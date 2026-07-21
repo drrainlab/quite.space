@@ -1,0 +1,21 @@
+# Go
+bin/
+dist/
+*.test
+*.out
+coverage.*
+vendor/
+
+# Env / secrets
+.env
+.env.*
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Local scratch
+*.log
+tmp/
