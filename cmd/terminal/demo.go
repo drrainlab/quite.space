@@ -43,7 +43,12 @@ func runDemo() error {
 	if err != nil {
 		return err
 	}
-	say("\n[node A] alice created space %s (%q)", spaceA.ID, "Forest Session")
+	spaceA.EnablePrivate(alice.Device)
+	spaceA.AddMember(alice.Device.ID, alice.Device.X25519Pub)
+	if _, err := alice.RotateEpoch(spaceA); err != nil {
+		return err
+	}
+	say("\n[node A] alice created PRIVATE space %s (%q), epoch 1 minted", spaceA.ID, "Forest Session")
 	say("[node A] alice fingerprint: %s", alice.Principal.Fingerprint())
 
 	climate, err := sensor.NewTemperature("studio climate")
@@ -62,8 +67,8 @@ func runDemo() error {
 	}
 	say("[node A] alice wrote a message and set presence 'listening' (TTL 300s)")
 
-	// Node B: independent replica of the same space.
-	spaceB := terminals.Replica(spaceA.ID)
+	// Node B joins via a signed capability invite (carries wrapped epoch
+	// keys for exactly one device — nothing here goes through a server).
 	echo, err := bot.NewEcho()
 	if err != nil {
 		return err
@@ -76,7 +81,19 @@ func runDemo() error {
 	if err != nil {
 		return err
 	}
-	say("\n[node B] replica of the space with echo-bot, AI-agent stub, sink-only logger")
+	invite, err := spaceA.NewInvite(echo.Device.ID, echo.Device.X25519Pub)
+	if err != nil {
+		return err
+	}
+	spaceB, err := terminals.AcceptInvite(invite, echo.Device)
+	if err != nil {
+		return err
+	}
+	spaceA.AddMember(echo.Device.ID, echo.Device.X25519Pub)
+	if _, err := alice.RotateEpoch(spaceA); err != nil {
+		return err
+	}
+	say("\n[node B] joined via signed invite (%d bytes) — echo-bot, AI-agent stub, sink-only logger; epoch 2 minted", len(invite))
 
 	// Direct sync over a local link (both directions).
 	engA := kernelsync.NewEngine(spaceA.Log)
@@ -137,8 +154,23 @@ func runDemo() error {
 	}
 	courier := relay.NewStore(64, 1<<20)
 	courier.Put(relay.Item{DestinationHint: "rotating-hint-7f3a", ExpiresAt: now + 86400, Ciphertext: raw})
-	say("\n[relay] blind courier holds %d bytes for hint %q — it has no parser for them", len(raw), "rotating-hint-7f3a")
-	say("[relay] honesty note: payload encryption lands in M1; today blindness is architectural, not yet cryptographic")
+	say("\n[relay] blind courier holds %d bytes for hint %q", len(raw), "rotating-hint-7f3a")
+
+	// Courier-eye view: a keyless replica of the same space can verify and
+	// store every frame, and read none of them.
+	courierEye := terminals.Replica(spaceB.ID)
+	_, eyeFrames, err := bundle.Read(bundlePath)
+	if err != nil {
+		return err
+	}
+	for _, f := range eyeFrames {
+		if _, err := courierEye.Absorb(f); err != nil {
+			return err
+		}
+	}
+	say("[relay] courier-eye check: %d frames verified, %d messages readable, %d undecryptable",
+		courierEye.Log.Len(), len(courierEye.State.Messages()), courierEye.Undecryptable)
+	say("[relay] honesty note: payloads are epoch-encrypted (ADR-005); envelope headers (author, schema, sequence) remain visible metadata")
 
 	delivered := courier.Collect("rotating-hint-7f3a", now+3600)
 	deliveredPath := filepath.Join(dir, "delivered.terminal-bundle")

@@ -35,8 +35,14 @@ type Space struct {
 	State *reducers.State
 	Trust *trust.Engine
 
+	// Private marks an encrypted space (ADR-005). Undecryptable counts
+	// events this replica received but could not read — shown, not hidden.
+	Private       bool
+	Undecryptable int
+
 	// priv is held only by the creating node (the controller's replica).
 	priv          ed25519.PrivateKey
+	priv2         *privateState
 	ManifestFrame []byte
 }
 
@@ -82,16 +88,32 @@ func newReplica(tid id.TerminalID) *Space {
 	return s
 }
 
-// absorb folds an applied event into materialized state and trust.
+// absorb folds an applied event into materialized state and trust,
+// decrypting sealed payloads when this replica holds the epoch key.
 func (s *Space) absorb(a eventlog.Applied) {
-	s.State.Apply(a.Env, a.ID)
-	if a.Env.Schema == schemas.PresenceUpdate && a.Env.SourceTerminal != nil {
-		if p, err := schemas.DecodePresence(a.Env.Payload); err == nil {
+	env := a.Env
+	if env.Schema == schemas.MembershipEpoch {
+		s.absorbEpoch(env)
+		return // key distribution is not user-visible state
+	}
+	if env.PayloadEncoding == signal.PayloadEncrypted {
+		pt, ok := s.openForAbsorb(env)
+		if !ok {
+			s.Undecryptable++
+			return
+		}
+		clone := *env
+		clone.Payload = pt
+		env = &clone
+	}
+	s.State.Apply(env, a.ID)
+	if env.Schema == schemas.PresenceUpdate && env.SourceTerminal != nil {
+		if p, err := schemas.DecodePresence(env.Payload); err == nil {
 			s.Trust.UpdatePresence(claims.Presence{
 				State:     p.State,
-				EmittedAt: a.Env.CreatedAt,
+				EmittedAt: env.CreatedAt,
 				ExpiresAt: p.ExpiresAt,
-				Source:    *a.Env.SourceTerminal,
+				Source:    *env.SourceTerminal,
 			})
 		}
 	}
@@ -198,6 +220,21 @@ func (p *Participant) Emit(s *Space, schema string, payload []byte,
 		return eventlog.Applied{}, fmt.Errorf("%w: agency %s cannot sign as %s",
 			ErrAuthorshipForbidden, p.Manifest.AgencyMode, produced)
 	}
+	// Private spaces: seal the payload under the current epoch. No key —
+	// no write; membership is cryptographic, not cosmetic.
+	encoding := signal.PayloadCBOR
+	wirePayload := payload
+	priority := signal.PriorityMessage
+	if schema == schemas.MembershipEpoch {
+		priority = signal.PrioritySecurity
+	} else if s.Private {
+		sealed, err := s.sealForEmit(schema, payload)
+		if err != nil {
+			return eventlog.Applied{}, err
+		}
+		wirePayload = sealed
+		encoding = signal.PayloadEncrypted
+	}
 	c, ok := p.chains[s.ID]
 	if !ok {
 		c = &chainState{}
@@ -216,9 +253,9 @@ func (p *Participant) Emit(s *Space, schema string, payload []byte,
 		LogicalClock:    p.clk,
 		ProducedBy:      produced,
 		SourceTerminal:  &src,
-		PayloadEncoding: signal.PayloadCBOR,
-		Payload:         payload,
-		Priority:        signal.PriorityMessage,
+		PayloadEncoding: encoding,
+		Payload:         wirePayload,
+		Priority:        priority,
 	}
 	if c.seq > 1 {
 		prev := c.tip

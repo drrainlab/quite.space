@@ -27,6 +27,7 @@ const (
 	ManifestUpdated   = "terminal.manifest.updated.v1"
 	MemberJoined      = "membership.joined.v1"
 	MemberLeft        = "membership.left.v1"
+	MembershipEpoch   = "membership.epoch.v1"
 )
 
 var schemaIDRe = regexp.MustCompile(`^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*\.v[1-9][0-9]*$`)
@@ -461,6 +462,104 @@ func DecodeObservation(payload []byte) (*Observation, error) {
 	return o, nil
 }
 
+// ---- membership.epoch.v1 ----
+
+// EpochWrap is one member device's encrypted copy of an epoch key.
+type EpochWrap struct {
+	Device id.DeviceID
+	Enc    []byte // HPKE encapsulated key
+	CT     []byte // sealed epoch key
+}
+
+// EpochPayload is membership.epoch.v1: {1: epoch n, 2: wraps}.
+type EpochPayload struct {
+	N     uint64
+	Wraps []EpochWrap
+}
+
+func (e *EpochPayload) Encode() ([]byte, error) {
+	if e.N == 0 {
+		return nil, errors.New("schemas: epoch numbers start at 1")
+	}
+	buf := codec.AppendMap(nil, 2)
+	buf = codec.AppendUint(buf, 1)
+	buf = codec.AppendUint(buf, e.N)
+	buf = codec.AppendUint(buf, 2)
+	buf = codec.AppendArray(buf, len(e.Wraps))
+	for _, w := range e.Wraps {
+		buf = codec.AppendArray(buf, 3)
+		buf = codec.AppendBytes(buf, w.Device[:])
+		buf = codec.AppendBytes(buf, w.Enc)
+		buf = codec.AppendBytes(buf, w.CT)
+	}
+	return buf, nil
+}
+
+func DecodeEpochPayload(payload []byte) (*EpochPayload, error) {
+	d := codec.NewDecoder(payload)
+	m, err := d.ReadMapHeader()
+	if err != nil {
+		return nil, err
+	}
+	e := &EpochPayload{}
+	for {
+		k, ok, er := m.Next()
+		if er != nil {
+			return nil, er
+		}
+		if !ok {
+			break
+		}
+		switch k {
+		case 1:
+			e.N, er = d.ReadUint()
+		case 2:
+			var cnt int
+			cnt, er = d.ReadArray()
+			if er != nil {
+				return nil, er
+			}
+			for range cnt {
+				if _, er = d.ReadArray(); er != nil {
+					return nil, er
+				}
+				var w EpochWrap
+				var devBytes []byte
+				devBytes, er = d.ReadBytes()
+				if er != nil {
+					return nil, er
+				}
+				if len(devBytes) != id.Size {
+					return nil, errors.New("schemas: bad wrap device id")
+				}
+				copy(w.Device[:], devBytes)
+				var enc, ct []byte
+				if enc, er = d.ReadBytes(); er != nil {
+					return nil, er
+				}
+				if ct, er = d.ReadBytes(); er != nil {
+					return nil, er
+				}
+				w.Enc = append([]byte(nil), enc...)
+				w.CT = append([]byte(nil), ct...)
+				e.Wraps = append(e.Wraps, w)
+			}
+		default:
+			er = d.SkipItem()
+		}
+		if er != nil {
+			return nil, er
+		}
+	}
+	if err := d.Done(); err != nil {
+		return nil, err
+	}
+	if e.N == 0 {
+		return nil, errors.New("schemas: epoch payload missing epoch number")
+	}
+	return e, nil
+}
+
 func init() {
 	Register(MessageText, func(p []byte) error { _, err := DecodeTextMessage(p); return err })
 	Register(MessageRevised, func(p []byte) error { _, err := DecodeTextMessage(p); return err })
@@ -469,4 +568,5 @@ func init() {
 	Register(CardUpdated, func(p []byte) error { _, err := DecodeCard(p); return err })
 	Register(PresenceUpdate, func(p []byte) error { _, err := DecodePresence(p); return err })
 	Register(ObservationTemp, func(p []byte) error { _, err := DecodeObservation(p); return err })
+	Register(MembershipEpoch, func(p []byte) error { _, err := DecodeEpochPayload(p); return err })
 }

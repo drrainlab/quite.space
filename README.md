@@ -49,8 +49,12 @@ Try the Phase 0 proof (no server, no accounts):
 go run ./cmd/terminal demo
 ```
 
-Not yet here (M1): payload encryption (ADR-005 epochs), LAN discovery,
-SQLite-backed storage, capability invites, desktop client.
+**M1 in progress.** Landed: group encryption per ADR-005 (epoch keys, HPKE
+key wrap, XChaCha20-Poly1305 payloads), private spaces with signed capability
+invites, epoch rotation on membership change — the demo's blind courier is
+now cryptographically blind, not just architecturally. Next: LAN transport
+(M1.1), encrypted local database + SQLite (M1.0), Reticulum sidecar (M1.6),
+desktop shell per ADR-011.
 
 ## Documents
 

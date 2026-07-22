@@ -79,6 +79,10 @@ func (p *Principal) Sign(msg []byte) []byte { return ed25519.Sign(p.priv, msg) }
 // SignKey exposes the device private key for envelope signing.
 func (d *Device) SignKey() ed25519.PrivateKey { return d.priv }
 
+// X25519Priv exposes the device's key-agreement scalar for unwrapping epoch
+// keys (ADR-005). Handle with the same care as the signing key.
+func (d *Device) X25519Priv() [32]byte { return d.x25519 }
+
 // Fingerprint of the principal's public key for manual verification.
 func (p *Principal) Fingerprint() string { return id.Fingerprint(p.ID[:]) }
 
