@@ -265,8 +265,10 @@ function pubAssetNode(kind, p) {
     wrap.appendChild(au);
   } else if (kind === 'image' && p.asset) {
     const img = document.createElement('img');
-    img.className = 'thumb'; img.alt = p.text || '';
-    img.src = `/api/spaces/${current}/assets/${p.asset}?token=${token}`;
+    img.alt = p.text || '';
+    const src = `/api/spaces/${current}/assets/${p.asset}?token=${token}`;
+    img.src = src;
+    img.onclick = () => window.open(src, '_blank'); // zoom: original full-size
     wrap.appendChild(img);
   } else {
     const a = document.createElement('a');

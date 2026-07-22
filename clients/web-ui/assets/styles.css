@@ -437,7 +437,14 @@
   .pub-title { font-weight: 600; font-size: calc(15px * var(--font-scale)); }
   .pub-summary { color: var(--dim); font-size: 13px; margin-top: 2px; }
   .pub-meta { color: var(--muted); font-size: 11px; margin-top: 4px; }
-  #pubArticle { max-width: 680px; }
+  #pubArticle { max-width: 680px; overflow-wrap: break-word; }
+  /* Content scales to its column — nothing busts out of the article. */
+  #pubArticle img, .pub-block img, .pub-card img {
+    max-width: 100%; height: auto; border-radius: var(--radius-md);
+    cursor: zoom-in; display: block; }
+  #pubArticle audio, .pub-block audio { width: 100%; max-width: 480px; display: block; }
+  #pubArticle video, .pub-block video { max-width: 100%; height: auto; }
+  .pub-block table { display: block; overflow-x: auto; }
   .pub-h1 { font-size: calc(22px * var(--font-scale)); margin: 8px 0 2px; }
   .pub-block { margin: 10px 0; }
   .pub-block h3 { color: var(--fg); font-size: calc(16px * var(--font-scale)); }
