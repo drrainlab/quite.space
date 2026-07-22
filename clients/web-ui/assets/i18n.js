@@ -31,6 +31,7 @@ const I18N = {
 
     // conversation
     'conv.member': 'member',
+    'conv.you': 'You',
     'conv.write': 'write into the space…',
     'conv.send': 'send',
     'conv.save_card': 'Save as card',

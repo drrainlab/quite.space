@@ -60,16 +60,16 @@ function shade(hex, f) {
   return `rgb(${ch(n>>16)}, ${ch((n>>8)&255)}, ${ch(n&255)})`;
 }
 
+// The space's character accent is SCOPED to the conversation (#content) — it
+// tints bubbles/persona for that space without overriding the shell theme +
+// preset, which own the global palette (PUI-1). Full per-space canvas theming
+// flows through the signed SC appearance (loadSpaceAppearance → #content).
 function applyTheme(char) {
   const a = ARCHETYPES[char?.archetype] || ARCHETYPES.forest;
-  const f = MOOD_LIGHT[char?.mood] ?? 1.0;
-  const root = document.documentElement.style;
-  root.setProperty('--acc', a.acc);
-  root.setProperty('--human', a.human);
-  root.setProperty('--bg', shade(a.bg, f));
-  root.setProperty('--panel', shade(a.bg, f * 1.55));
-  root.setProperty('--line', shade(a.bg, f * 2.6));
-  root.setProperty('--glow', a.acc + '10');
+  const el = document.getElementById('content');
+  if (!el) return;
+  el.style.setProperty('--acc', a.acc);
+  el.style.setProperty('--human', a.human);
 }
 
 // ---- relic: the growing shared object ----
@@ -160,6 +160,40 @@ function toggleProtocol() {
   refresh();
 }
 
+// ---- Appearance: theme (light/dark/auto) + preset (PUI-1) ----
+// Local, per-device shell look — the client's "last word". Distinct from a
+// space's shared SC appearance (scoped to #content). Persisted in localStorage;
+// the keystore mirror arrives with Settings (PUI-2).
+const PRESETS = ['quiet-glass', 'daylight', 'minimal-mono', 'comfort'];
+function prefersDark() {
+  return !window.matchMedia || window.matchMedia('(prefers-color-scheme: dark)').matches;
+}
+function applyAppearance() {
+  const theme = localStorage.getItem('qp.theme') || 'auto';
+  const effective = theme === 'auto' ? (prefersDark() ? 'dark' : 'light') : theme;
+  const preset = localStorage.getItem('qp.preset') || 'quiet-glass';
+  const r = document.documentElement;
+  r.setAttribute('data-theme', effective);
+  r.setAttribute('data-preset', PRESETS.includes(preset) ? preset : 'quiet-glass');
+}
+function setTheme(t) { localStorage.setItem('qp.theme', t); applyAppearance(); }
+function setPreset(p) { localStorage.setItem('qp.preset', p); applyAppearance(); }
+function openSettings() { syncSettingsUI(); dlgSettings.showModal(); }
+function syncSettingsUI() {
+  const theme = localStorage.getItem('qp.theme') || 'auto';
+  const preset = localStorage.getItem('qp.preset') || 'quiet-glass';
+  document.querySelectorAll('#setTheme button').forEach(b =>
+    b.classList.toggle('sel', b.dataset.v === theme));
+  document.querySelectorAll('#setPreset button').forEach(b =>
+    b.classList.toggle('sel', b.dataset.v === preset));
+}
+applyAppearance();
+if (window.matchMedia) {
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    if ((localStorage.getItem('qp.theme') || 'auto') === 'auto') applyAppearance();
+  });
+}
+
 // Compact human connection summary (§17): "● Direct · 2 here" — the raw
 // LAN/mesh/relay strings live behind the chip and in Protocol view.
 function connectionSummary(status) {
@@ -216,28 +250,18 @@ async function refresh() {
       d.tabIndex = 0;
       const title = s.title || t('conv.member');
       const an = ARCHETYPES[s.character?.archetype]?.name || '';
-      const head = document.createElement('div');
-      head.className = 'space-head';
-      head.innerHTML = `<span class="glyph g24">${glyphSVG(s.id, 'space', 24)}</span>` +
-        `<span class="t">${esc(title)}</span>` +
-        (s.owned ? `<span class="owner-tag">${esc(t('spaces.owner'))}</span>` : '');
-      d.appendChild(head);
-      const meta = document.createElement('div');
-      meta.className = 'm';
       const bits = [];
       if (an) bits.push(esc(an));
       bits.push(esc(t('spaces.activity.events', { count: s.events })));
       if (s.undecryptable) bits.push(`<span class="undec">${s.undecryptable}✦</span>`);
-      meta.innerHTML = bits.join(' · ');
-      d.appendChild(meta);
+      d.innerHTML =
+        `<span class="space-av"><span class="glyph g24">${glyphSVG(s.id, 'space', 24)}</span></span>` +
+        `<span class="space-main"><span class="space-top">` +
+          `<span class="t">${esc(title)}</span>` +
+          (s.owned ? `<span class="owner-tag">${esc(t('spaces.owner'))}</span>` : '') +
+        `</span><span class="m">${bits.join(' · ')}</span></span>`;
       d.onclick = () => { current = s.id; refresh(); };
       d.onkeydown = (e) => { if (e.key === 'Enter') { current = s.id; refresh(); } };
-      if (s.owned) {
-        const b = document.createElement('button');
-        b.textContent = 'invite'; b.style.marginTop = '6px'; b.style.fontSize = '12px';
-        b.onclick = (e) => { e.stopPropagation(); openPass(s); };
-        d.appendChild(b);
-      }
       box.appendChild(d);
     }
     if (!current && spacesCache.length) { current = spacesCache[0].id; }
@@ -247,11 +271,20 @@ async function refresh() {
 
 function currentSpace() { return spacesCache.find(s => s.id === current); }
 
+// Conversation header actions (PUI-1).
+function openPassCurrent() { const s = currentSpace(); if (s) openPass(s); }
+function toggleMembers() {
+  document.getElementById('members').classList.toggle('hidden');
+}
+
 async function refreshSpace() {
   const sp = currentSpace();
   const char = sp?.character;
   applyTheme(char);
   loadSpaceAppearance(current);
+  // Conversation header: title + invite (owned) + info toggle.
+  document.getElementById('convTitle').textContent = sp ? (sp.title || t('conv.member')) : '';
+  document.getElementById('inviteBtn').style.display = sp?.owned ? '' : 'none';
 
   // persona line: the declared character, plus its exact meaning.
   const persona = document.getElementById('persona');
@@ -280,10 +313,13 @@ async function refreshSpace() {
   if (seenSpace !== current) { seenSpace = current; seenEntries = new Set(); hereMembers = new Set(); }
   const firstPaint = seenEntries.size === 0;
   log.innerHTML = '';
+  let prev = null;
   for (const e of entries) {
     const fresh = !firstPaint && e.id && !seenEntries.has(e.id);
     if (e.id) seenEntries.add(e.id);
-    renderEntry(log, e, fresh);
+    const grouped = prev && prev.author === e.author && prev.produced_by === e.produced_by;
+    renderEntry(log, e, fresh, grouped);
+    prev = e;
   }
   if (stick) log.scrollTop = log.scrollHeight;
 
@@ -867,12 +903,16 @@ function authorLabel(e) {
   return e.author_name || t('conv.member');
 }
 
-function renderEntry(log, e, fresh) {
+function renderEntry(log, e, fresh, grouped) {
   const d = document.createElement('div');
-  d.className = 'entry msg' + (fresh ? ' enter' : '');
+  const own = !!e.mine;
+  d.className = 'entry msg' + (own ? ' own' : ' other') +
+    (grouped ? ' grouped' : '') + (fresh ? ' enter' : '');
+
+  // Author head (shown once per group, hidden for grouped follow-ons via CSS).
   const who = document.createElement('div');
   who.className = 'who';
-  if (!PROTOCOL) {
+  if (!PROTOCOL && !own) {
     const g = document.createElement('span');
     g.className = 'glyph g18';
     g.innerHTML = glyphSVG(e.author, e.produced_by === 'human' ? 'human' : 'device', 18);
@@ -881,17 +921,21 @@ function renderEntry(log, e, fresh) {
   const b = badge(e.produced_by);
   if (b) who.appendChild(b);
   const meta = document.createElement('span');
-  meta.className = 'meta';
-  meta.textContent = authorLabel(e) + (e.revised ? ' · ' + t('conv.edited') : '') +
-    (PROTOCOL ? ' · ' + e.kind : '');
+  meta.textContent = (own ? t('conv.you') : authorLabel(e)) +
+    (e.revised ? ' · ' + t('conv.edited') : '') + (PROTOCOL ? ' · ' + e.kind : '');
   who.appendChild(meta);
+  d.appendChild(who);
+
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble';
+  bubble.appendChild(renderBody(e));
+  bubble.appendChild(renderReactions(e));
+  d.appendChild(bubble);
+
   const mk = document.createElement('span');
   mk.className = 'mk'; mk.textContent = t('conv.save_card');
   mk.onclick = () => makeCardFrom(e);
-  who.appendChild(mk);
-  d.appendChild(who);
-  d.appendChild(renderBody(e));
-  d.appendChild(renderReactions(e));
+  d.appendChild(mk);
   log.appendChild(d);
 }
 

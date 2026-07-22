@@ -1,33 +1,72 @@
-  /* Quiet Terminal Glass — dark terminal base, soft glass controls,
-     calm typography (§4–8). Content surfaces are opaque and readable;
-     glass (blur) is reserved for navigation, composer and modals. */
+  /* Two orthogonal axes (PUI-1):
+       data-theme  = dark | light        → base palette
+       data-preset = quiet-glass | daylight | minimal-mono | comfort → style pack
+     Colours flow through semantic tokens; the preset packs adjust glass blur,
+     chroma, radius, shadow and type scale on top of the theme palette. */
   :root {
-    /* canvas + content */
+    /* canvas + content (dark base) */
     --bg: #0d0a10; --canvas-deep: #09070b;
     --panel: #18131c; --surface-raised: #1f1824; --line: rgba(215,164,239,.14);
     /* text */
     --fg: #ddd8df; --dim: #879993; --muted: #66736f;
     /* accents (space theming overrides --acc/--human at runtime) */
     --accent: #d39ae7; --acc: #d39ae7; --accent-soft: #ae7cc2;
+    --on-accent: #17111d;
     --signal: #91b9aa; --warn: #d0a36f; --critical: #d47e82;
     --human: #d39ae7; --ai: #b48ce0; --bot: #7ab4e0; --sensor: #d0a36f;
     --glow: rgba(211,154,231,.06);
     /* glass */
     --glass: rgba(32,24,38,.66); --glass-border: rgba(215,164,239,.20);
-    /* geometry */
-    --radius-sm: 6px; --radius-md: 10px; --radius-lg: 16px;
+    --glass-blur: 24px; --shadow: none;
+    /* bubbles */
+    --bubble-own: rgba(211,154,231,.16); --bubble-other: var(--panel);
+    /* geometry + type */
+    --radius-sm: 8px; --radius-md: 12px; --radius-lg: 18px;
+    --font-scale: 1;
+    --tap: 34px;
     --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, Inter, sans-serif;
     --font-mono: "SF Mono", ui-monospace, "JetBrains Mono", Menlo, monospace;
   }
+
+  /* ---- Light theme palette ---- */
+  :root[data-theme="light"] {
+    --bg: #f3f1f7; --canvas-deep: #e9e6f0;
+    --panel: #ffffff; --surface-raised: #f7f5fb; --line: rgba(60,40,80,.13);
+    --fg: #1b1622; --dim: #6a6577; --muted: #9a94a6;
+    --accent: #8a4fc0; --acc: #8a4fc0; --accent-soft: #a77cd0; --on-accent: #ffffff;
+    --signal: #3f8f76; --warn: #b06f1c; --critical: #c0555b;
+    --human: #8a4fc0; --ai: #7a5fd0; --bot: #3f74b0; --sensor: #b06f1c;
+    --glow: rgba(138,79,192,.05);
+    --glass: rgba(255,255,255,.72); --glass-border: rgba(60,40,80,.12);
+    --bubble-own: rgba(138,79,192,.14); --bubble-other: #ffffff;
+    --shadow: 0 1px 3px rgba(40,24,60,.10), 0 6px 20px rgba(40,24,60,.06);
+  }
+
+  /* ---- Preset packs (adjust the theme, not replace it) ---- */
+  /* Daylight: no blur, soft shadows, warmer — best paired with light theme. */
+  :root[data-preset="daylight"] { --glass-blur: 0px; --radius-md: 14px; --radius-lg: 20px; }
+  :root[data-preset="daylight"] .glass { box-shadow: var(--shadow); }
+  /* Minimal Mono: flat, low chroma, high contrast, no glass, tight radius. */
+  :root[data-preset="minimal-mono"] {
+    --glass-blur: 0px; --radius-sm: 6px; --radius-md: 8px; --radius-lg: 12px;
+    --accent: var(--fg); --acc: var(--fg); --accent-soft: var(--dim);
+    --bubble-own: color-mix(in srgb, var(--fg) 12%, transparent);
+    --glass: var(--surface-raised); --glow: transparent;
+  }
+  /* Comfort: larger type + bigger tap targets + calmer geometry. */
+  :root[data-preset="comfort"] {
+    --font-scale: 1.14; --radius-md: 14px; --radius-lg: 20px; --tap: 44px;
+  }
+
   * { box-sizing: border-box; margin: 0; }
   body {
     background: var(--bg); color: var(--fg);
-    font: 15px/1.5 var(--font-sans);
+    font: calc(15px * var(--font-scale))/1.5 var(--font-sans);
     height: 100vh; display: flex; flex-direction: column;
-    transition: background .8s ease;
+    transition: background .4s ease, color .4s ease;
   }
   body::before {
-    content: ""; position: fixed; inset: 0; pointer-events: none;
+    content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
     background: radial-gradient(ellipse 90% 60% at 50% 110%, var(--glow), transparent);
   }
   /* mono is an accent — statuses, phrases, times, ids — not body text */
@@ -35,8 +74,8 @@
   .member .caps, .asset-note, .sigbar, time { font-family: var(--font-mono); }
   /* glass material: nav, composer, modals, pass card */
   .glass {
-    background: var(--glass); backdrop-filter: blur(24px);
-    -webkit-backdrop-filter: blur(24px); border: 1px solid var(--glass-border);
+    background: var(--glass); backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur)); border: 1px solid var(--glass-border);
   }
   @media (prefers-reduced-transparency: reduce) {
     .glass { background: var(--surface-raised); backdrop-filter: none;
@@ -246,6 +285,120 @@
   @keyframes qs-enter {
     from { opacity: 0; transform: translateY(6px); }
     to { opacity: 1; transform: translateY(0); }
+  }
+
+  /* ============ PUI-1: messenger layout + Apple-style controls ============ */
+
+  /* --- message bubbles --- */
+  #log { display: flex; flex-direction: column; gap: 2px; }
+  .msg { display: flex; flex-direction: column; align-items: flex-start;
+    max-width: 78%; margin: 0; }
+  .msg.own { align-self: flex-end; align-items: flex-end; }
+  .msg.grouped { margin-top: 1px; }
+  .msg:not(.grouped) { margin-top: 10px; }
+  .msg .who { display: flex; align-items: center; gap: 6px; margin: 0 4px 3px;
+    color: var(--dim); font-size: 12px; }
+  .msg.own .who { flex-direction: row-reverse; }
+  .msg.grouped .who { display: none; }
+  .bubble {
+    background: var(--bubble-other); border: 1px solid var(--line);
+    border-radius: var(--radius-lg); padding: 8px 12px; box-shadow: var(--shadow);
+    position: relative; word-break: break-word;
+  }
+  .msg.own .bubble { background: var(--bubble-own); border-color: transparent; }
+  .msg:not(.grouped) .bubble { border-top-left-radius: var(--radius-sm); }
+  .msg.own:not(.grouped) .bubble { border-top-left-radius: var(--radius-lg);
+    border-top-right-radius: var(--radius-sm); }
+  .bubble .txt { white-space: pre-wrap; }
+  .bubble time { display: block; text-align: right; color: var(--muted);
+    font-size: 10px; margin-top: 2px; }
+  .msg .mk { color: var(--muted); font-size: 11px; cursor: pointer; opacity: 0;
+    transition: opacity .15s; margin: 2px 4px 0; }
+  .msg:hover .mk { opacity: 1; }
+  .sysrow { align-self: center; color: var(--muted); font-size: 12px;
+    background: var(--panel); border-radius: 999px; padding: 3px 12px; margin: 8px 0; }
+
+  /* --- chat-list sidebar --- */
+  #sidebar { padding: 8px; gap: 3px; }
+  #sidebar .row { position: sticky; top: 0; background: var(--bg); z-index: 2;
+    padding-bottom: 6px; }
+  .space { display: flex; gap: 10px; align-items: center; border: 0;
+    border-radius: var(--radius-md); padding: 8px 10px; background: transparent; }
+  .space:hover { background: var(--surface-raised); }
+  .space.active { background: color-mix(in srgb, var(--acc) 16%, transparent); }
+  .space-av { flex: 0 0 auto; width: 40px; height: 40px; border-radius: 50%;
+    background: var(--surface-raised); display: grid; place-items: center; }
+  .space-main { flex: 1; min-width: 0; }
+  .space-top { display: flex; align-items: baseline; gap: 6px; }
+  .space .t { font-weight: 600; font-size: calc(14px * var(--font-scale)); }
+  .space .when { margin-left: auto; color: var(--muted); font-size: 11px; }
+  .space .m { color: var(--dim); font-size: 12px; margin: 1px 0 0; padding: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .space .owner-tag { font-size: 10px; color: var(--muted); }
+  .unread-badge { background: var(--acc); color: var(--on-accent); font-size: 11px;
+    min-width: 18px; height: 18px; border-radius: 999px; padding: 0 5px;
+    display: inline-grid; place-items: center; }
+
+  /* --- Apple-style controls --- */
+  button, .btn { border-radius: var(--radius-md); min-height: var(--tap);
+    transition: background .15s, border-color .15s, transform .1s; }
+  button:active { transform: scale(.97); }
+  .btn-filled { background: var(--acc); color: var(--on-accent); border: 0; }
+  .btn-filled:hover { background: var(--accent-soft); }
+  .btn-tinted { background: color-mix(in srgb, var(--acc) 15%, transparent);
+    color: var(--acc); border: 0; }
+  .btn-plain { background: transparent; border: 0; color: var(--acc); }
+  .icon-btn { background: transparent; border: 0; min-width: var(--tap);
+    min-height: var(--tap); border-radius: 50%; color: var(--dim); font-size: 17px;
+    display: inline-grid; place-items: center; }
+  .icon-btn:hover { background: var(--surface-raised); color: var(--acc); }
+  /* iOS toggle */
+  .switch { position: relative; width: 46px; height: 28px; flex: 0 0 auto;
+    display: inline-block; }
+  .switch input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+  .switch .track { position: absolute; inset: 0; background: var(--muted);
+    border-radius: 999px; transition: background .2s; }
+  .switch .track::after { content: ""; position: absolute; top: 3px; left: 3px;
+    width: 22px; height: 22px; border-radius: 50%; background: #fff;
+    box-shadow: 0 1px 3px rgba(0,0,0,.3); transition: transform .2s; }
+  .switch input:checked + .track { background: var(--acc); }
+  .switch input:checked + .track::after { transform: translateX(18px); }
+  /* segmented control */
+  .segmented { display: inline-flex; background: var(--surface-raised);
+    border-radius: 10px; padding: 2px; gap: 2px; }
+  .segmented button, .seg-btn { flex: 1; min-height: 30px; border: 0; background: transparent;
+    color: var(--dim); border-radius: 8px; padding: 5px 12px; font-size: 13px; white-space: nowrap; }
+  .segmented button.sel, .seg-btn.sel { background: var(--panel); color: var(--fg);
+    box-shadow: var(--shadow); }
+  /* grouped settings list */
+  .list { background: var(--panel); border: 1px solid var(--line);
+    border-radius: var(--radius-md); overflow: hidden; margin: 8px 0; }
+  .list-row { display: flex; align-items: center; gap: 12px; padding: 11px 14px;
+    border-bottom: 1px solid var(--line); min-height: var(--tap); }
+  .list-row:last-child { border-bottom: 0; }
+  .list-row .lr-label { flex: 1; }
+  .list-row .lr-sub { color: var(--dim); font-size: 12px; }
+  .list-row input[type="text"], .list-row input[type="password"], .list-row select {
+    flex: 1; background: var(--bg); color: var(--fg); border: 1px solid var(--line);
+    border-radius: 8px; padding: 7px 9px; font: inherit; margin: 0; }
+
+  /* --- conversation header + members info drawer --- */
+  #convbar { display: flex; align-items: center; gap: 8px; padding: 8px 12px 8px 16px;
+    border-bottom: 1px solid var(--line); min-height: 48px; }
+  #convTitle { font-weight: 600; font-size: calc(15px * var(--font-scale)); }
+  #members.hidden { display: none; }
+  .info-toggle { cursor: pointer; }
+
+  /* --- sheet-style dialog --- */
+  dialog.sheet { border-radius: var(--radius-lg); width: 440px; max-width: calc(100% - 24px); }
+  dialog.sheet h3 { font-size: 18px; color: var(--fg); margin-bottom: 12px; }
+  .settings-sec { margin-bottom: 14px; }
+  .settings-sec > .hint { text-transform: uppercase; letter-spacing: .4px;
+    font-size: 11px; margin-left: 4px; }
+  @media (max-width: 600px) {
+    dialog.sheet { position: fixed; bottom: 0; left: 0; margin: 0; width: 100%;
+      max-width: 100%; border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
+    .segmented { flex-wrap: wrap; }
   }
   /* mobile (§20): list ↔ space as screens; composer bottom; pass full-screen */
   @media (max-width: 600px) {

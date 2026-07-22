@@ -16,6 +16,7 @@
   <span id="relayBtn" class="dim mono" onclick="dlgRelay.showModal()" style="cursor:pointer" title="blind relay" tabindex="0">relay</span>
   <span id="protoToggle" class="dim mono" onclick="toggleProtocol()" style="cursor:pointer" tabindex="0" role="button"
     title="Protocol view — the technical layer"></span>
+  <button class="icon-btn" onclick="openSettings()" title="Settings" aria-label="Settings">⚙</button>
   <span id="fp" class="dim mono" title="your fingerprint"></span>
 </header>
 <main>
@@ -28,6 +29,12 @@
     <div id="spaces"></div>
   </div>
   <div id="content">
+    <div id="convbar">
+      <span id="convTitle"></span>
+      <span style="flex:1"></span>
+      <button id="inviteBtn" class="btn-tinted" style="display:none" onclick="openPassCurrent()">invite</button>
+      <button class="icon-btn" onclick="toggleMembers()" title="Space info" aria-label="Space info">ⓘ</button>
+    </div>
     <div id="persona"></div>
     <div id="honesty"></div>
     <div id="cards"></div>
@@ -224,6 +231,33 @@
     <p class="hint" id="obDevice" style="text-align:center"></p>
     <div class="row"><button onclick="obFinish()">Continue</button></div>
   </div>
+</dialog>
+
+<dialog id="dlgSettings" class="sheet">
+  <h3>Settings</h3>
+  <div class="settings-sec">
+    <p class="hint">Appearance</p>
+    <div class="list">
+      <div class="list-row">
+        <span class="lr-label">Theme</span>
+        <div class="segmented" id="setTheme">
+          <button data-v="auto" onclick="setTheme('auto');syncSettingsUI()">Auto</button>
+          <button data-v="light" onclick="setTheme('light');syncSettingsUI()">Light</button>
+          <button data-v="dark" onclick="setTheme('dark');syncSettingsUI()">Dark</button>
+        </div>
+      </div>
+      <div class="list-row">
+        <span class="lr-label">Preset</span>
+        <div class="segmented" id="setPreset">
+          <button data-v="quiet-glass" onclick="setPreset('quiet-glass');syncSettingsUI()">Quiet Glass</button>
+          <button data-v="daylight" onclick="setPreset('daylight');syncSettingsUI()">Daylight</button>
+          <button data-v="minimal-mono" onclick="setPreset('minimal-mono');syncSettingsUI()">Minimal</button>
+          <button data-v="comfort" onclick="setPreset('comfort');syncSettingsUI()">Comfort</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="row" style="justify-content:flex-end"><button class="btn-filled" onclick="dlgSettings.close()">Done</button></div>
 </dialog>
 
 <dialog id="dlgMe">
