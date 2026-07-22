@@ -18,6 +18,7 @@ import (
 	"github.com/drrainlab/quiet_places/protocol/keep"
 	"github.com/drrainlab/quiet_places/protocol/listening"
 	"github.com/drrainlab/quiet_places/protocol/publication"
+	"github.com/drrainlab/quiet_places/protocol/resonance"
 	"github.com/drrainlab/quiet_places/protocol/schemas"
 	"github.com/drrainlab/quiet_places/protocol/signal"
 )
@@ -64,18 +65,8 @@ type UnknownContent struct {
 	Fallback string
 }
 
-type reactionState struct {
-	active bool
-	clock  uint64
-	event  id.EventID
-}
-
-type reactionKey struct {
-	principal id.PrincipalID
-	emoji     string
-}
-
-// Entry is one materialized feed item.
+// Entry is one materialized feed item. Reactions live in the resonance
+// projection (resonance.go), keyed by target — not on the entry.
 type Entry struct {
 	ID         id.EventID
 	Author     id.PrincipalID
@@ -83,17 +74,12 @@ type Entry struct {
 	ProducedBy signal.Authorship
 	Kind       EntryKind
 	Content    EntryContent
-	// Reactions: emoji → principals with active reactions (deterministic,
-	// no "mine" here — that is a per-viewer projection, never reducer
-	// state, and never part of the digest).
-	Reactions map[string][]id.PrincipalID
 }
 
 type entryRec struct {
-	entry     Entry
-	tomb      bool
-	revision  *revisionRec
-	reactions map[reactionKey]reactionState
+	entry    Entry
+	tomb     bool
+	revision *revisionRec
 }
 
 type revisionRec struct {
@@ -102,22 +88,18 @@ type revisionRec struct {
 	eid   id.EventID
 }
 
-type pendingReaction struct {
-	author id.PrincipalID
-	emoji  string
-	active bool
-	clock  uint64
-	eid    id.EventID
-}
-
 // State is the materialized state of one terminal.
 type State struct {
 	entries     map[id.EventID]*entryRec
 	orphanTombs map[id.EventID]struct{}
-	// pendingReactions arrived before their target entry (order tolerance).
-	pendingReactions map[id.EventID][]pendingReaction
-	cards            map[id.EventID]*Card
-	observation      *Observation
+	cards       map[id.EventID]*Card
+	observation *Observation
+
+	// resonance (RP-1, resonance.go): target → per-actor single-slot LWW
+	// registers (unresolved targets stay unprojected, never evicted), plus
+	// the controller-authored palette register.
+	resonance  map[id.EventID]*resRec
+	resPalette *resPaletteReg
 
 	// publications: per-document projection (ADR-014, publications.go).
 	publications map[[16]byte]*pubRec
@@ -166,11 +148,10 @@ type Observation struct {
 // NewState creates empty materialized state.
 func NewState() *State {
 	return &State{
-		entries:          map[id.EventID]*entryRec{},
-		orphanTombs:      map[id.EventID]struct{}{},
-		pendingReactions: map[id.EventID][]pendingReaction{},
-		cards:            map[id.EventID]*Card{},
-		Unsupported:      map[string]int{},
+		entries:     map[id.EventID]*entryRec{},
+		orphanTombs: map[id.EventID]struct{}{},
+		cards:       map[id.EventID]*Card{},
+		Unsupported: map[string]int{},
 	}
 }
 
@@ -186,7 +167,7 @@ func later(clockA uint64, idA id.EventID, clockB uint64, idB id.EventID) bool {
 func (s *State) entryRecFor(eid id.EventID) *entryRec {
 	rec, ok := s.entries[eid]
 	if !ok {
-		rec = &entryRec{reactions: map[reactionKey]reactionState{}}
+		rec = &entryRec{}
 		s.entries[eid] = rec
 	}
 	return rec
@@ -202,28 +183,10 @@ func (s *State) installEntry(eid id.EventID, env *signal.Envelope, kind EntryKin
 		rec.tomb = true
 		delete(s.orphanTombs, eid)
 	}
-	// Drain reactions that arrived before their target.
-	for _, p := range s.pendingReactions[eid] {
-		s.applyReactionState(rec, p.author, p.emoji, p.active, p.clock, p.eid)
-	}
-	delete(s.pendingReactions, eid)
 	// A keep folded before this entry now resolves against the allowlist.
+	// Resonance registers need no drain: unresolved registers simply start
+	// projecting once ResonanceTargetStatus resolves.
 	s.resolveKeepTarget(eid)
-}
-
-// applyReactionState is the LWW merge: the winner per (principal, emoji) is
-// the event latest in (clock, event id) order; its `active` field IS the
-// state (never a toggle — two devices both saying active=true converge to
-// one visible reaction).
-func (s *State) applyReactionState(rec *entryRec, author id.PrincipalID, emoji string,
-	active bool, clock uint64, eid id.EventID) {
-
-	key := reactionKey{principal: author, emoji: emoji}
-	cur, exists := rec.reactions[key]
-	if exists && !later(clock, eid, cur.clock, cur.event) {
-		return
-	}
-	rec.reactions[key] = reactionState{active: active, clock: clock, event: eid}
 }
 
 // Apply folds one applied event into the state.
@@ -300,23 +263,18 @@ func (s *State) Apply(env *signal.Envelope, eid id.EventID) {
 			s.installUnknown(eid, env)
 		}
 	case schemas.BlockReaction:
-		rb, err := schemas.DecodeReactionBlock(env.Payload)
-		if err != nil {
-			s.Unsupported["malformed:"+env.Schema]++
-			return
-		}
-		// A reaction target is either a feed entry's event id or a STABLE
-		// publication target (ADR-014 invariant 7: never a revision event id).
-		if docID, ok := s.pubTargets[rb.Target]; ok {
-			s.applyPubReaction(docID, env.Principal, rb.Emoji, rb.Active, env.LogicalClock, eid)
-		} else if rec, ok := s.entries[rb.Target]; ok && rec.entry.Kind != "" {
-			s.applyReactionState(rec, env.Principal, rb.Emoji, rb.Active, env.LogicalClock, eid)
-		} else {
-			s.pendingReactions[rb.Target] = append(s.pendingReactions[rb.Target], pendingReaction{
-				author: env.Principal, emoji: rb.Emoji, active: rb.Active,
-				clock: env.LogicalClock, eid: eid,
-			})
-		}
+		// Legacy pre-Resonance reactions (clean replacement, RP wave): the
+		// explicit arm is MANDATORY — without it IsBlockSchema would route
+		// these into installUnknown and they would surface as unknown feed
+		// entries. Counted, never rendered.
+		s.Unsupported["legacy:block.reaction.v1"]++
+		return
+	case resonance.SchemaSet:
+		s.applyResonanceSet(env, eid)
+	case resonance.SchemaClear:
+		s.applyResonanceClear(env, eid)
+	case resonance.SchemaPalette:
+		s.applyResonancePalette(env, eid)
 	case schemas.CardCreated:
 		c, err := schemas.DecodeCard(env.Payload)
 		if err != nil {
@@ -399,8 +357,8 @@ func (s *State) installUnknown(eid id.EventID, env *signal.Envelope) {
 	})
 }
 
-// Entries returns the live feed in total order, with reactions projected
-// deterministically (sorted principals per emoji).
+// Entries returns the live feed in total order. Reactions are a separate
+// projection — ResonanceFor(entry id).
 func (s *State) Entries() []Entry {
 	out := make([]Entry, 0, len(s.entries))
 	for _, rec := range s.entries {
@@ -414,33 +372,11 @@ func (s *State) Entries() []Entry {
 			t.Revised = true
 			e.Content.Text = &t
 		}
-		e.Reactions = projectReactions(rec.reactions)
 		out = append(out, e)
 	}
 	sort.Slice(out, func(i, j int) bool {
 		return !later(out[i].Clock, out[i].ID, out[j].Clock, out[j].ID)
 	})
-	return out
-}
-
-func projectReactions(states map[reactionKey]reactionState) map[string][]id.PrincipalID {
-	if len(states) == 0 {
-		return nil
-	}
-	out := map[string][]id.PrincipalID{}
-	for key, st := range states {
-		if st.active {
-			out[key.emoji] = append(out[key.emoji], key.principal)
-		}
-	}
-	for emoji := range out {
-		ps := out[emoji]
-		sort.Slice(ps, func(i, j int) bool { return string(ps[i][:]) < string(ps[j][:]) })
-		out[emoji] = ps
-	}
-	if len(out) == 0 {
-		return nil
-	}
 	return out
 }
 
@@ -458,7 +394,6 @@ func (s *State) EntryByID(eid id.EventID) (Entry, bool) {
 		t.Revised = true
 		e.Content.Text = &t
 	}
-	e.Reactions = projectReactions(rec.reactions)
 	return e, true
 }
 
@@ -513,9 +448,9 @@ func (s *State) LatestObservation() (Observation, bool) {
 }
 
 // Digest hashes the materialized views. Two nodes holding the same events
-// must produce identical digests (M0.6 acceptance). Reaction state enters
-// by (emoji, sorted principals) — viewer-relative data like "mine" never
-// exists at this layer.
+// must produce identical digests (M0.6 acceptance). Resonance state stays
+// out (precedent: keep/pubs/apps) — ResonanceDigest() is the test oracle
+// for its order-independence.
 func (s *State) Digest() [32]byte {
 	h := sha256.New()
 	for _, e := range s.Entries() {
@@ -545,17 +480,6 @@ func (s *State) Digest() [32]byte {
 			h.Write([]byte(e.Content.Link.URL))
 		case e.Content.Signal != nil:
 			h.Write([]byte(e.Content.Signal.Preset))
-		}
-		emojis := make([]string, 0, len(e.Reactions))
-		for em := range e.Reactions {
-			emojis = append(emojis, em)
-		}
-		sort.Strings(emojis)
-		for _, em := range emojis {
-			h.Write([]byte(em))
-			for _, p := range e.Reactions[em] {
-				h.Write(p[:])
-			}
 		}
 	}
 	for _, c := range s.Cards() {

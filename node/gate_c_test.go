@@ -123,26 +123,28 @@ func TestBlocksAPIEndToEnd(t *testing.T) {
 		t.Fatal("downloaded content differs")
 	}
 
-	// Reactions: set → visible+mine; unset → gone (state-based).
+	// Resonance: set → aggregate + own; clear → gone (single register).
 	target := entries[0].ID
 	if code := call("POST", "/api/spaces/"+sid+"/reactions",
-		map[string]any{"target": target, "emoji": "🌲", "active": true}, nil); code != 200 {
-		t.Fatal("reaction set failed")
+		map[string]any{"target": target, "op": "set",
+			"reaction": map[string]any{"kind": "unicode", "value": "🌲"}}, nil); code != 200 {
+		t.Fatal("resonance set failed")
 	}
 	var withReaction []entryResp
 	call("GET", "/api/spaces/"+sid+"/entries", nil, &withReaction)
-	if len(withReaction[0].Reactions) != 1 || !withReaction[0].Reactions[0].Mine ||
-		withReaction[0].Reactions[0].Count != 1 {
-		t.Fatalf("reaction projection: %+v", withReaction[0].Reactions)
+	res := withReaction[0].Resonance
+	if res == nil || res.Total != 1 || len(res.Groups) != 1 ||
+		res.Groups[0].Value != "🌲" || res.Own == nil || res.Own.Value != "🌲" {
+		t.Fatalf("resonance projection: %+v", res)
 	}
 	if code := call("POST", "/api/spaces/"+sid+"/reactions",
-		map[string]any{"target": target, "emoji": "🌲", "active": false}, nil); code != 200 {
-		t.Fatal("reaction unset failed")
+		map[string]any{"target": target, "op": "clear"}, nil); code != 200 {
+		t.Fatal("resonance clear failed")
 	}
 	var afterUnset []entryResp
 	call("GET", "/api/spaces/"+sid+"/entries", nil, &afterUnset)
-	if len(afterUnset[0].Reactions) != 0 {
-		t.Fatalf("reaction not removed: %+v", afterUnset[0].Reactions)
+	if r := afterUnset[0].Resonance; r != nil && (r.Total != 0 || r.Own != nil) {
+		t.Fatalf("resonance not cleared: %+v", r)
 	}
 
 	// Live signal: few hundred bytes, no asset.

@@ -205,7 +205,7 @@ func (a *APIServer) handleShelf(w http.ResponseWriter, r *http.Request) {
 				}
 			default:
 				if e, ok := sp.State.EntryByID(it.Target); ok {
-					er := a.projectEntry(tid, &e, me, names)
+					er := a.projectEntry(tid, sp, &e, me, names)
 					resp.Entry = &er
 				}
 			}

@@ -21,6 +21,7 @@ import (
 	"github.com/drrainlab/quiet_places/kernel/reducers"
 	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/protocol/schemas"
+	"github.com/drrainlab/quiet_places/terminals"
 )
 
 // MaxMultipartBody bounds an upload request before any reading happens.
@@ -296,35 +297,6 @@ func (a *APIServer) handleFetchAsset(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"state": st.State, "missing": st.Missing, "total": st.Total})
 }
 
-func (a *APIServer) handleReaction(w http.ResponseWriter, r *http.Request) {
-	tid, err := a.spaceID(r)
-	if err != nil {
-		httpErr(w, http.StatusBadRequest, err)
-		return
-	}
-	body, err := readBody[struct {
-		Target string `json:"target"`
-		Emoji  string `json:"emoji"`
-		Active bool   `json:"active"`
-	}](r)
-	if err != nil || body.Target == "" {
-		httpErr(w, http.StatusBadRequest, errors.New("target and emoji required"))
-		return
-	}
-	tb, err := hex.DecodeString(body.Target)
-	if err != nil || len(tb) != id.Size {
-		httpErr(w, http.StatusBadRequest, errors.New("bad target id"))
-		return
-	}
-	var target id.EventID
-	copy(target[:], tb)
-	if err := a.rt.ReactionSet(tid, target, body.Emoji, body.Active); err != nil {
-		httpErr(w, http.StatusBadRequest, err)
-		return
-	}
-	writeJSON(w, map[string]bool{"ok": true})
-}
-
 // ---- Entries feed ----
 
 type assetResp struct {
@@ -340,24 +312,20 @@ type assetResp struct {
 	Reason     string `json:"reason,omitempty"`
 }
 
-type reactionResp struct {
-	Emoji string `json:"emoji"`
-	Count int    `json:"count"`
-	Mine  bool   `json:"mine"`
-}
-
 type entryResp struct {
-	ID         string         `json:"id"`
-	Author     string         `json:"author"`
-	AuthorName string         `json:"author_name"`
-	Mine       bool           `json:"mine"`
-	ProducedBy string         `json:"produced_by"`
-	Clock      uint64         `json:"clock"`
-	Kind       string         `json:"kind"`
-	Fallback   string         `json:"fallback"`
-	Reactions  []reactionResp `json:"reactions,omitempty"`
-	// Kept: viewer-relative "kept by me" affordance (API layer only, like
-	// reaction Mine); KeepCount is how many members keep this entry.
+	ID         string `json:"id"`
+	Author     string `json:"author"`
+	AuthorName string `json:"author_name"`
+	Mine       bool   `json:"mine"`
+	ProducedBy string `json:"produced_by"`
+	Clock      uint64 `json:"clock"`
+	Kind       string `json:"kind"`
+	Fallback   string `json:"fallback"`
+	// Resonance: the reaction aggregate (own/mine are viewer-relative,
+	// resolved at this layer only).
+	Resonance *resonanceResp `json:"resonance,omitempty"`
+	// Kept: viewer-relative "kept by me" affordance (API layer only);
+	// KeepCount is how many members keep this entry.
 	Kept      bool `json:"kept,omitempty"`
 	KeepCount int  `json:"keep_count,omitempty"`
 
@@ -412,7 +380,7 @@ func (a *APIServer) handleEntries(w http.ResponseWriter, r *http.Request) {
 	entries := sp.State.Entries()
 	out := make([]entryResp, 0, len(entries))
 	for i := range entries {
-		resp := a.projectEntry(tid, &entries[i], me, names)
+		resp := a.projectEntry(tid, sp, &entries[i], me, names)
 		resp.Kept, _ = sp.State.KeepState(entries[i].ID, me)
 		resp.KeepCount = sp.State.KeepCount(entries[i].ID)
 		out = append(out, resp)
@@ -420,23 +388,16 @@ func (a *APIServer) handleEntries(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out)
 }
 
-func (a *APIServer) projectEntry(tid id.TerminalID, e *reducers.Entry, me id.PrincipalID,
-	names map[id.PrincipalID]string) entryResp {
+func (a *APIServer) projectEntry(tid id.TerminalID, sp *terminals.Space,
+	e *reducers.Entry, me id.PrincipalID, names map[id.PrincipalID]string) entryResp {
 	resp := entryResp{
 		ID: e.ID.Hex(), Author: e.Author.String(), AuthorName: names[e.Author],
 		Mine: e.Author == me, ProducedBy: e.ProducedBy.String(),
 		Clock: e.Clock, Kind: string(e.Kind),
 	}
-	for emoji, ps := range e.Reactions {
-		rr := reactionResp{Emoji: emoji, Count: len(ps)}
-		for _, p := range ps {
-			if p == me {
-				rr.Mine = true // viewer-relative projection, API-layer only
-			}
-		}
-		resp.Reactions = append(resp.Reactions, rr)
+	if sp != nil {
+		resp.Resonance = a.projectResonance(sp, e.ID, me, names)
 	}
-	sortReactions(resp.Reactions)
 
 	attachAsset := func(ref *schemas.AssetRef) {
 		st, err := a.rt.AssetStatus(tid, ref.PublicIDHex())
@@ -511,14 +472,6 @@ func (a *APIServer) projectEntry(tid id.TerminalID, e *reducers.Entry, me id.Pri
 		resp.Fallback = e.Content.Unknown.Fallback
 	}
 	return resp
-}
-
-func sortReactions(rs []reactionResp) {
-	for i := 1; i < len(rs); i++ {
-		for j := i; j > 0 && rs[j-1].Emoji > rs[j].Emoji; j-- {
-			rs[j-1], rs[j] = rs[j], rs[j-1]
-		}
-	}
 }
 
 var _ = time.Now

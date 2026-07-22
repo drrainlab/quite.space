@@ -438,16 +438,6 @@ func (r *Runtime) EmitBlock(tid id.TerminalID, schema string, payload []byte) (i
 	return a.ID, nil
 }
 
-// ReactionSet publishes the DESIRED reaction state (state-based, plan §4).
-func (r *Runtime) ReactionSet(tid id.TerminalID, target id.EventID, emoji string, active bool) error {
-	payload, err := (&schemas.ReactionBlock{Target: target, Emoji: emoji, Active: active}).Encode()
-	if err != nil {
-		return err
-	}
-	_, err = r.EmitBlock(tid, schemas.BlockReaction, payload)
-	return err
-}
-
 // SetCardStatus updates a card.
 func (r *Runtime) SetCardStatus(tid id.TerminalID, card id.EventID, title, status string) error {
 	r.mu.Lock()

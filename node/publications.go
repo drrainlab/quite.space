@@ -319,29 +319,27 @@ func (a *APIServer) publicationJSON(tid id.TerminalID, docID [16]byte) (map[stri
 		}
 		comments = append(comments, cm)
 	}
-	reactions := map[string]int{}
-	for emoji, ps := range pub.Reactions {
-		reactions[emoji] = len(ps)
-	}
-	mine := map[string]bool{}
-	for emoji, ps := range pub.Reactions {
-		for _, p := range ps {
-			if p == a.rt.Principal.ID {
-				mine[emoji] = true
-			}
+	me := a.rt.Principal.ID
+	names := map[id.PrincipalID]string{me: a.rt.DisplayName()}
+	for _, c := range sp.MemberCards(0) {
+		if c.Name != "" {
+			names[c.Principal] = c.Name
 		}
 	}
-	return map[string]any{
+	target := reducers.PubReactionTarget(docID)
+	out := map[string]any{
 		"document":          documentToJSON(pub.Document),
 		"author":            pub.Author.String(),
 		"revision_event_id": pub.RevisionEventID.Hex(),
 		"clock":             pub.Clock,
 		"archived":          pub.Archived,
 		"comments":          comments,
-		"reactions":         reactions,
-		"my_reactions":      mine,
-		"reaction_target":   reducers.PubReactionTarget(docID).Hex(),
-	}, true
+		"reaction_target":   target.Hex(),
+	}
+	if res := a.projectResonance(sp, target, me, names); res != nil {
+		out["resonance"] = res
+	}
+	return out, true
 }
 
 func (a *APIServer) handleListPublications(w http.ResponseWriter, r *http.Request) {
