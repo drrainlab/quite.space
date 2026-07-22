@@ -327,6 +327,19 @@
   </div>
 </dialog>
 
+<dialog id="dlgGenerate" class="sheet">
+  <h3>✨ Generate a look</h3>
+  <p class="hint" id="genProviderNote" style="margin-left:4px"></p>
+  <textarea id="genPrompt" rows="3" placeholder="night listening room, soft violet light, calm"></textarea>
+  <p class="hint warn" id="genMsg" style="margin-left:4px"></p>
+  <div class="row">
+    <button class="btn-filled" id="genRunBtn" onclick="doGenerate()">Generate</button>
+    <span style="flex:1"></span>
+    <button class="btn-plain" onclick="closeGenerate()">Cancel</button>
+    <button class="btn-tinted" id="genAcceptBtn" style="display:none" onclick="acceptGenerate()">Use this look</button>
+  </div>
+</dialog>
+
 <dialog id="dlgMe">
   <h3>This device</h3>
   <div id="meGlyph" style="text-align:center;margin:8px 0"></div>

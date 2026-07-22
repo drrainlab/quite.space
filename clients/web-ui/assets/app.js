@@ -252,9 +252,55 @@ function syncSettingsUI() {
     b.classList.toggle('sel', b.dataset.v === rm));
 }
 
-// Placeholder until PUI-4 wires AI composition.
-function openGenerate() {
-  document.getElementById('custMsg').textContent = 'AI generation arrives in the next step.';
+// ---- AI composition (SC-4): prompt → validated proposal → accept ----
+let genProposal = null; // { override, appearance } once generated
+async function openGenerate() {
+  dlgCustomize.close();
+  genProposal = null;
+  document.getElementById('genMsg').textContent = '';
+  document.getElementById('genAcceptBtn').style.display = 'none';
+  let provider = '';
+  try { provider = (await api('/api/settings')).llm.provider || ''; } catch (e) {}
+  document.getElementById('genProviderNote').textContent = provider
+    ? `A proposal from your ${provider} model — you approve it before it's saved.`
+    : 'Set up an AI provider in Settings first.';
+  dlgGenerate.showModal();
+}
+function closeGenerate() {
+  // Drop any un-accepted preview by re-applying the committed appearance.
+  if (genProposal && current) { appearanceSpace = null; loadSpaceAppearance(current); }
+  genProposal = null;
+  dlgGenerate.close();
+}
+async function doGenerate() {
+  const sid = current; if (!sid) return;
+  const prompt = document.getElementById('genPrompt').value.trim();
+  if (!prompt) return;
+  const msg = document.getElementById('genMsg');
+  const btn = document.getElementById('genRunBtn');
+  msg.textContent = 'Thinking…'; btn.disabled = true;
+  try {
+    const r = await api(`/api/spaces/${sid}/appearance/proposals`,
+      { method: 'POST', body: JSON.stringify({ prompt }) });
+    if (!r.ok) { msg.textContent = r.error || 'generation failed'; return; }
+    genProposal = r;
+    // Live preview: apply the proposed appearance to the scoped canvas.
+    applyScopedAppearance(document.getElementById('content'), r.appearance, renderMode());
+    msg.textContent = 'Preview applied. Keep it, or generate again.';
+    msg.className = 'hint';
+    document.getElementById('genAcceptBtn').style.display = '';
+    document.getElementById('genRunBtn').textContent = 'Regenerate';
+  } catch (err) { msg.textContent = err.message; }
+  finally { btn.disabled = false; }
+}
+async function acceptGenerate() {
+  const sid = current; if (!sid || !genProposal) return;
+  try {
+    await api(`/api/spaces/${sid}/appearance`, { method: 'PATCH', body: JSON.stringify(genProposal.override) });
+    appearanceSpace = null; await loadSpaceAppearance(sid);
+    genProposal = null;
+    dlgGenerate.close();
+  } catch (err) { document.getElementById('genMsg').textContent = err.message; }
 }
 function pickProvider(p, keepModel) {
   llmSettings.provider = p;

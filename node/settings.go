@@ -56,6 +56,14 @@ func (r *Runtime) SetSettings(s Settings) error {
 // node-side generation. Never exposed through the API.
 func (r *Runtime) LLMConfig() llm.Config { return r.GetSettings().LLM }
 
+// llm returns the generation client (default, or a test-injected one).
+func (r *Runtime) llm() *llm.Client {
+	if r.llmClient != nil {
+		return r.llmClient
+	}
+	return llm.New()
+}
+
 // TestLLM runs a tiny round-trip to verify the provider + key are usable.
 func (r *Runtime) TestLLM(ctx context.Context) error {
 	cfg := r.LLMConfig()

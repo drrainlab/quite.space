@@ -17,6 +17,7 @@ import (
 	"github.com/drrainlab/quiet_places/kernel/identity"
 	"github.com/drrainlab/quiet_places/kernel/storage"
 	kernelsync "github.com/drrainlab/quiet_places/kernel/sync"
+	"github.com/drrainlab/quiet_places/node/llm"
 	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/protocol/manifest"
 	"github.com/drrainlab/quiet_places/protocol/schemas"
@@ -37,10 +38,11 @@ type Runtime struct {
 	Device    *identity.Device
 	Self      *terminals.Participant
 
-	spaces   map[id.TerminalID]*spaceState
-	assetIdx *assetIndex
-	passes   *passRegistry
-	joins    map[string]*joinAttempt
+	spaces    map[id.TerminalID]*spaceState
+	assetIdx  *assetIndex
+	passes    *passRegistry
+	joins     map[string]*joinAttempt
+	llmClient *llm.Client // nil → default; injectable for tests
 
 	lanNode *lan.Node
 	lanPort int
