@@ -87,8 +87,17 @@ func (s *State) pubRecFor(docID [16]byte) *pubRec {
 			s.applyPubReaction(docID, p.author, p.emoji, p.active, p.clock, p.eid)
 		}
 		delete(s.pendingReactions, target)
+		// A keep of this publication may have folded before the document.
+		s.resolveKeepTarget(target)
 	}
 	return rec
+}
+
+// PublicationDocByTarget resolves a stable reaction/keep target to its
+// document id.
+func (s *State) PublicationDocByTarget(target id.EventID) ([16]byte, bool) {
+	d, ok := s.pubTargets[target]
+	return d, ok
 }
 
 // applyPubReaction is the LWW merge for publication reactions.

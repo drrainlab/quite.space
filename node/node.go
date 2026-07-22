@@ -18,6 +18,7 @@ import (
 	"github.com/drrainlab/quiet_places/kernel/storage"
 	kernelsync "github.com/drrainlab/quiet_places/kernel/sync"
 	"github.com/drrainlab/quiet_places/node/llm"
+	"github.com/drrainlab/quiet_places/protocol/contract"
 	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/protocol/manifest"
 	"github.com/drrainlab/quiet_places/protocol/schemas"
@@ -49,6 +50,9 @@ type Runtime struct {
 	mesh    *meshtastic.Radio
 	stop    chan struct{}
 	wg      sync.WaitGroup
+
+	// relayClk is the SyncClock calibration against a common relay (LR-2).
+	relayClk relayClock
 }
 
 // link is any live transport connection the runtime can pump.
@@ -67,6 +71,9 @@ type spaceState struct {
 // keystore (created on first run), every known space from its log, chains
 // resumed so writing continues seamlessly.
 func Open(dataDir string, passphrase []byte, displayName string) (*Runtime, error) {
+	// All contract registrations happen in package inits, which have run by
+	// now — freeze the runtime contract registry (idempotent, LR-0a).
+	contract.Freeze()
 	root, err := storage.Open(dataDir, passphrase)
 	if err != nil {
 		return nil, err

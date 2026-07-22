@@ -356,6 +356,10 @@ type entryResp struct {
 	Kind       string         `json:"kind"`
 	Fallback   string         `json:"fallback"`
 	Reactions  []reactionResp `json:"reactions,omitempty"`
+	// Kept: viewer-relative "kept by me" affordance (API layer only, like
+	// reaction Mine); KeepCount is how many members keep this entry.
+	Kept      bool `json:"kept,omitempty"`
+	KeepCount int  `json:"keep_count,omitempty"`
 
 	Text      string `json:"text,omitempty"`
 	Revised   bool   `json:"revised,omitempty"`
@@ -408,7 +412,10 @@ func (a *APIServer) handleEntries(w http.ResponseWriter, r *http.Request) {
 	entries := sp.State.Entries()
 	out := make([]entryResp, 0, len(entries))
 	for i := range entries {
-		out = append(out, a.projectEntry(tid, &entries[i], me, names))
+		resp := a.projectEntry(tid, &entries[i], me, names)
+		resp.Kept, _ = sp.State.KeepState(entries[i].ID, me)
+		resp.KeepCount = sp.State.KeepCount(entries[i].ID)
+		out = append(out, resp)
 	}
 	writeJSON(w, out)
 }

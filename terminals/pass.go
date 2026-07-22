@@ -430,11 +430,16 @@ func decodeJoinRequest(b []byte) (*JoinRequest, []byte, error) {
 // ---- Acceptance response (sealed to the newcomer device) ----
 
 // Accepted carries the space manifest and the newcomer's first epoch.
+// History carries PAST epoch keys when the space's memory policy shares
+// them ("everything"/"manual"); under private_history it stays empty and
+// the past remains sealed — enforced by keys, not UI (LR-4 fix: the pass
+// path now honors the same policy as invites).
 type Accepted struct {
 	RequestID     [32]byte
 	ManifestFrame []byte
 	EpochN        uint64
 	EpochKey      [32]byte
+	History       []crypto.EpochKey
 }
 
 func acceptInfo(space id.TerminalID, reqID [32]byte) []byte {
@@ -444,7 +449,11 @@ func acceptInfo(space id.TerminalID, reqID [32]byte) []byte {
 
 // BuildAccepted seals the acceptance to the newcomer's device X25519 key.
 func BuildAccepted(space id.TerminalID, deviceXpub [32]byte, a *Accepted) ([]byte, error) {
-	body := codec.AppendMap(nil, 4)
+	n := 4
+	if len(a.History) > 0 {
+		n++
+	}
+	body := codec.AppendMap(nil, n)
 	body = codec.AppendUint(body, 1)
 	body = codec.AppendBytes(body, a.RequestID[:])
 	body = codec.AppendUint(body, 2)
@@ -453,6 +462,15 @@ func BuildAccepted(space id.TerminalID, deviceXpub [32]byte, a *Accepted) ([]byt
 	body = codec.AppendUint(body, a.EpochN)
 	body = codec.AppendUint(body, 4)
 	body = codec.AppendBytes(body, a.EpochKey[:])
+	if len(a.History) > 0 {
+		body = codec.AppendUint(body, 5)
+		body = codec.AppendArray(body, len(a.History))
+		for _, e := range a.History {
+			body = codec.AppendArray(body, 2)
+			body = codec.AppendUint(body, e.N)
+			body = codec.AppendBytes(body, e.Key[:])
+		}
+	}
 	enc, ct, err := crypto.SealTo(deviceXpub, acceptInfo(space, a.RequestID), body)
 	if err != nil {
 		return nil, err
@@ -507,6 +525,30 @@ func OpenAccepted(space id.TerminalID, reqID [32]byte, xpriv [32]byte, sealed []
 			v, er = d.ReadBytes()
 			if er == nil && len(v) == 32 {
 				copy(a.EpochKey[:], v)
+			}
+		case 5:
+			var cnt int
+			cnt, er = d.ReadArray()
+			if er != nil {
+				return nil, er
+			}
+			for range cnt {
+				if _, er = d.ReadArray(); er != nil {
+					return nil, er
+				}
+				var e crypto.EpochKey
+				if e.N, er = d.ReadUint(); er != nil {
+					return nil, er
+				}
+				var kb []byte
+				if kb, er = d.ReadBytes(); er != nil {
+					return nil, er
+				}
+				if len(kb) != 32 {
+					return nil, errors.New("terminals: bad history key")
+				}
+				copy(e.Key[:], kb)
+				a.History = append(a.History, e)
 			}
 		default:
 			er = d.SkipItem()

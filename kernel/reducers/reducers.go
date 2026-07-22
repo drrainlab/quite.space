@@ -15,6 +15,8 @@ import (
 
 	"github.com/drrainlab/quiet_places/protocol/appdef"
 	"github.com/drrainlab/quiet_places/protocol/id"
+	"github.com/drrainlab/quiet_places/protocol/keep"
+	"github.com/drrainlab/quiet_places/protocol/listening"
 	"github.com/drrainlab/quiet_places/protocol/publication"
 	"github.com/drrainlab/quiet_places/protocol/schemas"
 	"github.com/drrainlab/quiet_places/protocol/signal"
@@ -127,6 +129,17 @@ type State struct {
 	appDefs      map[id.EventID]*AppDefinitionRec
 	appInstances map[[16]byte]*AppInstanceRec
 	appEvents    map[[16]byte][]AppStateEvent
+	// appInstanceEvents: instance creation event id → instance id (keep
+	// targets address app instances by their creation event).
+	appInstanceEvents map[id.EventID][16]byte
+
+	// keeps (LR-1, keep.go): target → per-author LWW keep registers, plus a
+	// bounded FIFO of targets folded before their object was seen.
+	keeps       map[id.EventID]*keepRec
+	keepPending []id.EventID
+	// Controller is the space controller from the manifest — static space
+	// metadata (never event-derived), used only to authorize keep moderation.
+	Controller *id.PrincipalID
 
 	// Unsupported schemas are counted, never dropped silently (ADR-009).
 	Unsupported map[string]int
@@ -194,6 +207,8 @@ func (s *State) installEntry(eid id.EventID, env *signal.Envelope, kind EntryKin
 		s.applyReactionState(rec, p.author, p.emoji, p.active, p.clock, p.eid)
 	}
 	delete(s.pendingReactions, eid)
+	// A keep folded before this entry now resolves against the allowlist.
+	s.resolveKeepTarget(eid)
 }
 
 // applyReactionState is the LWW merge: the winner per (principal, emoji) is
@@ -343,8 +358,12 @@ func (s *State) Apply(env *signal.Envelope, eid id.EventID) {
 		s.applyAppDefinition(env, eid)
 	case appdef.SchemaInstance:
 		s.applyAppInstance(env, eid)
-	case appdef.SchemaPollVote, appdef.SchemaFormResponse:
+	case appdef.SchemaPollVote, appdef.SchemaFormResponse, listening.SchemaCommand:
 		s.applyAppState(env, eid)
+	case keep.SchemaKept:
+		s.applyKept(env, eid)
+	case keep.SchemaUnkept:
+		s.applyUnkept(env, eid)
 	case schemas.BlockAttached:
 		// An asset carrier: indexed via the OnBlock hook, never a feed entry.
 		return
@@ -423,6 +442,24 @@ func projectReactions(states map[reactionKey]reactionState) map[string][]id.Prin
 		return nil
 	}
 	return out
+}
+
+// EntryByID projects one live entry (Shelf enrichment). Tombstoned entries
+// return false — the Shelf renders those as placeholders, not content.
+func (s *State) EntryByID(eid id.EventID) (Entry, bool) {
+	rec, ok := s.entries[eid]
+	if !ok || rec.tomb || rec.entry.Kind == "" {
+		return Entry{}, false
+	}
+	e := rec.entry
+	if e.Kind == KindText && rec.revision != nil {
+		t := *e.Content.Text
+		t.Text = rec.revision.text
+		t.Revised = true
+		e.Content.Text = &t
+	}
+	e.Reactions = projectReactions(rec.reactions)
+	return e, true
 }
 
 // Message is the pre-media text view (compat for older tests and the

@@ -71,7 +71,14 @@ func runUI(args []string, withUI bool) error {
 	if err != nil {
 		return err
 	}
-	addr, l, err := api.Serve(0)
+	port := 0
+	if p := flags["port"]; p != "" {
+		if _, err := fmt.Sscanf(p, "%d", &port); err != nil {
+			return fmt.Errorf("bad --port %q", p)
+		}
+	}
+	api.SetToken(flags["token"])
+	addr, l, err := api.Serve(port)
 	if err != nil {
 		return err
 	}

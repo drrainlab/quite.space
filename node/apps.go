@@ -16,6 +16,7 @@ import (
 
 	"github.com/drrainlab/quiet_places/protocol/appdef"
 	"github.com/drrainlab/quiet_places/protocol/id"
+	"github.com/drrainlab/quiet_places/protocol/listening"
 )
 
 // nodePolicy is the schema allowlist this node will serve/emit for apps.
@@ -262,6 +263,11 @@ func (r *Runtime) AppAction(tid id.TerminalID, instanceID, actionName string, fi
 	granted := appdef.NewCapSet(rec.Instance.Granted)
 	if !appdef.Allowed("append", action.Emit, requested, granted, appPolicyAppend) {
 		return id.EventID{}, fmt.Errorf("node: emitting %s is not within this app's effective capabilities", action.Emit)
+	}
+	// Listening commands take the schema-specific path: host-gated, with
+	// node-assigned (session_epoch, sequence) and effective_at (LR-2).
+	if action.Emit == listening.SchemaCommand {
+		return r.emitListeningCommand(st, iid, rec.Author, rec.Instance.Props, fields)
 	}
 	// Copy ONLY the action's declared fields — nothing else passes through.
 	data := map[string]any{}

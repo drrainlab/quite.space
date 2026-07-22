@@ -69,6 +69,11 @@ func (s *State) applyAppInstance(env *signal.Envelope, eid id.EventID) {
 	s.appInstances[iid] = &AppInstanceRec{
 		Instance: inst, EventID: eid, Author: env.Principal, Clock: env.LogicalClock,
 	}
+	if s.appInstanceEvents == nil {
+		s.appInstanceEvents = map[id.EventID][16]byte{}
+	}
+	s.appInstanceEvents[eid] = iid
+	s.resolveKeepTarget(eid)
 }
 
 func (s *State) applyAppState(env *signal.Envelope, eid id.EventID) {
@@ -109,6 +114,17 @@ func (s *State) AppInstances() []AppInstanceRec {
 
 // AppInstanceByID returns one instance.
 func (s *State) AppInstanceByID(iid [16]byte) (*AppInstanceRec, bool) {
+	rec, ok := s.appInstances[iid]
+	return rec, ok
+}
+
+// AppInstanceByEvent resolves an instance by its creation event id (keep
+// targets address app instances this way).
+func (s *State) AppInstanceByEvent(eid id.EventID) (*AppInstanceRec, bool) {
+	iid, ok := s.appInstanceEvents[eid]
+	if !ok {
+		return nil, false
+	}
 	rec, ok := s.appInstances[iid]
 	return rec, ok
 }

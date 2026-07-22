@@ -250,6 +250,12 @@ func (r *Runtime) acceptOne(client *relay.Client, recs []*passRecord, sealed []b
 			if err == nil {
 				acc := &terminals.Accepted{RequestID: req.RequestID,
 					ManifestFrame: mf, EpochN: epochN, EpochKey: epochKey}
+				// The memory policy decides whether the past travels with
+				// the pass (LR-4): private_history keeps earlier epochs
+				// sealed to those who lived them.
+				if _, ch := st.space.Character(); ch.Memory != "private_history" {
+					acc.History = st.space.EpochHistory()
+				}
 				resp, _ = terminals.BuildAccepted(rec.space, req.DeviceXpub, acc)
 				r.persistEpochsLocked(rec.space, st.space)
 			}
@@ -400,13 +406,18 @@ func (r *Runtime) adoptAccepted(at *joinAttempt, acc *terminals.Accepted) error 
 	}
 	s.ManifestFrame = acc.ManifestFrame
 	s.EnablePrivate(r.Device)
-	s.RestoreEpochs([]crypto.EpochKey{{N: acc.EpochN, Key: acc.EpochKey}})
+	keys := append([]crypto.EpochKey{}, acc.History...)
+	keys = append(keys, crypto.EpochKey{N: acc.EpochN, Key: acc.EpochKey})
+	s.RestoreEpochs(keys)
 	r.Self.ResumeChain(s)
 	title := "joined space"
 	if m := manifestTitle(acc.ManifestFrame); m != "" {
 		title = m
 	}
-	r.ks.Spaces[at.space] = storage.SpaceMeta{Title: title}
+	// Keep the manifest with the meta: the character (archetype, mood,
+	// memory policy) must survive restarts on joined replicas too.
+	r.ks.Spaces[at.space] = storage.SpaceMeta{Title: title,
+		ManifestFrame: acc.ManifestFrame}
 	r.attach(at.space, s)
 	if _, _, err := r.Self.PublishManifest(s); err != nil {
 		return err

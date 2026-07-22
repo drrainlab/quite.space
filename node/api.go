@@ -42,6 +42,14 @@ func NewAPIServer(rt *Runtime, ui fs.FS) (*APIServer, error) {
 // Token returns the session token (printed as part of the UI URL).
 func (a *APIServer) Token() string { return a.token }
 
+// SetToken overrides the session token (dev/test convenience — a stable
+// local URL across restarts; the API still binds 127.0.0.1 only).
+func (a *APIServer) SetToken(t string) {
+	if t != "" {
+		a.token = t
+	}
+}
+
 // Serve binds 127.0.0.1 (only) and serves until the listener closes.
 // Returns the bound address.
 func (a *APIServer) Serve(port int) (string, net.Listener, error) {
@@ -111,11 +119,16 @@ func (a *APIServer) Handler() http.Handler {
 	mux.HandleFunc("POST /api/spaces/{id}/apps", a.auth(a.handleCreateApp))
 	mux.HandleFunc("GET /api/spaces/{id}/apps/{instance}", a.auth(a.handleAppMeta))
 	mux.HandleFunc("GET /api/spaces/{id}/apps/{instance}/inputs/{input}", a.auth(a.handleAppInput))
+	mux.HandleFunc("GET /api/spaces/{id}/apps/{instance}/session", a.auth(a.handleListeningSession))
+	mux.HandleFunc("GET /api/time", a.auth(a.handleTime))
 	mux.HandleFunc("POST /api/spaces/{id}/apps/{instance}/actions/{action}", a.auth(a.handleAppAction))
 	mux.HandleFunc("GET /api/spaces/{id}/drafts", a.auth(a.handleDrafts))
 	mux.HandleFunc("POST /api/spaces/{id}/drafts", a.auth(a.handleDrafts))
 	mux.HandleFunc("GET /api/spaces/{id}/drafts/{doc}", a.auth(a.handleGetDraft))
 	mux.HandleFunc("DELETE /api/spaces/{id}/drafts/{doc}", a.auth(a.handleDeleteDraft))
+	mux.HandleFunc("POST /api/spaces/{id}/keep", a.auth(a.handleKeep))
+	mux.HandleFunc("POST /api/spaces/{id}/unkeep", a.auth(a.handleUnkeep))
+	mux.HandleFunc("GET /api/spaces/{id}/shelf", a.auth(a.handleShelf))
 	mux.HandleFunc("GET /api/spaces/{id}/composition", a.auth(a.handleComposition))
 	mux.HandleFunc("GET /api/spaces/{id}/bundles", a.auth(a.handleBundles))
 	mux.HandleFunc("POST /api/lan/connect", a.auth(a.handleConnect))

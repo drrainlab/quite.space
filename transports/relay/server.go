@@ -135,6 +135,10 @@ func (s *Server) handle(m *Msg) *Msg {
 			items = [][]byte{}
 		}
 		return &Msg{Type: msgItems, Items: items}
+	case msgTime:
+		// LR-2 calibration source: this clock's only property is that every
+		// participant asking THIS relay gets the same one.
+		return &Msg{Type: msgTimeOK, Now: uint64(time.Now().UnixMilli())}
 	default:
 		return &Msg{Type: msgError, Reason: "unknown message type"}
 	}
@@ -203,6 +207,21 @@ func (c *Client) Put(hint []byte, expiresAt uint64, body []byte) (uint64, error)
 		return 0, errors.New("relay: unexpected reply")
 	}
 	return reply.Expires, nil
+}
+
+// Time asks the relay for its wall clock (unix ms) and reports the local
+// monotonic round-trip. The caller derives offset = relay_now + rtt/2 - local
+// and keeps the sample with the smallest RTT.
+func (c *Client) Time() (nowMS uint64, rtt time.Duration, err error) {
+	start := time.Now() // monotonic
+	reply, err := c.roundTrip(&Msg{Type: msgTime}, 5*time.Second)
+	if err != nil {
+		return 0, 0, err
+	}
+	if reply.Type != msgTimeOK || reply.Now == 0 {
+		return 0, 0, errors.New("relay: unexpected time reply")
+	}
+	return reply.Now, time.Since(start), nil
 }
 
 // Collect fetches (and removes) everything stored under the given hints.

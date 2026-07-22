@@ -35,8 +35,16 @@ A Space Pass is **authority to request entry**, not an access key.
 4. **One authoritative acceptor** (v1): the controller replica that holds
    the terminal seed. Multi-owner-device acceptance is a documented v1
    limitation.
-5. **History starts at acceptance.** The newcomer receives only the epoch
-   minted during acceptance; past epochs were never wrapped to them.
+5. **History follows the space's declared memory policy** (amended
+   2026-07-23, LR-4). The pass itself still carries no keys and `pending`
+   still reads nothing — but the SEALED ACCEPTANCE (owner-confirmed,
+   encrypted to the newcomer's device) wraps past epoch keys when the
+   space's memory is `everything` or `manual`, because those spaces
+   publicly promise "this place remembers everything that happens in it"
+   and a memory the newcomers cannot see is not a memory. Under
+   `private_history` the original rule holds bit-for-bit: only the epoch
+   minted during acceptance is granted; the past stays with those who
+   lived it, enforced by cryptography.
 6. **Revoking a pass never removes a member.** Revoke blocks new and
    still-pending requests; removing a member is a separate operation that
    rotates the epoch and emits its own event.

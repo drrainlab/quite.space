@@ -127,6 +127,14 @@ func (s *Space) absorb(a eventlog.Applied) {
 	if env.LogicalClock > s.maxClock {
 		s.maxClock = env.LogicalClock
 	}
+	// The controller is static space metadata from the manifest (never
+	// event-derived); the reducer needs it only to authorize keep moderation.
+	if s.State.Controller == nil && len(s.ManifestFrame) > 0 {
+		if m, err := manifest.Decode(s.ManifestFrame); err == nil {
+			c := m.Controller
+			s.State.Controller = &c
+		}
+	}
 	if env.Schema == schemas.MembershipEpoch {
 		s.absorbEpoch(env)
 		return // key distribution is not user-visible state

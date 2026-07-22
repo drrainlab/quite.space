@@ -8,6 +8,7 @@ import (
 	"crypto/ed25519"
 	"errors"
 	"fmt"
+	"sort"
 
 	"github.com/drrainlab/quiet_places/kernel/crypto"
 	"github.com/drrainlab/quiet_places/kernel/eventlog"
@@ -143,6 +144,21 @@ func (s *Space) absorbEpoch(env *signal.Envelope) {
 		return // not addressed: normal for non-members and removed members
 	}
 	s.priv2.epochs[ep.N] = key
+}
+
+// EpochHistory returns every epoch key this replica holds, ascending by
+// epoch. Used by pass acceptance when the space's memory policy shares
+// history ("everything"/"manual"); private_history spaces never call it.
+func (s *Space) EpochHistory() []crypto.EpochKey {
+	if s.priv2 == nil {
+		return nil
+	}
+	out := make([]crypto.EpochKey, 0, len(s.priv2.epochs))
+	for _, k := range s.priv2.epochs {
+		out = append(out, k)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].N < out[j].N })
+	return out
 }
 
 // sealForEmit encrypts a payload for the current epoch. Without the key the

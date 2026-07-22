@@ -28,8 +28,10 @@ func waitJoin(t *testing.T, rt *Runtime, reqID string, want JoinState) string {
 
 // TestPassLifecycle is the UI-2 acceptance path: Alice mints a Space Pass,
 // Bob requests entry through the rendezvous relay, Alice's device confirms
-// automatically, and Bob ends up a real member who can read messages posted
-// AFTER acceptance (history starts at acceptance — ADR-012).
+// automatically, and Bob ends up a real member. The space is
+// private_history, so history stays sealed: Bob reads only what came after
+// acceptance (ADR-012 invariant 5, amended — see TestPassHistoryPolicy for
+// the memory=everything path).
 func TestPassLifecycle(t *testing.T) {
 	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
 	if err != nil {
@@ -43,7 +45,9 @@ func TestPassLifecycle(t *testing.T) {
 	bob := openRuntime(t, t.TempDir(), "bob")
 	defer bob.Close()
 
-	tid, err := alice.CreateSpace("Back Room")
+	ch := terminals.DefaultCharacter("campfire")
+	ch.Memory = "private_history"
+	tid, err := alice.CreateSpaceWithCharacter("Back Room", ch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,6 +122,62 @@ func TestPassLifecycle(t *testing.T) {
 	}
 	if leaked {
 		t.Fatal("Bob read a pre-acceptance message — history did not start at acceptance")
+	}
+}
+
+// TestPassHistoryPolicy: a memory=everything space wraps past epoch keys
+// into the SEALED acceptance (never into the pass itself), so a newcomer
+// sees the room's memory — the promise "this place remembers everything"
+// holds for pass joiners too (ADR-012 invariant 5, amended LR-4).
+func TestPassHistoryPolicy(t *testing.T) {
+	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+	addr := "127.0.0.1:" + itoa(port)
+
+	alice := openRuntime(t, t.TempDir(), "alice")
+	defer alice.Close()
+	bob := openRuntime(t, t.TempDir(), "bob")
+	defer bob.Close()
+
+	tid, err := alice.CreateSpace("Listening Room") // default memory: everything
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := alice.Say(tid, "the first listen happened here"); err != nil {
+		t.Fatal(err)
+	}
+
+	info, err := alice.MintPass(tid, 1, 24, addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reqID, err := bob.JoinByPass(info.Link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitJoin(t, bob, reqID, JoinReady)
+
+	if _, _, err := alice.PushToRelay(addr, tid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bob.PullFromRelay(addr); err != nil {
+		t.Fatal(err)
+	}
+	sB, _ := bob.Space(tid)
+	var seen bool
+	for _, m := range sB.State.Messages() {
+		if m.Text == "the first listen happened here" {
+			seen = true
+		}
+	}
+	if !seen {
+		t.Fatal("memory=everything must let a pass joiner read the room's history")
+	}
+	if sB.Undecryptable != 0 {
+		t.Fatalf("no event should stay sealed under memory=everything, got %d", sB.Undecryptable)
 	}
 }
 

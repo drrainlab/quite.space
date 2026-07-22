@@ -45,9 +45,13 @@ const (
 	msgCollect = 3
 	msgItems   = 4
 	msgError   = 5
+	// LR-2: relay time — the common calibration source for listening
+	// sessions. The relay's clock carries no authority beyond being SHARED.
+	msgTime   = 6
+	msgTimeOK = 7
 )
 
-// Message key table v0.
+// Message key table v0 (append-only, ADR-009).
 const (
 	keyType    = 1
 	keyHint    = 2
@@ -56,6 +60,7 @@ const (
 	keyHints   = 5
 	keyItems   = 6
 	keyReason  = 7
+	keyNow     = 8 // relay wall time, unix milliseconds
 )
 
 // Msg is one relay protocol message.
@@ -67,6 +72,7 @@ type Msg struct {
 	Hints   [][]byte
 	Items   [][]byte
 	Reason  string
+	Now     uint64 // unix ms (msgTimeOK)
 }
 
 // Encode serializes a message.
@@ -88,6 +94,9 @@ func (m *Msg) Encode() []byte {
 		n++
 	}
 	if m.Reason != "" {
+		n++
+	}
+	if m.Now != 0 {
 		n++
 	}
 	buf := codec.AppendMap(nil, n)
@@ -123,6 +132,10 @@ func (m *Msg) Encode() []byte {
 		buf = codec.AppendUint(buf, keyReason)
 		buf = codec.AppendText(buf, m.Reason)
 	}
+	if m.Now != 0 {
+		buf = codec.AppendUint(buf, keyNow)
+		buf = codec.AppendUint(buf, m.Now)
+	}
 	return buf
 }
 
@@ -151,6 +164,8 @@ func DecodeMsg(data []byte) (*Msg, error) {
 			m.Hint = append([]byte(nil), b...)
 		case keyExpires:
 			m.Expires, er = d.ReadUint()
+		case keyNow:
+			m.Now, er = d.ReadUint()
 		case keyBody:
 			var b []byte
 			b, er = d.ReadBytes()
