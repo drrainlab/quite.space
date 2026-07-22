@@ -211,4 +211,21 @@
   .mem-opt.sel { border-color: var(--acc); }
   .mem-opt .poetic { color: var(--fg); }
   .mem-opt .tech { color: var(--dim); font-size: 10px; margin-top: 2px; }
+  /* space pass (UI-2) */
+  .glyph.g48 { width: 48px; height: 48px; }
+  .pass-card { border-radius: var(--radius-lg); }
+  .pass-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+  .pass-head .glyph { flex: 0 0 auto; }
+  .pass-terms { color: var(--acc); font-size: 12px; margin: 6px 0; letter-spacing: .3px; }
+  .pass-opt { display: flex; align-items: center; gap: 6px; font-size: 11px;
+    color: var(--dim); flex: 1; }
+  .pass-opt select { width: auto; flex: 1; }
+  .pass-state { font-size: 12px; margin: 8px 0; line-height: 1.4; }
+  .pass-state.ok { color: var(--signal); }
+  .pass-state.warn { color: var(--warn); }
+  #passLink, #joinPass { word-break: break-all; }
+  #joinGlyph .glyph, #passGlyph { display: inline-flex; }
+  #passTechInvite { color: var(--dim); text-decoration: none; }
+  #passTechInvite:hover { color: var(--acc); }
+  #passQr img { image-rendering: pixelated; background: #fff; padding: 8px; border-radius: 4px; }
   @media (prefers-reduced-motion: reduce) { body { transition: none; } }

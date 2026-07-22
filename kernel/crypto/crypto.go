@@ -86,6 +86,48 @@ func WrapEpoch(terminal id.TerminalID, key EpochKey, members map[id.DeviceID][32
 // the epoch (fail closed; also exactly what a removed member sees).
 var ErrNotAddressed = errors.New("crypto: epoch not wrapped for this device")
 
+// SealTo HPKE-seals arbitrary plaintext to a recipient X25519 public key
+// (same suite as epoch wrapping). Returns the encapsulated key and
+// ciphertext. Used for Space Pass join requests/responses (ADR-012).
+func SealTo(recipientXpub [32]byte, info, plaintext []byte) (enc, ct []byte, err error) {
+	kem := hpke.KEM_X25519_HKDF_SHA256.Scheme()
+	pub, err := kem.UnmarshalBinaryPublicKey(recipientXpub[:])
+	if err != nil {
+		return nil, nil, err
+	}
+	sender, err := suite().NewSender(pub, info)
+	if err != nil {
+		return nil, nil, err
+	}
+	enc, sealer, err := sender.Setup(rand.Reader)
+	if err != nil {
+		return nil, nil, err
+	}
+	ct, err = sealer.Seal(plaintext, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	return enc, ct, nil
+}
+
+// OpenFrom reverses SealTo with the recipient's X25519 private scalar.
+func OpenFrom(recipientXpriv [32]byte, info, enc, ct []byte) ([]byte, error) {
+	kem := hpke.KEM_X25519_HKDF_SHA256.Scheme()
+	priv, err := kem.UnmarshalBinaryPrivateKey(recipientXpriv[:])
+	if err != nil {
+		return nil, err
+	}
+	receiver, err := suite().NewReceiver(priv, info)
+	if err != nil {
+		return nil, err
+	}
+	opener, err := receiver.Setup(enc)
+	if err != nil {
+		return nil, err
+	}
+	return opener.Open(ct, nil)
+}
+
 // UnwrapEpoch recovers the epoch key using this device's X25519 private
 // scalar.
 func UnwrapEpoch(terminal id.TerminalID, epochN uint64, wraps []Wrap,

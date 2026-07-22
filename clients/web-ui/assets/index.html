@@ -22,7 +22,7 @@
   <div id="sidebar">
     <div class="row">
       <button onclick="openWizard()">+ space</button>
-      <button onclick="dlgJoin.showModal()">join</button>
+      <button onclick="openJoinDialog()">join</button>
       <button onclick="showIdentity()">me</button>
     </div>
     <div id="spaces"></div>
@@ -139,11 +139,63 @@
   </div>
 </dialog>
 
+<!-- Enter with a pass (UI-2): an explicit async state machine. Pending never
+     means access — the space opens only after the owner's device confirms. -->
 <dialog id="dlgJoin">
-  <h3>join with invite</h3>
-  <textarea id="joinInvite" rows="4" placeholder="paste invite string"></textarea>
-  <div class="row"><button onclick="joinSpace()">join</button>
-  <button onclick="dlgJoin.close()">cancel</button></div>
+  <div id="joinInput">
+    <h3 id="joinTitle">Enter with a pass</h3>
+    <p class="hint" id="joinPaste">Paste the pass link someone shared with you:</p>
+    <textarea id="joinPass" rows="3" placeholder="paste pass link"></textarea>
+    <div class="row"><button onclick="requestEntry()" id="joinEnterBtn">Request entry</button>
+    <button onclick="dlgJoin.close()">cancel</button></div>
+  </div>
+  <div id="joinWaiting" style="display:none;text-align:center">
+    <div class="glyph" id="joinGlyph" style="width:56px;height:56px;margin:6px auto"></div>
+    <p class="pass-state" id="joinStateText"></p>
+    <div class="row" style="justify-content:center;margin-top:12px">
+      <button id="joinOpenBtn" onclick="openJoined()" style="display:none">Open the space</button>
+      <button onclick="resetJoin()">Enter another pass</button>
+      <button onclick="dlgJoin.close()">close</button>
+    </div>
+  </div>
+</dialog>
+
+<!-- Space Pass card (§12): the human invitation mechanic. A signed right to
+     ask to enter — no keys travel in it. -->
+<dialog id="dlgPass">
+  <div class="pass-card glass">
+    <div class="pass-head">
+      <span class="glyph g48" id="passGlyph"></span>
+      <div>
+        <h3 style="margin:0" id="passTitle">Space Pass</h3>
+        <p class="hint" style="margin:2px 0 0" id="passFrom"></p>
+      </div>
+    </div>
+    <p class="hint" id="passHint"></p>
+    <div id="passReady" style="display:none">
+      <p class="hint" id="passVerifyHint"></p>
+      <p class="verify-phrase" id="passPhrase"></p>
+      <p class="pass-terms" id="passTerms"></p>
+      <div id="passQr" style="text-align:center;margin:8px 0"></div>
+      <p class="out" id="passLink" style="font-size:11px;max-height:54px;overflow:auto"></p>
+    </div>
+    <div id="passConfig">
+      <p class="hint" id="passRelayLabel"></p>
+      <input id="passRelay" placeholder="relay address, e.g. 192.168.1.10:7411">
+      <div class="row" style="margin-top:8px">
+        <label class="pass-opt">Who <select id="passUses"><option value="1">one person</option><option value="10">up to 10</option></select></label>
+        <label class="pass-opt">For <select id="passTtl"><option value="1">1 hour</option><option value="24" selected>24 hours</option><option value="168">7 days</option></select></label>
+      </div>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button id="passCreateBtn" onclick="mintPass()">Create a pass</button>
+      <button id="passCopyBtn" onclick="copyPass()" style="display:none">Copy pass</button>
+      <button id="passRevokeBtn" onclick="revokeCurrentPass()" style="display:none">Revoke</button>
+      <button onclick="dlgPass.close()">close</button>
+    </div>
+    <p class="pass-state warn" id="passMsg" style="display:none"></p>
+    <p class="hint" style="margin-top:10px"><a href="#" onclick="openInviteFromPass();return false" id="passTechInvite">Invite a device directly (technical)</a></p>
+  </div>
 </dialog>
 
 <!-- First-run onboarding (§11.1–11.2): no phone, no email, no shared account.
@@ -154,7 +206,7 @@
     <p class="hint" id="obLede">Personal spaces for conversations that belong to the people in them.</p>
     <div class="row" style="margin-top:14px">
       <button onclick="obStep('name')">Create a space</button>
-      <button onclick="dlgWelcome.close(); dlgJoin.showModal()">Enter with a pass</button>
+      <button onclick="dlgWelcome.close(); openJoinDialog()">Enter with a pass</button>
     </div>
     <p class="hint" style="margin-top:12px">No phone, no email, no shared account.</p>
   </div>

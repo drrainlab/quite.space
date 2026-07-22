@@ -39,6 +39,8 @@ type Runtime struct {
 
 	spaces   map[id.TerminalID]*spaceState
 	assetIdx *assetIndex
+	passes   *passRegistry
+	joins    map[string]*joinAttempt
 
 	lanNode *lan.Node
 	lanPort int
@@ -68,7 +70,8 @@ func Open(dataDir string, passphrase []byte, displayName string) (*Runtime, erro
 		return nil, err
 	}
 	r := &Runtime{root: root, spaces: map[id.TerminalID]*spaceState{},
-		assetIdx: newAssetIndex(), stop: make(chan struct{})}
+		assetIdx: newAssetIndex(), passes: newPassRegistry(),
+		joins: map[string]*joinAttempt{}, stop: make(chan struct{})}
 
 	ks, err := root.LoadKeystore()
 	switch {

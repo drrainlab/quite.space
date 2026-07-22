@@ -89,6 +89,11 @@ func (a *APIServer) Handler() http.Handler {
 	mux.HandleFunc("POST /api/spaces/{id}/reactions", a.auth(a.handleReaction))
 	mux.HandleFunc("POST /api/spaces/{id}/presence", a.auth(a.handlePresence))
 	mux.HandleFunc("POST /api/invites/accept", a.auth(a.handleJoin))
+	mux.HandleFunc("POST /api/spaces/{id}/passes", a.auth(a.handleMintPass))
+	mux.HandleFunc("GET /api/spaces/{id}/passes", a.auth(a.handleListPasses))
+	mux.HandleFunc("DELETE /api/spaces/{id}/passes/{pass}", a.auth(a.handleRevokePass))
+	mux.HandleFunc("POST /api/join-requests", a.auth(a.handleJoinRequest))
+	mux.HandleFunc("GET /api/join-requests/{req}", a.auth(a.handleJoinStatus))
 	mux.HandleFunc("POST /api/lan/connect", a.auth(a.handleConnect))
 	mux.HandleFunc("POST /api/mesh/connect", a.auth(a.handleMeshConnect))
 	mux.HandleFunc("POST /api/relay/push", a.auth(a.handleRelayPush))
@@ -636,6 +641,104 @@ func (a *APIServer) handleJoin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]string{"id": tid.Hex()})
+}
+
+// ---- Space Pass (ADR-012 / UI-2) ----
+
+// handleMintPass mints a bearer-secret Join Pass for an owned space. The
+// returned link bundles the rendezvous relay with the signed pass; the bearer
+// secret lives only inside that link, never in the pass registry on this node.
+func (a *APIServer) handleMintPass(w http.ResponseWriter, r *http.Request) {
+	tid, err := a.spaceID(r)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	body, err := readBody[struct {
+		MaxUses  uint64 `json:"max_uses"`
+		TTLHours uint64 `json:"ttl_hours"`
+		Relay    string `json:"relay"`
+	}](r)
+	if err != nil || body.Relay == "" {
+		httpErr(w, http.StatusBadRequest, errors.New("relay required"))
+		return
+	}
+	info, err := a.rt.MintPass(tid, body.MaxUses, body.TTLHours, body.Relay)
+	if err != nil {
+		httpErr(w, http.StatusForbidden, err)
+		return
+	}
+	resp := map[string]any{
+		"pass_id":    info.PassID,
+		"link":       info.Link,
+		"expires_at": info.ExpiresAt,
+		"max_uses":   info.MaxUses,
+	}
+	if png, err := qrcode.Encode(info.Link, qrcode.Medium, 512); err == nil {
+		resp["qr_png_base64"] = base64.StdEncoding.EncodeToString(png)
+	}
+	writeJSON(w, resp)
+}
+
+func (a *APIServer) handleListPasses(w http.ResponseWriter, r *http.Request) {
+	tid, err := a.spaceID(r)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	want := tid.Hex()
+	out := []map[string]any{}
+	for _, p := range a.rt.ListPasses() {
+		if p.Space != want {
+			continue
+		}
+		out = append(out, map[string]any{
+			"pass_id": p.PassID, "expires_at": p.ExpiresAt,
+			"max_uses": p.MaxUses, "used": p.Used, "revoked": p.Revoked,
+		})
+	}
+	writeJSON(w, map[string]any{"passes": out})
+}
+
+// handleRevokePass blocks a pass for new and pending requests. It never
+// removes members already accepted (ADR-012 invariant 6: revoke ≠ remove).
+func (a *APIServer) handleRevokePass(w http.ResponseWriter, r *http.Request) {
+	if err := a.rt.RevokePass(r.PathValue("pass")); err != nil {
+		httpErr(w, http.StatusNotFound, err)
+		return
+	}
+	writeJSON(w, map[string]string{"status": "revoked"})
+}
+
+// handleJoinRequest starts an async join: it sends a sealed request to the
+// pass's rendezvous and returns a request id to poll. No space is opened yet —
+// pending has no access until the owner's device confirms.
+func (a *APIServer) handleJoinRequest(w http.ResponseWriter, r *http.Request) {
+	body, err := readBody[struct {
+		Pass string `json:"pass"`
+	}](r)
+	if err != nil || strings.TrimSpace(body.Pass) == "" {
+		httpErr(w, http.StatusBadRequest, errors.New("pass required"))
+		return
+	}
+	reqID, err := a.rt.JoinByPass(strings.TrimSpace(body.Pass))
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, map[string]string{
+		"request_id": reqID,
+		"status":     string(JoinWaiting),
+	})
+}
+
+func (a *APIServer) handleJoinStatus(w http.ResponseWriter, r *http.Request) {
+	state, space := a.rt.JoinStatus(r.PathValue("req"))
+	resp := map[string]any{"status": string(state)}
+	if space != "" {
+		resp["space"] = space
+	}
+	writeJSON(w, resp)
 }
 
 func (a *APIServer) handleRelayPush(w http.ResponseWriter, r *http.Request) {

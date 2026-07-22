@@ -28,6 +28,7 @@ const (
 	MemberJoined      = "membership.joined.v1"
 	MemberLeft        = "membership.left.v1"
 	MembershipEpoch   = "membership.epoch.v1"
+	MemberAdded       = "membership.member_added.v1"
 )
 
 var schemaIDRe = regexp.MustCompile(`^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*\.v[1-9][0-9]*$`)
@@ -560,8 +561,77 @@ func DecodeEpochPayload(payload []byte) (*EpochPayload, error) {
 	return e, nil
 }
 
+// MemberAddedPayload is membership.member_added.v1 — the canonical in-log
+// event through which ALL participants learn a new member joined via a pass
+// (ADR-012). {1: device, 2: name, 3: accepted_by principal, 4: accepted_at}.
+type MemberAddedPayload struct {
+	Device     id.DeviceID
+	Name       string
+	AcceptedBy id.PrincipalID
+	AcceptedAt uint64
+}
+
+func (m *MemberAddedPayload) Encode() []byte {
+	buf := codec.AppendMap(nil, 4)
+	buf = codec.AppendUint(buf, 1)
+	buf = codec.AppendBytes(buf, m.Device[:])
+	buf = codec.AppendUint(buf, 2)
+	buf = codec.AppendText(buf, m.Name)
+	buf = codec.AppendUint(buf, 3)
+	buf = codec.AppendBytes(buf, m.AcceptedBy[:])
+	buf = codec.AppendUint(buf, 4)
+	buf = codec.AppendUint(buf, m.AcceptedAt)
+	return buf
+}
+
+func DecodeMemberAdded(payload []byte) (*MemberAddedPayload, error) {
+	d := codec.NewDecoder(payload)
+	mr, err := d.ReadMapHeader()
+	if err != nil {
+		return nil, err
+	}
+	m := &MemberAddedPayload{}
+	for {
+		k, ok, er := mr.Next()
+		if er != nil {
+			return nil, er
+		}
+		if !ok {
+			break
+		}
+		switch k {
+		case 1:
+			var b []byte
+			b, er = d.ReadBytes()
+			if er == nil && len(b) == id.Size {
+				copy(m.Device[:], b)
+			}
+		case 2:
+			m.Name, er = d.ReadText()
+		case 3:
+			var b []byte
+			b, er = d.ReadBytes()
+			if er == nil && len(b) == id.Size {
+				copy(m.AcceptedBy[:], b)
+			}
+		case 4:
+			m.AcceptedAt, er = d.ReadUint()
+		default:
+			er = d.SkipItem()
+		}
+		if er != nil {
+			return nil, er
+		}
+	}
+	if err := d.Done(); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
 func init() {
 	Register(MessageText, func(p []byte) error { _, err := DecodeTextMessage(p); return err })
+	Register(MemberAdded, func(p []byte) error { _, err := DecodeMemberAdded(p); return err })
 	Register(MessageRevised, func(p []byte) error { _, err := DecodeTextMessage(p); return err })
 	Register(MessageTombstoned, func(p []byte) error { _, err := DecodeTombstone(p); return err })
 	Register(CardCreated, func(p []byte) error { _, err := DecodeCard(p); return err })

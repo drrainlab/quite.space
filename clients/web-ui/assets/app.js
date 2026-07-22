@@ -214,7 +214,7 @@ async function refresh() {
       if (s.owned) {
         const b = document.createElement('button');
         b.textContent = 'invite'; b.style.marginTop = '6px'; b.style.fontSize = '12px';
-        b.onclick = (e) => { e.stopPropagation(); openInvite(s); };
+        b.onclick = (e) => { e.stopPropagation(); openPass(s); };
         d.appendChild(b);
       }
       box.appendChild(d);
@@ -346,13 +346,99 @@ async function setPresence(state) {
   } catch (err) { alert(err.message); }
 }
 
-async function joinSpace() {
-  const inv = document.getElementById('joinInvite').value.trim();
-  if (!inv) return;
+// ---- Enter with a pass: async state machine (UI-2) ----
+//
+// A pass is a right to ask, not a key. We send a request to the rendezvous
+// and poll the owner's confirmation; the space opens only when confirmed.
+// A pending join is honestly pending — no replica exists until "ready".
+
+let joinPoll = null;
+let joinedSpaceId = null;
+
+function joinView(which) {
+  document.getElementById('joinInput').style.display = which === 'input' ? 'block' : 'none';
+  document.getElementById('joinWaiting').style.display = which === 'waiting' ? 'block' : 'none';
+}
+
+function resetJoin() {
+  if (joinPoll) { clearInterval(joinPoll); joinPoll = null; }
+  joinedSpaceId = null;
+  document.getElementById('joinPass').value = '';
+  document.getElementById('joinOpenBtn').style.display = 'none';
+  joinView('input');
+  setTimeout(() => document.getElementById('joinPass').focus(), 50);
+}
+
+async function requestEntry() {
+  const pass = document.getElementById('joinPass').value.trim();
+  if (!pass) return;
+  // Legacy device-id/xpub invites (base64 std) still work — they open at once.
+  // A Space Pass link is base64url of "relay\nenvelope"; try the pass path
+  // first, fall back to the classic invite if the backend rejects it.
+  document.getElementById('joinEnterBtn').disabled = true;
   try {
-    const r = await api('/api/invites/accept', { method: 'POST', body: JSON.stringify({ invite: inv }) });
-    current = r.id; dlgJoin.close(); refresh();
-  } catch (err) { alert(err.message); }
+    const r = await api('/api/join-requests', { method: 'POST', body: JSON.stringify({ pass }) });
+    // The link fragment can linger in history/screenshots — drop it now.
+    if (location.hash) history.replaceState(null, '', location.pathname + location.search);
+    startJoinWait(r.request_id);
+  } catch (err) {
+    // Fall back to the classic full-history invite (device already known).
+    try {
+      const j = await api('/api/invites/accept', { method: 'POST', body: JSON.stringify({ invite: pass }) });
+      current = j.id; dlgJoin.close(); refresh();
+    } catch (_) {
+      showJoinState('rejected', err.message);
+    }
+  } finally {
+    document.getElementById('joinEnterBtn').disabled = false;
+  }
+}
+
+function startJoinWait(reqID) {
+  joinView('waiting');
+  document.getElementById('joinGlyph').innerHTML = glyphSVG(reqID, 'pass', 56);
+  showJoinState('waiting_for_owner');
+  if (joinPoll) clearInterval(joinPoll);
+  joinPoll = setInterval(async () => {
+    try {
+      const s = await api(`/api/join-requests/${reqID}`);
+      if (s.status === 'ready') {
+        clearInterval(joinPoll); joinPoll = null;
+        joinedSpaceId = s.space;
+        showJoinState('ready');
+        document.getElementById('joinOpenBtn').style.display = '';
+      } else if (['expired', 'expired_while_waiting', 'revoked', 'rejected'].includes(s.status)) {
+        clearInterval(joinPoll); joinPoll = null;
+        showJoinState(s.status);
+      }
+    } catch (e) { /* transient — keep polling */ }
+  }, 1500);
+}
+
+function showJoinState(state, detail) {
+  const map = {
+    waiting_for_owner: 'join.waiting', offline: 'join.offline',
+    ready: 'join.ready', expired: 'join.expired',
+    expired_while_waiting: 'join.expired_waiting', revoked: 'join.revoked',
+    rejected: 'join.rejected',
+  };
+  const el = document.getElementById('joinStateText');
+  el.textContent = detail || t(map[state] || 'join.rejected');
+  el.className = 'pass-state' + (state === 'ready' ? ' ok' : (state === 'waiting_for_owner' ? '' : ' warn'));
+  joinView('waiting');
+}
+
+function openJoined() {
+  if (!joinedSpaceId) return;
+  current = joinedSpaceId;
+  resetJoin();
+  dlgJoin.close();
+  refresh();
+}
+
+function openJoinDialog() {
+  resetJoin();
+  dlgJoin.showModal();
 }
 
 // ---- First run & identity (UI-1) ----
@@ -440,6 +526,96 @@ async function mintInvite() {
     qr.innerHTML = r.qr_png_base64
       ? `<img alt="invite QR" src="data:image/png;base64,${r.qr_png_base64}">` : '';
   } catch (err) { alert(err.message); }
+}
+
+// ---- Space Pass card (UI-2) ----
+
+let passSpace = null;
+let mintedPass = null; // { pass_id, link }
+
+function openPass(s) {
+  passSpace = s.id;
+  mintedPass = null;
+  const me = (onboardInfo && onboardInfo.name) || 'someone';
+  document.getElementById('passTitle').textContent = t('pass.title');
+  document.getElementById('passFrom').textContent = t('pass.invite_from', { who: me });
+  document.getElementById('passHint').textContent = t('pass.card_hint');
+  document.getElementById('passVerifyHint').textContent = t('pass.verify_hint');
+  document.getElementById('passRelayLabel').textContent = t('pass.relay');
+  document.getElementById('passCreateBtn').textContent = t('pass.create');
+  document.getElementById('passCopyBtn').textContent = t('pass.copy');
+  document.getElementById('passRevokeBtn').textContent = t('pass.revoke');
+  document.getElementById('passTechInvite').textContent = t('pass.tech_invite');
+  // A pass glyph seeded by the space id — recognisable, not sensitive.
+  document.getElementById('passGlyph').innerHTML = glyphSVG(s.id, 'pass', 48);
+  document.getElementById('passRelay').value = localStorage.getItem('qp.relay') || '';
+  document.getElementById('passReady').style.display = 'none';
+  document.getElementById('passConfig').style.display = 'block';
+  document.getElementById('passCreateBtn').style.display = '';
+  document.getElementById('passCopyBtn').style.display = 'none';
+  document.getElementById('passRevokeBtn').style.display = 'none';
+  document.getElementById('passMsg').style.display = 'none';
+  dlgPass.showModal();
+}
+
+function passMsg(text, warn) {
+  const el = document.getElementById('passMsg');
+  el.textContent = text;
+  el.className = 'pass-state' + (warn ? ' warn' : ' ok');
+  el.style.display = text ? 'block' : 'none';
+}
+
+async function mintPass() {
+  const relay = document.getElementById('passRelay').value.trim();
+  if (!relay) { passMsg(t('pass.need_relay'), true); return; }
+  localStorage.setItem('qp.relay', relay);
+  const maxUses = parseInt(document.getElementById('passUses').value, 10);
+  const ttlHours = parseInt(document.getElementById('passTtl').value, 10);
+  document.getElementById('passCreateBtn').disabled = true;
+  try {
+    const r = await api(`/api/spaces/${passSpace}/passes`, {
+      method: 'POST',
+      body: JSON.stringify({ max_uses: maxUses, ttl_hours: ttlHours, relay }),
+    });
+    mintedPass = r;
+    document.getElementById('passPhrase').textContent = verificationPhrase(r.pass_id, 3);
+    document.getElementById('passTerms').textContent = maxUses === 1
+      ? t('pass.terms_one', { hours: ttlHours })
+      : t('pass.terms_many', { uses: maxUses, hours: ttlHours });
+    document.getElementById('passQr').innerHTML = r.qr_png_base64
+      ? `<img alt="pass QR" src="data:image/png;base64,${r.qr_png_base64}" style="max-width:220px">` : '';
+    document.getElementById('passLink').textContent = r.link;
+    document.getElementById('passReady').style.display = 'block';
+    document.getElementById('passConfig').style.display = 'none';
+    document.getElementById('passCreateBtn').style.display = 'none';
+    document.getElementById('passCopyBtn').style.display = '';
+    document.getElementById('passRevokeBtn').style.display = '';
+    passMsg('', false);
+  } catch (err) { passMsg(err.message, true); }
+  finally { document.getElementById('passCreateBtn').disabled = false; }
+}
+
+async function copyPass() {
+  if (!mintedPass) return;
+  try {
+    await navigator.clipboard.writeText(mintedPass.link);
+    document.getElementById('passCopyBtn').textContent = t('pass.copied');
+    setTimeout(() => { document.getElementById('passCopyBtn').textContent = t('pass.copy'); }, 1500);
+  } catch (_) { /* clipboard blocked — the link is visible to select manually */ }
+}
+
+async function revokeCurrentPass() {
+  if (!mintedPass) return;
+  try {
+    await api(`/api/spaces/${passSpace}/passes/${mintedPass.pass_id}`, { method: 'DELETE' });
+    passMsg(t('pass.revoked'), true);
+    document.getElementById('passRevokeBtn').style.display = 'none';
+  } catch (err) { passMsg(err.message, true); }
+}
+
+function openInviteFromPass() {
+  dlgPass.close();
+  openInvite({ id: passSpace, title: currentSpace()?.title });
 }
 
 
@@ -1095,6 +1271,17 @@ function playDrone(e) {
 
 document.getElementById('sigPreset').addEventListener('change', () => { lastPreset = null; renderSignalPreview(); });
 
+// Deep link: a pass link arriving as #p=<token> opens the join flow, then the
+// fragment is scrubbed from history (it may hold the bearer secret).
+function checkPassDeepLink() {
+  const m = location.hash.match(/[#&]p=([^&]+)/);
+  if (!m) return;
+  history.replaceState(null, '', location.pathname + location.search);
+  openJoinDialog();
+  document.getElementById('joinPass').value = decodeURIComponent(m[1]);
+}
+
 checkOnboarding();
+checkPassDeepLink();
 refresh();
 setInterval(refresh, 2000);
