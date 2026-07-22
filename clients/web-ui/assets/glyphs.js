@@ -4,8 +4,10 @@
 // it is a memory aid, like a face.
 //
 // Types: human (soft open form), device (precise geometry), space (a small
-// composition), pass (an open orbit / broken seal). Living types (bot/iot)
-// and animation arrive in UI-3.
+// composition), pass (an open orbit / broken seal), bot (crisp hexagon +
+// pulse dot), iot (sensor square + emanation rings). Forms are STATIC by
+// default — motion is quiet-by-default and event-triggered in the shell
+// (arrival pulse, real signal), never an idle loop inside the glyph.
 
 // Cache by (id,type,size): SVG strings are reused across renders.
 const _glyphCache = new Map();
@@ -66,6 +68,24 @@ function glyphSVG(id, type = 'human', size = 24) {
       const x = c + Math.cos(a) * rr, y = c + Math.sin(a) * rr;
       inner += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${(1.6 + rnd() * 1.6).toFixed(1)}"
         fill="${col}" opacity="${(0.4 + rnd() * 0.5).toFixed(2)}"/>`;
+    }
+  } else if (type === 'bot') {
+    // a deterministic bot: a crisp hexagon with an inner pulse dot — a made
+    // thing, not a person. Distinguishable from human by hard edges.
+    const pts = [];
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2 - Math.PI / 2;
+      pts.push(`${(c + Math.cos(a) * 15).toFixed(1)},${(c + Math.sin(a) * 15).toFixed(1)}`);
+    }
+    inner += `<polygon points="${pts.join(' ')}" fill="none" stroke="${col}" stroke-width="2" opacity="0.9"/>`;
+    inner += `<circle class="pulse" cx="${c}" cy="${c}" r="4.5" fill="${col}" opacity="0.75"/>`;
+  } else if (type === 'iot') {
+    // a sensor / IoT device: a small square with concentric emanation arcs —
+    // a thing that senses and emits.
+    inner += `<rect x="${c - 4}" y="${c - 4}" width="8" height="8" rx="1.5" fill="${col}" opacity="0.8"/>`;
+    for (let i = 1; i <= 3; i++) {
+      inner += `<circle class="ring r${i}" cx="${c}" cy="${c}" r="${5 + i * 5}"
+        fill="none" stroke="${col}" stroke-width="1.4" opacity="${(0.6 - i * 0.14).toFixed(2)}"/>`;
     }
   } else if (type === 'pass') {
     // an open orbit / broken seal: a not-quite-closed arc + a spark

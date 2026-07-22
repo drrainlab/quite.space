@@ -6,6 +6,13 @@ const api = (path, opts = {}) =>
 let current = null;
 let status = null;
 let spacesCache = [];
+// Entry-motion tracking (UI-3): remember which entry ids we've already shown
+// for the active space so re-renders don't re-animate the whole feed.
+let seenEntries = new Set();
+let seenSpace = null;
+// Members known to be "here" last render — used to fire the arrival pulse
+// exactly once, on the transition into presence (never as an idle loop).
+let hereMembers = new Set();
 
 // ---- archetypes, palettes, moods ----
 
@@ -252,8 +259,17 @@ async function refreshSpace() {
   const entries = await api(`/api/spaces/${current}/entries`);
   const log = document.getElementById('log');
   const stick = log.scrollTop + log.clientHeight >= log.scrollHeight - 40;
+  // Motion is quiet-by-default: the feed re-renders every poll, so only a
+  // genuinely-new entry (id unseen for this space) gets the short enter
+  // animation — never the whole list, never an idle loop.
+  if (seenSpace !== current) { seenSpace = current; seenEntries = new Set(); hereMembers = new Set(); }
+  const firstPaint = seenEntries.size === 0;
   log.innerHTML = '';
-  for (const e of entries) renderEntry(log, e);
+  for (const e of entries) {
+    const fresh = !firstPaint && e.id && !seenEntries.has(e.id);
+    if (e.id) seenEntries.add(e.id);
+    renderEntry(log, e, fresh);
+  }
   if (stick) log.scrollTop = log.scrollHeight;
 
   const st = await api(`/api/spaces/${current}/state`);
@@ -292,19 +308,34 @@ async function refreshSpace() {
   mbox.appendChild(note);
 
   const h = document.createElement('h3'); h.textContent = t('conv.member') + 's'; mbox.appendChild(h);
+  const summary = presenceSummary(members);
+  if (summary) {
+    const ps = document.createElement('div');
+    ps.className = 'presence-summary'; ps.setAttribute('aria-live', 'polite');
+    ps.textContent = summary;
+    mbox.appendChild(ps);
+  }
+  const nextHere = new Set();
   for (const m of members) {
     const d = document.createElement('div');
     d.className = 'member';
     let pres;
+    const here = m.presence.known && m.presence.current;
+    if (here) nextHere.add(m.terminal);
     if (!m.presence.known) pres = `<div class="pres stale">${esc(t('presence.unknown'))}</div>`;
     else if (m.presence.current) pres = `<div class="pres current">● ${esc(m.presence.state)}</div>`;
     else pres = `<div class="pres stale">${esc(m.presence.state)} · ${esc(relTime(m.presence.age_seconds))}</div>`;
-    const glyphType = m.kind === 'human' ? 'human' : m.kind === 'space' ? 'space' : 'device';
+    const glyphType = memberGlyphType(m);
     const name = m.name || m.terminal.slice(0, 10);
     const kindBadge = m.kind === 'human' ? '' :
       `<span class="badge b-${m.agency === 'ai_agent' ? 'ai_agent' : 'deterministic_bot'}">${esc(m.kind)}</span>`;
+    // Quiet-by-default: a member who is here gets a steady "present" glyph
+    // (static). The gentle pulse fires ONCE, only on the transition into
+    // presence — never as an idle loop. Reduced-motion drops the pulse.
+    const arriving = here && !hereMembers.has(m.terminal);
+    const glyphCls = 'glyph g24' + (here ? ' present' : '') + (arriving ? ' pulse-in' : '');
     let inner =
-      `<div class="mhead"><span class="glyph g24">${glyphSVG(m.principal || m.terminal, glyphType, 24)}</span>` +
+      `<div class="mhead"><span class="${glyphCls}">${glyphSVG(m.principal || m.terminal, glyphType, 24)}</span>` +
       `<span class="mname">${esc(name)}</span>${kindBadge}</div>` + pres;
     if (m.ai_present)
       inner += `<div class="ai-note">AI · ${esc(m.autonomy)} · model ${esc(m.model)}</div>`;
@@ -315,12 +346,38 @@ async function refreshSpace() {
     d.innerHTML = inner;
     mbox.appendChild(d);
   }
+  hereMembers = nextHere;
 }
 
 function fmtAge(s) {
   if (s < 90) return `${s}s`;
   if (s < 5400) return `${Math.round(s / 60)}m`;
   return `${Math.round(s / 3600)}h`;
+}
+
+// A living space has living members: humans, deterministic bots, sensors —
+// each gets a distinct glyph form (UI-3). Form carries the difference; the
+// badge still names the kind honestly.
+function memberGlyphType(m) {
+  if (m.kind === 'human') return 'human';
+  if (m.kind === 'space') return 'space';
+  const k = (m.kind || '').toLowerCase();
+  if (k.includes('sensor') || k.includes('iot')) return 'iot';
+  if (m.ai_present || m.agency === 'ai_agent' || k.includes('bot') || k.includes('agent')) return 'bot';
+  return 'device';
+}
+
+// A single human line above the member list: who is here, who was recently.
+function presenceSummary(members) {
+  const here = members.filter(m => m.presence.known && m.presence.current);
+  const recent = members
+    .filter(m => m.presence.known && !m.presence.current && m.presence.age_seconds < 3600)
+    .sort((a, b) => a.presence.age_seconds - b.presence.age_seconds);
+  const parts = [];
+  for (const m of here) parts.push(t('presence.is_here', { who: m.name || m.terminal.slice(0, 8) }));
+  for (const m of recent.slice(0, 2))
+    parts.push(t('presence.last_seen', { who: m.name || m.terminal.slice(0, 8), ago: relTime(m.presence.age_seconds) }));
+  return parts.join(' · ');
 }
 
 // ---- actions ----
@@ -795,9 +852,9 @@ function authorLabel(e) {
   return e.author_name || t('conv.member');
 }
 
-function renderEntry(log, e) {
+function renderEntry(log, e, fresh) {
   const d = document.createElement('div');
-  d.className = 'entry msg';
+  d.className = 'entry msg' + (fresh ? ' enter' : '');
   const who = document.createElement('div');
   who.className = 'who';
   if (!PROTOCOL) {

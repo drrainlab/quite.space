@@ -33,10 +33,10 @@
     <div id="cards"></div>
     <div id="log"></div>
     <form id="composer" onsubmit="return say(event)">
-      <button type="button" class="ic" onclick="fileInput.click()" title="attach image or file">📎</button>
-      <button type="button" class="ic" id="voiceBtn" onclick="toggleVoice()" title="record voice">🎙</button>
-      <button type="button" class="ic" onclick="openSignal()" title="live signal">✧</button>
-      <button type="button" class="ic" onclick="openLink()" title="link">🔗</button>
+      <button type="button" class="ic" onclick="fileInput.click()" title="attach image or file" aria-label="Attach image or file">📎</button>
+      <button type="button" class="ic" id="voiceBtn" onclick="toggleVoice()" title="record voice" aria-label="Record voice message">🎙</button>
+      <button type="button" class="ic" onclick="openSignal()" title="live signal" aria-label="Send a live signal">✧</button>
+      <button type="button" class="ic" onclick="openLink()" title="link" aria-label="Share a link">🔗</button>
       <input id="text" placeholder="write into the space…" autocomplete="off">
       <select id="presence" onchange="setPresence(this.value)" title="presence (TTL 5 min)">
         <option value="">presence…</option>
