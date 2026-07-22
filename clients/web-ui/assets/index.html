@@ -113,6 +113,35 @@
   .member .ai-note { color: var(--ai); font-size: 10px; }
   #qrBox img { width: 220px; height: 220px; image-rendering: pixelated;
     background: #fff; padding: 8px; border-radius: 4px; margin-top: 8px; }
+  .ic { border: 0; border-right: 1px solid var(--line); border-radius: 0;
+    padding: 0 10px; font-size: 15px; color: var(--dim); }
+  .ic:hover { color: var(--acc); }
+  .ic.rec { color: #e06464; }
+  .entry img.thumb { max-width: 320px; max-height: 240px; border-radius: 4px;
+    cursor: pointer; display: block; margin-top: 4px; }
+  .entry .asset-note { font-size: 11px; color: var(--dim); cursor: pointer; }
+  .entry .asset-note:hover { color: var(--acc); }
+  .entry .filecard, .entry .linkcard {
+    border: 1px solid var(--line); border-radius: 4px; padding: 8px 10px;
+    margin-top: 4px; display: inline-block; max-width: 360px; }
+  .entry .linkcard a { color: var(--acc); text-decoration: none; word-break: break-all; }
+  .entry .wave { display: flex; align-items: flex-end; gap: 1px; height: 32px; margin-top: 4px; }
+  .entry .wave i { width: 2px; background: var(--acc); opacity: .6; }
+  .entry audio { height: 30px; margin-top: 4px; }
+  .entry .sig { border: 1px solid var(--line); border-radius: 4px; margin-top: 4px;
+    overflow: hidden; max-width: 320px; }
+  .entry .sig canvas { display: block; width: 100%; }
+  .entry .sig .sigbar { font-size: 11px; color: var(--dim); padding: 3px 6px;
+    display: flex; justify-content: space-between; align-items: center; }
+  .entry .sig .play { cursor: pointer; color: var(--acc); }
+  .entry .reactrow { margin-top: 3px; font-size: 12px; }
+  .entry .react { cursor: pointer; margin-right: 6px; padding: 0 5px;
+    border: 1px solid var(--line); border-radius: 10px; }
+  .entry .react.mine { border-color: var(--acc); }
+  .entry .addreact { cursor: pointer; color: var(--dim); }
+  #sigParams label { display: block; font-size: 11px; color: var(--dim); margin-top: 4px; }
+  #sigParams input { width: 100%; }
+  .unknownblk { color: var(--dim); font-style: italic; }
   #relic { display: block; margin: 8px auto 4px; opacity: .9; }
   #relicNote { text-align: center; font-size: 10px; color: var(--dim); margin-bottom: 8px; }
   /* wizard */
@@ -160,15 +189,62 @@
     <div id="cards"></div>
     <div id="log"></div>
     <form id="composer" onsubmit="return say(event)">
+      <button type="button" class="ic" onclick="fileInput.click()" title="attach image or file">📎</button>
+      <button type="button" class="ic" id="voiceBtn" onclick="toggleVoice()" title="record voice">🎙</button>
+      <button type="button" class="ic" onclick="openSignal()" title="live signal">✧</button>
+      <button type="button" class="ic" onclick="openLink()" title="link">🔗</button>
       <input id="text" placeholder="write into the space…" autocomplete="off">
       <select id="presence" onchange="setPresence(this.value)" title="presence (TTL 5 min)">
         <option value="">presence…</option>
       </select>
       <button type="submit" style="border:0">send</button>
     </form>
+    <input type="file" id="fileInput" style="display:none" onchange="onFilePicked(this.files[0])">
   </div>
   <div id="members"></div>
 </main>
+
+<dialog id="dlgAttach">
+  <h3 id="attachTitle">attach image</h3>
+  <div id="attachPreview"></div>
+  <p class="hint" id="attachWarn"></p>
+  <input id="attachAlt" placeholder="alt text — what's in the image (required, honest for text terminals)">
+  <input id="attachCaption" placeholder="caption (optional)">
+  <div class="row"><button onclick="sendAttachment()">send</button>
+  <button onclick="dlgAttach.close()">cancel</button></div>
+</dialog>
+
+<dialog id="dlgVoiceReview">
+  <h3>voice message</h3>
+  <canvas id="voiceWave" width="260" height="48"></canvas>
+  <audio id="voicePreview" controls style="width:100%"></audio>
+  <input id="voiceTranscript" placeholder="transcript (optional, but the real fallback on text terminals)">
+  <div class="row"><button onclick="sendVoice()">send</button>
+  <button onclick="dlgVoiceReview.close()">discard</button></div>
+</dialog>
+
+<dialog id="dlgLink">
+  <h3>share a link</h3>
+  <input id="linkURL" placeholder="https://…">
+  <input id="linkTitle" placeholder="title (you attach the preview — no server unfurls it)">
+  <input id="linkDescr" placeholder="description (optional)">
+  <div class="row"><button onclick="sendLink()">send</button>
+  <button onclick="dlgLink.close()">cancel</button></div>
+</dialog>
+
+<dialog id="dlgSignal">
+  <h3>live signal — a recipe, not a file</h3>
+  <p class="hint">a few hundred bytes that unfold into a scene on the receiver;
+  passes through mesh where an image never could.</p>
+  <select id="sigPreset" onchange="renderSignalPreview()">
+    <option value="slow-pines@1">slow-pines</option>
+    <option value="ember-drift@1">ember-drift</option>
+  </select>
+  <div id="sigParams"></div>
+  <canvas id="sigPreview" width="260" height="120" style="display:block;margin:8px auto;border-radius:4px"></canvas>
+  <div class="row"><button onclick="sendSignal()">send</button>
+  <button onclick="dlgSignal.close()">cancel</button></div>
+</dialog>
 
 <dialog id="dlgWiz">
   <div class="wiz-step" id="wiz1">
@@ -479,20 +555,11 @@ async function refreshSpace() {
   sel.innerHTML = '<option value="">presence…</option>' +
     states.map(s => `<option>${esc(s)}</option>`).join('');
 
-  const msgs = await api(`/api/spaces/${current}/messages`);
+  const entries = await api(`/api/spaces/${current}/entries`);
   const log = document.getElementById('log');
   const stick = log.scrollTop + log.clientHeight >= log.scrollHeight - 40;
   log.innerHTML = '';
-  for (const m of msgs) {
-    const d = document.createElement('div');
-    d.className = 'msg';
-    d.innerHTML =
-      `<div class="who"><span class="badge b-${esc(m.produced_by)}">${esc(m.produced_by)}</span>` +
-      `<span class="meta">${esc(m.author)}${m.revised ? ' · edited' : ''}</span> ` +
-      `<span class="mk" onclick="makeCard('${m.id}', this)">→card</span></div>` +
-      `<div class="txt">${esc(m.text)}</div>`;
-    log.appendChild(d);
-  }
+  for (const e of entries) renderEntry(log, e);
   if (stick) log.scrollTop = log.scrollHeight;
 
   const st = await api(`/api/spaces/${current}/state`);
@@ -621,11 +688,6 @@ async function mintInvite() {
   } catch (err) { alert(err.message); }
 }
 
-async function makeCard(originId, el) {
-  const title = el.closest('.msg').querySelector('.txt').textContent.slice(0, 120);
-  await api(`/api/spaces/${current}/cards`, { method: 'POST', body: JSON.stringify({ title, origin: originId }) });
-  refreshSpace();
-}
 
 async function toggleCard(c) {
   const next = c.status === 'open' ? 'done' : 'open';
@@ -779,6 +841,485 @@ async function wizCreate() {
 
 const esc = (s) => String(s).replace(/[&<>"']/g, ch =>
   ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[ch]));
+
+// ---- entry rendering ----
+// Every card sets textContent for user strings (never innerHTML), so
+// caption/alt/title/transcript can never inject markup.
+
+function badge(producedBy) {
+  const b = document.createElement('span');
+  b.className = 'badge b-' + producedBy;
+  b.textContent = producedBy;
+  return b;
+}
+
+function renderEntry(log, e) {
+  const d = document.createElement('div');
+  d.className = 'entry msg';
+  const who = document.createElement('div');
+  who.className = 'who';
+  who.appendChild(badge(e.produced_by));
+  const meta = document.createElement('span');
+  meta.className = 'meta';
+  meta.textContent = e.author + (e.revised ? ' · edited' : '');
+  who.appendChild(meta);
+  const mk = document.createElement('span');
+  mk.className = 'mk'; mk.textContent = ' →card';
+  mk.onclick = () => makeCardFrom(e);
+  who.appendChild(mk);
+  d.appendChild(who);
+  d.appendChild(renderBody(e));
+  d.appendChild(renderReactions(e));
+  log.appendChild(d);
+}
+
+function textNode(cls, s) {
+  const el = document.createElement('div');
+  el.className = cls; el.textContent = s;
+  return el;
+}
+
+function assetNote(e) {
+  const a = e.asset;
+  const n = document.createElement('div');
+  n.className = 'asset-note';
+  if (!a) return n;
+  if (a.state === 'complete') {
+    n.textContent = `⬇ open original · ${fmtBytes(a.size)}`;
+    n.onclick = () => window.open(`/api/spaces/${current}/assets/${a.id}?token=${token}`, '_blank');
+  } else if (a.state === 'fetching') {
+    n.textContent = `fetching… ${a.total - a.missing}/${a.total}`;
+  } else {
+    n.textContent = `⬇ fetch original · ${fmtBytes(a.size)} · not local yet`;
+    n.onclick = async () => {
+      n.textContent = 'requesting…';
+      await api(`/api/spaces/${current}/assets/${a.id}/fetch`, { method: 'POST' });
+      refreshSpace();
+    };
+  }
+  return n;
+}
+
+function renderBody(e) {
+  switch (e.kind) {
+    case 'text':
+      return textNode('txt', e.text);
+    case 'visual': {
+      const wrap = document.createElement('div');
+      if (e.caption) wrap.appendChild(textNode('txt', e.caption));
+      if (e.thumb_b64) {
+        const img = document.createElement('img');
+        img.className = 'thumb'; img.alt = e.alt;
+        img.src = `data:${e.thumb_mime};base64,${e.thumb_b64}`;
+        img.onclick = () => { if (e.asset?.state === 'complete')
+          window.open(`/api/spaces/${current}/assets/${e.asset.id}?token=${token}`, '_blank'); };
+        wrap.appendChild(img);
+      } else {
+        wrap.appendChild(textNode('txt', '🖼 ' + e.alt));
+      }
+      wrap.appendChild(assetNote(e));
+      return wrap;
+    }
+    case 'voice': case 'audio': {
+      const wrap = document.createElement('div');
+      const title = e.kind === 'audio'
+        ? (e.title || 'audio') + (e.bpm ? ` · ${e.bpm} BPM` : '')
+        : `voice · ${fmtDur(e.duration_ms)}`;
+      wrap.appendChild(textNode('txt', (e.kind === 'audio' ? '♫ ' : '🎙 ') + title));
+      if (e.waveform_b64) wrap.appendChild(renderWave(e.waveform_b64));
+      if (e.transcript) wrap.appendChild(textNode('meta', '“' + e.transcript + '”'));
+      if (e.asset?.state === 'complete') {
+        const au = document.createElement('audio');
+        au.controls = true;
+        au.src = `/api/spaces/${current}/assets/${e.asset.id}?token=${token}`;
+        wrap.appendChild(au);
+      } else {
+        wrap.appendChild(assetNote(e));
+      }
+      return wrap;
+    }
+    case 'file': {
+      const wrap = document.createElement('div');
+      const card = document.createElement('div');
+      card.className = 'filecard';
+      card.appendChild(textNode('txt', '📄 ' + e.filename));
+      card.appendChild(assetNote(e));
+      wrap.appendChild(card);
+      return wrap;
+    }
+    case 'link': {
+      const card = document.createElement('div');
+      card.className = 'linkcard';
+      const a = document.createElement('a');
+      a.href = e.url; a.target = '_blank'; a.rel = 'noopener noreferrer';
+      a.textContent = e.title || e.url;
+      card.appendChild(a);
+      if (e.description) card.appendChild(textNode('meta', e.description));
+      return card;
+    }
+    case 'live_signal':
+      return renderSignal(e);
+    default: {
+      const wrap = document.createElement('div');
+      wrap.appendChild(textNode('unknownblk', e.fallback || ('unsupported block: ' + e.schema)));
+      return wrap;
+    }
+  }
+}
+
+function renderWave(b64) {
+  const bytes = atob(b64);
+  const w = document.createElement('div');
+  w.className = 'wave';
+  for (let i = 0; i < bytes.length; i++) {
+    const bar = document.createElement('i');
+    bar.style.height = Math.max(2, (bytes.charCodeAt(i) / 255) * 32) + 'px';
+    w.appendChild(bar);
+  }
+  return w;
+}
+
+function renderReactions(e) {
+  const row = document.createElement('div');
+  row.className = 'reactrow';
+  for (const r of (e.reactions || [])) {
+    const el = document.createElement('span');
+    el.className = 'react' + (r.mine ? ' mine' : '');
+    el.textContent = `${r.emoji} ${r.count}`;
+    el.onclick = () => setReaction(e.id, r.emoji, !r.mine);
+    row.appendChild(el);
+  }
+  const add = document.createElement('span');
+  add.className = 'addreact'; add.textContent = '+';
+  add.onclick = () => {
+    const em = prompt('react with one emoji:');
+    if (em) setReaction(e.id, em, true);
+  };
+  row.appendChild(add);
+  return row;
+}
+
+async function setReaction(target, emoji, active) {
+  try {
+    await api(`/api/spaces/${current}/reactions`,
+      { method: 'POST', body: JSON.stringify({ target, emoji, active }) });
+    refreshSpace();
+  } catch (err) { alert(err.message); }
+}
+
+async function makeCardFrom(e) {
+  await api(`/api/spaces/${current}/cards`,
+    { method: 'POST', body: JSON.stringify({ title: (e.fallback || e.text || 'card').slice(0, 120), origin: e.id }) });
+  refreshSpace();
+}
+
+const fmtBytes = (b) => b >= 1<<20 ? (b/(1<<20)).toFixed(1)+' MB'
+  : b >= 1<<10 ? Math.round(b/(1<<10))+' KB' : b+' B';
+const fmtDur = (ms) => { const s = Math.round(ms/1000); return `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`; };
+
+// ---- composer: attachments ----
+
+let pendingFile = null, pendingKind = null, pendingPreview = null, pendingMeta = {};
+
+async function onFilePicked(file) {
+  if (!file) return;
+  pendingFile = file;
+  const isImage = file.type.startsWith('image/');
+  pendingKind = isImage ? 'visual' : 'file';
+  document.getElementById('attachTitle').textContent = isImage ? 'attach image' : 'attach file';
+  document.getElementById('attachAlt').style.display = isImage ? '' : 'none';
+  document.getElementById('attachCaption').style.display = isImage ? '' : 'none';
+  const prev = document.getElementById('attachPreview');
+  prev.innerHTML = '';
+  pendingPreview = null;
+  document.getElementById('attachWarn').textContent = '';
+  if (isImage) {
+    const { blob, dataURL } = await makeThumb(file);
+    pendingPreview = blob;
+    const img = document.createElement('img'); img.src = dataURL;
+    img.style.maxWidth = '200px'; img.style.borderRadius = '4px';
+    prev.appendChild(img);
+    document.getElementById('attachWarn').textContent =
+      'note: the original may carry EXIF/GPS metadata; the thumbnail is re-encoded and stripped.';
+  } else {
+    prev.textContent = `${file.name} · ${fmtBytes(file.size)}`;
+  }
+  dlgAttach.showModal();
+  fileInput.value = '';
+}
+
+// Downscale + re-encode through a canvas: strips metadata, bounds size.
+function makeThumb(file) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const max = 480;
+      let { width: w, height: h } = img;
+      if (w > max || h > max) { const s = max / Math.max(w, h); w = Math.round(w*s); h = Math.round(h*s); }
+      const c = document.createElement('canvas'); c.width = w; c.height = h;
+      c.getContext('2d').drawImage(img, 0, 0, w, h);
+      c.toBlob(b => resolve({ blob: b, dataURL: c.toDataURL('image/webp', 0.7) }), 'image/webp', 0.7);
+    };
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+async function sendAttachment() {
+  const meta = {
+    kind: pendingKind, size: pendingFile.size, media_type: pendingFile.type || 'application/octet-stream',
+  };
+  if (pendingKind === 'visual') {
+    const alt = document.getElementById('attachAlt').value.trim();
+    if (!alt) { alert('alt text is required — it is how the image reaches text terminals'); return; }
+    meta.alt = alt;
+    meta.caption = document.getElementById('attachCaption').value.trim();
+    meta.preview_mime = 'image/webp';
+  } else {
+    meta.filename = pendingFile.name;
+  }
+  await postBlock(meta, pendingPreview, pendingFile);
+  dlgAttach.close();
+  refreshSpace();
+}
+
+async function postBlock(meta, preview, file) {
+  const fd = new FormData();
+  fd.append('metadata', new Blob([JSON.stringify(meta)], { type: 'application/json' }));
+  if (preview) fd.append('preview', preview, 'preview.webp');
+  if (file) fd.append('file', file, meta.filename || 'file');
+  const resp = await fetch(`/api/spaces/${current}/blocks`,
+    { method: 'POST', headers: { 'X-QP-Token': token }, body: fd });
+  if (!resp.ok) { alert((await resp.json()).error || resp.status); throw new Error('post failed'); }
+}
+
+// ---- composer: voice ----
+
+let mediaRecorder = null, voiceChunks = [], voiceBlob = null, voiceMIME = '', voiceStart = 0, voiceWaveData = [];
+
+function pickVoiceMIME() {
+  for (const m of ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/mp4', 'audio/webm']) {
+    if (window.MediaRecorder && MediaRecorder.isTypeSupported(m)) return m;
+  }
+  return '';
+}
+
+async function toggleVoice() {
+  const btn = document.getElementById('voiceBtn');
+  if (mediaRecorder && mediaRecorder.state === 'recording') {
+    mediaRecorder.stop();
+    btn.classList.remove('rec');
+    return;
+  }
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+  catch { alert('microphone unavailable'); return; }
+  voiceMIME = pickVoiceMIME();
+  if (!voiceMIME) { alert('this browser cannot record audio'); return; }
+  voiceChunks = []; voiceWaveData = []; voiceStart = Date.now();
+  mediaRecorder = new MediaRecorder(stream, { mimeType: voiceMIME });
+  // sample loudness for a compact waveform (≤64 buckets).
+  const ac = new AudioContext();
+  const an = ac.createAnalyser(); an.fftSize = 256;
+  ac.createMediaStreamSource(stream).connect(an);
+  const buf = new Uint8Array(an.frequencyBinCount);
+  const sample = () => {
+    if (!mediaRecorder || mediaRecorder.state !== 'recording') { ac.close(); return; }
+    an.getByteTimeDomainData(buf);
+    let peak = 0; for (const v of buf) peak = Math.max(peak, Math.abs(v - 128));
+    voiceWaveData.push(Math.min(255, peak * 2));
+    setTimeout(sample, 120);
+  };
+  mediaRecorder.ondataavailable = (ev) => voiceChunks.push(ev.data);
+  mediaRecorder.onstop = () => {
+    stream.getTracks().forEach(t => t.stop());
+    voiceBlob = new Blob(voiceChunks, { type: voiceMIME });
+    document.getElementById('voicePreview').src = URL.createObjectURL(voiceBlob);
+    drawVoiceWave();
+    dlgVoiceReview.showModal();
+  };
+  mediaRecorder.start(); sample();
+  btn.classList.add('rec');
+}
+
+function compactWave() {
+  const target = 48, data = voiceWaveData, out = [];
+  if (!data.length) return out;
+  const step = data.length / target;
+  for (let i = 0; i < target; i++) {
+    const a = Math.floor(i * step), b = Math.max(a + 1, Math.floor((i + 1) * step));
+    let m = 0; for (let j = a; j < b && j < data.length; j++) m = Math.max(m, data[j]);
+    out.push(m);
+  }
+  return out;
+}
+
+function drawVoiceWave() {
+  const c = document.getElementById('voiceWave'), ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, c.width, c.height);
+  const acc = getComputedStyle(document.documentElement).getPropertyValue('--acc').trim();
+  ctx.fillStyle = acc;
+  const w = compactWave();
+  w.forEach((v, i) => { const h = Math.max(2, (v/255)*c.height); ctx.fillRect(i*5, c.height-h, 3, h); });
+}
+
+async function sendVoice() {
+  const durMs = Date.now() - voiceStart;
+  const wave = compactWave();
+  const meta = {
+    kind: 'audio', size: voiceBlob.size, media_type: voiceMIME.split(';')[0],
+    title: 'voice message', duration_ms: durMs,
+    waveform: btoa(String.fromCharCode(...wave)),
+    transcript: document.getElementById('voiceTranscript').value.trim(),
+  };
+  // Voice is an AudioBlock with a spoken-word title; transcript is fallback.
+  await postBlock(meta, null, voiceBlob);
+  dlgVoiceReview.close();
+  document.getElementById('voiceTranscript').value = '';
+  refreshSpace();
+}
+
+// ---- composer: link ----
+
+function openLink() { dlgLink.showModal(); }
+async function sendLink() {
+  const url = document.getElementById('linkURL').value.trim();
+  if (!/^https?:\/\//.test(url)) { alert('only http/https links'); return; }
+  await postBlock({ kind: 'link', url,
+    title: document.getElementById('linkTitle').value.trim(),
+    description: document.getElementById('linkDescr').value.trim() }, null, null);
+  dlgLink.close(); refreshSpace();
+}
+
+// ---- composer: live signal ----
+
+const SIGNAL_PRESETS = {
+  'slow-pines@1': [['density', 420], ['wind', 180], ['tone', 670]],
+  'ember-drift@1': [['heat', 500], ['drift', 300]],
+};
+
+function openSignal() {
+  document.getElementById('sigPreset').value = 'slow-pines@1';
+  buildSignalParams();
+  dlgSignal.showModal();
+}
+
+function buildSignalParams() {
+  const preset = document.getElementById('sigPreset').value;
+  const box = document.getElementById('sigParams');
+  box.innerHTML = '';
+  for (const [name, def] of SIGNAL_PRESETS[preset]) {
+    const l = document.createElement('label');
+    l.textContent = name;
+    const inp = document.createElement('input');
+    inp.type = 'range'; inp.min = 0; inp.max = 1000; inp.value = def;
+    inp.dataset.name = name;
+    inp.oninput = renderSignalPreview;
+    l.appendChild(inp);
+    box.appendChild(l);
+  }
+  renderSignalPreview();
+}
+
+function currentSignalParams() {
+  const params = {};
+  document.querySelectorAll('#sigParams input').forEach(i => params[i.dataset.name] = +i.value);
+  return params;
+}
+
+function renderSignalPreview() {
+  buildSignalParamsIfNeeded();
+  const preset = document.getElementById('sigPreset').value;
+  drawSignal(document.getElementById('sigPreview'), preset, 173991, currentSignalParams());
+}
+let lastPreset = null;
+function buildSignalParamsIfNeeded() {
+  const p = document.getElementById('sigPreset').value;
+  if (p !== lastPreset) { lastPreset = p; buildSignalParams(); }
+}
+
+// Deterministic renderer: own PRNG (mulberry32), reduced-motion aware, no
+// Math.random. Producer is strict (only known presets/params); this is the
+// renderer — an unknown preset would fall back to the text line.
+function drawSignal(canvas, preset, seed, params) {
+  const ctx = canvas.getContext('2d'), W = canvas.width, H = canvas.height;
+  const acc = getComputedStyle(document.documentElement).getPropertyValue('--acc').trim();
+  ctx.clearRect(0, 0, W, H);
+  const rnd = mulberry(seed ^ hashStr(preset));
+  const name = preset.split('@')[0];
+  if (name === 'slow-pines') {
+    const density = (params.density ?? 420) / 1000;
+    const n = Math.round(6 + density * 40);
+    ctx.globalAlpha = 0.15; ctx.fillStyle = acc; ctx.fillRect(0, 0, W, H);
+    ctx.globalAlpha = 1;
+    for (let i = 0; i < n; i++) {
+      const x = rnd() * W, base = H - 4, ht = 20 + rnd() * (H * 0.7);
+      ctx.strokeStyle = acc; ctx.globalAlpha = 0.3 + rnd() * 0.5;
+      ctx.beginPath();
+      for (let y = 0; y <= ht; y += 4) {
+        const wob = Math.sin(y / 7 + i) * (params.wind ?? 180) / 200;
+        ctx.lineTo(x + wob, base - y);
+      }
+      ctx.stroke();
+    }
+  } else if (name === 'ember-drift') {
+    const heat = (params.heat ?? 500) / 1000;
+    ctx.globalAlpha = 1;
+    for (let i = 0; i < 60; i++) {
+      const x = rnd() * W, y = H - rnd() * H * (0.3 + heat);
+      ctx.globalAlpha = 0.2 + rnd() * 0.7; ctx.fillStyle = acc;
+      ctx.beginPath(); ctx.arc(x, y, 1 + rnd() * 2, 0, 7); ctx.fill();
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+
+function hashStr(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
+
+async function sendSignal() {
+  const preset = document.getElementById('sigPreset').value;
+  const params = currentSignalParams();
+  const density = params.density ?? params.heat ?? 500;
+  const fallback = `~ ${preset.split('@')[0]} signal · ${Math.round(density/10)}%`;
+  await postBlock({ kind: 'live_signal', preset, seed: 173991, params, fallback }, null, null);
+  dlgSignal.close(); refreshSpace();
+}
+
+// Render a live signal in the feed: canvas + a static fallback line + an
+// optional soft drone that only plays on click (never auto, hard gain cap).
+function renderSignal(e) {
+  const wrap = document.createElement('div');
+  wrap.className = 'sig';
+  const c = document.createElement('canvas'); c.width = 300; c.height = 110;
+  wrap.appendChild(c);
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  drawSignal(c, e.preset || 'slow-pines@1', e.seed || 0, e.params || {});
+  const bar = document.createElement('div');
+  bar.className = 'sigbar';
+  const label = document.createElement('span'); label.textContent = e.fallback;
+  const play = document.createElement('span'); play.className = 'play'; play.textContent = '▶ sound';
+  play.onclick = () => playDrone(e);
+  bar.appendChild(label); bar.appendChild(play);
+  wrap.appendChild(bar);
+  if (reduce) wrap.appendChild(textNode('meta', 'motion reduced'));
+  return wrap;
+}
+
+let droneCtx = null;
+function playDrone(e) {
+  if (droneCtx) { droneCtx.close(); droneCtx = null; return; }
+  droneCtx = new AudioContext();
+  const g = droneCtx.createGain();
+  g.gain.value = 0.04; // hard cap — never loud, never sudden
+  g.connect(droneCtx.destination);
+  const tone = ((e.params?.tone ?? 500) / 1000) * 120 + 80;
+  [tone, tone * 1.5].forEach(f => {
+    const o = droneCtx.createOscillator(); o.type = 'sine'; o.frequency.value = f;
+    o.connect(g); o.start();
+  });
+  setTimeout(() => { if (droneCtx) { droneCtx.close(); droneCtx = null; } }, 6000);
+}
+
+document.getElementById('sigPreset').addEventListener('change', () => { lastPreset = null; renderSignalPreview(); });
 
 refresh();
 setInterval(refresh, 2000);
