@@ -118,6 +118,11 @@ func Open(dataDir string, passphrase []byte, displayName string) (*Runtime, erro
 		s.AttachLog(log, replayed)
 		r.Self.ResumeChain(s)
 		r.attach(tid, s)
+		// Idempotent: publishes only if the registry lacks our revision
+		// (spaces created before manifests traveled, or a bumped manifest).
+		if _, _, err := r.Self.PublishManifest(s); err != nil {
+			return nil, fmt.Errorf("node: publishing manifest into %s: %w", tid, err)
+		}
 	}
 	if err := r.saveKeystore(); err != nil {
 		return nil, err
@@ -203,6 +208,9 @@ func (r *Runtime) CreateSpace(title string) (id.TerminalID, error) {
 		ManifestFrame: s.ManifestFrame, Members: s.Members(),
 	}
 	r.attach(s.ID, s)
+	if _, _, err := r.Self.PublishManifest(s); err != nil {
+		return id.TerminalID{}, err
+	}
 	r.persistEpochsLocked(s.ID, s)
 	return s.ID, nil
 }
@@ -258,8 +266,34 @@ func (r *Runtime) JoinInvite(inviteB64 string) (id.TerminalID, error) {
 	}
 	r.ks.Spaces[spaceID] = storage.SpaceMeta{Title: title}
 	r.attach(spaceID, s)
+	if _, _, err := r.Self.PublishManifest(s); err != nil {
+		return id.TerminalID{}, err
+	}
 	r.persistEpochsLocked(spaceID, s)
 	return spaceID, nil
+}
+
+// SetPresence publishes a presence state with a TTL (plan §8.3): after the
+// TTL every replica projects it as "last known + age", never as current.
+func (r *Runtime) SetPresence(tid id.TerminalID, state string, ttlSeconds uint64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	st, ok := r.spaces[tid]
+	if !ok {
+		return errors.New("node: unknown space")
+	}
+	return human.SetPresence(r.Self, st.space, state, uint64(time.Now().Unix()), ttlSeconds)
+}
+
+// Members projects the member cards of a space.
+func (r *Runtime) Members(tid id.TerminalID) ([]terminals.MemberCard, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	st, ok := r.spaces[tid]
+	if !ok {
+		return nil, errors.New("node: unknown space")
+	}
+	return st.space.MemberCards(uint64(time.Now().Unix())), nil
 }
 
 // Say posts a text message into a space.

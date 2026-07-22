@@ -13,6 +13,7 @@ import (
 	"github.com/drrainlab/quiet_places/kernel/eventlog"
 	"github.com/drrainlab/quiet_places/kernel/identity"
 	"github.com/drrainlab/quiet_places/kernel/reducers"
+	"github.com/drrainlab/quiet_places/kernel/registry"
 	"github.com/drrainlab/quiet_places/kernel/trust"
 	"github.com/drrainlab/quiet_places/protocol/capability"
 	"github.com/drrainlab/quiet_places/protocol/claims"
@@ -34,6 +35,9 @@ type Space struct {
 	Log   *eventlog.Log
 	State *reducers.State
 	Trust *trust.Engine
+	// Registry holds member terminal manifests published into the space
+	// (M1.3): the source for device/agent cards.
+	Registry *registry.Registry
 
 	// Private marks an encrypted space (ADR-005). Undecryptable counts
 	// events this replica received but could not read — shown, not hidden.
@@ -81,10 +85,11 @@ func Replica(tid id.TerminalID) *Space { return newReplica(tid) }
 
 func newReplica(tid id.TerminalID) *Space {
 	s := &Space{
-		ID:    tid,
-		Log:   eventlog.New(tid, nil),
-		State: reducers.NewState(),
-		Trust: trust.NewEngine(),
+		ID:       tid,
+		Log:      eventlog.New(tid, nil),
+		State:    reducers.NewState(),
+		Trust:    trust.NewEngine(),
+		Registry: registry.New(),
 	}
 	return s
 }
@@ -109,6 +114,13 @@ func (s *Space) absorb(a eventlog.Applied) {
 		clone := *env
 		clone.Payload = pt
 		env = &clone
+	}
+	if env.Schema == schemas.ManifestUpdated {
+		// A member published its interaction contract: install it. Errors
+		// (stale revision, broken chain) are ignored here — the registry
+		// keeps the last valid manifest and never downgrades.
+		_, _ = s.Registry.Upsert(env.Payload)
+		return
 	}
 	s.State.Apply(env, a.ID)
 	if env.Schema == schemas.PresenceUpdate && env.SourceTerminal != nil {
@@ -208,9 +220,19 @@ func (p *Participant) Emit(s *Space, schema string, payload []byte,
 	encoding := signal.PayloadCBOR
 	wirePayload := payload
 	priority := signal.PriorityMessage
-	if schema == schemas.MembershipEpoch {
+	switch schema {
+	case schemas.MembershipEpoch:
 		priority = signal.PrioritySecurity
-	} else if s.Private {
+	case schemas.ManifestUpdated:
+		priority = signal.PriorityManifest
+	case schemas.PresenceUpdate:
+		priority = signal.PriorityStatePatch
+	case schemas.ObservationTemp:
+		priority = signal.PriorityTelemetry
+	}
+	// Epoch distribution stays plaintext (its wraps are already encrypted
+	// per device); everything else in a private space gets sealed.
+	if s.Private && schema != schemas.MembershipEpoch {
 		sealed, err := s.sealForEmit(schema, payload)
 		if err != nil {
 			return eventlog.Applied{}, err

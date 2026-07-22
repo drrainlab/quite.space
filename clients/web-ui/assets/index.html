@@ -83,6 +83,25 @@
   .row { display: flex; gap: 8px; margin-top: 8px; }
   h3 { margin-bottom: 6px; color: var(--acc); font-size: 13px; }
   .hint { color: var(--dim); font-size: 11px; }
+  #members {
+    width: 250px; border-left: 1px solid var(--line); padding: 12px;
+    overflow-y: auto; font-size: 12px;
+  }
+  .member {
+    border: 1px solid var(--line); border-radius: 4px; background: var(--panel);
+    padding: 8px 10px; margin-bottom: 8px;
+  }
+  .member .caps { color: var(--dim); font-size: 10px; word-break: break-word; }
+  .member .pres { font-size: 11px; margin-top: 2px; }
+  .member .pres.current { color: var(--acc); }
+  .member .pres.stale { color: var(--dim); }
+  .member .ai-note { color: var(--ai); font-size: 10px; }
+  select {
+    background: var(--panel); color: var(--dim); border: 0;
+    border-left: 1px solid var(--line); font: inherit; padding: 0 8px; outline: none;
+  }
+  #qrBox img { width: 220px; height: 220px; image-rendering: pixelated;
+    background: #fff; padding: 8px; border-radius: 4px; margin-top: 8px; }
 </style>
 </head>
 <body>
@@ -107,9 +126,18 @@
     <div id="log"></div>
     <form id="composer" onsubmit="return say(event)">
       <input id="text" placeholder="write into the space…" autocomplete="off">
+      <select id="presence" onchange="setPresence(this.value)" title="presence (TTL 5 min)">
+        <option value="">presence…</option>
+        <option>around</option>
+        <option>listening</option>
+        <option>open_to_talk</option>
+        <option>busy</option>
+        <option>do_not_disturb</option>
+      </select>
       <button type="submit" style="border:0">send</button>
     </form>
   </div>
+  <div id="members"></div>
 </main>
 
 <dialog id="dlgNew">
@@ -152,8 +180,9 @@
   <input id="invXpub" placeholder="peer device xpub (hex)">
   <div class="row"><button onclick="mintInvite()">mint invite</button>
   <button onclick="dlgInvite.close()">close</button></div>
-  <p class="hint">send the string below to the peer over any channel:</p>
+  <p class="hint">send the string below to the peer over any channel, or let them scan the QR:</p>
   <p class="out" id="invOut"></p>
+  <div id="qrBox"></div>
 </dialog>
 
 <script>
@@ -241,6 +270,43 @@ async function refreshSpace() {
       ` · ${o.freshness}${o.freshness !== 'current' ? ` (${o.age_seconds}s old)` : ''}`);
   }
   document.getElementById('honesty').innerHTML = parts.join(' · ');
+
+  const members = await api(`/api/spaces/${current}/members`);
+  const mbox = document.getElementById('members');
+  mbox.innerHTML = '<h3>members</h3>';
+  for (const m of members) {
+    const d = document.createElement('div');
+    d.className = 'member';
+    let pres = '<div class="pres stale">presence unknown</div>';
+    if (m.presence.known) {
+      pres = m.presence.current
+        ? `<div class="pres current">● ${esc(m.presence.state)}</div>`
+        : `<div class="pres stale">last known: ${esc(m.presence.state)}, ${fmtAge(m.presence.age_seconds)} ago</div>`;
+    }
+    d.innerHTML =
+      `<div><span class="badge b-${m.agency === 'ai_agent' ? 'ai_agent' : (m.kind === 'human' ? 'human' : 'deterministic_bot')}">${esc(m.kind)}</span>` +
+      `${esc((m.declared_labels || [])[0] || m.terminal.slice(0, 12))}</div>` +
+      pres +
+      (m.ai_present ? `<div class="ai-note">AI-agent · ${esc(m.autonomy)} · model ${esc(m.model)}</div>` : '') +
+      `<div class="caps">${esc(m.io_mode)} · ${esc((m.capabilities || []).join(' '))}` +
+      `${m.commandable ? '' : ' · no command surface'}</div>`;
+    mbox.appendChild(d);
+  }
+}
+
+function fmtAge(s) {
+  if (s < 90) return `${s}s`;
+  if (s < 5400) return `${Math.round(s / 60)}m`;
+  return `${Math.round(s / 3600)}h`;
+}
+
+async function setPresence(state) {
+  if (!state || !current) return;
+  try {
+    await api(`/api/spaces/${current}/presence`, { method: 'POST', body: JSON.stringify({ state, ttl_seconds: 300 }) });
+    document.getElementById('presence').value = '';
+    refreshSpace();
+  } catch (err) { alert(err.message); }
 }
 
 async function say(e) {
@@ -296,6 +362,10 @@ async function mintInvite() {
       }),
     });
     document.getElementById('invOut').textContent = r.invite;
+    const qr = document.getElementById('qrBox');
+    qr.innerHTML = r.qr_png_base64
+      ? `<img alt="invite QR" src="data:image/png;base64,${r.qr_png_base64}">`
+      : '';
   } catch (err) { alert(err.message); }
 }
 

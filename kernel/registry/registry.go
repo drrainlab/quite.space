@@ -126,6 +126,18 @@ func (r *Registry) Get(tid id.TerminalID) (*Terminal, bool) {
 	return t, ok
 }
 
+// All lists known terminals, sorted by id for determinism.
+func (r *Registry) All() []*Terminal {
+	out := make([]*Terminal, 0, len(r.terminals))
+	for _, t := range r.terminals {
+		out = append(out, t)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return string(out[i].ID[:]) < string(out[j].ID[:])
+	})
+	return out
+}
+
 // Observe records an observed label as a peer_observed claim (§7.3).
 func (t *Terminal) Observe(key, value string, atUnix uint64) {
 	t.Observed["observed."+key] = claims.Claim{

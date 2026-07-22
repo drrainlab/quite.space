@@ -6,6 +6,7 @@ package node
 
 import (
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -16,6 +17,8 @@ import (
 	"time"
 
 	"github.com/drrainlab/quiet_places/protocol/id"
+	"github.com/drrainlab/quiet_places/terminals"
+	qrcode "github.com/skip2/go-qrcode"
 )
 
 // APIServer wraps a Runtime for local HTTP access.
@@ -74,6 +77,8 @@ func (a *APIServer) Handler() http.Handler {
 	mux.HandleFunc("POST /api/spaces/{id}/cards", a.auth(a.handleMakeCard))
 	mux.HandleFunc("POST /api/spaces/{id}/cards/{card}/status", a.auth(a.handleCardStatus))
 	mux.HandleFunc("POST /api/spaces/{id}/invites", a.auth(a.handleMintInvite))
+	mux.HandleFunc("GET /api/spaces/{id}/members", a.auth(a.handleMembers))
+	mux.HandleFunc("POST /api/spaces/{id}/presence", a.auth(a.handlePresence))
 	mux.HandleFunc("POST /api/invites/accept", a.auth(a.handleJoin))
 	mux.HandleFunc("POST /api/lan/connect", a.auth(a.handleConnect))
 	mux.HandleFunc("POST /api/mesh/connect", a.auth(a.handleMeshConnect))
@@ -429,7 +434,85 @@ func (a *APIServer) handleMintInvite(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusForbidden, err)
 		return
 	}
-	writeJSON(w, map[string]string{"invite": invite})
+	resp := map[string]string{"invite": invite}
+	// QR of the invite string (vision §6.2 step 2): scan or send, any channel.
+	if png, err := qrcode.Encode(invite, qrcode.Medium, 512); err == nil {
+		resp["qr_png_base64"] = base64.StdEncoding.EncodeToString(png)
+	}
+	writeJSON(w, resp)
+}
+
+type memberResp struct {
+	Terminal       string   `json:"terminal"`
+	Kind           string   `json:"kind"`
+	Agency         string   `json:"agency"`
+	AIPresent      bool     `json:"ai_present"`
+	Autonomy       string   `json:"autonomy"`
+	Model          string   `json:"model"` // "not specified" unless declared
+	IOMode         string   `json:"io_mode"`
+	Capabilities   []string `json:"capabilities"`
+	DeclaredLabels []string `json:"declared_labels"`
+	SysLabels      []string `json:"sys_labels"`
+	Commandable    bool     `json:"commandable"`
+	Presence       struct {
+		Known   bool   `json:"known"`
+		Current bool   `json:"current"`
+		State   string `json:"state,omitempty"`
+		AgeSec  uint64 `json:"age_seconds,omitempty"`
+	} `json:"presence"`
+}
+
+func (a *APIServer) handleMembers(w http.ResponseWriter, r *http.Request) {
+	tid, err := a.spaceID(r)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	cards, err := a.rt.Members(tid)
+	if err != nil {
+		httpErr(w, http.StatusNotFound, err)
+		return
+	}
+	out := make([]memberResp, 0, len(cards))
+	for _, c := range cards {
+		m := memberResp{
+			Terminal: c.Terminal.Hex(), Kind: c.Kind, Agency: c.Agency,
+			AIPresent: c.AIPresent, Autonomy: terminals.AutonomyLabel(c.Autonomy),
+			Model: "not specified", IOMode: c.IOMode,
+			Capabilities: c.Capabilities, DeclaredLabels: c.DeclaredLabels,
+			SysLabels: c.SysLabels, Commandable: c.CanReceiveCommands,
+		}
+		m.Presence.Known = c.Presence.Known
+		m.Presence.Current = c.Presence.Current
+		m.Presence.State = c.Presence.State
+		m.Presence.AgeSec = c.Presence.AgeSeconds
+		out = append(out, m)
+	}
+	writeJSON(w, out)
+}
+
+func (a *APIServer) handlePresence(w http.ResponseWriter, r *http.Request) {
+	tid, err := a.spaceID(r)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	body, err := readBody[struct {
+		State string `json:"state"`
+		TTL   uint64 `json:"ttl_seconds"`
+	}](r)
+	if err != nil || body.State == "" {
+		httpErr(w, http.StatusBadRequest, errors.New("state required"))
+		return
+	}
+	if body.TTL == 0 {
+		body.TTL = 300
+	}
+	if err := a.rt.SetPresence(tid, body.State, body.TTL); err != nil {
+		httpErr(w, http.StatusForbidden, err)
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
 }
 
 func (a *APIServer) handleJoin(w http.ResponseWriter, r *http.Request) {
