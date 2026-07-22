@@ -138,3 +138,43 @@ func TestAppOwnerGate(t *testing.T) {
 		t.Fatal("non-owner published a definition")
 	}
 }
+
+// Revotes append in deterministic (clock, event id) order — the client's
+// last-per-author fold therefore converges identically on every node — and
+// oversized action data is refused.
+func TestAppVoteOrderAndBounds(t *testing.T) {
+	rt := openRuntime(t, t.TempDir(), "alice")
+	defer rt.Close()
+	tid, _ := rt.CreateSpace("Studio")
+	p, err := rt.CreateAppInstance(tid, "poll", "", "", map[string]string{"question": "q", "options": "A,B"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.AppAction(tid, p.InstanceID, "vote", map[string]any{"option": "A"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.AppAction(tid, p.InstanceID, "vote", map[string]any{"option": "B"}); err != nil {
+		t.Fatal(err)
+	}
+	evs, err := rt.AppInput(tid, p.InstanceID, "votes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) != 2 {
+		t.Fatalf("expected both vote events in the partition, got %d", len(evs))
+	}
+	// Deterministic order: the LAST event per author is the revote → "B".
+	last := evs[len(evs)-1]["data"].(map[string]any)
+	if last["option"] != "B" {
+		t.Fatalf("deterministic order broken: last vote %v", last)
+	}
+	// Oversized action data refused.
+	big := strings.Repeat("x", 8000)
+	f, err := rt.CreateAppInstance(tid, "form", "", "", map[string]string{"title": "t", "fields": "answer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.AppAction(tid, f.InstanceID, "submit", map[string]any{"fields": map[string]any{"answer": big}}); err == nil {
+		t.Fatal("oversized form data accepted")
+	}
+}

@@ -453,6 +453,18 @@
   .pub-credit-role { color: var(--muted); min-width: 110px; }
   .pub-comment { padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
   .pub-comment-author { color: var(--acc); font-size: 12px; }
+  /* app blocks (APP-1) */
+  .app-block { border: 1px solid var(--line); border-radius: var(--radius-md);
+    background: var(--panel); padding: 12px 14px; margin: 8px 0;
+    box-shadow: var(--shadow); max-width: 420px; }
+  .app-title { font-weight: 600; margin-bottom: 8px; }
+  .app-poll-option { display: block; width: 100%; text-align: left;
+    margin: 4px 0; background: var(--surface-raised); border: 1px solid var(--line); }
+  .app-poll-option:hover { border-color: var(--acc); }
+  .app-fallback { color: var(--dim); font-style: italic; font-size: 13px; }
+  .app-block input { width: 100%; background: var(--bg); color: var(--fg);
+    border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px;
+    margin: 4px 0; font: inherit; }
   /* composer */
   dialog#dlgComposer { width: 620px; max-width: calc(100% - 24px); }
   #composerBlocks { max-height: 40vh; overflow-y: auto; }

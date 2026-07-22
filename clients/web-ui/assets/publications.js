@@ -233,11 +233,17 @@ function renderPubBlock(b) {
       break;
     }
     case 'app': {
-      // Reserved: renders fallback until APP-1 wires instances.
-      const f = document.createElement('div');
-      f.className = 'unknownblk';
-      f.textContent = 'Interactive block (arrives with apps)';
-      el.appendChild(f); break;
+      // APP-1: the block references an instance; the runtime renders it.
+      const holder = document.createElement('div');
+      holder.className = 'unknownblk';
+      holder.textContent = 'Loading interactive block…';
+      el.appendChild(holder);
+      if (p.asset && typeof renderAppInstance === 'function') {
+        renderAppInstance(p.asset).then(node => holder.replaceWith(node));
+      } else {
+        holder.textContent = 'Interactive block unavailable.';
+      }
+      break;
     }
     default: {
       const f = document.createElement('div');
