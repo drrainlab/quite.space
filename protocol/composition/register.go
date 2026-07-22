@@ -23,5 +23,12 @@ func init() {
 		_, err = DecodeComposition(s.Payload)
 		return err
 	})
-	// SchemaBundleIndex is registered in bundle.go (SC-0 step 5).
+	schemas.Register(SchemaBundleIndex, func(frame []byte) error {
+		s, err := DecodeSnapshot(frame)
+		if err != nil {
+			return err
+		}
+		_, err = DecodeBundleIndex(s.Payload)
+		return err
+	})
 }
