@@ -31,6 +31,7 @@ Suggested template:
 - [x] [ADR-008 Claims and honesty model](ADR-008-claims-and-honesty-model.md) — claim origins, proof-gated delivery ladder, honesty snapshot tests
 - [x] [ADR-009 Schema evolution](ADR-009-schema-evolution.md) — three version axes, must-ignore, append-only key tables, opaque unknown schemas
 - [x] [ADR-010 Deletion semantics](ADR-010-deletion-semantics.md) — tombstones, prune stubs, sync exceptions, no "deleted everywhere" claim
+- [x] [ADR-011 Client packaging](ADR-011-client-packaging.md) — single CGO-free Go binary, embedded web UI, local typed API; sidecars and native shells optional
 
 Acceptance for M0.0: no core entity has two conflicting definitions — the
 glossary in ADR-001 is the single source; other ADRs only reference it.
