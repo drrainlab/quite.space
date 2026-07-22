@@ -178,6 +178,52 @@ function applyAppearance() {
 }
 function setTheme(t) { localStorage.setItem('qp.theme', t); applyAppearance(); }
 function setPreset(p) { localStorage.setItem('qp.preset', p); applyAppearance(); }
+function setRenderMode(m) {
+  localStorage.setItem('qp.rendermode', m); syncSettingsUI();
+  appearanceSpace = null; if (current) loadSpaceAppearance(current); // re-apply at new detail
+}
+function pickSeg(groupId, v) {
+  document.querySelectorAll('#' + groupId + ' button').forEach(b =>
+    b.classList.toggle('sel', b.dataset.v === v));
+}
+function segValue(groupId) {
+  const b = document.querySelector('#' + groupId + ' button.sel');
+  return b ? b.dataset.v : '';
+}
+
+// ---- Quick Customize (SC-3): manual appearance → new signed revision ----
+function hexOr(v, fb) { return /^#[0-9a-fA-F]{6}$/.test(v) ? v : fb; }
+async function openCustomize() {
+  const sid = current; if (!sid) return;
+  document.getElementById('custMsg').textContent = '';
+  try {
+    const snap = await api(`/api/spaces/${sid}/appearance`);
+    const ap = snap.appearance || {};
+    const pal = Object.fromEntries((ap.palette || []).map(p => [p.name, p.hex]));
+    document.getElementById('custAccent').value = hexOr(pal.accent, '#c48ae4');
+    document.getElementById('custTint').value = hexOr(ap.background?.tint, '#241730');
+    document.getElementById('custDim').value = ap.background?.dim ?? 380;
+    pickSeg('custMotion', ap.motion || 'quiet');
+    pickSeg('custDensity', ap.density || 'calm');
+  } catch (e) { /* defaults stand */ }
+  dlgCustomize.showModal();
+}
+async function applyCustomize() {
+  const sid = current; if (!sid) return;
+  const body = {
+    accent: document.getElementById('custAccent').value,
+    tint: document.getElementById('custTint').value,
+    dim: parseInt(document.getElementById('custDim').value, 10) || 0,
+    motion: segValue('custMotion') || 'quiet',
+    density: segValue('custDensity') || 'calm',
+  };
+  try {
+    const snap = await api(`/api/spaces/${sid}/appearance`, { method: 'PATCH', body: JSON.stringify(body) });
+    // Re-apply the freshly signed appearance to the scoped canvas.
+    appearanceSpace = null; await loadSpaceAppearance(sid);
+    dlgCustomize.close();
+  } catch (err) { document.getElementById('custMsg').textContent = err.message; }
+}
 let llmSettings = { provider: '', model: '', base_url: '', has_key: false };
 async function openSettings() {
   syncSettingsUI();
@@ -201,6 +247,14 @@ function syncSettingsUI() {
     b.classList.toggle('sel', b.dataset.v === theme));
   document.querySelectorAll('#setPreset button').forEach(b =>
     b.classList.toggle('sel', b.dataset.v === preset));
+  const rm = localStorage.getItem('qp.rendermode') || 'auto';
+  document.querySelectorAll('#setRenderMode button').forEach(b =>
+    b.classList.toggle('sel', b.dataset.v === rm));
+}
+
+// Placeholder until PUI-4 wires AI composition.
+function openGenerate() {
+  document.getElementById('custMsg').textContent = 'AI generation arrives in the next step.';
 }
 function pickProvider(p, keepModel) {
   llmSettings.provider = p;
@@ -347,6 +401,7 @@ async function refreshSpace() {
   // Conversation header: title + invite (owned) + info toggle.
   document.getElementById('convTitle').textContent = sp ? (sp.title || t('conv.member')) : '';
   document.getElementById('inviteBtn').style.display = sp?.owned ? '' : 'none';
+  document.getElementById('customizeBtn').style.display = sp?.owned ? '' : 'none';
 
   // persona line: the declared character, plus its exact meaning.
   const persona = document.getElementById('persona');

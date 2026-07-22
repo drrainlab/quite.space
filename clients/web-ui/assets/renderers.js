@@ -33,6 +33,9 @@ function rendererSupported(id) {
 // keeps the last word on accessibility (ADR-013 refinement 4): reduced data,
 // reduced transparency, or a small viewport pull rendering down.
 function renderMode() {
+  // Explicit user choice wins (SC-1 selector); "auto" falls through to sensing.
+  const pref = (typeof localStorage !== 'undefined' && localStorage.getItem('qp.rendermode')) || 'auto';
+  if (pref === 'full' || pref === 'reduced' || pref === 'minimal') return pref;
   const m = window.matchMedia;
   if (m && (m('(prefers-reduced-transparency: reduce)').matches ||
             m('(prefers-reduced-motion: reduce)').matches)) return 'reduced';

@@ -32,6 +32,7 @@
     <div id="convbar">
       <span id="convTitle"></span>
       <span style="flex:1"></span>
+      <button id="customizeBtn" class="icon-btn" style="display:none" onclick="openCustomize()" title="Customize" aria-label="Customize space">🎨</button>
       <button id="inviteBtn" class="btn-tinted" style="display:none" onclick="openPassCurrent()">invite</button>
       <button class="icon-btn" onclick="toggleMembers()" title="Space info" aria-label="Space info">ⓘ</button>
     </div>
@@ -255,6 +256,15 @@
           <button data-v="comfort" onclick="setPreset('comfort');syncSettingsUI()">Comfort</button>
         </div>
       </div>
+      <div class="list-row">
+        <span class="lr-label">Detail<span class="lr-sub"> · how much a space renders</span></span>
+        <div class="segmented" id="setRenderMode">
+          <button data-v="auto" onclick="setRenderMode('auto')">Auto</button>
+          <button data-v="full" onclick="setRenderMode('full')">Full</button>
+          <button data-v="reduced" onclick="setRenderMode('reduced')">Reduced</button>
+          <button data-v="minimal" onclick="setRenderMode('minimal')">Minimal</button>
+        </div>
+      </div>
     </div>
   </div>
   <div class="settings-sec">
@@ -284,6 +294,37 @@
     <p class="hint" style="margin-left:4px">Your key never leaves this device except to reach the provider you choose. Local models need no key.</p>
   </div>
   <div class="row" style="justify-content:flex-end"><button class="btn-filled" onclick="dlgSettings.close()">Done</button></div>
+</dialog>
+
+<dialog id="dlgCustomize" class="sheet">
+  <h3>Customize this space</h3>
+  <p class="hint" id="custPreview" style="margin-left:4px">A signed appearance for everyone here.</p>
+  <div class="list">
+    <div class="list-row"><span class="lr-label">Accent</span>
+      <input type="color" id="custAccent" style="width:52px;height:34px;padding:0;border:0;background:none"></div>
+    <div class="list-row"><span class="lr-label">Background tint</span>
+      <input type="color" id="custTint" style="width:52px;height:34px;padding:0;border:0;background:none"></div>
+    <div class="list-row"><span class="lr-label">Dim<span class="lr-sub"> · how dark the canvas</span></span>
+      <input type="range" id="custDim" min="0" max="1000" step="20" style="flex:1"></div>
+    <div class="list-row"><span class="lr-label">Motion</span>
+      <div class="segmented" id="custMotion">
+        <button data-v="still" onclick="pickSeg('custMotion','still')">Still</button>
+        <button data-v="quiet" onclick="pickSeg('custMotion','quiet')">Quiet</button>
+        <button data-v="lively" onclick="pickSeg('custMotion','lively')">Lively</button>
+      </div></div>
+    <div class="list-row"><span class="lr-label">Density</span>
+      <div class="segmented" id="custDensity">
+        <button data-v="calm" onclick="pickSeg('custDensity','calm')">Calm</button>
+        <button data-v="dense" onclick="pickSeg('custDensity','dense')">Dense</button>
+      </div></div>
+  </div>
+  <p class="hint warn" id="custMsg" style="margin-left:4px"></p>
+  <div class="row">
+    <button class="btn-plain" id="genLookBtn" onclick="openGenerate()">✨ Generate a look</button>
+    <span style="flex:1"></span>
+    <button class="btn-plain" onclick="dlgCustomize.close()">Cancel</button>
+    <button class="btn-filled" onclick="applyCustomize()">Apply</button>
+  </div>
 </dialog>
 
 <dialog id="dlgMe">

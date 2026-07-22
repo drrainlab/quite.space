@@ -113,6 +113,11 @@ type SpaceMeta struct {
 	ManifestFrame []byte
 	// Members is the controller's rotation list (owned spaces only).
 	Members map[id.DeviceID][32]byte
+	// AppearanceOverride is the node-owned JSON of manual/AI customizations
+	// (SC-3/SC-4); AppearanceFrame is the current signed appearance snapshot
+	// tip, persisted so revisions chain across restarts. Empty until customized.
+	AppearanceOverride []byte
+	AppearanceFrame    []byte
 }
 
 // NewKeystore captures a fresh identity's key material.
@@ -186,7 +191,7 @@ func (k *Keystore) encode() []byte {
 	buf = codec.AppendUint(buf, ksKeySpaces)
 	buf = codec.AppendArray(buf, len(k.Spaces))
 	for _, sm := range sortedSpaces(k.Spaces) {
-		buf = codec.AppendArray(buf, 5)
+		buf = codec.AppendArray(buf, 7)
 		buf = codec.AppendBytes(buf, sm.id[:])
 		buf = codec.AppendText(buf, sm.meta.Title)
 		buf = codec.AppendBool(buf, sm.meta.Owned)
@@ -197,6 +202,8 @@ func (k *Keystore) encode() []byte {
 			buf = codec.AppendBytes(buf, mm.dev[:])
 			buf = codec.AppendBytes(buf, mm.xpub[:])
 		}
+		buf = codec.AppendBytes(buf, sm.meta.AppearanceOverride)
+		buf = codec.AppendBytes(buf, sm.meta.AppearanceFrame)
 	}
 	buf = codec.AppendUint(buf, ksKeyName)
 	buf = codec.AppendText(buf, k.DisplayName)
@@ -387,7 +394,8 @@ func decodeKeystore(data []byte) (*Keystore, error) {
 				return nil, er
 			}
 			for range cnt {
-				if _, er = d.ReadArray(); er != nil {
+				var acount int
+				if acount, er = d.ReadArray(); er != nil {
 					return nil, er
 				}
 				var tidB []byte
@@ -435,6 +443,17 @@ func decodeKeystore(data []byte) (*Keystore, error) {
 					copy(dev[:], devB)
 					copy(xpub[:], xpubB)
 					meta.Members[dev] = xpub
+				}
+				if acount >= 7 {
+					var ov, af []byte
+					if ov, er = d.ReadBytes(); er != nil {
+						return nil, er
+					}
+					if af, er = d.ReadBytes(); er != nil {
+						return nil, er
+					}
+					meta.AppearanceOverride = append([]byte(nil), ov...)
+					meta.AppearanceFrame = append([]byte(nil), af...)
 				}
 				k.Spaces[tid] = meta
 			}

@@ -98,6 +98,7 @@ func (a *APIServer) Handler() http.Handler {
 	mux.HandleFunc("POST /api/settings", a.auth(a.handleSetSettings))
 	mux.HandleFunc("POST /api/settings/llm/test", a.auth(a.handleTestLLM))
 	mux.HandleFunc("GET /api/spaces/{id}/appearance", a.auth(a.handleAppearance))
+	mux.HandleFunc("PATCH /api/spaces/{id}/appearance", a.auth(a.handlePatchAppearance))
 	mux.HandleFunc("GET /api/spaces/{id}/composition", a.auth(a.handleComposition))
 	mux.HandleFunc("GET /api/spaces/{id}/bundles", a.auth(a.handleBundles))
 	mux.HandleFunc("POST /api/lan/connect", a.auth(a.handleConnect))
