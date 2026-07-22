@@ -83,6 +83,28 @@ func (d *Device) SignKey() ed25519.PrivateKey { return d.priv }
 // keys (ADR-005). Handle with the same care as the signing key.
 func (d *Device) X25519Priv() [32]byte { return d.x25519 }
 
+// Seed exports the device's Ed25519 seed for encrypted storage (M1.0).
+func (d *Device) Seed() []byte { return d.priv.Seed() }
+
+// Seed exports the principal's Ed25519 seed for encrypted storage.
+func (p *Principal) Seed() []byte { return p.priv.Seed() }
+
+// NewDeviceFromKeys rebuilds a device from stored key material.
+func NewDeviceFromKeys(seed []byte, x25519Priv [32]byte) (*Device, error) {
+	if len(seed) != ed25519.SeedSize {
+		return nil, errors.New("identity: bad device seed length")
+	}
+	priv := ed25519.NewKeyFromSeed(seed)
+	d := &Device{priv: priv, x25519: x25519Priv}
+	copy(d.ID[:], priv.Public().(ed25519.PublicKey))
+	xpub, err := curve25519.X25519(x25519Priv[:], curve25519.Basepoint)
+	if err != nil {
+		return nil, err
+	}
+	copy(d.X25519Pub[:], xpub)
+	return d, nil
+}
+
 // Fingerprint of the principal's public key for manual verification.
 func (p *Principal) Fingerprint() string { return id.Fingerprint(p.ID[:]) }
 
