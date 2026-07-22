@@ -92,6 +92,11 @@ type Keystore struct {
 	Epochs map[id.TerminalID][]crypto.EpochKey
 	// SelfTerminalSeed is the user's participant terminal key.
 	SelfTerminalSeed []byte
+	// DisplayName is the user's chosen name; empty until onboarding sets it.
+	DisplayName string
+	// SelfManifestFrame is the authoritative self participant manifest at
+	// its current revision (persisted so a rename can chain from it).
+	SelfManifestFrame []byte
 	// Spaces holds per-space metadata needed to reopen them.
 	Spaces map[id.TerminalID]SpaceMeta
 }
@@ -139,10 +144,12 @@ const (
 	ksKeyEpochs    = 5
 	ksKeySelfTerm  = 6
 	ksKeySpaces    = 7
+	ksKeyName      = 8
+	ksKeySelfMan   = 9
 )
 
 func (k *Keystore) encode() []byte {
-	buf := codec.AppendMap(nil, 7)
+	buf := codec.AppendMap(nil, 9)
 	buf = codec.AppendUint(buf, ksKeyPrincipal)
 	buf = codec.AppendBytes(buf, k.PrincipalSeed)
 	buf = codec.AppendUint(buf, ksKeyDevice)
@@ -185,6 +192,10 @@ func (k *Keystore) encode() []byte {
 			buf = codec.AppendBytes(buf, mm.xpub[:])
 		}
 	}
+	buf = codec.AppendUint(buf, ksKeyName)
+	buf = codec.AppendText(buf, k.DisplayName)
+	buf = codec.AppendUint(buf, ksKeySelfMan)
+	buf = codec.AppendBytes(buf, k.SelfManifestFrame)
 	return buf
 }
 
@@ -419,6 +430,12 @@ func decodeKeystore(data []byte) (*Keystore, error) {
 				}
 				k.Spaces[tid] = meta
 			}
+		case ksKeyName:
+			k.DisplayName, er = d.ReadText()
+		case ksKeySelfMan:
+			var b []byte
+			b, er = d.ReadBytes()
+			k.SelfManifestFrame = append([]byte(nil), b...)
 		default:
 			er = d.SkipItem()
 		}

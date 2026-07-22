@@ -146,13 +146,52 @@
   <button onclick="dlgJoin.close()">cancel</button></div>
 </dialog>
 
+<!-- First-run onboarding (§11.1–11.2): no phone, no email, no shared account.
+     The local identity is created automatically; the user only picks a name. -->
+<dialog id="dlgWelcome">
+  <div id="obStep1">
+    <h3 id="obTitle">quiet spaces</h3>
+    <p class="hint" id="obLede">Personal spaces for conversations that belong to the people in them.</p>
+    <div class="row" style="margin-top:14px">
+      <button onclick="obStep('name')">Create a space</button>
+      <button onclick="dlgWelcome.close(); dlgJoin.showModal()">Enter with a pass</button>
+    </div>
+    <p class="hint" style="margin-top:12px">No phone, no email, no shared account.</p>
+  </div>
+  <div id="obStep2" style="display:none">
+    <h3>What should people call you?</h3>
+    <input id="obName" placeholder="a name" maxlength="64" autocomplete="off">
+    <p class="hint">People see this in your spaces. You can change it later.</p>
+    <div class="row"><button onclick="obSubmitName()">Continue</button></div>
+  </div>
+  <div id="obStep3" style="display:none">
+    <h3>Ready</h3>
+    <p class="hint">Your identity was created on this device — nowhere else.</p>
+    <div id="obGlyph" style="text-align:center;margin:12px 0"></div>
+    <p class="out" id="obWho" style="text-align:center;color:var(--fg)"></p>
+    <p class="hint" id="obDevice" style="text-align:center"></p>
+    <div class="row"><button onclick="obFinish()">Continue</button></div>
+  </div>
+</dialog>
+
 <dialog id="dlgMe">
-  <h3>this device</h3>
-  <p class="hint">share these two lines with a space owner to get invited:</p>
-  <p class="out" id="meDevice"></p>
-  <p class="out" id="meXpub"></p>
-  <p class="hint">fingerprint (compare out-of-band): <span id="meFp"></span></p>
-  <div class="row"><button onclick="dlgMe.close()">close</button></div>
+  <h3>This device</h3>
+  <div id="meGlyph" style="text-align:center;margin:8px 0"></div>
+  <p class="out" id="meName" style="text-align:center;color:var(--fg);font-size:16px"></p>
+  <p class="hint" id="meDeviceName" style="text-align:center"></p>
+  <p class="hint" style="margin-top:12px">Verification code — compare it out loud with someone to confirm you're talking to the right device:</p>
+  <p class="verify-phrase" id="meVerify" style="text-align:center;color:var(--accent)"></p>
+  <div class="row" style="margin-top:10px">
+    <button onclick="renameSelf()">Change name</button>
+    <button onclick="document.getElementById('meTech').style.display='block'">Technical details</button>
+    <button onclick="dlgMe.close()">Close</button>
+  </div>
+  <div id="meTech" style="display:none;margin-top:12px">
+    <p class="hint">device id (share with a space owner to be invited):</p>
+    <p class="out" id="meDevice"></p>
+    <p class="out" id="meXpub"></p>
+    <p class="hint">fingerprint: <span id="meFp" class="mono"></span></p>
+  </div>
 </dialog>
 
 <dialog id="dlgLan">

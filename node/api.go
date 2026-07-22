@@ -13,6 +13,7 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"os"
 	"slices"
 	"strings"
 	"time"
@@ -70,6 +71,8 @@ func itoa(n int) string {
 func (a *APIServer) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/status", a.auth(a.handleStatus))
+	mux.HandleFunc("GET /api/onboarding", a.auth(a.handleOnboarding))
+	mux.HandleFunc("POST /api/identity/name", a.auth(a.handleSetName))
 	mux.HandleFunc("GET /api/spaces", a.auth(a.handleSpaces))
 	mux.HandleFunc("POST /api/spaces", a.auth(a.handleCreateSpace))
 	mux.HandleFunc("GET /api/spaces/{id}/messages", a.auth(a.handleMessages))
@@ -143,6 +146,38 @@ type statusResp struct {
 		RX        int    `json:"rx"`
 		Err       string `json:"err,omitempty"`
 	} `json:"mesh"`
+}
+
+func (a *APIServer) handleOnboarding(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, map[string]any{
+		"needs_name":  a.rt.NeedsOnboarding(),
+		"name":        a.rt.DisplayName(),
+		"device_name": deviceName(),
+		"fingerprint": a.rt.Principal.Fingerprint(),
+	})
+}
+
+func (a *APIServer) handleSetName(w http.ResponseWriter, r *http.Request) {
+	body, err := readBody[struct {
+		Name string `json:"name"`
+	}](r)
+	if err != nil || strings.TrimSpace(body.Name) == "" {
+		httpErr(w, http.StatusBadRequest, errors.New("name required"))
+		return
+	}
+	if err := a.rt.SetName(body.Name); err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, map[string]string{"name": a.rt.DisplayName()})
+}
+
+// deviceName returns a friendly, platform-neutral device label.
+func deviceName() string {
+	if h, err := os.Hostname(); err == nil && h != "" {
+		return h
+	}
+	return "this device"
 }
 
 func (a *APIServer) handleStatus(w http.ResponseWriter, r *http.Request) {

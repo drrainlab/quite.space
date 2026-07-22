@@ -79,6 +79,10 @@
   .space .undec { color: var(--warn); }
   .member .mhead { display: flex; align-items: center; gap: 8px; }
   .member .mname { color: var(--fg); }
+  .empty-spaces { padding: 24px 12px; text-align: center; }
+  .empty-spaces .et { color: var(--fg); margin-bottom: 6px; }
+  .empty-spaces .eb { color: var(--dim); font-size: 13px; }
+  .verify-phrase { font-size: 14px; letter-spacing: 1px; }
   #content { flex: 1; display: flex; flex-direction: column; min-width: 0; }
   #persona {
     padding: 6px 16px; border-bottom: 1px solid var(--line);

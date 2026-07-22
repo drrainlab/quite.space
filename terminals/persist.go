@@ -167,6 +167,49 @@ func NewParticipantFrom(prin *identity.Principal, dev *identity.Device,
 	return p, priv.Seed(), nil
 }
 
+// NewParticipantFromManifest adopts a previously-signed self manifest frame
+// (persisted across restarts) so its revision chain stays intact.
+func NewParticipantFromManifest(prin *identity.Principal, dev *identity.Device,
+	terminalSeed, manifestFrame []byte) (*Participant, error) {
+	if len(terminalSeed) != ed25519.SeedSize {
+		return nil, errors.New("terminals: bad participant terminal seed")
+	}
+	m, err := manifest.Decode(manifestFrame)
+	if err != nil {
+		return nil, err
+	}
+	priv := ed25519.NewKeyFromSeed(terminalSeed)
+	p := &Participant{
+		Principal:     prin,
+		Device:        dev,
+		terminalPriv:  priv,
+		chains:        map[id.TerminalID]*chainState{},
+		Manifest:      m,
+		ManifestFrame: append([]byte(nil), manifestFrame...),
+	}
+	copy(p.TerminalID[:], priv.Public().(ed25519.PublicKey))
+	return p, nil
+}
+
+// Rename bumps the self manifest to a new revision carrying a new display
+// name, chaining Previous to the current frame's hash so members' registries
+// accept it. Returns the new signed frame to persist and republish.
+func (p *Participant) Rename(name string) ([]byte, error) {
+	m := *p.Manifest
+	m.DeclaredLabels = []string{name}
+	prev := manifest.Hash(p.ManifestFrame)
+	m.Revision = p.Manifest.Revision + 1
+	m.Previous = &prev
+	m.Signature = nil
+	frame, err := m.Sign(p.terminalPriv)
+	if err != nil {
+		return nil, err
+	}
+	p.Manifest = &m
+	p.ManifestFrame = frame
+	return frame, nil
+}
+
 // ResumeChain restores the participant's per-space sequence counter and tip
 // from the log, so writing continues seamlessly after a restart.
 func (p *Participant) ResumeChain(s *Space) {

@@ -98,11 +98,11 @@ func (r *Registry) Upsert(frame []byte) (*Terminal, error) {
 		case m.Previous == nil || *m.Previous != existing.ManifestHash:
 			return nil, errors.New("registry: manifest revision chain broken")
 		}
-	} else if m.Revision != 1 {
-		// First sight must be revision 1, or arrive with history we can walk
-		// later; v0 keeps it strict and simple.
-		return nil, fmt.Errorf("registry: first manifest for terminal must be revision 1, got %d", m.Revision)
 	}
+	// First sight of a terminal accepts its current revision as the
+	// baseline: a member who renamed before joining arrives above revision 1,
+	// and history we never saw cannot be verified anyway. The signature is
+	// checked; subsequent revisions must chain from this baseline.
 	t := &Terminal{
 		ID:            m.Terminal,
 		Manifest:      m,

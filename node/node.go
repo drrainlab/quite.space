@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -91,15 +92,30 @@ func Open(dataDir string, passphrase []byte, displayName string) (*Runtime, erro
 		return nil, err
 	}
 
-	// Self participant: stable terminal key across restarts.
-	self, seed, err := terminals.NewParticipantFrom(r.Principal, r.Device,
-		r.ks.SelfTerminalSeed, human.Template(displayName))
-	if err != nil {
-		return nil, err
+	// Self participant. A persisted manifest frame (rev chain intact) is
+	// authoritative; otherwise mint a fresh one. The persisted display name
+	// wins over the launch flag; empty name means onboarding is pending.
+	if r.ks.DisplayName != "" {
+		displayName = r.ks.DisplayName
 	}
-	r.Self = self
-	if r.ks.SelfTerminalSeed == nil {
-		r.ks.SelfTerminalSeed = seed
+	if r.ks.SelfManifestFrame != nil && r.ks.SelfTerminalSeed != nil {
+		self, err := terminals.NewParticipantFromManifest(r.Principal, r.Device,
+			r.ks.SelfTerminalSeed, r.ks.SelfManifestFrame)
+		if err != nil {
+			return nil, err
+		}
+		r.Self = self
+	} else {
+		self, seed, err := terminals.NewParticipantFrom(r.Principal, r.Device,
+			r.ks.SelfTerminalSeed, human.Template(displayName))
+		if err != nil {
+			return nil, err
+		}
+		r.Self = self
+		if r.ks.SelfTerminalSeed == nil {
+			r.ks.SelfTerminalSeed = seed
+		}
+		r.ks.SelfManifestFrame = self.ManifestFrame
 	}
 
 	// Reopen every known space: keys first, then the log, so the replay
@@ -315,6 +331,37 @@ func (r *Runtime) DisplayName() string {
 		return r.Self.Manifest.DeclaredLabels[0]
 	}
 	return "me"
+}
+
+// NeedsOnboarding reports whether the user has not chosen a name yet.
+func (r *Runtime) NeedsOnboarding() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.ks.DisplayName == ""
+}
+
+// SetName records the user's display name (onboarding or rename): it bumps
+// the self manifest revision, republishes it into every space so members
+// see the new name, and persists it.
+func (r *Runtime) SetName(name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" || len(name) > 64 {
+		return errors.New("node: name must be 1..64 characters")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	frame, err := r.Self.Rename(name)
+	if err != nil {
+		return err
+	}
+	r.ks.DisplayName = name
+	r.ks.SelfManifestFrame = frame
+	for tid, st := range r.spaces {
+		if _, _, err := r.Self.PublishManifest(st.space); err != nil {
+			return fmt.Errorf("node: republishing name into %s: %w", tid, err)
+		}
+	}
+	return r.saveKeystore()
 }
 
 // Members projects the member cards of a space.

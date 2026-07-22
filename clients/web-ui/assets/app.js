@@ -181,6 +181,13 @@ async function refresh() {
     spacesCache = await api('/api/spaces');
     const box = document.getElementById('spaces');
     box.innerHTML = '';
+    if (spacesCache.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'empty-spaces';
+      empty.innerHTML = `<div class="et">${esc(t('spaces.empty.title'))}</div>` +
+        `<div class="eb">${esc(t('spaces.empty.body'))}</div>`;
+      box.appendChild(empty);
+    }
     for (const s of spacesCache) {
       const d = document.createElement('div');
       d.className = 'space' + (s.id === current ? ' active' : '');
@@ -348,11 +355,66 @@ async function joinSpace() {
   } catch (err) { alert(err.message); }
 }
 
+// ---- First run & identity (UI-1) ----
+
+let onboardInfo = null;
+
+async function checkOnboarding() {
+  try {
+    onboardInfo = await api('/api/onboarding');
+    if (onboardInfo.needs_name && !dlgWelcome.open) {
+      obStep('welcome');
+      dlgWelcome.showModal();
+    }
+  } catch (e) { console.error(e); }
+}
+
+function obStep(which) {
+  document.getElementById('obStep1').style.display = which === 'welcome' ? 'block' : 'none';
+  document.getElementById('obStep2').style.display = which === 'name' ? 'block' : 'none';
+  document.getElementById('obStep3').style.display = which === 'done' ? 'block' : 'none';
+  if (which === 'name') setTimeout(() => document.getElementById('obName').focus(), 50);
+}
+
+async function obSubmitName() {
+  const name = document.getElementById('obName').value.trim();
+  if (!name) { alert('please choose a name'); return; }
+  try {
+    await api('/api/identity/name', { method: 'POST', body: JSON.stringify({ name }) });
+    onboardInfo = await api('/api/onboarding');
+    document.getElementById('obGlyph').innerHTML =
+      `<span class="glyph" style="width:56px;height:56px">${glyphSVG(onboardInfo.fingerprint, 'human', 56)}</span>`;
+    document.getElementById('obWho').textContent = onboardInfo.name;
+    document.getElementById('obDevice').textContent = onboardInfo.device_name;
+    obStep('done');
+  } catch (err) { alert(err.message); }
+}
+
+function obFinish() { dlgWelcome.close(); refresh(); }
+
 function showIdentity() {
+  const fp = status.fingerprint;
+  document.getElementById('meGlyph').innerHTML =
+    `<span class="glyph" style="width:56px;height:56px">${glyphSVG(fp, 'human', 56)}</span>`;
+  document.getElementById('meName').textContent = (onboardInfo && onboardInfo.name) || 'me';
+  document.getElementById('meDeviceName').textContent = (onboardInfo && onboardInfo.device_name) || 'this device';
+  document.getElementById('meVerify').textContent = verificationPhrase(fp, 4);
   document.getElementById('meDevice').textContent = status.device_id;
   document.getElementById('meXpub').textContent = status.device_xpub;
-  document.getElementById('meFp').textContent = status.fingerprint;
+  document.getElementById('meFp').textContent = fp;
+  document.getElementById('meTech').style.display = 'none';
   dlgMe.showModal();
+}
+
+async function renameSelf() {
+  const name = prompt('Change your name to:', (onboardInfo && onboardInfo.name) || '');
+  if (!name || !name.trim()) return;
+  try {
+    await api('/api/identity/name', { method: 'POST', body: JSON.stringify({ name: name.trim() }) });
+    onboardInfo = await api('/api/onboarding');
+    dlgMe.close();
+    refresh();
+  } catch (err) { alert(err.message); }
 }
 
 let inviteSpace = null;
@@ -1033,5 +1095,6 @@ function playDrone(e) {
 
 document.getElementById('sigPreset').addEventListener('change', () => { lastPreset = null; renderSignalPreview(); });
 
+checkOnboarding();
 refresh();
 setInterval(refresh, 2000);

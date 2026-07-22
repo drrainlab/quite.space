@@ -144,7 +144,9 @@ func TestRevisionChain(t *testing.T) {
 	}
 }
 
-func TestFirstManifestMustBeRevisionOne(t *testing.T) {
+// A member who renamed before joining arrives above revision 1; first sight
+// accepts the current revision as the baseline, then requires chaining.
+func TestFirstSightAcceptsAnyRevision(t *testing.T) {
 	r := New()
 	priv, tid := terminalKey(t, 6)
 	prev := id.Hash{1}
@@ -162,8 +164,19 @@ func TestFirstManifestMustBeRevisionOne(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.Upsert(frame); err == nil {
-		t.Fatal("accepted unknown terminal at revision 5")
+	got, err := r.Upsert(frame)
+	if err != nil {
+		t.Fatalf("first sight at revision 5 rejected: %v", err)
+	}
+	if got.Manifest.Revision != 5 {
+		t.Fatalf("baseline revision wrong: %d", got.Manifest.Revision)
+	}
+	// A stale revision is still rejected after the baseline.
+	m.Revision = 3
+	m.Previous = nil
+	stale, _ := m.Sign(priv)
+	if _, err := r.Upsert(stale); err == nil {
+		t.Fatal("accepted a stale revision after baseline")
 	}
 }
 
