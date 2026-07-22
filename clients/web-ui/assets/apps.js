@@ -158,29 +158,60 @@ function renderGenericApp(box, def, state) {
 }
 
 // ---- composer integration: create + embed a poll/form ----
+// A styled sheet (stacked over the composer) instead of native prompt().
 
-async function insertAppBlock(kind) {
-  const props = {};
-  if (kind === 'poll') {
-    const q = prompt('Poll question:');
-    if (!q) return;
-    const opts = prompt('Options (comma separated):', 'yes, no');
-    if (!opts) return;
-    props.question = q;
-    props.options = opts;
-  } else {
-    const title = prompt('Form title:');
-    if (!title) return;
-    const fields = prompt('Fields (comma separated):', 'answer');
-    if (!fields) return;
-    props.title = title;
-    props.fields = fields;
-  }
+let appBlockKind = null;
+
+const APP_BLOCK_FORMS = {
+  poll: {
+    title: '📊 Add a poll',
+    hint: 'Members vote inside the post; a revote replaces the previous choice.',
+    l1: 'Question', p1: 'Which mix for the EP?',
+    l2: 'Options', p2: 'analog, digital',
+  },
+  form: {
+    title: '📝 Add a form',
+    hint: 'Responses are signed events, visible to members of this space.',
+    l1: 'Title', p1: 'Remix submissions',
+    l2: 'Fields', p2: 'name, link',
+  },
+};
+
+function insertAppBlock(kind) {
+  appBlockKind = kind;
+  const f = APP_BLOCK_FORMS[kind];
+  document.getElementById('appBlockTitle').textContent = f.title;
+  document.getElementById('appBlockHint').textContent = f.hint;
+  document.getElementById('appBlockL1').textContent = f.l1;
+  document.getElementById('appBlockL2').textContent = f.l2;
+  const f1 = document.getElementById('appBlockF1');
+  const f2 = document.getElementById('appBlockF2');
+  f1.value = ''; f1.placeholder = f.p1;
+  f2.value = f.p2; f2.placeholder = f.p2;
+  document.getElementById('appBlockMsg').textContent = '';
+  dlgAppBlock.showModal();
+  setTimeout(() => f1.focus(), 50);
+}
+
+async function confirmAppBlock() {
+  const kind = appBlockKind;
+  const v1 = document.getElementById('appBlockF1').value.trim();
+  const v2 = document.getElementById('appBlockF2').value.trim();
+  const msg = document.getElementById('appBlockMsg');
+  if (!v1) { msg.textContent = 'A ' + (kind === 'poll' ? 'question' : 'title') + ' is required.'; return; }
+  if (!v2) { msg.textContent = (kind === 'poll' ? 'Options' : 'Fields') + ' are required.'; return; }
+  const props = kind === 'poll'
+    ? { question: v1, options: v2 }
+    : { title: v1, fields: v2 };
+  const btn = document.getElementById('appBlockAdd');
+  btn.disabled = true;
   try {
     const r = await api(`/api/spaces/${current}/apps`, { method: 'POST',
       body: JSON.stringify({ app_id: kind, document_id: composerDoc.document_id, props }) });
     composerDoc.blocks.push({ id: 'b' + randHex16().slice(0, 8), type: 'app',
       props: { asset: r.instance_id } });
     renderComposerBlocks();
-  } catch (err) { document.getElementById('compMsg').textContent = err.message; }
+    dlgAppBlock.close();
+  } catch (err) { msg.textContent = err.message; }
+  finally { btn.disabled = false; }
 }

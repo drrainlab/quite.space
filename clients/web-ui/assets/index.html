@@ -360,6 +360,22 @@
   </div>
 </dialog>
 
+<dialog id="dlgAppBlock" class="sheet">
+  <h3 id="appBlockTitle">Add a poll</h3>
+  <p class="hint" id="appBlockHint" style="margin-left:2px"></p>
+  <div class="list">
+    <div class="list-row"><span class="lr-label" id="appBlockL1">Question</span>
+      <input type="text" id="appBlockF1" placeholder=""></div>
+    <div class="list-row"><span class="lr-label" id="appBlockL2">Options</span>
+      <input type="text" id="appBlockF2" placeholder=""></div>
+  </div>
+  <p class="hint warn" id="appBlockMsg" style="margin-left:2px"></p>
+  <div class="row" style="justify-content:flex-end">
+    <button class="btn-plain" onclick="dlgAppBlock.close()">Cancel</button>
+    <button class="btn-filled" id="appBlockAdd" onclick="confirmAppBlock()">Add</button>
+  </div>
+</dialog>
+
 <dialog id="dlgGenerate" class="sheet">
   <h3>✨ Generate a look</h3>
   <p class="hint" id="genProviderNote" style="margin-left:4px"></p>
