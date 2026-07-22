@@ -30,8 +30,9 @@ const (
 	keyFrames   = 3
 )
 
-// Write exports frames for one terminal.
-func Write(path string, terminal id.TerminalID, frames [][]byte) error {
+// Encode serializes frames for one terminal (same bytes as the file form —
+// bundles travel identically by file, QR, or relay).
+func Encode(terminal id.TerminalID, frames [][]byte) []byte {
 	buf := []byte(magic)
 	buf = codec.AppendMap(buf, 3)
 	buf = codec.AppendUint(buf, keyVersion)
@@ -43,22 +44,32 @@ func Write(path string, terminal id.TerminalID, frames [][]byte) error {
 	for _, f := range frames {
 		buf = codec.AppendBytes(buf, f)
 	}
+	return buf
+}
+
+// Write exports frames for one terminal to a file.
+func Write(path string, terminal id.TerminalID, frames [][]byte) error {
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, buf, 0o600); err != nil {
+	if err := os.WriteFile(tmp, Encode(terminal, frames), 0o600); err != nil {
 		return err
 	}
 	return os.Rename(tmp, path)
 }
 
-// Read imports a bundle, returning the terminal and its frames. Frames are
-// opaque here — validation (signatures, chains, admission) happens in the
-// event log, not in the transport (ADR-007).
+// Read imports a bundle file.
 func Read(path string) (id.TerminalID, [][]byte, error) {
-	var terminal id.TerminalID
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return terminal, nil, err
+		return id.TerminalID{}, nil, err
 	}
+	return Decode(data)
+}
+
+// Decode parses bundle bytes, returning the terminal and its frames. Frames
+// are opaque here — validation (signatures, chains, admission) happens in
+// the event log, not in the transport (ADR-007).
+func Decode(data []byte) (id.TerminalID, [][]byte, error) {
+	var terminal id.TerminalID
 	if len(data) < len(magic) || string(data[:len(magic)]) != magic {
 		return terminal, nil, errors.New("bundle: not a terminal-bundle file")
 	}

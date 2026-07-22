@@ -82,6 +82,8 @@ func (a *APIServer) Handler() http.Handler {
 	mux.HandleFunc("POST /api/invites/accept", a.auth(a.handleJoin))
 	mux.HandleFunc("POST /api/lan/connect", a.auth(a.handleConnect))
 	mux.HandleFunc("POST /api/mesh/connect", a.auth(a.handleMeshConnect))
+	mux.HandleFunc("POST /api/relay/push", a.auth(a.handleRelayPush))
+	mux.HandleFunc("POST /api/relay/pull", a.auth(a.handleRelayPull))
 	if a.ui != nil {
 		mux.Handle("GET /", http.FileServerFS(a.ui))
 	}
@@ -529,6 +531,49 @@ func (a *APIServer) handleJoin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]string{"id": tid.Hex()})
+}
+
+func (a *APIServer) handleRelayPush(w http.ResponseWriter, r *http.Request) {
+	body, err := readBody[struct {
+		Addr  string `json:"addr"`
+		Space string `json:"space"`
+	}](r)
+	if err != nil || body.Addr == "" || body.Space == "" {
+		httpErr(w, http.StatusBadRequest, errors.New("addr and space required"))
+		return
+	}
+	tid, err := id.ParseTerminalID(body.Space)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, errors.New("bad space id"))
+		return
+	}
+	pushed, deadline, err := a.rt.PushToRelay(body.Addr, tid)
+	if err != nil {
+		httpErr(w, http.StatusBadGateway, err)
+		return
+	}
+	// Honest wording: the relay accepted the bundle; nobody received it.
+	writeJSON(w, map[string]any{
+		"events_pushed":     pushed,
+		"relay_holds_until": deadline,
+		"status":            "accepted_by_relay",
+	})
+}
+
+func (a *APIServer) handleRelayPull(w http.ResponseWriter, r *http.Request) {
+	body, err := readBody[struct {
+		Addr string `json:"addr"`
+	}](r)
+	if err != nil || body.Addr == "" {
+		httpErr(w, http.StatusBadRequest, errors.New("addr required"))
+		return
+	}
+	applied, err := a.rt.PullFromRelay(body.Addr)
+	if err != nil {
+		httpErr(w, http.StatusBadGateway, err)
+		return
+	}
+	writeJSON(w, map[string]int{"events_applied": applied})
 }
 
 func (a *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
