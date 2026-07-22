@@ -21,7 +21,9 @@ import (
 	"github.com/drrainlab/quiet_places/protocol/schemas"
 	"github.com/drrainlab/quiet_places/terminals"
 	"github.com/drrainlab/quiet_places/terminals/human"
+	"github.com/drrainlab/quiet_places/transports"
 	"github.com/drrainlab/quiet_places/transports/lan"
+	"github.com/drrainlab/quiet_places/transports/meshtastic"
 )
 
 // Runtime is one running node.
@@ -38,14 +40,21 @@ type Runtime struct {
 
 	lanNode *lan.Node
 	lanPort int
+	mesh    *meshtastic.Radio
 	stop    chan struct{}
 	wg      sync.WaitGroup
+}
+
+// link is any live transport connection the runtime can pump.
+type link interface {
+	transports.Endpoint
+	Closed() (bool, error)
 }
 
 type spaceState struct {
 	space *terminals.Space
 	eng   *kernelsync.Engine
-	conns []*lan.Conn
+	conns []link
 }
 
 // Open unlocks the data root and reconstructs the node: identity from the

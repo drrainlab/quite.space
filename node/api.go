@@ -76,6 +76,7 @@ func (a *APIServer) Handler() http.Handler {
 	mux.HandleFunc("POST /api/spaces/{id}/invites", a.auth(a.handleMintInvite))
 	mux.HandleFunc("POST /api/invites/accept", a.auth(a.handleJoin))
 	mux.HandleFunc("POST /api/lan/connect", a.auth(a.handleConnect))
+	mux.HandleFunc("POST /api/mesh/connect", a.auth(a.handleMeshConnect))
 	if a.ui != nil {
 		mux.Handle("GET /", http.FileServerFS(a.ui))
 	}
@@ -122,6 +123,13 @@ type statusResp struct {
 		Port      int  `json:"port"`
 		Peers     int  `json:"peers"`
 	} `json:"lan"`
+	Mesh struct {
+		Connected bool   `json:"connected"`
+		NodeNum   uint32 `json:"node_num"`
+		TX        int    `json:"tx"`
+		RX        int    `json:"rx"`
+		Err       string `json:"err,omitempty"`
+	} `json:"mesh"`
 }
 
 func (a *APIServer) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -131,7 +139,25 @@ func (a *APIServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 	resp.DeviceXPub = hex.EncodeToString(a.rt.Device.X25519Pub[:])
 	l := a.rt.LAN()
 	resp.LAN.Listening, resp.LAN.Port, resp.LAN.Peers = l.Listening, l.Port, l.Peers
+	m := a.rt.Mesh()
+	resp.Mesh.Connected, resp.Mesh.NodeNum = m.Connected, m.NodeNum
+	resp.Mesh.TX, resp.Mesh.RX, resp.Mesh.Err = m.TX, m.RX, m.Err
 	writeJSON(w, resp)
+}
+
+func (a *APIServer) handleMeshConnect(w http.ResponseWriter, r *http.Request) {
+	body, err := readBody[struct {
+		Target string `json:"target"`
+	}](r)
+	if err != nil || body.Target == "" {
+		httpErr(w, http.StatusBadRequest, errors.New("target required: tcp:HOST[:PORT] or serial:/dev/PATH"))
+		return
+	}
+	if err := a.rt.StartMeshtastic(strings.TrimSpace(body.Target)); err != nil {
+		httpErr(w, http.StatusBadGateway, err)
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
 }
 
 type spaceResp struct {

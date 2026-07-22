@@ -27,6 +27,8 @@ func main() {
 		err = runIdentity(os.Args[2:])
 	case "inspect":
 		err = runInspect(os.Args[2:])
+	case "meshhub":
+		err = runMeshHub(os.Args[2:])
 	default:
 		usage()
 		os.Exit(2)
@@ -42,6 +44,7 @@ func usage() {
 
 usage:
   terminal ui   --passphrase P [--data DIR] [--name N] [--no-browser] [--no-lan]
+                [--mesh tcp:HOST[:PORT] | --mesh serial:/dev/PATH]
                                          run the node and open the web UI
   terminal node --passphrase P [--data DIR]
                                          run headless (API only, no UI assets)
@@ -52,6 +55,8 @@ usage:
   terminal identity restore --passphrase P --in FILE
                                          restore an identity from a bundle
   terminal inspect --bundle FILE         list frames in a *.terminal-bundle
+  terminal meshhub [--listen ADDR]       run a fake Meshtastic mesh (dev tool):
+                                         point nodes at it with --mesh tcp:ADDR
 `)
 }
 

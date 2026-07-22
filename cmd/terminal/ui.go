@@ -54,6 +54,14 @@ func runUI(args []string, withUI bool) error {
 			fmt.Printf("LAN: listening on :%d, announcing to %s\n", rt.LAN().Port, lan.MulticastAddr)
 		}
 	}
+	if target := flags["mesh"]; target != "" {
+		if err := rt.StartMeshtastic(target); err != nil {
+			fmt.Println("mesh: connection failed:", err)
+		} else {
+			fmt.Printf("mesh: connected as node %d via %s (summaries every 60s — LoRa airtime)\n",
+				rt.Mesh().NodeNum, target)
+		}
+	}
 
 	var uiFS = webui.FS()
 	if !withUI {

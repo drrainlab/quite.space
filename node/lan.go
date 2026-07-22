@@ -123,10 +123,16 @@ func (r *Runtime) announceOnce(announceAddr string, port int, nonce uint64) {
 	_ = lan.AnnounceOnce(announceAddr, port, hints, nonce)
 }
 
-// adoptConn attaches a connection to every space and pumps it until it
-// dies. Frames for other terminals are simply not matched by the engines —
-// each engine checks its own terminal id.
+// adoptConn attaches a LAN connection with realtime cadence.
 func (r *Runtime) adoptConn(c *lan.Conn) {
+	r.adoptLink(c, pumpEvery, 2*time.Second)
+}
+
+// adoptLink attaches any link to every space and pumps it until it dies.
+// Frames for other terminals are simply not matched by the engines — each
+// engine checks its own terminal id. Cadence is per-transport: a LAN link
+// pumps in milliseconds; a LoRa link must respect airtime (plan §19 T6).
+func (r *Runtime) adoptLink(c link, pump, summaryEvery time.Duration) {
 	r.mu.Lock()
 	states := make([]*spaceState, 0, len(r.spaces))
 	for _, st := range r.spaces {
@@ -138,7 +144,7 @@ func (r *Runtime) adoptConn(c *lan.Conn) {
 	r.wg.Add(1)
 	go func() {
 		defer r.wg.Done()
-		t := time.NewTicker(pumpEvery)
+		t := time.NewTicker(pump)
 		defer t.Stop()
 		lastSummary := time.Time{}
 		for {
@@ -152,7 +158,7 @@ func (r *Runtime) adoptConn(c *lan.Conn) {
 				return
 			}
 			r.mu.Lock()
-			if time.Since(lastSummary) > 2*time.Second {
+			if time.Since(lastSummary) > summaryEvery {
 				for _, st := range states {
 					_ = st.eng.SendSummary(c)
 				}
@@ -166,7 +172,7 @@ func (r *Runtime) adoptConn(c *lan.Conn) {
 	}()
 }
 
-func (r *Runtime) dropConn(c *lan.Conn) {
+func (r *Runtime) dropConn(c link) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, st := range r.spaces {
@@ -184,7 +190,7 @@ func (r *Runtime) dropConn(c *lan.Conn) {
 func (r *Runtime) LAN() LANStatus {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	peers := map[*lan.Conn]bool{}
+	peers := map[link]bool{}
 	for _, st := range r.spaces {
 		for _, c := range st.conns {
 			if closed, _ := c.Closed(); !closed {
