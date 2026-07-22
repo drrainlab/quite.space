@@ -99,6 +99,11 @@ type Keystore struct {
 	SelfManifestFrame []byte
 	// Spaces holds per-space metadata needed to reopen them.
 	Spaces map[id.TerminalID]SpaceMeta
+	// Settings is an opaque local-settings blob owned by the node layer
+	// (UI prefs + LLM config, including the API key). Encrypted at rest with
+	// the rest of the keystore; never leaves the device except to the
+	// user-chosen provider on an explicit action.
+	Settings []byte
 }
 
 // SpaceMeta is what the node must remember about a space besides its log.
@@ -146,10 +151,11 @@ const (
 	ksKeySpaces    = 7
 	ksKeyName      = 8
 	ksKeySelfMan   = 9
+	ksKeySettings  = 10
 )
 
 func (k *Keystore) encode() []byte {
-	buf := codec.AppendMap(nil, 9)
+	buf := codec.AppendMap(nil, 10)
 	buf = codec.AppendUint(buf, ksKeyPrincipal)
 	buf = codec.AppendBytes(buf, k.PrincipalSeed)
 	buf = codec.AppendUint(buf, ksKeyDevice)
@@ -196,6 +202,8 @@ func (k *Keystore) encode() []byte {
 	buf = codec.AppendText(buf, k.DisplayName)
 	buf = codec.AppendUint(buf, ksKeySelfMan)
 	buf = codec.AppendBytes(buf, k.SelfManifestFrame)
+	buf = codec.AppendUint(buf, ksKeySettings)
+	buf = codec.AppendBytes(buf, k.Settings)
 	return buf
 }
 
@@ -432,6 +440,12 @@ func decodeKeystore(data []byte) (*Keystore, error) {
 			}
 		case ksKeyName:
 			k.DisplayName, er = d.ReadText()
+		case ksKeySettings:
+			b, er2 := d.ReadBytes()
+			if er2 != nil {
+				return nil, er2
+			}
+			k.Settings = append([]byte(nil), b...)
 		case ksKeySelfMan:
 			var b []byte
 			b, er = d.ReadBytes()

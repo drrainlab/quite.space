@@ -257,6 +257,32 @@
       </div>
     </div>
   </div>
+  <div class="settings-sec">
+    <p class="hint">AI regeneration</p>
+    <div class="list">
+      <div class="list-row">
+        <span class="lr-label">Provider</span>
+        <div class="segmented" id="setProvider">
+          <button data-v="anthropic" onclick="pickProvider('anthropic')">Claude</button>
+          <button data-v="openai" onclick="pickProvider('openai')">OpenAI</button>
+          <button data-v="openai-compatible" onclick="pickProvider('openai-compatible')">Custom</button>
+          <button data-v="local" onclick="pickProvider('local')">Local</button>
+        </div>
+      </div>
+      <div class="list-row"><span class="lr-label">Model</span>
+        <input type="text" id="llmModel" placeholder="e.g. claude-sonnet-5 / llama3.1"></div>
+      <div class="list-row" id="rowBaseURL"><span class="lr-label">Base URL</span>
+        <input type="text" id="llmBaseURL" placeholder="https://… or http://localhost:11434"></div>
+      <div class="list-row" id="rowKey"><span class="lr-label">API key</span>
+        <input type="password" id="llmKey" placeholder="stored on this device only" autocomplete="off"></div>
+    </div>
+    <p class="hint" id="llmMsg" style="margin-left:4px"></p>
+    <div class="row">
+      <button class="btn-tinted" onclick="saveLLM()">Save</button>
+      <button class="btn-plain" onclick="testLLM()">Test connection</button>
+    </div>
+    <p class="hint" style="margin-left:4px">Your key never leaves this device except to reach the provider you choose. Local models need no key.</p>
+  </div>
   <div class="row" style="justify-content:flex-end"><button class="btn-filled" onclick="dlgSettings.close()">Done</button></div>
 </dialog>
 

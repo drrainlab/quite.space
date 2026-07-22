@@ -178,7 +178,22 @@ function applyAppearance() {
 }
 function setTheme(t) { localStorage.setItem('qp.theme', t); applyAppearance(); }
 function setPreset(p) { localStorage.setItem('qp.preset', p); applyAppearance(); }
-function openSettings() { syncSettingsUI(); dlgSettings.showModal(); }
+let llmSettings = { provider: '', model: '', base_url: '', has_key: false };
+async function openSettings() {
+  syncSettingsUI();
+  try {
+    const s = await api('/api/settings');
+    llmSettings = s.llm || llmSettings;
+    document.getElementById('llmModel').value = llmSettings.model || '';
+    document.getElementById('llmBaseURL').value = llmSettings.base_url || '';
+    document.getElementById('llmKey').value = '';
+    document.getElementById('llmKey').placeholder = llmSettings.has_key
+      ? 'key saved — leave blank to keep' : 'stored on this device only';
+    pickProvider(llmSettings.provider || 'anthropic', true);
+    document.getElementById('llmMsg').textContent = '';
+  } catch (e) { /* settings unavailable */ }
+  dlgSettings.showModal();
+}
 function syncSettingsUI() {
   const theme = localStorage.getItem('qp.theme') || 'auto';
   const preset = localStorage.getItem('qp.preset') || 'quiet-glass';
@@ -186,6 +201,53 @@ function syncSettingsUI() {
     b.classList.toggle('sel', b.dataset.v === theme));
   document.querySelectorAll('#setPreset button').forEach(b =>
     b.classList.toggle('sel', b.dataset.v === preset));
+}
+function pickProvider(p, keepModel) {
+  llmSettings.provider = p;
+  document.querySelectorAll('#setProvider button').forEach(b =>
+    b.classList.toggle('sel', b.dataset.v === p));
+  // Custom needs a base URL + key; Local needs a base URL, no key.
+  document.getElementById('rowBaseURL').style.display =
+    (p === 'openai-compatible' || p === 'local') ? '' : 'none';
+  document.getElementById('rowKey').style.display = (p === 'local') ? 'none' : '';
+}
+async function persistPrefs() {
+  // Mirror shell prefs into the keystore alongside the LLM config.
+  try {
+    await api('/api/settings', { method: 'POST', body: JSON.stringify({
+      theme: localStorage.getItem('qp.theme') || 'auto',
+      preset: localStorage.getItem('qp.preset') || 'quiet-glass',
+      render_mode: localStorage.getItem('qp.rendermode') || 'auto',
+      llm: { provider: llmSettings.provider, model: llmSettings.model,
+        base_url: llmSettings.base_url }, // no api_key → keep stored
+    }) });
+  } catch (e) { /* offline-friendly: localStorage already holds prefs */ }
+}
+async function saveLLM() {
+  const msg = document.getElementById('llmMsg');
+  llmSettings.model = document.getElementById('llmModel').value.trim();
+  llmSettings.base_url = document.getElementById('llmBaseURL').value.trim();
+  const key = document.getElementById('llmKey').value;
+  try {
+    await api('/api/settings', { method: 'POST', body: JSON.stringify({
+      theme: localStorage.getItem('qp.theme') || 'auto',
+      preset: localStorage.getItem('qp.preset') || 'quiet-glass',
+      render_mode: localStorage.getItem('qp.rendermode') || 'auto',
+      llm: { provider: llmSettings.provider, model: llmSettings.model,
+        base_url: llmSettings.base_url, api_key: key || undefined },
+    }) });
+    document.getElementById('llmKey').value = '';
+    msg.textContent = 'Saved.'; msg.className = 'hint';
+  } catch (err) { msg.textContent = err.message; }
+}
+async function testLLM() {
+  const msg = document.getElementById('llmMsg');
+  msg.textContent = 'Testing…';
+  await saveLLM();
+  try {
+    const r = await api('/api/settings/llm/test', { method: 'POST' });
+    msg.textContent = r.ok ? '✓ Connected.' : ('✗ ' + (r.error || 'failed'));
+  } catch (err) { msg.textContent = '✗ ' + err.message; }
 }
 applyAppearance();
 if (window.matchMedia) {
