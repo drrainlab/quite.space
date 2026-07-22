@@ -26,6 +26,7 @@ type EntryKind string
 const (
 	KindText    EntryKind = "text"
 	KindVisual  EntryKind = "visual"
+	KindVideo   EntryKind = "video"
 	KindVoice   EntryKind = "voice"
 	KindAudio   EntryKind = "audio"
 	KindFile    EntryKind = "file"
@@ -39,6 +40,7 @@ const (
 type EntryContent struct {
 	Text    *TextContent
 	Visual  *schemas.VisualBlock
+	Video   *schemas.VideoBlock
 	Voice   *schemas.VoiceBlock
 	Audio   *schemas.AudioBlock
 	File    *schemas.FileBlock
@@ -243,6 +245,12 @@ func (s *State) Apply(env *signal.Envelope, eid id.EventID) {
 	case schemas.BlockVisual:
 		if b, err := schemas.DecodeVisualBlock(env.Payload); err == nil {
 			s.installEntry(eid, env, KindVisual, EntryContent{Visual: b})
+		} else {
+			s.installUnknown(eid, env)
+		}
+	case schemas.BlockVideo:
+		if b, err := schemas.DecodeVideoBlock(env.Payload); err == nil {
+			s.installEntry(eid, env, KindVideo, EntryContent{Video: b})
 		} else {
 			s.installUnknown(eid, env)
 		}

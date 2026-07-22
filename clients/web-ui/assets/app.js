@@ -1139,12 +1139,59 @@ function assetNote(e) {
 const FEED_RENDERERS = {
   text: (e) => textNode('txt', e.text),
   visual: (e) => renderVisual(e),
+  video: (e) => renderVideo(e),
   voice: (e) => renderVoiceAudio(e),
   audio: (e) => renderVoiceAudio(e),
   file: (e) => renderFile(e),
   link: (e) => renderLink(e),
   live_signal: (e) => renderSignal(e),
 };
+
+// Telegram-style video card: poster + ▶ overlay; the player mounts on tap
+// once the original is local (Range-served, so seeking works).
+function renderVideo(e) {
+  const wrap = document.createElement('div');
+  if (e.caption) wrap.appendChild(textNode('txt', e.caption));
+  const src = e.asset ? `/api/spaces/${current}/assets/${e.asset.id}?token=${token}` : null;
+  const complete = e.asset?.state === 'complete';
+  if (e.thumb_b64) {
+    const holder = document.createElement('div');
+    holder.className = 'video-holder';
+    const img = document.createElement('img');
+    img.className = 'thumb'; img.alt = e.alt;
+    img.src = `data:${e.thumb_mime};base64,${e.thumb_b64}`;
+    holder.appendChild(img);
+    const play = document.createElement('div');
+    play.className = 'video-play';
+    play.textContent = '▶';
+    holder.appendChild(play);
+    if (e.duration_ms) {
+      const d = document.createElement('span');
+      d.className = 'video-dur';
+      d.textContent = fmtDur(e.duration_ms);
+      holder.appendChild(d);
+    }
+    holder.onclick = () => {
+      if (!complete) return; // the note below offers the fetch
+      const v = document.createElement('video');
+      v.controls = true; v.autoplay = true; v.playsInline = true;
+      v.src = src;
+      v.poster = img.src;
+      v.className = 'video-player';
+      holder.replaceWith(v);
+    };
+    wrap.appendChild(holder);
+  } else if (complete) {
+    const v = document.createElement('video');
+    v.controls = true; v.playsInline = true; v.src = src;
+    v.className = 'video-player';
+    wrap.appendChild(v);
+  } else {
+    wrap.appendChild(textNode('txt', '🎬 ' + e.alt));
+  }
+  wrap.appendChild(assetNote(e));
+  return wrap;
+}
 
 function renderBody(e) {
   const r = FEED_RENDERERS[e.kind];
@@ -1265,26 +1312,95 @@ const fmtDur = (ms) => { const s = Math.round(ms/1000); return `${Math.floor(s/6
 
 let pendingFile = null, pendingKind = null, pendingPreview = null, pendingMeta = {};
 
+// ---- Telegram-style attach: 📎 opens Photo / Video / Document ----
+let attachMode = 'doc';
+let pendingVideoMeta = null; // { duration_ms, width, height } for video sends
+
+function toggleAttachMenu(e) {
+  e.stopPropagation();
+  const m = document.getElementById('attachMenu');
+  m.style.display = m.style.display === 'none' ? '' : 'none';
+}
+document.addEventListener('click', () => {
+  const m = document.getElementById('attachMenu');
+  if (m) m.style.display = 'none';
+});
+
+function attachPick(mode) {
+  attachMode = mode;
+  fileInput.accept = mode === 'photo' ? 'image/*' : mode === 'video' ? 'video/*' : '';
+  fileInput.click();
+}
+
+// captureVideoPoster grabs a frame + duration/dimensions from a local file.
+function captureVideoPoster(file) {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const v = document.createElement('video');
+    v.muted = true; v.playsInline = true; v.preload = 'metadata';
+    const fail = () => { URL.revokeObjectURL(url); resolve(null); };
+    v.onerror = fail;
+    v.onloadedmetadata = () => { v.currentTime = Math.min(0.5, (v.duration || 1) / 2); };
+    v.onseeked = () => {
+      try {
+        const cv = document.createElement('canvas');
+        const scale = Math.min(1, 480 / (v.videoWidth || 480));
+        cv.width = Math.max(1, Math.round(v.videoWidth * scale));
+        cv.height = Math.max(1, Math.round(v.videoHeight * scale));
+        cv.getContext('2d').drawImage(v, 0, 0, cv.width, cv.height);
+        cv.toBlob((blob) => {
+          URL.revokeObjectURL(url);
+          resolve({
+            blob, dataURL: cv.toDataURL('image/webp', .8),
+            duration_ms: Math.round((v.duration || 0) * 1000),
+            width: v.videoWidth, height: v.videoHeight,
+          });
+        }, 'image/webp', .8);
+      } catch (e) { fail(); }
+    };
+    v.src = url;
+  });
+}
+
 async function onFilePicked(file) {
   if (!file) return;
   pendingFile = file;
-  const isImage = file.type.startsWith('image/');
-  pendingKind = isImage ? 'visual' : 'file';
-  document.getElementById('attachTitle').textContent = isImage ? 'attach image' : 'attach file';
-  document.getElementById('attachAlt').style.display = isImage ? '' : 'none';
-  document.getElementById('attachCaption').style.display = isImage ? '' : 'none';
+  pendingPreview = null;
+  pendingVideoMeta = null;
+  const isImage = attachMode === 'photo' || (attachMode === 'doc' && file.type.startsWith('image/'));
+  const isVideo = attachMode === 'video' || (attachMode === 'doc' && file.type.startsWith('video/'));
+  pendingKind = isImage ? 'visual' : isVideo ? 'video' : 'file';
+  const withMedia = isImage || isVideo;
+  document.getElementById('attachTitle').textContent =
+    isImage ? 'Send a photo' : isVideo ? 'Send a video' : 'Send a document';
+  document.getElementById('attachAlt').style.display = withMedia ? '' : 'none';
+  document.getElementById('attachCaption').style.display = withMedia ? '' : 'none';
   const prev = document.getElementById('attachPreview');
   prev.innerHTML = '';
-  pendingPreview = null;
   document.getElementById('attachWarn').textContent = '';
   if (isImage) {
     const { blob, dataURL } = await makeThumb(file);
     pendingPreview = blob;
     const img = document.createElement('img'); img.src = dataURL;
-    img.style.maxWidth = '200px'; img.style.borderRadius = '4px';
+    img.style.maxWidth = '240px'; img.style.borderRadius = '8px';
     prev.appendChild(img);
     document.getElementById('attachWarn').textContent =
       'note: the original may carry EXIF/GPS metadata; the thumbnail is re-encoded and stripped.';
+  } else if (isVideo) {
+    const cap = await captureVideoPoster(file);
+    if (cap) {
+      pendingPreview = cap.blob;
+      pendingVideoMeta = { duration_ms: cap.duration_ms, width: cap.width, height: cap.height };
+      const img = document.createElement('img'); img.src = cap.dataURL;
+      img.style.maxWidth = '240px'; img.style.borderRadius = '8px';
+      prev.appendChild(img);
+      const meta = document.createElement('div');
+      meta.className = 'hint';
+      meta.textContent = `${file.name} · ${fmtBytes(file.size)} · ${fmtDur(cap.duration_ms)}`;
+      prev.appendChild(meta);
+    } else {
+      prev.textContent = `${file.name} · ${fmtBytes(file.size)} (no poster — codec not decodable here)`;
+    }
   } else {
     prev.textContent = `${file.name} · ${fmtBytes(file.size)}`;
   }
@@ -1312,12 +1428,17 @@ async function sendAttachment() {
   const meta = {
     kind: pendingKind, size: pendingFile.size, media_type: pendingFile.type || 'application/octet-stream',
   };
-  if (pendingKind === 'visual') {
+  if (pendingKind === 'visual' || pendingKind === 'video') {
     const alt = document.getElementById('attachAlt').value.trim();
-    if (!alt) { alert('alt text is required — it is how the image reaches text terminals'); return; }
+    if (!alt) { alert('alt text is required — it is how the media reaches text terminals'); return; }
     meta.alt = alt;
     meta.caption = document.getElementById('attachCaption').value.trim();
-    meta.preview_mime = 'image/webp';
+    if (pendingPreview) meta.preview_mime = 'image/webp';
+    if (pendingKind === 'video' && pendingVideoMeta) {
+      meta.duration_ms = pendingVideoMeta.duration_ms;
+      meta.width = pendingVideoMeta.width;
+      meta.height = pendingVideoMeta.height;
+    }
   } else {
     meta.filename = pendingFile.name;
   }

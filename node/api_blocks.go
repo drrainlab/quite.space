@@ -6,6 +6,7 @@
 package node
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -13,6 +14,7 @@ import (
 	"fmt"
 	"mime"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/drrainlab/quiet_places/kernel/assets"
@@ -88,13 +90,13 @@ func (a *APIServer) handlePostBlock(w http.ResponseWriter, r *http.Request) {
 	// Kinds without assets finish here-ish; asset kinds validate early.
 	needsFile := false
 	switch meta.Kind {
-	case "visual", "voice", "audio", "file":
+	case "visual", "video", "voice", "audio", "file":
 		needsFile = true
 		if meta.Size <= 0 || meta.Size > assets.MaxAssetSize {
 			httpErr(w, http.StatusBadRequest, errors.New("declared size missing or over limit"))
 			return
 		}
-		if meta.Kind == "visual" && meta.Alt == "" {
+		if (meta.Kind == "visual" || meta.Kind == "video") && meta.Alt == "" {
 			httpErr(w, http.StatusBadRequest, errors.New("visual blocks require alt text"))
 			return
 		}
@@ -151,6 +153,11 @@ func (a *APIServer) handlePostBlock(w http.ResponseWriter, r *http.Request) {
 		schema = schemas.BlockVisual
 		payload, err = (&schemas.VisualBlock{Caption: meta.Caption, Alt: meta.Alt,
 			ThumbMIME: previewMIME, Thumb: preview, Original: ref}).Encode()
+	case "video":
+		schema = schemas.BlockVideo
+		payload, err = (&schemas.VideoBlock{Caption: meta.Caption, Alt: meta.Alt,
+			ThumbMIME: previewMIME, Thumb: preview, DurationMS: meta.DurationMS,
+			Width: meta.Width, Height: meta.Height, Original: ref}).Encode()
 	case "voice":
 		schema = schemas.BlockVoice
 		payload, err = (&schemas.VoiceBlock{DurationMS: meta.DurationMS, Waveform: waveform,
@@ -257,10 +264,17 @@ func (a *APIServer) handleGetAsset(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", ct)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+	// Media plays inline (video/audio elements need Range + inline);
+	// everything else downloads as an attachment.
+	disp := "attachment"
+	if strings.HasPrefix(ct, "image/") || strings.HasPrefix(ct, "audio/") || strings.HasPrefix(ct, "video/") {
+		disp = "inline"
+	}
 	w.Header().Set("Content-Disposition",
-		mime.FormatMediaType("attachment", map[string]string{"filename": schemas.NormalizeFilename("asset-" + aid[:min(12, len(aid))])}))
+		mime.FormatMediaType(disp, map[string]string{"filename": schemas.NormalizeFilename("asset-" + aid[:min(12, len(aid))])}))
 	w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
-	w.Write(data)
+	// ServeContent adds Range/206 support — video seeking works.
+	http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(data))
 }
 
 func (a *APIServer) handleFetchAsset(w http.ResponseWriter, r *http.Request) {
@@ -438,6 +452,15 @@ func (a *APIServer) projectEntry(tid id.TerminalID, e *reducers.Entry, me id.Pri
 	case e.Content.Visual != nil:
 		v := e.Content.Visual
 		resp.Caption, resp.Alt, resp.Fallback = v.Caption, v.Alt, v.Fallback()
+		if len(v.Thumb) > 0 {
+			resp.ThumbB64 = base64.StdEncoding.EncodeToString(v.Thumb)
+			resp.ThumbMIME = v.ThumbMIME
+		}
+		attachAsset(v.Original)
+	case e.Content.Video != nil:
+		v := e.Content.Video
+		resp.Caption, resp.Alt, resp.Fallback = v.Caption, v.Alt, v.Fallback()
+		resp.DurationMS = v.DurationMS
 		if len(v.Thumb) > 0 {
 			resp.ThumbB64 = base64.StdEncoding.EncodeToString(v.Thumb)
 			resp.ThumbMIME = v.ThumbMIME

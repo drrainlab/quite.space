@@ -26,6 +26,7 @@ import (
 const (
 	BlockVisual     = "block.visual.v1"
 	BlockAttached   = "block.attached.v1" // asset carrier only — no feed entry
+	BlockVideo      = "block.video.v1"
 	BlockVoice      = "block.voice.v1"
 	BlockAudio      = "block.audio.v1"
 	BlockFile       = "block.file.v1"
@@ -122,6 +123,10 @@ func ExtractAssetRefs(schema string, payload []byte) []*AssetRef {
 		}
 	case BlockVisual:
 		if b, err := DecodeVisualBlock(payload); err == nil {
+			return []*AssetRef{b.Original}
+		}
+	case BlockVideo:
+		if b, err := DecodeVideoBlock(payload); err == nil {
 			return []*AssetRef{b.Original}
 		}
 	case BlockVoice:

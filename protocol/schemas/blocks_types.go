@@ -755,6 +755,7 @@ func init() {
 	Register(BlockReaction, func(p []byte) error { _, err := DecodeReactionBlock(p); return err })
 	Register(BlockLiveSignal, func(p []byte) error { _, err := DecodeLiveSignalBlock(p); return err })
 	Register(BlockAttached, func(p []byte) error { _, err := DecodeAttachedBlock(p); return err })
+	Register(BlockVideo, func(p []byte) error { _, err := DecodeVideoBlock(p); return err })
 }
 
 // ---- AttachedBlock (block.attached.v1) ----
@@ -816,5 +817,133 @@ func DecodeAttachedBlock(p []byte) (*AttachedBlock, error) {
 		return nil, errors.New("schemas: attached block missing asset")
 	}
 	b.Filename = NormalizeFilename(b.Filename)
+	return b, nil
+}
+
+// ---- VideoBlock (block.video.v1) ----
+//
+// Same pipeline as visual: an inline poster thumb for instant preview, the
+// original as an encrypted asset. Alt is required — the honest path for
+// text terminals ("what is in this video").
+
+type VideoBlock struct {
+	Caption    string
+	Alt        string
+	ThumbMIME  string
+	Thumb      []byte // poster frame, jpeg/png/webp only
+	DurationMS uint64
+	Width      uint64
+	Height     uint64
+	Original   *AssetRef
+}
+
+func (b *VideoBlock) Fallback() string {
+	if b.Alt != "" {
+		return "video: " + b.Alt
+	}
+	return "video"
+}
+
+func (b *VideoBlock) Encode() ([]byte, error) {
+	if b.Alt == "" || len(b.Alt) > MaxAltLen {
+		return nil, errors.New("schemas: video block requires alt text (≤500)")
+	}
+	if len(b.Caption) > MaxCaptionLen {
+		return nil, errors.New("schemas: caption too long")
+	}
+	if err := validatePreview(b.ThumbMIME, b.Thumb); err != nil {
+		return nil, err
+	}
+	if b.Original == nil {
+		return nil, errors.New("schemas: video block requires original asset")
+	}
+	orig, err := b.Original.encode()
+	if err != nil {
+		return nil, err
+	}
+	n := 3 // fallback, alt, original
+	if b.Caption != "" {
+		n++
+	}
+	if len(b.Thumb) > 0 {
+		n += 2
+	}
+	if b.DurationMS != 0 {
+		n++
+	}
+	if b.Width != 0 {
+		n++
+	}
+	if b.Height != 0 {
+		n++
+	}
+	buf := codec.AppendMap(nil, n)
+	buf = codec.AppendUint(buf, 1)
+	buf = codec.AppendText(buf, clip(b.Fallback(), MaxFallbackLen))
+	if b.Caption != "" {
+		buf = codec.AppendUint(buf, 2)
+		buf = codec.AppendText(buf, b.Caption)
+	}
+	buf = codec.AppendUint(buf, 3)
+	buf = codec.AppendText(buf, b.Alt)
+	if len(b.Thumb) > 0 {
+		buf = codec.AppendUint(buf, 4)
+		buf = codec.AppendText(buf, b.ThumbMIME)
+		buf = codec.AppendUint(buf, 5)
+		buf = codec.AppendBytes(buf, b.Thumb)
+	}
+	if b.DurationMS != 0 {
+		buf = codec.AppendUint(buf, 6)
+		buf = codec.AppendUint(buf, b.DurationMS)
+	}
+	if b.Width != 0 {
+		buf = codec.AppendUint(buf, 7)
+		buf = codec.AppendUint(buf, b.Width)
+	}
+	if b.Height != 0 {
+		buf = codec.AppendUint(buf, 8)
+		buf = codec.AppendUint(buf, b.Height)
+	}
+	buf = codec.AppendUint(buf, 9)
+	buf = append(buf, orig...)
+	return finishBlock(buf)
+}
+
+func DecodeVideoBlock(p []byte) (*VideoBlock, error) {
+	b := &VideoBlock{}
+	err := walkBlock(p, func(k uint64, d *codec.Decoder) (er error) {
+		switch k {
+		case 2:
+			b.Caption, er = d.ReadText()
+		case 3:
+			b.Alt, er = d.ReadText()
+		case 4:
+			b.ThumbMIME, er = d.ReadText()
+		case 5:
+			var v []byte
+			v, er = d.ReadBytes()
+			b.Thumb = append([]byte(nil), v...)
+		case 6:
+			b.DurationMS, er = d.ReadUint()
+		case 7:
+			b.Width, er = d.ReadUint()
+		case 8:
+			b.Height, er = d.ReadUint()
+		case 9:
+			b.Original, er = decodeAssetRef(d)
+		default:
+			er = d.SkipItem()
+		}
+		return er
+	})
+	if err != nil {
+		return nil, err
+	}
+	if b.Alt == "" || b.Original == nil {
+		return nil, errors.New("schemas: video block missing alt or original")
+	}
+	if err := validatePreview(b.ThumbMIME, b.Thumb); err != nil {
+		return nil, err
+	}
 	return b, nil
 }
