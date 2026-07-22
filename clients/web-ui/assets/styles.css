@@ -261,7 +261,22 @@
       border-radius: 0; }
     .ic { min-width: 40px; min-height: 40px; }
   }
+  /* space composition contract (SC-0) — scoped appearance + object renderers */
+  .sc-appearance { position: relative; }
+  .sc-appearance::before {
+    content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 0;
+    background: var(--sc-tint, transparent);
+    opacity: calc(var(--sc-dim, 0) * 0.25); transition: opacity .4s ease;
+  }
+  .sc-appearance > * { position: relative; z-index: 1; }
+  .sc-obj { border: 1px solid var(--line); border-radius: var(--radius-md);
+    padding: 10px 12px; margin: 6px 0; background: var(--panel); }
+  .sc-obj .sc-title { color: var(--fg); font-size: 13px; }
+  .sc-obj .sc-meta { color: var(--dim); font-size: 11px; margin-top: 2px; }
+  .sc-obj.sc-music { border-left: 2px solid var(--sc-accent, var(--acc)); }
+  .sc-obj.sc-relic { border-left: 2px solid var(--sc-signal, var(--signal)); font-style: italic; }
   @media (prefers-reduced-motion: reduce) {
     body { transition: none; }
     .glyph.pulse-in, .entry.enter { animation: none; }
+    .sc-appearance::before { transition: none; }
   }

@@ -13,6 +13,20 @@ let seenSpace = null;
 // Members known to be "here" last render — used to fire the arrival pulse
 // exactly once, on the transition into presence (never as an idle loop).
 let hereMembers = new Set();
+// Space Composition Contract (SC-0): the appearance snapshot last applied.
+let appearanceSpace = null;
+
+// loadSpaceAppearance fetches the space's signed appearance snapshot and
+// applies its palette to a SCOPED container (never :root). Fetched once per
+// space change; a foreign holder would verify the signed frame first.
+async function loadSpaceAppearance(sid) {
+  if (!sid || sid === appearanceSpace) return;
+  appearanceSpace = sid;
+  try {
+    const snap = await api(`/api/spaces/${sid}/appearance`);
+    applyScopedAppearance(document.getElementById('content'), snap.appearance, renderMode());
+  } catch (e) { /* space may not project a contract (not owned) — ignore */ }
+}
 
 // ---- archetypes, palettes, moods ----
 
@@ -237,6 +251,7 @@ async function refreshSpace() {
   const sp = currentSpace();
   const char = sp?.character;
   applyTheme(char);
+  loadSpaceAppearance(current);
 
   // persona line: the declared character, plus its exact meaning.
   const persona = document.getElementById('persona');
@@ -907,71 +922,83 @@ function assetNote(e) {
   return n;
 }
 
+// The message feed dispatches through the same registry seam as the
+// composition contract (§34): a kind→renderer map with a semantic fallback to
+// the honest "unsupported" node. Behaviour is unchanged from the old switch;
+// the indirection is the point.
+const FEED_RENDERERS = {
+  text: (e) => textNode('txt', e.text),
+  visual: (e) => renderVisual(e),
+  voice: (e) => renderVoiceAudio(e),
+  audio: (e) => renderVoiceAudio(e),
+  file: (e) => renderFile(e),
+  link: (e) => renderLink(e),
+  live_signal: (e) => renderSignal(e),
+};
+
 function renderBody(e) {
-  switch (e.kind) {
-    case 'text':
-      return textNode('txt', e.text);
-    case 'visual': {
-      const wrap = document.createElement('div');
-      if (e.caption) wrap.appendChild(textNode('txt', e.caption));
-      if (e.thumb_b64) {
-        const img = document.createElement('img');
-        img.className = 'thumb'; img.alt = e.alt;
-        img.src = `data:${e.thumb_mime};base64,${e.thumb_b64}`;
-        img.onclick = () => { if (e.asset?.state === 'complete')
-          window.open(`/api/spaces/${current}/assets/${e.asset.id}?token=${token}`, '_blank'); };
-        wrap.appendChild(img);
-      } else {
-        wrap.appendChild(textNode('txt', '🖼 ' + e.alt));
-      }
-      wrap.appendChild(assetNote(e));
-      return wrap;
-    }
-    case 'voice': case 'audio': {
-      const wrap = document.createElement('div');
-      const title = e.kind === 'audio'
-        ? (e.title || 'audio') + (e.bpm ? ` · ${e.bpm} BPM` : '')
-        : `voice · ${fmtDur(e.duration_ms)}`;
-      wrap.appendChild(textNode('txt', (e.kind === 'audio' ? '♫ ' : '🎙 ') + title));
-      if (e.waveform_b64) wrap.appendChild(renderWave(e.waveform_b64));
-      if (e.transcript) wrap.appendChild(textNode('meta', '“' + e.transcript + '”'));
-      if (e.asset?.state === 'complete') {
-        const au = document.createElement('audio');
-        au.controls = true;
-        au.src = `/api/spaces/${current}/assets/${e.asset.id}?token=${token}`;
-        wrap.appendChild(au);
-      } else {
-        wrap.appendChild(assetNote(e));
-      }
-      return wrap;
-    }
-    case 'file': {
-      const wrap = document.createElement('div');
-      const card = document.createElement('div');
-      card.className = 'filecard';
-      card.appendChild(textNode('txt', '📄 ' + e.filename));
-      card.appendChild(assetNote(e));
-      wrap.appendChild(card);
-      return wrap;
-    }
-    case 'link': {
-      const card = document.createElement('div');
-      card.className = 'linkcard';
-      const a = document.createElement('a');
-      a.href = e.url; a.target = '_blank'; a.rel = 'noopener noreferrer';
-      a.textContent = e.title || e.url;
-      card.appendChild(a);
-      if (e.description) card.appendChild(textNode('meta', e.description));
-      return card;
-    }
-    case 'live_signal':
-      return renderSignal(e);
-    default: {
-      const wrap = document.createElement('div');
-      wrap.appendChild(textNode('unknownblk', e.fallback || ('unsupported block: ' + e.schema)));
-      return wrap;
-    }
+  const r = FEED_RENDERERS[e.kind];
+  if (r) return r(e);
+  const wrap = document.createElement('div');
+  wrap.appendChild(textNode('unknownblk', e.fallback || ('unsupported block: ' + e.schema)));
+  return wrap;
+}
+
+function renderVisual(e) {
+  const wrap = document.createElement('div');
+  if (e.caption) wrap.appendChild(textNode('txt', e.caption));
+  if (e.thumb_b64) {
+    const img = document.createElement('img');
+    img.className = 'thumb'; img.alt = e.alt;
+    img.src = `data:${e.thumb_mime};base64,${e.thumb_b64}`;
+    img.onclick = () => { if (e.asset?.state === 'complete')
+      window.open(`/api/spaces/${current}/assets/${e.asset.id}?token=${token}`, '_blank'); };
+    wrap.appendChild(img);
+  } else {
+    wrap.appendChild(textNode('txt', '🖼 ' + e.alt));
   }
+  wrap.appendChild(assetNote(e));
+  return wrap;
+}
+
+function renderVoiceAudio(e) {
+  const wrap = document.createElement('div');
+  const title = e.kind === 'audio'
+    ? (e.title || 'audio') + (e.bpm ? ` · ${e.bpm} BPM` : '')
+    : `voice · ${fmtDur(e.duration_ms)}`;
+  wrap.appendChild(textNode('txt', (e.kind === 'audio' ? '♫ ' : '🎙 ') + title));
+  if (e.waveform_b64) wrap.appendChild(renderWave(e.waveform_b64));
+  if (e.transcript) wrap.appendChild(textNode('meta', '“' + e.transcript + '”'));
+  if (e.asset?.state === 'complete') {
+    const au = document.createElement('audio');
+    au.controls = true;
+    au.src = `/api/spaces/${current}/assets/${e.asset.id}?token=${token}`;
+    wrap.appendChild(au);
+  } else {
+    wrap.appendChild(assetNote(e));
+  }
+  return wrap;
+}
+
+function renderFile(e) {
+  const wrap = document.createElement('div');
+  const card = document.createElement('div');
+  card.className = 'filecard';
+  card.appendChild(textNode('txt', '📄 ' + e.filename));
+  card.appendChild(assetNote(e));
+  wrap.appendChild(card);
+  return wrap;
+}
+
+function renderLink(e) {
+  const card = document.createElement('div');
+  card.className = 'linkcard';
+  const a = document.createElement('a');
+  a.href = e.url; a.target = '_blank'; a.rel = 'noopener noreferrer';
+  a.textContent = e.title || e.url;
+  card.appendChild(a);
+  if (e.description) card.appendChild(textNode('meta', e.description));
+  return card;
 }
 
 function renderWave(b64) {
