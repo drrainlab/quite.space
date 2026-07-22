@@ -36,7 +36,8 @@ type Runtime struct {
 	Device    *identity.Device
 	Self      *terminals.Participant
 
-	spaces map[id.TerminalID]*spaceState
+	spaces   map[id.TerminalID]*spaceState
+	assetIdx *assetIndex
 
 	lanNode *lan.Node
 	lanPort int
@@ -65,7 +66,8 @@ func Open(dataDir string, passphrase []byte, displayName string) (*Runtime, erro
 	if err != nil {
 		return nil, err
 	}
-	r := &Runtime{root: root, spaces: map[id.TerminalID]*spaceState{}, stop: make(chan struct{})}
+	r := &Runtime{root: root, spaces: map[id.TerminalID]*spaceState{},
+		assetIdx: newAssetIndex(), stop: make(chan struct{})}
 
 	ks, err := root.LoadKeystore()
 	switch {
@@ -101,9 +103,11 @@ func Open(dataDir string, passphrase []byte, displayName string) (*Runtime, erro
 	}
 
 	// Reopen every known space: keys first, then the log, so the replay
-	// can decrypt (terminals.AttachLog contract).
+	// can decrypt (terminals.AttachLog contract). The block hook is set
+	// before replay so asset indexes rebuild from the log (plan §10).
 	for tid, meta := range r.ks.Spaces {
 		s := terminals.Replica(tid)
+		s.OnBlock = r.onBlockEvent(tid)
 		s.EnablePrivate(r.Device)
 		s.RestoreEpochs(r.ks.Epochs[tid])
 		if meta.Owned {
@@ -140,6 +144,9 @@ func manifestTitle(frame []byte) string {
 }
 
 func (r *Runtime) attach(tid id.TerminalID, s *terminals.Space) {
+	if s.OnBlock == nil {
+		s.OnBlock = r.onBlockEvent(tid)
+	}
 	st := &spaceState{space: s, eng: kernelsync.NewEngine(s.Log)}
 	st.eng.OnApplied = func(a eventlog.Applied) {
 		s.AttachSyncApply(a)
@@ -148,6 +155,11 @@ func (r *Runtime) attach(tid id.TerminalID, s *terminals.Space) {
 			r.persistEpochsLocked(tid, s)
 		}
 	}
+	// Asset exchange: serve only wire ids this space legitimately
+	// publishes; accept only what we requested (kernel/sync enforces both).
+	st.eng.Blobs = r.root
+	st.eng.BlobAllowed = func(h id.Hash) bool { return r.assetIdx.allowed(h, tid) }
+	st.eng.OnBlobStored = r.onBlobStored
 	r.spaces[tid] = st
 }
 

@@ -17,17 +17,35 @@ import (
 
 // Message types.
 const (
-	msgSummary = 1
-	msgFrames  = 2
+	msgSummary  = 1
+	msgFrames   = 2
+	msgBlobReq  = 3 // request encrypted blobs (asset manifests and chunks)
+	msgBlobData = 4
 )
 
-// Message key table.
+// Message key table (append-only).
 const (
 	keyType     = 1
 	keyTerminal = 2
 	keyChains   = 3
 	keyFrames   = 4
+	keyHashes   = 5
+	keyBlobs    = 6
 )
+
+// Blob exchange limits (plan: resource limits).
+const (
+	MaxBlobIDsPerRequest = 64
+	MaxBlobBytes         = 1 << 20
+)
+
+// BlobStore is the optional blob surface for asset exchange. Implemented by
+// storage.Root; nil disables blob serving and fetching.
+type BlobStore interface {
+	PutBlob(data []byte) (id.Hash, error)
+	GetBlob(h id.Hash) ([]byte, error)
+	HasBlob(h id.Hash) bool
+}
 
 // Fragment key table (outer packet layer).
 const (
@@ -49,6 +67,20 @@ type Engine struct {
 	// OnApplied receives every event the sync engine lands in the log.
 	OnApplied func(eventlog.Applied)
 
+	// Blobs enables asset exchange. BlobAllowed answers "is this wire id
+	// legitimately published in THIS space" — the engine is per-space, so
+	// the check plus the terminal-id filter scope every request (plan §5:
+	// a node must not become an oracle for arbitrary hashes).
+	Blobs       BlobStore
+	BlobAllowed func(h id.Hash) bool
+	// OnBlobStored fires when a requested blob lands (fetch coordinator).
+	OnBlobStored func(h id.Hash)
+
+	// pending holds requested wire ids awaiting delivery. The engine is not
+	// safe for concurrent use; callers serialize (the node runtime holds
+	// its own lock around every engine call).
+	pending map[id.Hash]bool
+
 	nextStream uint64
 	reasm      map[uint64]*reassembly
 }
@@ -60,7 +92,7 @@ type reassembly struct {
 
 // NewEngine wraps a log for syncing.
 func NewEngine(log *eventlog.Log) *Engine {
-	return &Engine{Log: log, reasm: map[uint64]*reassembly{}}
+	return &Engine{Log: log, reasm: map[uint64]*reassembly{}, pending: map[id.Hash]bool{}}
 }
 
 // ---- Message encoding ----
@@ -96,57 +128,96 @@ func (e *Engine) encodeFrames(frames [][]byte) []byte {
 	return buf
 }
 
+func (e *Engine) encodeBlobReq(hashes []id.Hash) []byte {
+	buf := codec.AppendMap(nil, 3)
+	buf = codec.AppendUint(buf, keyType)
+	buf = codec.AppendUint(buf, msgBlobReq)
+	buf = codec.AppendUint(buf, keyTerminal)
+	buf = codec.AppendBytes(buf, e.Log.Terminal[:])
+	buf = codec.AppendUint(buf, keyHashes)
+	buf = codec.AppendArray(buf, len(hashes))
+	for _, h := range hashes {
+		buf = codec.AppendBytes(buf, h[:])
+	}
+	return buf
+}
+
+func (e *Engine) encodeBlobData(blobs [][]byte) []byte {
+	buf := codec.AppendMap(nil, 3)
+	buf = codec.AppendUint(buf, keyType)
+	buf = codec.AppendUint(buf, msgBlobData)
+	buf = codec.AppendUint(buf, keyTerminal)
+	buf = codec.AppendBytes(buf, e.Log.Terminal[:])
+	buf = codec.AppendUint(buf, keyBlobs)
+	buf = codec.AppendArray(buf, len(blobs))
+	for _, b := range blobs {
+		buf = codec.AppendBytes(buf, b)
+	}
+	return buf
+}
+
 type summary struct {
 	terminal id.TerminalID
 	chains   map[id.DeviceID]uint64
 }
 
-func decodeMessage(data []byte) (msgType uint64, term id.TerminalID, sum *summary, frames [][]byte, err error) {
+// message is one decoded sync message.
+type message struct {
+	msgType uint64
+	term    id.TerminalID
+	sum     *summary
+	frames  [][]byte
+	hashes  []id.Hash
+	blobs   [][]byte
+}
+
+func decodeMessage(data []byte) (*message, error) {
 	d := codec.NewDecoder(data)
 	m, err := d.ReadMapHeader()
 	if err != nil {
-		return 0, term, nil, nil, err
+		return nil, err
 	}
+	msg := &message{}
 	chains := map[id.DeviceID]uint64{}
 	for {
 		k, ok, e := m.Next()
 		if e != nil {
-			return 0, term, nil, nil, e
+			return nil, e
 		}
 		if !ok {
 			break
 		}
 		switch k {
 		case keyType:
-			msgType, err = d.ReadUint()
+			msg.msgType, err = d.ReadUint()
 		case keyTerminal:
 			var b []byte
 			b, err = d.ReadBytes()
 			if err == nil {
 				if len(b) != id.Size {
-					return 0, term, nil, nil, errors.New("sync: bad terminal id")
+					return nil, errors.New("sync: bad terminal id")
 				}
-				copy(term[:], b)
+				copy(msg.term[:], b)
 			}
 		case keyChains:
 			var n int
 			n, err = d.ReadArray()
 			if err != nil {
-				return 0, term, nil, nil, err
+				return nil, err
 			}
 			for range n {
 				if _, err = d.ReadArray(); err != nil {
-					return 0, term, nil, nil, err
+					return nil, err
 				}
 				var devBytes []byte
 				devBytes, err = d.ReadBytes()
 				if err != nil || len(devBytes) != id.Size {
-					return 0, term, nil, nil, errors.New("sync: bad device id")
+					return nil, errors.New("sync: bad device id")
 				}
 				var until uint64
 				until, err = d.ReadUint()
 				if err != nil {
-					return 0, term, nil, nil, err
+					return nil, err
 				}
 				var dev id.DeviceID
 				copy(dev[:], devBytes)
@@ -156,30 +227,66 @@ func decodeMessage(data []byte) (msgType uint64, term id.TerminalID, sum *summar
 			var n int
 			n, err = d.ReadArray()
 			if err != nil {
-				return 0, term, nil, nil, err
+				return nil, err
 			}
 			for range n {
 				var f []byte
 				f, err = d.ReadBytes()
 				if err != nil {
-					return 0, term, nil, nil, err
+					return nil, err
 				}
-				frames = append(frames, append([]byte(nil), f...))
+				msg.frames = append(msg.frames, append([]byte(nil), f...))
+			}
+		case keyHashes:
+			var n int
+			n, err = d.ReadArray()
+			if err != nil {
+				return nil, err
+			}
+			if n > MaxBlobIDsPerRequest {
+				return nil, errors.New("sync: too many blob ids in request")
+			}
+			for range n {
+				var b []byte
+				b, err = d.ReadBytes()
+				if err != nil || len(b) != id.Size {
+					return nil, errors.New("sync: bad blob id")
+				}
+				var h id.Hash
+				copy(h[:], b)
+				msg.hashes = append(msg.hashes, h)
+			}
+		case keyBlobs:
+			var n int
+			n, err = d.ReadArray()
+			if err != nil {
+				return nil, err
+			}
+			for range n {
+				var b []byte
+				b, err = d.ReadBytes()
+				if err != nil {
+					return nil, err
+				}
+				if len(b) > MaxBlobBytes {
+					return nil, errors.New("sync: blob over size limit")
+				}
+				msg.blobs = append(msg.blobs, append([]byte(nil), b...))
 			}
 		default:
 			err = d.SkipItem()
 		}
 		if err != nil {
-			return 0, term, nil, nil, err
+			return nil, err
 		}
 	}
 	if err := d.Done(); err != nil {
-		return 0, term, nil, nil, err
+		return nil, err
 	}
-	if msgType == msgSummary {
-		sum = &summary{terminal: term, chains: chains}
+	if msg.msgType == msgSummary {
+		msg.sum = &summary{terminal: msg.term, chains: chains}
 	}
-	return msgType, term, sum, frames, nil
+	return msg, nil
 }
 
 // ---- Fragmentation (radio-scale MTUs, plan §19 T4) ----
@@ -314,29 +421,29 @@ func (e *Engine) sendMsg(ep transports.Endpoint, msg []byte) error {
 // stop sync for everyone (plan §17.4 partial failure).
 func (e *Engine) Pump(ep transports.Endpoint) (applied int, rejected int, err error) {
 	for _, pkt := range ep.Poll() {
-		msg, err := e.reassemble(pkt)
-		if err != nil || msg == nil {
+		raw, err := e.reassemble(pkt)
+		if err != nil || raw == nil {
 			if err != nil {
 				rejected++
 			}
 			continue
 		}
-		msgType, term, sum, frames, err := decodeMessage(msg)
+		msg, err := decodeMessage(raw)
 		if err != nil {
 			rejected++
 			continue
 		}
-		if term != e.Log.Terminal {
+		if msg.term != e.Log.Terminal {
 			rejected++ // not our terminal; a router would dispatch here
 			continue
 		}
-		switch msgType {
+		switch msg.msgType {
 		case msgSummary:
-			if err := e.pushMissing(ep, sum); err != nil {
+			if err := e.pushMissing(ep, msg.sum); err != nil {
 				return applied, rejected, err
 			}
 		case msgFrames:
-			for _, f := range frames {
+			for _, f := range msg.frames {
 				as, err := e.Log.Ingest(f)
 				if err != nil {
 					rejected++
@@ -349,9 +456,97 @@ func (e *Engine) Pump(ep transports.Endpoint) (applied int, rejected int, err er
 					}
 				}
 			}
+		case msgBlobReq:
+			if err := e.serveBlobs(ep, msg.hashes); err != nil {
+				return applied, rejected, err
+			}
+		case msgBlobData:
+			for _, b := range msg.blobs {
+				if !e.acceptBlob(b) {
+					rejected++
+				}
+			}
 		}
 	}
 	return applied, rejected, nil
+}
+
+// RequestBlobs asks the peer for wire ids this replica is missing. Only
+// blobs that were requested are accepted back (no opportunistic writes).
+func (e *Engine) RequestBlobs(ep transports.Endpoint, hashes []id.Hash) error {
+	for start := 0; start < len(hashes); start += MaxBlobIDsPerRequest {
+		end := min(start+MaxBlobIDsPerRequest, len(hashes))
+		batch := hashes[start:end]
+		for _, h := range batch {
+			e.pending[h] = true
+		}
+		if err := e.sendMsg(ep, e.encodeBlobReq(batch)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// PendingBlobs reports how many requested blobs have not arrived yet.
+func (e *Engine) PendingBlobs() int { return len(e.pending) }
+
+// serveBlobs answers a request with everything this space legitimately
+// publishes and has locally, batched under the transport budget.
+func (e *Engine) serveBlobs(ep transports.Endpoint, hashes []id.Hash) error {
+	if e.Blobs == nil || e.BlobAllowed == nil {
+		return nil // this node does not serve assets; silence, not oracle
+	}
+	budget := framesBudget
+	if mtu := ep.Capabilities().MaxPayload; mtu > 0 {
+		budget = min(framesBudget, max(mtu*4, 512))
+	}
+	var batch [][]byte
+	size := 0
+	flush := func() error {
+		if len(batch) == 0 {
+			return nil
+		}
+		msg := e.encodeBlobData(batch)
+		batch, size = nil, 0
+		return e.sendMsg(ep, msg)
+	}
+	for _, h := range hashes {
+		if !e.BlobAllowed(h) {
+			continue // not part of this space: refuse silently
+		}
+		blob, err := e.Blobs.GetBlob(h)
+		if err != nil {
+			continue // not local; the peer can try another node
+		}
+		if size+len(blob) > budget && len(batch) > 0 {
+			if err := flush(); err != nil {
+				return err
+			}
+		}
+		batch = append(batch, blob)
+		size += len(blob)
+	}
+	return flush()
+}
+
+// acceptBlob verifies and stores one delivered blob: hash must match a
+// pending request (plan §5: expected-only, verify before PutBlob).
+func (e *Engine) acceptBlob(data []byte) bool {
+	if e.Blobs == nil {
+		return false
+	}
+	h := id.HashOf(data)
+	if !e.pending[h] {
+		return false // unrequested: refuse
+	}
+	if _, err := e.Blobs.PutBlob(data); err != nil {
+		return false
+	}
+	delete(e.pending, h)
+	if e.OnBlobStored != nil {
+		e.OnBlobStored(h)
+	}
+	return true
 }
 
 // pushMissing sends the peer everything our log has beyond their summary,

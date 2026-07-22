@@ -19,7 +19,7 @@ type ServerLimits struct {
 
 // DefaultLimits are conservative community-node settings.
 func DefaultLimits() ServerLimits {
-	return ServerLimits{MaxItemBytes: 1 << 20, PerHint: 64, MaxTTL: 7 * 24 * time.Hour}
+	return ServerLimits{MaxItemBytes: 16 << 20, PerHint: 64, MaxTTL: 7 * 24 * time.Hour}
 }
 
 // Server is a running relay.

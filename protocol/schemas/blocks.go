@@ -106,6 +106,34 @@ func validateBlockFallbackOnly(p []byte) error {
 	return err
 }
 
+var _ = validateBlockFallbackOnly // referenced by future block registrations
+
+// ExtractAssetRefs pulls every asset reference out of a known block payload
+// (asset indexing). Unknown schemas yield nothing — their assets become
+// fetchable only once the node learns the schema, which is the honest
+// reading of "cannot parse".
+func ExtractAssetRefs(schema string, payload []byte) []*AssetRef {
+	switch schema {
+	case BlockVisual:
+		if b, err := DecodeVisualBlock(payload); err == nil {
+			return []*AssetRef{b.Original}
+		}
+	case BlockVoice:
+		if b, err := DecodeVoiceBlock(payload); err == nil {
+			return []*AssetRef{b.Original}
+		}
+	case BlockAudio:
+		if b, err := DecodeAudioBlock(payload); err == nil {
+			return []*AssetRef{b.Original}
+		}
+	case BlockFile:
+		if b, err := DecodeFileBlock(payload); err == nil {
+			return []*AssetRef{b.Original}
+		}
+	}
+	return nil
+}
+
 // ---- AssetRef ----
 
 // InlineChunkMax is the cutoff between inline chunk lists and an external

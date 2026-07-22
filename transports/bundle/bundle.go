@@ -23,18 +23,30 @@ const (
 	version = 0
 )
 
-// Bundle key table v0.
+// Bundle key table v0 (append-only, ADR-009: old decoders skip key 4).
 const (
 	keyVersion  = 1
 	keyTerminal = 2
 	keyFrames   = 3
+	keyBlobs    = 4 // encrypted asset blobs (manifests and chunks)
 )
 
 // Encode serializes frames for one terminal (same bytes as the file form —
 // bundles travel identically by file, QR, or relay).
 func Encode(terminal id.TerminalID, frames [][]byte) []byte {
+	return EncodeWithBlobs(terminal, frames, nil)
+}
+
+// EncodeWithBlobs additionally carries encrypted asset blobs — the offline
+// path for media. A blob is opaque here; possession proves nothing about
+// access (keys travel inside the epoch-encrypted block events).
+func EncodeWithBlobs(terminal id.TerminalID, frames [][]byte, blobs [][]byte) []byte {
+	n := 3
+	if len(blobs) > 0 {
+		n++
+	}
 	buf := []byte(magic)
-	buf = codec.AppendMap(buf, 3)
+	buf = codec.AppendMap(buf, n)
 	buf = codec.AppendUint(buf, keyVersion)
 	buf = codec.AppendUint(buf, version)
 	buf = codec.AppendUint(buf, keyTerminal)
@@ -43,6 +55,13 @@ func Encode(terminal id.TerminalID, frames [][]byte) []byte {
 	buf = codec.AppendArray(buf, len(frames))
 	for _, f := range frames {
 		buf = codec.AppendBytes(buf, f)
+	}
+	if len(blobs) > 0 {
+		buf = codec.AppendUint(buf, keyBlobs)
+		buf = codec.AppendArray(buf, len(blobs))
+		for _, b := range blobs {
+			buf = codec.AppendBytes(buf, b)
+		}
 	}
 	return buf
 }
@@ -65,25 +84,32 @@ func Read(path string) (id.TerminalID, [][]byte, error) {
 	return Decode(data)
 }
 
-// Decode parses bundle bytes, returning the terminal and its frames. Frames
-// are opaque here — validation (signatures, chains, admission) happens in
-// the event log, not in the transport (ADR-007).
+// Decode parses bundle bytes, returning the terminal and its frames.
 func Decode(data []byte) (id.TerminalID, [][]byte, error) {
+	tid, frames, _, err := DecodeFull(data)
+	return tid, frames, err
+}
+
+// DecodeFull additionally returns carried asset blobs. Frames and blobs are
+// opaque here — validation happens in the event log and the asset layer,
+// not in the transport (ADR-007).
+func DecodeFull(data []byte) (id.TerminalID, [][]byte, [][]byte, error) {
 	var terminal id.TerminalID
 	if len(data) < len(magic) || string(data[:len(magic)]) != magic {
-		return terminal, nil, errors.New("bundle: not a terminal-bundle file")
+		return terminal, nil, nil, errors.New("bundle: not a terminal-bundle file")
 	}
 	d := codec.NewDecoder(data[len(magic):])
 	m, err := d.ReadMapHeader()
 	if err != nil {
-		return terminal, nil, err
+		return terminal, nil, nil, err
 	}
 	var frames [][]byte
+	var blobs [][]byte
 	var seenTerminal bool
 	for {
 		k, ok, err := m.Next()
 		if err != nil {
-			return terminal, nil, err
+			return terminal, nil, nil, err
 		}
 		if !ok {
 			break
@@ -92,44 +118,56 @@ func Decode(data []byte) (id.TerminalID, [][]byte, error) {
 		case keyVersion:
 			v, e := d.ReadUint()
 			if e != nil {
-				return terminal, nil, e
+				return terminal, nil, nil, e
 			}
 			if v != version {
-				return terminal, nil, fmt.Errorf("bundle: unsupported version %d", v)
+				return terminal, nil, nil, fmt.Errorf("bundle: unsupported version %d", v)
 			}
 		case keyTerminal:
 			b, e := d.ReadBytes()
 			if e != nil {
-				return terminal, nil, e
+				return terminal, nil, nil, e
 			}
 			if len(b) != id.Size {
-				return terminal, nil, errors.New("bundle: bad terminal id")
+				return terminal, nil, nil, errors.New("bundle: bad terminal id")
 			}
 			copy(terminal[:], b)
 			seenTerminal = true
 		case keyFrames:
 			n, e := d.ReadArray()
 			if e != nil {
-				return terminal, nil, e
+				return terminal, nil, nil, e
 			}
 			for range n {
 				f, e := d.ReadBytes()
 				if e != nil {
-					return terminal, nil, e
+					return terminal, nil, nil, e
 				}
 				frames = append(frames, append([]byte(nil), f...))
 			}
+		case keyBlobs:
+			n, e := d.ReadArray()
+			if e != nil {
+				return terminal, nil, nil, e
+			}
+			for range n {
+				b, e := d.ReadBytes()
+				if e != nil {
+					return terminal, nil, nil, e
+				}
+				blobs = append(blobs, append([]byte(nil), b...))
+			}
 		default:
 			if err := d.SkipItem(); err != nil {
-				return terminal, nil, err
+				return terminal, nil, nil, err
 			}
 		}
 	}
 	if err := d.Done(); err != nil {
-		return terminal, nil, err
+		return terminal, nil, nil, err
 	}
 	if !seenTerminal {
-		return terminal, nil, errors.New("bundle: missing terminal id")
+		return terminal, nil, nil, errors.New("bundle: missing terminal id")
 	}
-	return terminal, frames, nil
+	return terminal, frames, blobs, nil
 }

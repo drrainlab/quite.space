@@ -44,6 +44,10 @@ type Space struct {
 	Private       bool
 	Undecryptable int
 
+	// OnBlock receives every DECRYPTED block.* event (asset indexing and
+	// other post-reduction hooks live above the terminals layer).
+	OnBlock func(env *signal.Envelope, eid id.EventID)
+
 	// priv is held only by the creating node (the controller's replica).
 	priv          ed25519.PrivateKey
 	priv2         *privateState
@@ -145,6 +149,9 @@ func (s *Space) absorb(a eventlog.Applied) {
 		return
 	}
 	s.State.Apply(env, a.ID)
+	if s.OnBlock != nil && schemas.IsBlockSchema(env.Schema) {
+		s.OnBlock(env, a.ID)
+	}
 	if env.Schema == schemas.PresenceUpdate && env.SourceTerminal != nil {
 		if p, err := schemas.DecodePresence(env.Payload); err == nil {
 			s.Trust.UpdatePresence(claims.Presence{
