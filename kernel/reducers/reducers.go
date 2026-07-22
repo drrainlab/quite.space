@@ -13,6 +13,7 @@ import (
 	"crypto/sha256"
 	"sort"
 
+	"github.com/drrainlab/quiet_places/protocol/appdef"
 	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/protocol/publication"
 	"github.com/drrainlab/quiet_places/protocol/schemas"
@@ -118,6 +119,12 @@ type State struct {
 	publications map[[16]byte]*pubRec
 	// pubTargets: stable reaction target → document id.
 	pubTargets map[id.EventID][16]byte
+
+	// apps (ADR-014, apps.go): definitions by revision event, instances by
+	// id, and per-instance state partitions.
+	appDefs      map[id.EventID]*AppDefinitionRec
+	appInstances map[[16]byte]*AppInstanceRec
+	appEvents    map[[16]byte][]AppStateEvent
 
 	// Unsupported schemas are counted, never dropped silently (ADR-009).
 	Unsupported map[string]int
@@ -324,6 +331,12 @@ func (s *State) Apply(env *signal.Envelope, eid id.EventID) {
 		s.applyPublicationLifecycle(env, eid, false)
 	case publication.SchemaComment:
 		s.applyPublicationComment(env, eid)
+	case appdef.SchemaDefinition:
+		s.applyAppDefinition(env, eid)
+	case appdef.SchemaInstance:
+		s.applyAppInstance(env, eid)
+	case appdef.SchemaPollVote, appdef.SchemaFormResponse:
+		s.applyAppState(env, eid)
 	case schemas.ObservationTemp:
 		o, err := schemas.DecodeObservation(env.Payload)
 		if err != nil {
