@@ -213,14 +213,15 @@ func readFull(r interface{ Read([]byte) (int, error) }, buf []byte) (int, error)
 
 // ---- Asset download / fetch ----
 
-func (a *APIServer) assetID(r *http.Request) ([16]byte, error) {
-	var out [16]byte
-	b, err := hex.DecodeString(r.PathValue("asset"))
-	if err != nil || len(b) != 16 {
-		return out, errors.New("bad asset id")
+// assetID returns the hex asset id from the path, accepting both the legacy
+// 16-byte handle and the 32-byte V2 content digest.
+func (a *APIServer) assetID(r *http.Request) (string, error) {
+	s := r.PathValue("asset")
+	b, err := hex.DecodeString(s)
+	if err != nil || (len(b) != 16 && len(b) != 32) {
+		return "", errors.New("bad asset id")
 	}
-	copy(out[:], b)
-	return out, nil
+	return s, nil
 }
 
 func (a *APIServer) handleGetAsset(w http.ResponseWriter, r *http.Request) {
@@ -257,7 +258,7 @@ func (a *APIServer) handleGetAsset(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", ct)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Disposition",
-		mime.FormatMediaType("attachment", map[string]string{"filename": schemas.NormalizeFilename("asset-" + hex.EncodeToString(aid[:6]))}))
+		mime.FormatMediaType("attachment", map[string]string{"filename": schemas.NormalizeFilename("asset-" + aid[:min(12, len(aid))])}))
 	w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
 	w.Write(data)
 }
@@ -417,9 +418,9 @@ func (a *APIServer) projectEntry(tid id.TerminalID, e *reducers.Entry, me id.Pri
 	sortReactions(resp.Reactions)
 
 	attachAsset := func(ref *schemas.AssetRef) {
-		st, err := a.rt.AssetStatus(tid, ref.AssetID)
+		st, err := a.rt.AssetStatus(tid, ref.PublicIDHex())
 		ar := &assetResp{
-			ID: hex.EncodeToString(ref.AssetID[:]), MediaType: ref.MediaType,
+			ID: ref.PublicIDHex(), MediaType: ref.MediaType,
 			Size: ref.Size, DurationMS: ref.DurationMS,
 			Width: ref.Width, Height: ref.Height,
 		}

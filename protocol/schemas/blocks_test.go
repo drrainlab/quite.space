@@ -261,3 +261,64 @@ func TestEncodedSizeGate(t *testing.T) {
 		t.Fatal("encoded-size gate not enforced")
 	}
 }
+
+// AssetRefV2: content-addressed identity via a versioned tagged union, with
+// V1 dual-read (ADR-013).
+func TestAssetRefVersionedRoundTrip(t *testing.T) {
+	// V2 ref round-trips version + content id; PublicID is the 32-byte digest.
+	v2 := testRef(2)
+	v2.Version = AssetRefVersion
+	for i := range v2.ContentID {
+		v2.ContentID[i] = byte(i + 1)
+	}
+	enc, err := v2.encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := decodeAssetRef(codec.NewDecoder(enc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Version != AssetRefVersion || got.ContentID != v2.ContentID {
+		t.Fatalf("v2 identity did not round-trip: %+v", got)
+	}
+	if got.PublicIDHex() != v2.PublicIDHex() || len(got.PublicIDHex()) != 64 {
+		t.Fatalf("v2 public id wrong: %q", got.PublicIDHex())
+	}
+
+	// A legacy ref (no version) still decodes; its public id is the handle.
+	v1 := testRef(2) // Version 0
+	enc1, err := v1.encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got1, err := decodeAssetRef(codec.NewDecoder(enc1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got1.Version != 0 || !bytes.Equal(got1.PublicID(), got1.AssetID[:]) || len(got1.PublicIDHex()) != 32 {
+		t.Fatalf("v1 dual-read wrong: %+v", got1)
+	}
+}
+
+func TestAssetRefVersionValidation(t *testing.T) {
+	// Unknown version rejected (no length guessing).
+	bad := testRef(1)
+	bad.Version = 3
+	bad.ContentID[0] = 1
+	if err := bad.Validate(); err == nil {
+		t.Fatal("unknown asset ref version accepted")
+	}
+	// V2 without a content id rejected.
+	noID := testRef(1)
+	noID.Version = 2
+	if err := noID.Validate(); err == nil {
+		t.Fatal("v2 ref without content id accepted")
+	}
+	// Legacy ref carrying a content id rejected.
+	strayID := testRef(1)
+	strayID.ContentID[0] = 1
+	if err := strayID.Validate(); err == nil {
+		t.Fatal("legacy ref with content id accepted")
+	}
+}

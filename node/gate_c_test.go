@@ -205,7 +205,7 @@ func TestAssetGet409WhenMissing(t *testing.T) {
 	if err := rtB.ConnectPeer(fmt.Sprintf("127.0.0.1:%d", rtA.LAN().Port)); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, func() bool { _, err := rtB.AssetStatus(tid, ref.AssetID); return err == nil })
+	waitFor(t, func() bool { _, err := rtB.AssetStatus(tid, ref.PublicIDHex()); return err == nil })
 
 	api, err := NewAPIServer(rtB, nil)
 	if err != nil {
@@ -214,7 +214,7 @@ func TestAssetGet409WhenMissing(t *testing.T) {
 	srv := httptest.NewServer(api.Handler())
 	defer srv.Close()
 	req, _ := http.NewRequest("GET",
-		srv.URL+"/api/spaces/"+tid.Hex()+"/assets/"+fmt.Sprintf("%x", ref.AssetID), nil)
+		srv.URL+"/api/spaces/"+tid.Hex()+"/assets/"+ref.PublicIDHex(), nil)
 	req.Header.Set("X-QP-Token", api.Token())
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

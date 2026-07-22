@@ -3,10 +3,12 @@ package assets
 import (
 	"bytes"
 	"crypto/rand"
+	"crypto/sha256"
 	"errors"
 	"testing"
 
 	"github.com/drrainlab/quiet_places/protocol/id"
+	"github.com/drrainlab/quiet_places/protocol/schemas"
 )
 
 // memStore is an in-memory blob store for tests.
@@ -224,5 +226,45 @@ func TestDigestMismatchRejected(t *testing.T) {
 	ref.PlaintextDigest[0] ^= 1 // ref claims different content
 	if _, err := RetrieveBytes(store, ref); !errors.Is(err, ErrIntegrity) {
 		t.Fatalf("digest mismatch not rejected: %v", err)
+	}
+}
+
+// V2 content identity (ADR-013): Ingest mints a domain-separated content id,
+// stable for identical bytes (reference dedup) and distinct from the raw
+// plaintext digest.
+func TestIngestContentIDV2(t *testing.T) {
+	store := newMemStore()
+	data := randomData(t, 9_000)
+
+	ref, err := IngestBytes(store, data, Metadata{MediaType: "image/webp", Role: "original", ChunkSize: 4096})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ref.Version != schemas.AssetRefVersion {
+		t.Fatalf("expected V%d ref, got V%d", schemas.AssetRefVersion, ref.Version)
+	}
+	// Domain-separated: SHA256("qs.asset.v1" ‖ plaintext), not SHA256(plaintext).
+	h := sha256.New()
+	h.Write([]byte("qs.asset.v1"))
+	h.Write(data)
+	var want id.Hash
+	h.Sum(want[:0])
+	if ref.ContentID != want {
+		t.Fatal("content id is not the domain-separated digest")
+	}
+	if ref.ContentID == ref.PlaintextDigest {
+		t.Fatal("content id must differ from the raw plaintext digest")
+	}
+	// Identical bytes → identical content id (reference-level dedup), even
+	// though the ciphertext blobs differ (random per-asset key).
+	ref2, err := IngestBytes(store, data, Metadata{MediaType: "image/webp", Role: "original", ChunkSize: 4096})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ref2.ContentID != ref.ContentID {
+		t.Fatal("identical content produced different content ids")
+	}
+	if ref2.AssetID == ref.AssetID {
+		t.Fatal("crypto binding handle should be random per ingest")
 	}
 }

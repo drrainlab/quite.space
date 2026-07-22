@@ -18,10 +18,12 @@ import (
 	"github.com/drrainlab/quiet_places/protocol/signal"
 )
 
-// AssetKey addresses an asset within one space (no global namespace).
+// AssetKey addresses an asset within one space (no global namespace). Asset
+// is the hex of the ref's PublicID — 16-byte legacy handle or 32-byte V2
+// content digest — so the key holds either width comparably.
 type AssetKey struct {
 	Space id.TerminalID
-	Asset [16]byte
+	Asset string
 }
 
 // FetchReason is the machine-readable failure cause (plan §Gate B).
@@ -95,7 +97,7 @@ func (x *assetIndex) allowed(h id.Hash, space id.TerminalID) bool {
 // indexRef registers one AssetRef for a space: its manifest or inline
 // chunks, and — when the manifest is already local — its chunk ids too.
 func (r *Runtime) indexRef(space id.TerminalID, ref *schemas.AssetRef) {
-	key := AssetKey{Space: space, Asset: ref.AssetID}
+	key := AssetKey{Space: space, Asset: ref.PublicIDHex()}
 	if _, seen := r.assetIdx.refs[key]; !seen {
 		r.assetIdx.refOrder[space] = append(r.assetIdx.refOrder[space], key)
 	}
@@ -154,7 +156,7 @@ func (r *Runtime) IngestAsset(src io.Reader, size int64, meta assets.Metadata) (
 
 // RetrieveAsset returns the decrypted, integrity-verified content of an
 // asset published in the given space.
-func (r *Runtime) RetrieveAsset(space id.TerminalID, asset [16]byte) ([]byte, *schemas.AssetRef, error) {
+func (r *Runtime) RetrieveAsset(space id.TerminalID, asset string) ([]byte, *schemas.AssetRef, error) {
 	r.mu.Lock()
 	ref, ok := r.assetIdx.refs[AssetKey{Space: space, Asset: asset}]
 	r.mu.Unlock()
@@ -169,7 +171,7 @@ func (r *Runtime) RetrieveAsset(space id.TerminalID, asset [16]byte) ([]byte, *s
 }
 
 // AssetRefFor exposes a ref for the API layer (space-scoped only).
-func (r *Runtime) AssetRefFor(space id.TerminalID, asset [16]byte) (*schemas.AssetRef, bool) {
+func (r *Runtime) AssetRefFor(space id.TerminalID, asset string) (*schemas.AssetRef, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	ref, ok := r.assetIdx.refs[AssetKey{Space: space, Asset: asset}]
@@ -177,7 +179,7 @@ func (r *Runtime) AssetRefFor(space id.TerminalID, asset [16]byte) (*schemas.Ass
 }
 
 // AssetStatus projects the current lifecycle of an asset.
-func (r *Runtime) AssetStatus(space id.TerminalID, asset [16]byte) (FetchStatus, error) {
+func (r *Runtime) AssetStatus(space id.TerminalID, asset string) (FetchStatus, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.assetStatusLocked(AssetKey{Space: space, Asset: asset})
@@ -207,7 +209,7 @@ func (r *Runtime) assetStatusLocked(key AssetKey) (FetchStatus, error) {
 // RequestAsset starts (or joins) a fetch for an asset: two-phase, sequential
 // over available peers, bounded retries. Returns immediately; progress is
 // polled via AssetStatus.
-func (r *Runtime) RequestAsset(space id.TerminalID, asset [16]byte) error {
+func (r *Runtime) RequestAsset(space id.TerminalID, asset string) error {
 	r.mu.Lock()
 	key := AssetKey{Space: space, Asset: asset}
 	ref, ok := r.assetIdx.refs[key]

@@ -9,6 +9,7 @@
 package schemas
 
 import (
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/url"
@@ -147,6 +148,9 @@ var AllowedChunkSizes = []uint64{4 << 10, 16 << 10, 64 << 10}
 // inside the epoch-encrypted block payload — so whoever can read the block
 // can read the asset, and nobody else.
 type AssetRef struct {
+	// AssetID is the crypto binding handle: a random 16-byte value known at
+	// ingest start and mixed into every chunk's AAD. It is NOT the public
+	// identity in V2 (the content digest can't be known before streaming).
 	AssetID         [16]byte
 	Role            string // original | preview | transcript
 	MediaType       string
@@ -161,9 +165,18 @@ type AssetRef struct {
 	InlineChunks   []id.Hash // small assets: wire ids inline (≤ InlineChunkMax)
 	ManifestWireID *id.Hash  // larger assets: encrypted manifest blob
 	ManifestVer    uint64    // manifest AAD version (1 when manifest present)
+	// Versioned identity (ADR-013): Version 0/1 = legacy (public id is the
+	// 16-byte AssetID handle); Version 2 = ContentID is the public id, a
+	// domain-separated content digest SHA256("qs.asset.v1"‖plaintext). New
+	// events emit V2 only; the decoder still reads V1 (dual-read).
+	Version   uint64
+	ContentID id.Hash
 }
 
-// AssetRef wire key table v1.
+// AssetRefVersion is the version new assets are minted at.
+const AssetRefVersion = 2
+
+// AssetRef wire key table (append-only). Keys 14/15 add the V2 identity.
 const (
 	arKeyAssetID    = 1
 	arKeyRole       = 2
@@ -178,7 +191,23 @@ const (
 	arKeyInline     = 11
 	arKeyManifest   = 12
 	arKeyManVer     = 13
+	arKeyVersion    = 14
+	arKeyContentID  = 15
 )
+
+// PublicID is the addressing/dedup identity used by the composition contract,
+// the asset index, and the API: the content digest for V2, else the legacy
+// 16-byte handle. Two identical files share a V2 PublicID (reference-level
+// dedup); the underlying encrypted blobs still differ (random per-asset keys).
+func (a *AssetRef) PublicID() []byte {
+	if a.Version >= 2 {
+		return append([]byte(nil), a.ContentID[:]...)
+	}
+	return append([]byte(nil), a.AssetID[:]...)
+}
+
+// PublicIDHex is PublicID as lowercase hex (a comparable map/URL key).
+func (a *AssetRef) PublicIDHex() string { return hex.EncodeToString(a.PublicID()) }
 
 // Validate enforces structural rules.
 func (a *AssetRef) Validate() error {
@@ -208,6 +237,20 @@ func (a *AssetRef) Validate() error {
 	if hasManifest && a.ManifestVer == 0 {
 		return errors.New("schemas: manifest reference without manifest version")
 	}
+	// Versioned identity: unknown versions are rejected (not length-guessed).
+	// V2 requires a non-zero content id; legacy (0/1) must not carry one.
+	switch a.Version {
+	case 0, 1:
+		if a.ContentID != (id.Hash{}) {
+			return errors.New("schemas: legacy asset ref must not carry a content id")
+		}
+	case 2:
+		if a.ContentID == (id.Hash{}) {
+			return errors.New("schemas: v2 asset ref requires a content id")
+		}
+	default:
+		return fmt.Errorf("schemas: unknown asset ref version %d", a.Version)
+	}
 	return nil
 }
 
@@ -236,6 +279,9 @@ func (a *AssetRef) encode() ([]byte, error) {
 	}
 	if a.ManifestWireID != nil {
 		n += 2 // manifest id + version
+	}
+	if a.Version != 0 {
+		n += 2 // version + content_id
 	}
 	buf := codec.AppendMap(nil, n)
 	buf = codec.AppendUint(buf, arKeyAssetID)
@@ -278,6 +324,12 @@ func (a *AssetRef) encode() ([]byte, error) {
 		buf = codec.AppendBytes(buf, a.ManifestWireID[:])
 		buf = codec.AppendUint(buf, arKeyManVer)
 		buf = codec.AppendUint(buf, a.ManifestVer)
+	}
+	if a.Version != 0 {
+		buf = codec.AppendUint(buf, arKeyVersion)
+		buf = codec.AppendUint(buf, a.Version)
+		buf = codec.AppendUint(buf, arKeyContentID)
+		buf = codec.AppendBytes(buf, a.ContentID[:])
 	}
 	return buf, nil
 }
@@ -350,6 +402,10 @@ func decodeAssetRef(d *codec.Decoder) (*AssetRef, error) {
 			a.ManifestWireID = &h
 		case arKeyManVer:
 			a.ManifestVer, er = d.ReadUint()
+		case arKeyVersion:
+			a.Version, er = d.ReadUint()
+		case arKeyContentID:
+			er = readN(a.ContentID[:], 32)
 		default:
 			er = d.SkipItem()
 		}

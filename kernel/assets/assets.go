@@ -307,7 +307,13 @@ func Ingest(store Store, src io.Reader, size int64, meta Metadata) (*schemas.Ass
 	}
 	manifestVer := uint16(1)
 
+	// Two hashers over the same plaintext stream (one pass, no re-read):
+	//   digest    — SHA256(plaintext), the end-to-end integrity check (legacy).
+	//   contentID — SHA256("qs.asset.v1"‖plaintext), the domain-separated V2
+	//               public identity (ADR-013). They are deliberately distinct.
 	digest := sha256.New()
+	contentID := sha256.New()
+	contentID.Write([]byte("qs.asset.v1"))
 	buf := make([]byte, chunkSize)
 	var chunkIDs []id.Hash
 	var read int64
@@ -322,6 +328,7 @@ func Ingest(store Store, src io.Reader, size int64, meta Metadata) (*schemas.Ass
 		}
 		read += int64(n)
 		digest.Write(buf[:n])
+		contentID.Write(buf[:n])
 		aad := chunkAAD(ref.AssetID, uint32(idx), uint32(total), uint32(n), manifestVer)
 		blob, err := sealBlob(ref.Key, aad, buf[:n])
 		if err != nil {
@@ -340,6 +347,8 @@ func Ingest(store Store, src io.Reader, size int64, meta Metadata) (*schemas.Ass
 		return nil, ErrAssetSizeMismatch
 	}
 	digest.Sum(ref.PlaintextDigest[:0])
+	ref.Version = schemas.AssetRefVersion
+	contentID.Sum(ref.ContentID[:0])
 
 	if total <= schemas.InlineChunkMax {
 		ref.InlineChunks = chunkIDs

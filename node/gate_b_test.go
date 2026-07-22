@@ -88,7 +88,7 @@ func TestTwoNodesAssetExchange(t *testing.T) {
 	// decrypted payload and honestly reports manifest_missing.
 	deadline := time.Now().Add(15 * time.Second)
 	for {
-		if st, err := rtB.AssetStatus(tid, ref.AssetID); err == nil {
+		if st, err := rtB.AssetStatus(tid, ref.PublicIDHex()); err == nil {
 			if st.State != assets.StateManifestMissing && st.State != assets.StateFetching {
 				t.Fatalf("unexpected initial state %v", st.State)
 			}
@@ -101,11 +101,11 @@ func TestTwoNodesAssetExchange(t *testing.T) {
 	}
 
 	// Phases 1+2: fetch manifest, then chunks.
-	if err := rtB.RequestAsset(tid, ref.AssetID); err != nil {
+	if err := rtB.RequestAsset(tid, ref.PublicIDHex()); err != nil {
 		t.Fatal(err)
 	}
 	for {
-		st, err := rtB.AssetStatus(tid, ref.AssetID)
+		st, err := rtB.AssetStatus(tid, ref.PublicIDHex())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -120,7 +120,7 @@ func TestTwoNodesAssetExchange(t *testing.T) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	got, _, err := rtB.RetrieveAsset(tid, ref.AssetID)
+	got, _, err := rtB.RetrieveAsset(tid, ref.PublicIDHex())
 	if err != nil || !bytes.Equal(got, content) {
 		t.Fatalf("retrieved content wrong: %v", err)
 	}
@@ -158,7 +158,7 @@ func TestRestartRebuildsAssetIndexes(t *testing.T) {
 		t.Fatal("chunk wire ids not reindexed from local manifest after restart")
 	}
 	// And the asset is still fully retrievable.
-	got, _, err := rt2.RetrieveAsset(tid, ref.AssetID)
+	got, _, err := rt2.RetrieveAsset(tid, ref.PublicIDHex())
 	if err != nil || !bytes.Equal(got, content) {
 		t.Fatalf("asset lost across restart: %v", err)
 	}
@@ -199,7 +199,7 @@ func TestRelayDeadDropCarriesAssets(t *testing.T) {
 	if _, err := rtB.PullFromRelay(addr); err != nil {
 		t.Fatal(err)
 	}
-	got, _, err := rtB.RetrieveAsset(tid, ref.AssetID)
+	got, _, err := rtB.RetrieveAsset(tid, ref.PublicIDHex())
 	if err != nil || !bytes.Equal(got, content) {
 		t.Fatalf("asset did not survive the dead drop: %v", err)
 	}
