@@ -334,6 +334,7 @@ type reactionResp struct {
 type entryResp struct {
 	ID         string         `json:"id"`
 	Author     string         `json:"author"`
+	AuthorName string         `json:"author_name"`
 	Mine       bool           `json:"mine"`
 	ProducedBy string         `json:"produced_by"`
 	Clock      uint64         `json:"clock"`
@@ -380,18 +381,29 @@ func (a *APIServer) handleEntries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	me := a.rt.Principal.ID
+	// Resolve author principals to human display names (self-declared
+	// claims from member manifests) — the honest projection that keeps
+	// principal:hex out of the human path.
+	names := map[id.PrincipalID]string{me: a.rt.DisplayName()}
+	for _, c := range sp.MemberCards(0) {
+		if c.Name != "" {
+			names[c.Principal] = c.Name
+		}
+	}
 	entries := sp.State.Entries()
 	out := make([]entryResp, 0, len(entries))
 	for i := range entries {
-		out = append(out, a.projectEntry(tid, &entries[i], me))
+		out = append(out, a.projectEntry(tid, &entries[i], me, names))
 	}
 	writeJSON(w, out)
 }
 
-func (a *APIServer) projectEntry(tid id.TerminalID, e *reducers.Entry, me id.PrincipalID) entryResp {
+func (a *APIServer) projectEntry(tid id.TerminalID, e *reducers.Entry, me id.PrincipalID,
+	names map[id.PrincipalID]string) entryResp {
 	resp := entryResp{
-		ID: e.ID.Hex(), Author: e.Author.String(), Mine: e.Author == me,
-		ProducedBy: e.ProducedBy.String(), Clock: e.Clock, Kind: string(e.Kind),
+		ID: e.ID.Hex(), Author: e.Author.String(), AuthorName: names[e.Author],
+		Mine: e.Author == me, ProducedBy: e.ProducedBy.String(),
+		Clock: e.Clock, Kind: string(e.Kind),
 	}
 	for emoji, ps := range e.Reactions {
 		rr := reactionResp{Emoji: emoji, Count: len(ps)}

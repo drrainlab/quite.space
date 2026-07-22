@@ -129,16 +129,51 @@ function drawRelic(canvas, spaceId, relic, events, acc) {
 
 // ---- main refresh ----
 
+// Protocol view (§18): human by default; the technical layer is opt-in and
+// remembered. It only changes how things RENDER — same data underneath.
+let PROTOCOL = localStorage.getItem('qp.protocol') === '1';
+function toggleProtocol() {
+  PROTOCOL = !PROTOCOL;
+  localStorage.setItem('qp.protocol', PROTOCOL ? '1' : '0');
+  document.body.classList.toggle('protocol', PROTOCOL);
+  refresh();
+}
+
+// Compact human connection summary (§17): "● Direct · 2 here" — the raw
+// LAN/mesh/relay strings live behind the chip and in Protocol view.
+function connectionSummary(status) {
+  const lan = status.lan, mesh = status.mesh;
+  const peers = (lan.peers || 0) + (mesh.connected ? 1 : 0);
+  let state = t('conn.off'), cls = 'off';
+  if (mesh.connected && peers > 0) { state = t('conn.mesh'); cls = 'mesh'; }
+  else if (lan.peers > 0) { state = t('conn.direct'); cls = ''; }
+  else if (lan.listening) { state = t('conn.lan'); cls = ''; }
+  return { text: peers > 0 ? t('conn.summary', { state, count: peers }) : state, cls };
+}
+
 async function refresh() {
   try {
     status = await api('/api/status');
-    document.getElementById('fp').textContent = status.fingerprint;
-    const lan = status.lan;
-    document.getElementById('lan').textContent =
-      lan.listening ? `LAN :${lan.port} · ${lan.peers} peer${lan.peers===1?'':'s'}` : 'LAN off';
+    document.body.classList.toggle('protocol', PROTOCOL);
+    document.getElementById('protoToggle').textContent = PROTOCOL ? t('protocol.on') : t('protocol.toggle');
+
+    // Connection chip: human by default, raw string only in Protocol view.
+    const conn = document.getElementById('conn');
+    const cText = document.getElementById('connText');
+    if (PROTOCOL) {
+      const lan = status.lan;
+      cText.textContent = lan.listening ? `LAN :${lan.port} · ${lan.peers} peers` : 'LAN off';
+      conn.className = 'conn-chip' + (lan.peers ? '' : ' off');
+    } else {
+      const s = connectionSummary(status);
+      cText.textContent = s.text;
+      conn.className = 'conn-chip ' + s.cls;
+    }
+    document.getElementById('fp').textContent = PROTOCOL ? status.fingerprint : '';
+
     const mesh = status.mesh;
     document.getElementById('mesh').textContent = mesh.connected
-      ? `mesh !${mesh.node_num.toString(16)} ↑${mesh.tx} ↓${mesh.rx}` : 'mesh off';
+      ? t('conn.mesh_node', { node: mesh.node_num.toString(16) }) : '';
     document.getElementById('meshInfo').textContent = mesh.connected
       ? `connected as node ${mesh.node_num} · sent ${mesh.tx} · received ${mesh.rx}`
       : (mesh.err ? `disconnected: ${mesh.err}` : 'not connected');
@@ -149,15 +184,29 @@ async function refresh() {
     for (const s of spacesCache) {
       const d = document.createElement('div');
       d.className = 'space' + (s.id === current ? ' active' : '');
+      d.setAttribute('role', 'button');
+      d.tabIndex = 0;
+      const title = s.title || t('conv.member');
       const an = ARCHETYPES[s.character?.archetype]?.name || '';
-      d.innerHTML = `<div class="t">${esc(s.title || s.id.slice(0,12))}${s.owned ? ' ·owner' : ''}</div>
-        <div class="m">${an ? esc(an) + ' · ' : ''}${s.events} events · ${s.messages} msgs` +
-        (s.undecryptable ? ` · <span class="undec">${s.undecryptable} unreadable</span>` : '') +
-        (s.peers ? ` · ${s.peers} peer` : '') + `</div>`;
+      const head = document.createElement('div');
+      head.className = 'space-head';
+      head.innerHTML = `<span class="glyph g24">${glyphSVG(s.id, 'space', 24)}</span>` +
+        `<span class="t">${esc(title)}</span>` +
+        (s.owned ? `<span class="owner-tag">${esc(t('spaces.owner'))}</span>` : '');
+      d.appendChild(head);
+      const meta = document.createElement('div');
+      meta.className = 'm';
+      const bits = [];
+      if (an) bits.push(esc(an));
+      bits.push(esc(t('spaces.activity.events', { count: s.events })));
+      if (s.undecryptable) bits.push(`<span class="undec">${s.undecryptable}✦</span>`);
+      meta.innerHTML = bits.join(' · ');
+      d.appendChild(meta);
       d.onclick = () => { current = s.id; refresh(); };
+      d.onkeydown = (e) => { if (e.key === 'Enter') { current = s.id; refresh(); } };
       if (s.owned) {
         const b = document.createElement('button');
-        b.textContent = 'invite'; b.style.marginTop = '4px'; b.style.fontSize = '11px';
+        b.textContent = 'invite'; b.style.marginTop = '6px'; b.style.fontSize = '12px';
         b.onclick = (e) => { e.stopPropagation(); openInvite(s); };
         d.appendChild(b);
       }
@@ -213,11 +262,11 @@ async function refreshSpace() {
   }
   const parts = [];
   if (st.undecryptable > 0)
-    parts.push(`<span class="warn">${st.undecryptable} events you cannot read (no key — shown, not hidden)</span>`);
+    parts.push(`<span class="warn">${esc(t('honesty.undecryptable', { count: st.undecryptable }))}</span>`);
   if (st.observation) {
     const o = st.observation;
-    parts.push(`sensor: ${esc(o.display)}${o.simulated ? ' <span class="warn">SIMULATED</span>' : ''}` +
-      ` · ${o.freshness}${o.freshness !== 'current' ? ` (${o.age_seconds}s old)` : ''}`);
+    parts.push(`${esc(o.display)}${o.simulated ? ' <span class="warn">' + t('honesty.simulated') + '</span>' : ''}` +
+      ` · ${esc(o.freshness)}${o.freshness !== 'current' ? ` (${esc(relTime(o.age_seconds))})` : ''}`);
   }
   document.getElementById('honesty').innerHTML = parts.join(' · ');
 
@@ -235,23 +284,28 @@ async function refreshSpace() {
   note.textContent = `grown from ${st.events} shared events`;
   mbox.appendChild(note);
 
-  const h = document.createElement('h3'); h.textContent = 'members'; mbox.appendChild(h);
+  const h = document.createElement('h3'); h.textContent = t('conv.member') + 's'; mbox.appendChild(h);
   for (const m of members) {
     const d = document.createElement('div');
     d.className = 'member';
-    let pres = '<div class="pres stale">presence unknown</div>';
-    if (m.presence.known) {
-      pres = m.presence.current
-        ? `<div class="pres current">● ${esc(m.presence.state)}</div>`
-        : `<div class="pres stale">last known: ${esc(m.presence.state)}, ${fmtAge(m.presence.age_seconds)} ago</div>`;
-    }
-    d.innerHTML =
-      `<div><span class="badge b-${m.agency === 'ai_agent' ? 'ai_agent' : (m.kind === 'human' ? 'human' : 'deterministic_bot')}">${esc(m.kind)}</span>` +
-      `${esc((m.declared_labels || [])[0] || m.terminal.slice(0, 12))}</div>` +
-      pres +
-      (m.ai_present ? `<div class="ai-note">AI-agent · ${esc(m.autonomy)} · model ${esc(m.model)}</div>` : '') +
-      `<div class="caps">${esc(m.io_mode)} · ${esc((m.capabilities || []).join(' '))}` +
-      `${m.commandable ? '' : ' · no command surface'}</div>`;
+    let pres;
+    if (!m.presence.known) pres = `<div class="pres stale">${esc(t('presence.unknown'))}</div>`;
+    else if (m.presence.current) pres = `<div class="pres current">● ${esc(m.presence.state)}</div>`;
+    else pres = `<div class="pres stale">${esc(m.presence.state)} · ${esc(relTime(m.presence.age_seconds))}</div>`;
+    const glyphType = m.kind === 'human' ? 'human' : m.kind === 'space' ? 'space' : 'device';
+    const name = m.name || m.terminal.slice(0, 10);
+    const kindBadge = m.kind === 'human' ? '' :
+      `<span class="badge b-${m.agency === 'ai_agent' ? 'ai_agent' : 'deterministic_bot'}">${esc(m.kind)}</span>`;
+    let inner =
+      `<div class="mhead"><span class="glyph g24">${glyphSVG(m.principal || m.terminal, glyphType, 24)}</span>` +
+      `<span class="mname">${esc(name)}</span>${kindBadge}</div>` + pres;
+    if (m.ai_present)
+      inner += `<div class="ai-note">AI · ${esc(m.autonomy)} · model ${esc(m.model)}</div>`;
+    // Technical capabilities only in Protocol view — human path stays calm.
+    if (PROTOCOL)
+      inner += `<div class="caps">${esc(m.io_mode)} · ${esc((m.capabilities || []).join(' '))}` +
+        `${m.commandable ? '' : ' · no command surface'}</div>`;
+    d.innerHTML = inner;
     mbox.appendChild(d);
   }
 }
@@ -484,11 +538,23 @@ const esc = (s) => String(s).replace(/[&<>"']/g, ch =>
 // Every card sets textContent for user strings (never innerHTML), so
 // caption/alt/title/transcript can never inject markup.
 
+// Authorship badge stays visible for non-human origins (honesty §2.4): AI,
+// bot and sensor never masquerade as a person. Plain human authors get no
+// badge — the default needs no label.
 function badge(producedBy) {
+  if (producedBy === 'human') return null;
   const b = document.createElement('span');
   b.className = 'badge b-' + producedBy;
-  b.textContent = producedBy;
+  b.textContent = producedBy.replace(/_/g, ' ');
   return b;
+}
+
+// A human display name for an author. In Protocol view the raw principal is
+// shown instead; in the human path an unnamed author gets a glyph + "member"
+// — never a bare principal:hex.
+function authorLabel(e) {
+  if (PROTOCOL) return e.author;
+  return e.author_name || t('conv.member');
 }
 
 function renderEntry(log, e) {
@@ -496,13 +562,21 @@ function renderEntry(log, e) {
   d.className = 'entry msg';
   const who = document.createElement('div');
   who.className = 'who';
-  who.appendChild(badge(e.produced_by));
+  if (!PROTOCOL) {
+    const g = document.createElement('span');
+    g.className = 'glyph g18';
+    g.innerHTML = glyphSVG(e.author, e.produced_by === 'human' ? 'human' : 'device', 18);
+    who.appendChild(g);
+  }
+  const b = badge(e.produced_by);
+  if (b) who.appendChild(b);
   const meta = document.createElement('span');
   meta.className = 'meta';
-  meta.textContent = e.author + (e.revised ? ' · edited' : '');
+  meta.textContent = authorLabel(e) + (e.revised ? ' · ' + t('conv.edited') : '') +
+    (PROTOCOL ? ' · ' + e.kind : '');
   who.appendChild(meta);
   const mk = document.createElement('span');
-  mk.className = 'mk'; mk.textContent = ' →card';
+  mk.className = 'mk'; mk.textContent = t('conv.save_card');
   mk.onclick = () => makeCardFrom(e);
   who.appendChild(mk);
   d.appendChild(who);

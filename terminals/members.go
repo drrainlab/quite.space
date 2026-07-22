@@ -35,6 +35,10 @@ func (p *Participant) PublishManifest(s *Space) (eventlog.Applied, bool, error) 
 // member terminal (plan §M1.3/M1.4).
 type MemberCard struct {
 	Terminal id.TerminalID
+	// Principal controls this terminal; Name is its self-declared display
+	// label (the human-readable identity, a claim — never verified).
+	Principal id.PrincipalID
+	Name      string
 	// Everything below the line is the member's own signed declaration —
 	// a claim, not a verified fact (invariant §2.3).
 	Kind           string
@@ -77,8 +81,14 @@ func (s *Space) MemberCards(nowUnix uint64) []MemberCard {
 	out := make([]MemberCard, 0, len(terminals))
 	for _, t := range terminals {
 		m := t.Manifest
+		name := ""
+		if len(m.DeclaredLabels) > 0 {
+			name = m.DeclaredLabels[0]
+		}
 		card := MemberCard{
 			Terminal:       t.ID,
+			Principal:      m.Controller,
+			Name:           name,
 			Kind:           m.Kind.String(),
 			Agency:         m.AgencyMode.String(),
 			AIPresent:      m.AIPresent,

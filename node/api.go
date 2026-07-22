@@ -513,6 +513,8 @@ func (a *APIServer) handleMintInvite(w http.ResponseWriter, r *http.Request) {
 
 type memberResp struct {
 	Terminal       string   `json:"terminal"`
+	Principal      string   `json:"principal"`
+	Name           string   `json:"name"`
 	Kind           string   `json:"kind"`
 	Agency         string   `json:"agency"`
 	AIPresent      bool     `json:"ai_present"`
@@ -545,7 +547,8 @@ func (a *APIServer) handleMembers(w http.ResponseWriter, r *http.Request) {
 	out := make([]memberResp, 0, len(cards))
 	for _, c := range cards {
 		m := memberResp{
-			Terminal: c.Terminal.Hex(), Kind: c.Kind, Agency: c.Agency,
+			Terminal: c.Terminal.Hex(), Principal: c.Principal.Hex(), Name: c.Name,
+			Kind: c.Kind, Agency: c.Agency,
 			AIPresent: c.AIPresent, Autonomy: terminals.AutonomyLabel(c.Autonomy),
 			Model: "not specified", IOMode: c.IOMode,
 			Capabilities: c.Capabilities, DeclaredLabels: c.DeclaredLabels,

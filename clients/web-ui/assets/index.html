@@ -7,12 +7,16 @@
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-<header>
-  <b>quiet places</b>
-  <span id="fp" class="dim"></span>
-  <span id="lan" class="dim" onclick="dlgLan.showModal()" style="cursor:pointer" title="LAN peers"></span>
-  <span id="mesh" class="dim" onclick="dlgMesh.showModal()" style="cursor:pointer" title="Meshtastic radio"></span>
-  <span id="relayBtn" class="dim" onclick="dlgRelay.showModal()" style="cursor:pointer" title="blind relay">relay</span>
+<header class="glass">
+  <b>quiet spaces</b>
+  <span id="conn" class="conn-chip off" onclick="dlgLan.showModal()" tabindex="0"
+    role="button" aria-label="Connection details"><span class="dot"></span><span id="connText">Not connected</span></span>
+  <span style="flex:1"></span>
+  <span id="mesh" class="dim mono" onclick="dlgMesh.showModal()" style="cursor:pointer" title="Meshtastic radio" tabindex="0"></span>
+  <span id="relayBtn" class="dim mono" onclick="dlgRelay.showModal()" style="cursor:pointer" title="blind relay" tabindex="0">relay</span>
+  <span id="protoToggle" class="dim mono" onclick="toggleProtocol()" style="cursor:pointer" tabindex="0" role="button"
+    title="Protocol view — the technical layer"></span>
+  <span id="fp" class="dim mono" title="your fingerprint"></span>
 </header>
 <main>
   <div id="sidebar">

@@ -309,6 +309,14 @@ func (r *Runtime) SetPresence(tid id.TerminalID, state string, ttlSeconds uint64
 	return human.SetPresence(r.Self, st.space, state, uint64(time.Now().Unix()), ttlSeconds)
 }
 
+// DisplayName is this node's own self-declared name (first manifest label).
+func (r *Runtime) DisplayName() string {
+	if len(r.Self.Manifest.DeclaredLabels) > 0 {
+		return r.Self.Manifest.DeclaredLabels[0]
+	}
+	return "me"
+}
+
 // Members projects the member cards of a space.
 func (r *Runtime) Members(tid id.TerminalID) ([]terminals.MemberCard, error) {
 	r.mu.Lock()
