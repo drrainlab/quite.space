@@ -13,6 +13,7 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -167,25 +168,53 @@ func (a *APIServer) handleMeshConnect(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
+type characterResp struct {
+	Archetype string   `json:"archetype"`
+	Mood      string   `json:"mood"`
+	Material  string   `json:"material"`
+	Motion    string   `json:"motion"`
+	Geometry  string   `json:"geometry"`
+	Central   string   `json:"central"`
+	Memory    string   `json:"memory"`
+	Relic     string   `json:"relic"`
+	Rituals   []string `json:"rituals"`
+	Presence  []string `json:"presence"`
+}
+
+func characterOf(c terminals.Character) characterResp {
+	return characterResp{
+		Archetype: c.Archetype, Mood: c.Mood, Material: c.Material,
+		Motion: c.Motion, Geometry: c.Geometry, Central: c.Central,
+		Memory: c.Memory, Relic: c.Relic,
+		Rituals: c.Rituals, Presence: c.Presence,
+	}
+}
+
 type spaceResp struct {
-	ID            string `json:"id"`
-	Title         string `json:"title"`
-	Owned         bool   `json:"owned"`
-	Events        int    `json:"events"`
-	Messages      int    `json:"messages"`
-	Undecryptable int    `json:"undecryptable"`
-	Peers         int    `json:"peers"`
+	ID            string        `json:"id"`
+	Title         string        `json:"title"`
+	Owned         bool          `json:"owned"`
+	Events        int           `json:"events"`
+	Messages      int           `json:"messages"`
+	Undecryptable int           `json:"undecryptable"`
+	Peers         int           `json:"peers"`
+	Character     characterResp `json:"character"`
 }
 
 func (a *APIServer) handleSpaces(w http.ResponseWriter, r *http.Request) {
 	spaces := a.rt.Spaces()
 	out := make([]spaceResp, 0, len(spaces))
 	for _, s := range spaces {
-		out = append(out, spaceResp{
+		resp := spaceResp{
 			ID: s.ID.Hex(), Title: s.Title, Owned: s.Owned,
 			Events: s.Events, Messages: s.Messages,
 			Undecryptable: s.Undecryptable, Peers: s.Peers,
-		})
+		}
+		if sp, ok := a.rt.Space(s.ID); ok {
+			_, c := sp.Character()
+			resp.Character = characterOf(c)
+		}
+		out = append(out, resp)
 	}
 	writeJSON(w, out)
 }
@@ -198,15 +227,48 @@ func readBody[T any](r *http.Request) (T, error) {
 
 func (a *APIServer) handleCreateSpace(w http.ResponseWriter, r *http.Request) {
 	body, err := readBody[struct {
-		Title string `json:"title"`
+		Title     string   `json:"title"`
+		Archetype string   `json:"archetype"`
+		Mood      string   `json:"mood"`
+		Material  string   `json:"material"`
+		Motion    string   `json:"motion"`
+		Geometry  string   `json:"geometry"`
+		Central   string   `json:"central"`
+		Memory    string   `json:"memory"`
+		Rituals   []string `json:"rituals"`
+		Presence  []string `json:"presence"` // extra custom states
 	}](r)
 	if err != nil || strings.TrimSpace(body.Title) == "" {
 		httpErr(w, http.StatusBadRequest, errors.New("title required"))
 		return
 	}
-	tid, err := a.rt.CreateSpace(strings.TrimSpace(body.Title))
+	arch := body.Archetype
+	if arch == "" {
+		arch = "campfire"
+	}
+	c := terminals.DefaultCharacter(arch)
+	set := func(dst *string, v string) {
+		if v != "" {
+			*dst = v
+		}
+	}
+	set(&c.Mood, body.Mood)
+	set(&c.Material, body.Material)
+	set(&c.Motion, body.Motion)
+	set(&c.Geometry, body.Geometry)
+	set(&c.Central, body.Central)
+	set(&c.Memory, body.Memory)
+	if len(body.Rituals) > 0 {
+		c.Rituals = body.Rituals
+	}
+	for _, p := range body.Presence {
+		if !slices.Contains(c.Presence, p) {
+			c.Presence = append(c.Presence, p)
+		}
+	}
+	tid, err := a.rt.CreateSpaceWithCharacter(strings.TrimSpace(body.Title), c)
 	if err != nil {
-		httpErr(w, http.StatusInternalServerError, err)
+		httpErr(w, http.StatusBadRequest, err)
 		return
 	}
 	writeJSON(w, map[string]string{"id": tid.Hex()})

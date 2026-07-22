@@ -179,11 +179,16 @@ func (r *Runtime) Close() {
 
 // ---- Space operations ----
 
-// CreateSpace mints a private space owned by this node.
+// CreateSpace mints a private space owned by this node (default character).
 func (r *Runtime) CreateSpace(title string) (id.TerminalID, error) {
+	return r.CreateSpaceWithCharacter(title, terminals.DefaultCharacter("campfire"))
+}
+
+// CreateSpaceWithCharacter mints a private space with a declared character.
+func (r *Runtime) CreateSpaceWithCharacter(title string, c terminals.Character) (id.TerminalID, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	s, err := terminals.NewSpace(title, r.Principal.ID)
+	s, err := terminals.NewSpaceWithCharacter(title, r.Principal.ID, c)
 	if err != nil {
 		return id.TerminalID{}, err
 	}
@@ -224,7 +229,10 @@ func (r *Runtime) MintInvite(tid id.TerminalID, dev id.DeviceID, xpub [32]byte) 
 	if !ok {
 		return "", errors.New("node: unknown space")
 	}
-	invite, err := st.space.NewInvite(dev, xpub)
+	// The memory policy decides whether newcomers receive history keys:
+	// "private_history" invites carry only the current epoch.
+	_, character := st.space.Character()
+	invite, err := st.space.NewInviteWithHistory(dev, xpub, character.Memory != "private_history")
 	if err != nil {
 		return "", err
 	}
@@ -275,7 +283,11 @@ func (r *Runtime) JoinInvite(inviteB64 string) (id.TerminalID, error) {
 
 // SetPresence publishes a presence state with a TTL (plan §8.3): after the
 // TTL every replica projects it as "last known + age", never as current.
+// States that impersonate system properties are refused (character rule).
 func (r *Runtime) SetPresence(tid id.TerminalID, state string, ttlSeconds uint64) error {
+	if err := terminals.ValidatePresenceState(state); err != nil {
+		return err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	st, ok := r.spaces[tid]

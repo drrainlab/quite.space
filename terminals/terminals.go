@@ -51,8 +51,17 @@ type Space struct {
 	maxClock      uint64
 }
 
-// NewSpace creates a Space Terminal: keypair, signed manifest, empty log.
+// NewSpace creates a Space Terminal with the default (campfire) character.
 func NewSpace(title string, controller id.PrincipalID) (*Space, error) {
+	return NewSpaceWithCharacter(title, controller, DefaultCharacter("campfire"))
+}
+
+// NewSpaceWithCharacter creates a Space Terminal whose character is part of
+// its signed manifest: every replica reads the same declared feel.
+func NewSpaceWithCharacter(title string, controller id.PrincipalID, c Character) (*Space, error) {
+	if err := c.Validate(); err != nil {
+		return nil, err
+	}
 	pub, priv, err := ed25519.GenerateKey(identity.NewRand())
 	if err != nil {
 		return nil, err
@@ -63,7 +72,7 @@ func NewSpace(title string, controller id.PrincipalID) (*Space, error) {
 		Terminal:       tid,
 		Controller:     controller,
 		Kind:           manifest.KindSpace,
-		DeclaredLabels: []string{title},
+		DeclaredLabels: c.Labels(title),
 		IOMode:         manifest.IODuplex,
 		Capabilities: []string{capability.SignalPublish, capability.SignalReceive,
 			capability.PresencePublish, capability.TerminalDiscover},
@@ -82,6 +91,19 @@ func NewSpace(title string, controller id.PrincipalID) (*Space, error) {
 
 // Replica joins an existing Space by id (e.g. from an invite).
 func Replica(tid id.TerminalID) *Space { return newReplica(tid) }
+
+// Character parses the space's declared character from its manifest frame.
+// Falls back to the default when the manifest is absent (bare replicas).
+func (s *Space) Character() (string, Character) {
+	if len(s.ManifestFrame) == 0 {
+		return "", DefaultCharacter("campfire")
+	}
+	m, err := manifest.Decode(s.ManifestFrame)
+	if err != nil {
+		return "", DefaultCharacter("campfire")
+	}
+	return ParseCharacter(m.DeclaredLabels)
+}
 
 func newReplica(tid id.TerminalID) *Space {
 	s := &Space{

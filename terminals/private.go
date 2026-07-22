@@ -187,16 +187,25 @@ const (
 	invKeyManifest = 4
 )
 
-// NewInvite (controller only) builds a signed invite for one device: the
-// space id, the manifest frame, and every known epoch key wrapped for the
-// invitee. Sharing history keys is the controller's explicit choice here —
-// a fresh-start invite would wrap only the current epoch.
+// NewInvite builds an invite that shares the full history (all epochs).
 func (s *Space) NewInvite(inviteeDevice id.DeviceID, inviteeXpub [32]byte) ([]byte, error) {
+	return s.NewInviteWithHistory(inviteeDevice, inviteeXpub, true)
+}
+
+// NewInviteWithHistory (controller only) builds a signed invite for one
+// device. includeHistory=false wraps only the current epoch: the newcomer
+// reads from now on, and the past stays cryptographically closed — this is
+// the "private history" memory policy, enforced by keys, not UI.
+func (s *Space) NewInviteWithHistory(inviteeDevice id.DeviceID, inviteeXpub [32]byte, includeHistory bool) ([]byte, error) {
 	if s.priv == nil {
 		return nil, errors.New("terminals: only the controller replica can invite")
 	}
 	if s.priv2 == nil || s.priv2.current == 0 {
 		return nil, errors.New("terminals: private space has no epoch yet")
+	}
+	firstEpoch := uint64(1)
+	if !includeHistory {
+		firstEpoch = s.priv2.current
 	}
 	target := map[id.DeviceID][32]byte{inviteeDevice: inviteeXpub}
 	body := codec.AppendMap(nil, 4)
@@ -205,8 +214,8 @@ func (s *Space) NewInvite(inviteeDevice id.DeviceID, inviteeXpub [32]byte) ([]by
 	body = codec.AppendUint(body, invKeyDevice)
 	body = codec.AppendBytes(body, inviteeDevice[:])
 	body = codec.AppendUint(body, invKeyEpochs)
-	body = codec.AppendArray(body, len(s.priv2.epochs))
-	for n := uint64(1); n <= s.priv2.current; n++ {
+	body = codec.AppendArray(body, int(s.priv2.current-firstEpoch+1))
+	for n := firstEpoch; n <= s.priv2.current; n++ {
 		key, ok := s.priv2.epochs[n]
 		if !ok {
 			return nil, fmt.Errorf("terminals: controller is missing epoch %d", n)

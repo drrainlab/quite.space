@@ -9,12 +9,18 @@
     --bg: #0c1210; --panel: #111917; --line: #1e2b27;
     --fg: #c8d8d0; --dim: #6d817a; --acc: #64d8a4; --warn: #d8b464;
     --human: #64d8a4; --ai: #b48ce0; --bot: #64a8d8; --sensor: #d8b464;
+    --glow: rgba(100, 216, 164, .06);
   }
   * { box-sizing: border-box; margin: 0; }
   body {
     background: var(--bg); color: var(--fg);
     font: 14px/1.5 "SF Mono", ui-monospace, Menlo, monospace;
     height: 100vh; display: flex; flex-direction: column;
+    transition: background .8s ease;
+  }
+  body::before {
+    content: ""; position: fixed; inset: 0; pointer-events: none;
+    background: radial-gradient(ellipse 90% 60% at 50% 110%, var(--glow), transparent);
   }
   header {
     padding: 10px 16px; border-bottom: 1px solid var(--line);
@@ -36,9 +42,14 @@
   .space .m { color: var(--dim); font-size: 12px; }
   .space .undec { color: var(--warn); }
   #content { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-  #honesty {
+  #persona {
     padding: 6px 16px; border-bottom: 1px solid var(--line);
-    color: var(--dim); font-size: 12px; min-height: 30px;
+    font-size: 12px; color: var(--dim); display: flex; gap: 12px; flex-wrap: wrap;
+  }
+  #persona .arch { color: var(--acc); }
+  #honesty {
+    padding: 4px 16px; border-bottom: 1px solid var(--line);
+    color: var(--dim); font-size: 12px; min-height: 24px;
   }
   #honesty .warn { color: var(--warn); }
   #log { flex: 1; overflow-y: auto; padding: 12px 16px; }
@@ -70,17 +81,21 @@
     border-radius: 4px; padding: 6px 12px; font: inherit; cursor: pointer;
   }
   button:hover { border-color: var(--acc); }
+  select {
+    background: var(--panel); color: var(--dim); border: 0;
+    border-left: 1px solid var(--line); font: inherit; padding: 0 8px; outline: none;
+  }
   dialog {
     background: var(--panel); color: var(--fg); border: 1px solid var(--line);
-    border-radius: 6px; padding: 20px; max-width: 520px;
+    border-radius: 6px; padding: 20px; max-width: 560px;
   }
   dialog::backdrop { background: rgba(0,0,0,.6); }
-  dialog input, dialog textarea {
+  dialog input, dialog textarea, dialog select {
     width: 100%; background: var(--bg); color: var(--fg); font: inherit;
     border: 1px solid var(--line); border-radius: 4px; padding: 8px; margin: 6px 0;
   }
   dialog .out { word-break: break-all; font-size: 11px; color: var(--acc); }
-  .row { display: flex; gap: 8px; margin-top: 8px; }
+  .row { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
   h3 { margin-bottom: 6px; color: var(--acc); font-size: 13px; }
   .hint { color: var(--dim); font-size: 11px; }
   #members {
@@ -96,12 +111,30 @@
   .member .pres.current { color: var(--acc); }
   .member .pres.stale { color: var(--dim); }
   .member .ai-note { color: var(--ai); font-size: 10px; }
-  select {
-    background: var(--panel); color: var(--dim); border: 0;
-    border-left: 1px solid var(--line); font: inherit; padding: 0 8px; outline: none;
-  }
   #qrBox img { width: 220px; height: 220px; image-rendering: pixelated;
     background: #fff; padding: 8px; border-radius: 4px; margin-top: 8px; }
+  #relic { display: block; margin: 8px auto 4px; opacity: .9; }
+  #relicNote { text-align: center; font-size: 10px; color: var(--dim); margin-bottom: 8px; }
+  /* wizard */
+  .arch-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin: 8px 0; }
+  .arch-card {
+    border: 1px solid var(--line); border-radius: 6px; padding: 10px;
+    cursor: pointer; background: var(--bg);
+  }
+  .arch-card.sel { border-color: var(--acc); background: var(--panel); }
+  .arch-card .an { color: var(--acc); }
+  .arch-card .ad { color: var(--dim); font-size: 11px; }
+  .wiz-step { display: none; }
+  .wiz-step.on { display: block; }
+  .seed { font-size: 12px; color: var(--acc); margin: 6px 0; }
+  .ritual { display: block; margin: 4px 0; font-size: 12px; cursor: pointer; }
+  .ritual input { width: auto; margin-right: 8px; }
+  .mem-opt { display: block; border: 1px solid var(--line); border-radius: 4px;
+    padding: 8px; margin: 6px 0; cursor: pointer; font-size: 12px; }
+  .mem-opt.sel { border-color: var(--acc); }
+  .mem-opt .poetic { color: var(--fg); }
+  .mem-opt .tech { color: var(--dim); font-size: 10px; margin-top: 2px; }
+  @media (prefers-reduced-motion: reduce) { body { transition: none; } }
 </style>
 </head>
 <body>
@@ -110,17 +143,19 @@
   <span id="fp" class="dim"></span>
   <span id="lan" class="dim"></span>
   <span id="mesh" class="dim" onclick="dlgMesh.showModal()" style="cursor:pointer" title="Meshtastic radio"></span>
+  <span id="relayBtn" class="dim" onclick="dlgRelay.showModal()" style="cursor:pointer" title="blind relay">relay</span>
 </header>
 <main>
   <div id="sidebar">
     <div class="row">
-      <button onclick="dlgNew.showModal()">+ space</button>
+      <button onclick="openWizard()">+ space</button>
       <button onclick="dlgJoin.showModal()">join</button>
       <button onclick="showIdentity()">me</button>
     </div>
     <div id="spaces"></div>
   </div>
   <div id="content">
+    <div id="persona"></div>
     <div id="honesty"></div>
     <div id="cards"></div>
     <div id="log"></div>
@@ -128,11 +163,6 @@
       <input id="text" placeholder="write into the space…" autocomplete="off">
       <select id="presence" onchange="setPresence(this.value)" title="presence (TTL 5 min)">
         <option value="">presence…</option>
-        <option>around</option>
-        <option>listening</option>
-        <option>open_to_talk</option>
-        <option>busy</option>
-        <option>do_not_disturb</option>
       </select>
       <button type="submit" style="border:0">send</button>
     </form>
@@ -140,11 +170,53 @@
   <div id="members"></div>
 </main>
 
-<dialog id="dlgNew">
-  <h3>new private space</h3>
-  <input id="newTitle" placeholder="title">
-  <div class="row"><button onclick="createSpace()">create</button>
-  <button onclick="dlgNew.close()">cancel</button></div>
+<dialog id="dlgWiz">
+  <div class="wiz-step" id="wiz1">
+    <h3>1 · who is this place for?</h3>
+    <div class="arch-grid" id="whoGrid"></div>
+    <div class="row"><button onclick="wizStep(2)">next</button>
+    <button onclick="dlgWiz.close()">cancel</button></div>
+  </div>
+  <div class="wiz-step" id="wiz2">
+    <h3>2 · how should it feel?</h3>
+    <div class="arch-grid" id="archGrid"></div>
+    <div class="seed" id="moodSeed"></div>
+    <div class="row">
+      <select id="wMood" style="width:31%" onchange="updSeed()">
+        <option value="dawn">dawn</option><option value="day">day</option>
+        <option value="dusk" selected>dusk</option><option value="night">night</option>
+      </select>
+      <select id="wMaterial" style="width:31%" onchange="updSeed()">
+        <option>light</option><option>wood</option><option>glass</option>
+        <option>metal</option><option>fog</option><option>paper</option>
+      </select>
+      <select id="wMotion" style="width:31%" onchange="updSeed()">
+        <option>still</option><option selected>slow</option><option>lively</option>
+      </select>
+    </div>
+    <div class="row"><button onclick="wizStep(1)">back</button><button onclick="wizStep(3)">next</button></div>
+  </div>
+  <div class="wiz-step" id="wiz3">
+    <h3>3 · what will you do together?</h3>
+    <p class="hint">up to three rituals — they define how people live here:</p>
+    <div id="ritualList"></div>
+    <p class="hint">central block:</p>
+    <select id="wCentral">
+      <option>chat</option><option>objects</option><option>audio</option>
+      <option>members</option><option>telemetry</option>
+    </select>
+    <p class="hint">custom presence states (comma separated, optional — they may not
+    impersonate system properties like online/verified/delivered):</p>
+    <input id="wPresence" placeholder="mixing_a_track, reading_not_replying">
+    <div class="row"><button onclick="wizStep(2)">back</button><button onclick="wizStep(4)">next</button></div>
+  </div>
+  <div class="wiz-step" id="wiz4">
+    <h3>4 · what should it remember?</h3>
+    <div id="memOpts"></div>
+    <input id="wTitle" placeholder="name of the place">
+    <div class="row"><button onclick="wizStep(3)">back</button>
+    <button onclick="wizCreate()">create the place</button></div>
+  </div>
 </dialog>
 
 <dialog id="dlgJoin">
@@ -174,6 +246,20 @@
   <p class="hint" id="meshInfo"></p>
 </dialog>
 
+<dialog id="dlgRelay">
+  <h3>blind relay</h3>
+  <p class="hint">a relay holds encrypted bundles for peers who are offline.
+  It sees a rotating hint and ciphertext — nothing else. Its receipt means
+  <b>accepted by relay</b>, never “delivered”.</p>
+  <input id="relayAddr" placeholder="relay address, e.g. 192.168.1.10:7411">
+  <div class="row">
+    <button onclick="relayPush()">push current space</button>
+    <button onclick="relayPull()">pull for all spaces</button>
+    <button onclick="dlgRelay.close()">close</button>
+  </div>
+  <p class="hint" id="relayInfo"></p>
+</dialog>
+
 <dialog id="dlgInvite">
   <h3>invite to <span id="invSpace"></span></h3>
   <input id="invDevice" placeholder="peer device id (hex)">
@@ -193,6 +279,129 @@ const api = (path, opts = {}) =>
 
 let current = null;
 let status = null;
+let spacesCache = [];
+
+// ---- archetypes, palettes, moods ----
+
+const ARCHETYPES = {
+  campfire:   { name: 'Campfire',   desc: 'friends, quiet presence, talk',           acc: '#e8a862', bg: '#14100b', human: '#e8a862' },
+  forest:     { name: 'Forest',     desc: 'an organic space grown from shared life', acc: '#64d8a4', bg: '#0c1210', human: '#64d8a4' },
+  studio:     { name: 'Studio',     desc: 'music, listening sessions, demos, notes', acc: '#c88ce0', bg: '#100c14', human: '#c88ce0' },
+  workshop:   { name: 'Workshop',   desc: 'projects, tasks, devices, telemetry',     acc: '#7ab4e0', bg: '#0c1014', human: '#7ab4e0' },
+  orbit:      { name: 'Orbit',      desc: 'a minimal scene for distributed teams',   acc: '#9cc2e8', bg: '#0a0d12', human: '#9cc2e8' },
+  home:       { name: 'Home',       desc: 'close people, photos, family memory',     acc: '#e0b49c', bg: '#12100d', human: '#e0b49c' },
+  radio_room: { name: 'Radio Room', desc: 'mesh, LoRa, BBS and node status',         acc: '#6ce07a', bg: '#0a0f0a', human: '#6ce07a' },
+};
+const MOOD_LIGHT = { dawn: 1.5, day: 1.9, dusk: 1.0, night: 0.62 };
+const RITUALS = [
+  'sunday_capsule', 'shared_hour_of_silence', 'listening_session',
+  'one_photo_a_day', 'field_recording_of_the_week', 'question_of_the_week',
+  'show_what_you_made', 'evening_by_the_fire', 'vote_on_the_next_step',
+];
+const MEMORY_OPTS = [
+  { v: 'everything',      poetic: 'This place remembers everything that happens in it.',
+    tech: 'full log kept on member devices; invites carry full history keys' },
+  { v: 'manual',          poetic: 'This place remembers only what you decide to keep.',
+    tech: 'log kept; UI will favor deliberate saves (capsules arrive later)' },
+  { v: 'private_history', poetic: 'The past stays with those who lived it.',
+    tech: 'newcomers get current keys only — earlier epochs stay sealed to them (enforced by cryptography)' },
+];
+
+function shade(hex, f) {
+  const n = parseInt(hex.slice(1), 16);
+  const ch = (x) => Math.max(0, Math.min(255, Math.round(x * f)));
+  return `rgb(${ch(n>>16)}, ${ch((n>>8)&255)}, ${ch(n&255)})`;
+}
+
+function applyTheme(char) {
+  const a = ARCHETYPES[char?.archetype] || ARCHETYPES.forest;
+  const f = MOOD_LIGHT[char?.mood] ?? 1.0;
+  const root = document.documentElement.style;
+  root.setProperty('--acc', a.acc);
+  root.setProperty('--human', a.human);
+  root.setProperty('--bg', shade(a.bg, f));
+  root.setProperty('--panel', shade(a.bg, f * 1.55));
+  root.setProperty('--line', shade(a.bg, f * 2.6));
+  root.setProperty('--glow', a.acc + '10');
+}
+
+// ---- relic: the growing shared object ----
+// Deterministic from (space id, event count): every replica draws the same
+// form. It grows from shared life; nobody draws it by hand.
+
+function mulberry(seed) {
+  return () => {
+    seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+    let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+
+function drawRelic(canvas, spaceId, relic, events, acc) {
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+  const seed = parseInt(spaceId.slice(0, 8), 16) || 1;
+  const rnd = mulberry(seed);
+  const n = Math.min(4 + Math.floor(events * 1.5), 90);
+  ctx.strokeStyle = acc; ctx.fillStyle = acc;
+  if (relic === 'tree') {
+    ctx.lineWidth = 1;
+    const branch = (x, y, ang, len, depth) => {
+      if (depth <= 0 || len < 3) return;
+      const nx = x + Math.cos(ang) * len, ny = y - Math.sin(ang) * len;
+      ctx.globalAlpha = .25 + depth * .12;
+      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(nx, ny); ctx.stroke();
+      branch(nx, ny, ang + .35 + rnd() * .3, len * .72, depth - 1);
+      branch(nx, ny, ang - .35 - rnd() * .3, len * .72, depth - 1);
+    };
+    branch(W / 2, H - 6, Math.PI / 2, H / 3.4, Math.min(2 + Math.floor(events / 4), 7));
+  } else if (relic === 'constellation') {
+    const pts = [];
+    for (let i = 0; i < Math.min(n, 40); i++)
+      pts.push([10 + rnd() * (W - 20), 8 + rnd() * (H - 16)]);
+    ctx.globalAlpha = .3; ctx.lineWidth = .5;
+    for (let i = 1; i < pts.length; i++) {
+      ctx.beginPath(); ctx.moveTo(...pts[i - 1]); ctx.lineTo(...pts[i]); ctx.stroke();
+    }
+    ctx.globalAlpha = .9;
+    for (const [x, y] of pts) { ctx.beginPath(); ctx.arc(x, y, 1.2, 0, 7); ctx.fill(); }
+  } else if (relic === 'structure') {
+    ctx.globalAlpha = .5;
+    for (let i = 0; i < Math.min(n, 30); i++) {
+      const w = 6 + rnd() * 18, h = 4 + rnd() * 10;
+      ctx.strokeRect(W / 2 + (rnd() - .5) * (W - 40), H - 8 - i * 2.4 - h, w, h);
+    }
+  } else if (relic === 'garden') {
+    for (let i = 0; i < Math.min(n, 50); i++) {
+      const x = 8 + rnd() * (W - 16), h = 4 + rnd() * (6 + Math.min(events, 30));
+      ctx.globalAlpha = .35; ctx.beginPath(); ctx.moveTo(x, H - 4); ctx.lineTo(x, H - 4 - h); ctx.stroke();
+      ctx.globalAlpha = .8; ctx.beginPath(); ctx.arc(x, H - 4 - h, 1.4, 0, 7); ctx.fill();
+    }
+  } else if (relic === 'waveform') {
+    ctx.globalAlpha = .7; ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let x = 0; x < W; x++) {
+      let y = H / 2;
+      for (let k = 1; k <= Math.min(1 + events / 6, 6); k++)
+        y += Math.sin(x / (9 + k * 7) + seed % 100 + k) * (2.4 + k);
+      x ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    }
+    ctx.stroke();
+  } else { // ember_ring
+    const cx = W / 2, cy = H / 2 + 6, R = Math.min(W, H) / 2.9;
+    for (let i = 0; i < Math.min(n, 60); i++) {
+      const a = rnd() * Math.PI * 2, r = R * (.75 + rnd() * .4);
+      ctx.globalAlpha = .2 + rnd() * .7;
+      ctx.beginPath(); ctx.arc(cx + Math.cos(a) * r, cy + Math.sin(a) * r * .5, 1 + rnd() * 1.5, 0, 7);
+      ctx.fill();
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ---- main refresh ----
 
 async function refresh() {
   try {
@@ -203,20 +412,20 @@ async function refresh() {
       lan.listening ? `LAN :${lan.port} · ${lan.peers} peer${lan.peers===1?'':'s'}` : 'LAN off';
     const mesh = status.mesh;
     document.getElementById('mesh').textContent = mesh.connected
-      ? `mesh !${mesh.node_num.toString(16)} ↑${mesh.tx} ↓${mesh.rx}`
-      : 'mesh off';
+      ? `mesh !${mesh.node_num.toString(16)} ↑${mesh.tx} ↓${mesh.rx}` : 'mesh off';
     document.getElementById('meshInfo').textContent = mesh.connected
       ? `connected as node ${mesh.node_num} · sent ${mesh.tx} · received ${mesh.rx}`
       : (mesh.err ? `disconnected: ${mesh.err}` : 'not connected');
 
-    const spaces = await api('/api/spaces');
+    spacesCache = await api('/api/spaces');
     const box = document.getElementById('spaces');
     box.innerHTML = '';
-    for (const s of spaces) {
+    for (const s of spacesCache) {
       const d = document.createElement('div');
       d.className = 'space' + (s.id === current ? ' active' : '');
+      const an = ARCHETYPES[s.character?.archetype]?.name || '';
       d.innerHTML = `<div class="t">${esc(s.title || s.id.slice(0,12))}${s.owned ? ' ·owner' : ''}</div>
-        <div class="m">${s.events} events · ${s.messages} msgs` +
+        <div class="m">${an ? esc(an) + ' · ' : ''}${s.events} events · ${s.messages} msgs` +
         (s.undecryptable ? ` · <span class="undec">${s.undecryptable} unreadable</span>` : '') +
         (s.peers ? ` · ${s.peers} peer` : '') + `</div>`;
       d.onclick = () => { current = s.id; refresh(); };
@@ -228,12 +437,36 @@ async function refresh() {
       }
       box.appendChild(d);
     }
-    if (!current && spaces.length) { current = spaces[0].id; }
+    if (!current && spacesCache.length) { current = spacesCache[0].id; }
     if (current) await refreshSpace();
   } catch (e) { console.error(e); }
 }
 
+function currentSpace() { return spacesCache.find(s => s.id === current); }
+
 async function refreshSpace() {
+  const sp = currentSpace();
+  const char = sp?.character;
+  applyTheme(char);
+
+  // persona line: the declared character, plus its exact meaning.
+  const persona = document.getElementById('persona');
+  if (char) {
+    const mem = MEMORY_OPTS.find(m => m.v === char.memory) || MEMORY_OPTS[0];
+    persona.innerHTML =
+      `<span class="arch">${esc(ARCHETYPES[char.archetype]?.name || char.archetype)}</span>` +
+      `<span>${esc(char.mood)} · ${esc(char.material)} · ${esc(char.motion)}</span>` +
+      `<span>geometry: ${esc(char.geometry)}</span>` +
+      (char.rituals?.length ? `<span>rituals: ${esc(char.rituals.join(', '))}</span>` : '') +
+      `<span title="${esc(mem.tech)}">“${esc(mem.poetic)}”</span>`;
+  } else { persona.innerHTML = ''; }
+
+  // presence selector fed by the space's declared vocabulary.
+  const sel = document.getElementById('presence');
+  const states = [...new Set(char?.presence || [])];
+  sel.innerHTML = '<option value="">presence…</option>' +
+    states.map(s => `<option>${esc(s)}</option>`).join('');
+
   const msgs = await api(`/api/spaces/${current}/messages`);
   const log = document.getElementById('log');
   const stick = log.scrollTop + log.clientHeight >= log.scrollHeight - 40;
@@ -273,7 +506,19 @@ async function refreshSpace() {
 
   const members = await api(`/api/spaces/${current}/members`);
   const mbox = document.getElementById('members');
-  mbox.innerHTML = '<h3>members</h3>';
+  mbox.innerHTML = '';
+  // the relic: grown from shared life, identical on every replica.
+  const canvas = document.createElement('canvas');
+  canvas.id = 'relic'; canvas.width = 220; canvas.height = 90;
+  mbox.appendChild(canvas);
+  const acc = getComputedStyle(document.documentElement).getPropertyValue('--acc').trim();
+  drawRelic(canvas, current, char?.relic || 'ember_ring', st.events, acc);
+  const note = document.createElement('div');
+  note.id = 'relicNote';
+  note.textContent = `grown from ${st.events} shared events`;
+  mbox.appendChild(note);
+
+  const h = document.createElement('h3'); h.textContent = 'members'; mbox.appendChild(h);
   for (const m of members) {
     const d = document.createElement('div');
     d.className = 'member';
@@ -300,14 +545,7 @@ function fmtAge(s) {
   return `${Math.round(s / 3600)}h`;
 }
 
-async function setPresence(state) {
-  if (!state || !current) return;
-  try {
-    await api(`/api/spaces/${current}/presence`, { method: 'POST', body: JSON.stringify({ state, ttl_seconds: 300 }) });
-    document.getElementById('presence').value = '';
-    refreshSpace();
-  } catch (err) { alert(err.message); }
-}
+// ---- actions ----
 
 async function say(e) {
   e.preventDefault();
@@ -321,11 +559,13 @@ async function say(e) {
   return false;
 }
 
-async function createSpace() {
-  const t = document.getElementById('newTitle').value.trim();
-  if (!t) return;
-  const r = await api('/api/spaces', { method: 'POST', body: JSON.stringify({ title: t }) });
-  current = r.id; dlgNew.close(); refresh();
+async function setPresence(state) {
+  if (!state || !current) return;
+  try {
+    await api(`/api/spaces/${current}/presence`, { method: 'POST', body: JSON.stringify({ state, ttl_seconds: 300 }) });
+    document.getElementById('presence').value = '';
+    refreshSpace();
+  } catch (err) { alert(err.message); }
 }
 
 async function joinSpace() {
@@ -349,6 +589,7 @@ function openInvite(s) {
   inviteSpace = s.id;
   document.getElementById('invSpace').textContent = s.title || s.id.slice(0,12);
   document.getElementById('invOut').textContent = '';
+  document.getElementById('qrBox').innerHTML = '';
   dlgInvite.showModal();
 }
 
@@ -364,17 +605,7 @@ async function mintInvite() {
     document.getElementById('invOut').textContent = r.invite;
     const qr = document.getElementById('qrBox');
     qr.innerHTML = r.qr_png_base64
-      ? `<img alt="invite QR" src="data:image/png;base64,${r.qr_png_base64}">`
-      : '';
-  } catch (err) { alert(err.message); }
-}
-
-async function meshConnect() {
-  const target = document.getElementById('meshTarget').value.trim();
-  if (!target) return;
-  try {
-    await api('/api/mesh/connect', { method: 'POST', body: JSON.stringify({ target }) });
-    refresh();
+      ? `<img alt="invite QR" src="data:image/png;base64,${r.qr_png_base64}">` : '';
   } catch (err) { alert(err.message); }
 }
 
@@ -389,6 +620,138 @@ async function toggleCard(c) {
   await api(`/api/spaces/${current}/cards/${c.id}/status`,
     { method: 'POST', body: JSON.stringify({ title: c.title, status: next }) });
   refreshSpace();
+}
+
+async function meshConnect() {
+  const target = document.getElementById('meshTarget').value.trim();
+  if (!target) return;
+  try {
+    await api('/api/mesh/connect', { method: 'POST', body: JSON.stringify({ target }) });
+    refresh();
+  } catch (err) { alert(err.message); }
+}
+
+// ---- relay ----
+
+async function relayPush() {
+  const addr = document.getElementById('relayAddr').value.trim();
+  if (!addr || !current) return;
+  const info = document.getElementById('relayInfo');
+  try {
+    const r = await api('/api/relay/push', { method: 'POST',
+      body: JSON.stringify({ addr, space: current }) });
+    const until = new Date(r.relay_holds_until * 1000).toLocaleString();
+    info.textContent = `relay accepted ${r.events_pushed} events and holds them until ${until}. ` +
+      `Status: accepted by relay — this is not delivery.`;
+  } catch (err) { info.textContent = 'push failed: ' + err.message; }
+}
+
+async function relayPull() {
+  const addr = document.getElementById('relayAddr').value.trim();
+  if (!addr) return;
+  const info = document.getElementById('relayInfo');
+  try {
+    const r = await api('/api/relay/pull', { method: 'POST', body: JSON.stringify({ addr }) });
+    info.textContent = r.events_applied > 0
+      ? `collected and applied ${r.events_applied} new events.`
+      : 'the relay had nothing new for your spaces.';
+    refresh();
+  } catch (err) { info.textContent = 'pull failed: ' + err.message; }
+}
+
+// ---- creation wizard ----
+
+const WHO = [
+  ['friends', 'campfire'], ['a creative group', 'studio'], ['a project', 'workshop'],
+  ['family', 'home'], ['a community', 'forest'], ['a local net', 'radio_room'],
+];
+let wizArch = 'campfire';
+
+function openWizard() {
+  const wg = document.getElementById('whoGrid');
+  wg.innerHTML = '';
+  for (const [label, arch] of WHO) {
+    const d = document.createElement('div');
+    d.className = 'arch-card';
+    d.innerHTML = `<div class="an">${esc(label)}</div>`;
+    d.onclick = () => { selectArch(arch); wizStep(2); };
+    wg.appendChild(d);
+  }
+  const ag = document.getElementById('archGrid');
+  ag.innerHTML = '';
+  for (const [k, a] of Object.entries(ARCHETYPES)) {
+    const d = document.createElement('div');
+    d.className = 'arch-card' + (k === wizArch ? ' sel' : '');
+    d.dataset.arch = k;
+    d.innerHTML = `<div class="an">${esc(a.name)}</div><div class="ad">${esc(a.desc)}</div>`;
+    d.onclick = () => selectArch(k);
+    ag.appendChild(d);
+  }
+  const rl = document.getElementById('ritualList');
+  rl.innerHTML = RITUALS.map(r =>
+    `<label class="ritual"><input type="checkbox" value="${r}" onchange="limitRituals(this)">${r.replaceAll('_',' ')}</label>`).join('');
+  const mo = document.getElementById('memOpts');
+  mo.innerHTML = '';
+  MEMORY_OPTS.forEach((m, i) => {
+    const d = document.createElement('div');
+    d.className = 'mem-opt' + (i === 0 ? ' sel' : '');
+    d.dataset.v = m.v;
+    d.innerHTML = `<div class="poetic">“${esc(m.poetic)}”</div><div class="tech">${esc(m.tech)}</div>`;
+    d.onclick = () => {
+      document.querySelectorAll('.mem-opt').forEach(x => x.classList.remove('sel'));
+      d.classList.add('sel');
+    };
+    mo.appendChild(d);
+  });
+  updSeed();
+  wizStep(1);
+  dlgWiz.showModal();
+}
+
+function selectArch(k) {
+  wizArch = k;
+  document.querySelectorAll('#archGrid .arch-card').forEach(d =>
+    d.classList.toggle('sel', d.dataset.arch === k));
+  updSeed();
+}
+
+function updSeed() {
+  const mood = document.getElementById('wMood').value;
+  const mat = document.getElementById('wMaterial').value;
+  const mot = document.getElementById('wMotion').value;
+  document.getElementById('moodSeed').textContent =
+    `${mood} ${ARCHETYPES[wizArch].name.toLowerCase()} · ${mat} · ${mot} growth`;
+  applyTheme({ archetype: wizArch, mood });
+}
+
+function limitRituals(box) {
+  const checked = document.querySelectorAll('#ritualList input:checked');
+  if (checked.length > 3) { box.checked = false; alert('up to three rituals — they define life here; choose'); }
+}
+
+function wizStep(n) {
+  for (let i = 1; i <= 4; i++)
+    document.getElementById('wiz' + i).classList.toggle('on', i === n);
+}
+
+async function wizCreate() {
+  const title = document.getElementById('wTitle').value.trim();
+  if (!title) { alert('name the place'); return; }
+  const rituals = [...document.querySelectorAll('#ritualList input:checked')].map(i => i.value);
+  const presence = document.getElementById('wPresence').value
+    .split(',').map(s => s.trim().replaceAll(' ', '_')).filter(Boolean);
+  const memory = document.querySelector('.mem-opt.sel')?.dataset.v || 'everything';
+  try {
+    const r = await api('/api/spaces', { method: 'POST', body: JSON.stringify({
+      title, archetype: wizArch,
+      mood: document.getElementById('wMood').value,
+      material: document.getElementById('wMaterial').value,
+      motion: document.getElementById('wMotion').value,
+      central: document.getElementById('wCentral').value,
+      memory, rituals, presence,
+    })});
+    current = r.id; dlgWiz.close(); refresh();
+  } catch (err) { alert(err.message); }
 }
 
 const esc = (s) => String(s).replace(/[&<>"']/g, ch =>
