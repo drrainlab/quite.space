@@ -223,11 +223,6 @@
   .entry .sig .sigbar { font-size: 11px; color: var(--dim); padding: 3px 6px;
     display: flex; justify-content: space-between; align-items: center; }
   .entry .sig .play { cursor: pointer; color: var(--acc); }
-  .entry .reactrow { margin-top: 3px; font-size: 12px; }
-  .entry .react { cursor: pointer; margin-right: 6px; padding: 0 5px;
-    border: 1px solid var(--line); border-radius: 10px; }
-  .entry .react.mine { border-color: var(--acc); }
-  .entry .addreact { cursor: pointer; color: var(--dim); }
   #sigParams label { display: block; font-size: 11px; color: var(--dim); margin-top: 4px; }
   #sigParams input { width: 100%; }
   .unknownblk { color: var(--dim); font-style: italic; }
@@ -619,6 +614,97 @@
   .release-tpl { border: 1px solid color-mix(in srgb, var(--acc) 45%, transparent);
     background: color-mix(in srgb, var(--acc) 8%, transparent); grid-column: 1 / -1; }
 
+  /* --- Resonance (RP-1/RP-2): chips, picker, actors --- */
+  .res-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+    margin-top: 4px; min-height: 18px; }
+  .res-chip { display: inline-flex; align-items: center; gap: 4px;
+    border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px;
+    font-size: 12px; cursor: pointer; color: var(--dim);
+    transition: border-color .15s, color .15s; user-select: none; }
+  .res-chip:hover { border-color: var(--acc); color: var(--fg); }
+  .res-chip.res-own { border-color: var(--acc); color: var(--acc); }
+  .res-sym { font-size: 13px; line-height: 1; }
+  .res-n { font-size: 11px; color: var(--muted); }
+  .res-add { color: var(--muted); cursor: pointer; font-size: 13px;
+    opacity: 0; transition: opacity .15s, color .15s; padding: 0 4px;
+    user-select: none; }
+  .msg:hover .res-add, .pub-block:hover .res-add, #pubArticle .res-add,
+  .shelf-card:hover .res-add { opacity: 1; }
+  .res-add:hover { color: var(--acc); }
+  .res-row:has(.res-own) .res-add { opacity: .6; }
+  .res-picker { position: fixed; z-index: 60; background: var(--glass);
+    backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+    border: 1px solid var(--glass-border); border-radius: var(--radius-md);
+    padding: 8px; max-width: 340px; box-shadow: 0 8px 32px rgba(0,0,0,.35); }
+  .res-picker-slots { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; }
+  .res-slot { display: flex; flex-direction: column; align-items: center;
+    gap: 2px; border: 1px solid transparent; background: transparent;
+    border-radius: var(--radius-sm); padding: 6px 4px; min-height: 44px; }
+  .res-slot:hover { border-color: var(--acc); background: var(--surface-raised); }
+  .res-slot.res-own { border-color: var(--acc); }
+  .res-slot .res-sym { font-size: 16px; }
+  .res-slot .res-lbl { font-size: 10px; color: var(--dim); }
+  .res-picker-actions { display: flex; gap: 8px; justify-content: flex-end;
+    margin-top: 6px; }
+  .res-emoji-grid { display: grid; grid-template-columns: repeat(8, 1fr);
+    gap: 2px; margin-top: 8px; max-height: 180px; overflow-y: auto; }
+  .res-emoji-grid button { border: 0; background: transparent; font-size: 16px;
+    min-height: 30px; padding: 2px; border-radius: 4px; }
+  .res-emoji-grid button:hover { background: var(--surface-raised); }
+  .res-emoji-grid input { grid-column: 1 / -1; }
+  .res-actors { display: flex; flex-direction: column; gap: 4px; }
+  .res-actor-line { display: flex; gap: 8px; align-items: baseline;
+    font-size: 12px; color: var(--dim); }
+  .res-pal-row { display: grid; grid-template-columns: 2fr 3fr 1fr; gap: 6px; }
+  .res-pal-row input { margin: 3px 0; }
+
+  /* --- Resonant Surfaces (RP-2A) ---
+     .fx-layer is an absolutely-positioned overlay INSIDE the target:
+     zero layout shift by construction; residue is edge light only
+     (never over media); intensity comes from --fx-i (log-curve, ≤0.30). */
+  .fx-host { position: relative; }
+  .fx-layer { position: absolute; inset: 0; pointer-events: none;
+    border-radius: inherit; overflow: hidden; }
+  .fx-residue > .fx-layer {
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--acc) calc(var(--fx-i, 0) * 200%), transparent),
+      inset 0 0 18px color-mix(in srgb, var(--acc) calc(var(--fx-i, 0) * 100%), transparent);
+  }
+  .fx-residue-2 > .fx-layer {
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--acc) calc(var(--fx-i, 0) * 200%), transparent),
+      inset 0 0 18px color-mix(in srgb, var(--acc) calc(var(--fx-i, 0) * 100%), transparent),
+      inset 0 -6px 14px color-mix(in srgb, var(--signal) calc(var(--fx-i2, 0) * 120%), transparent);
+  }
+  /* arrival primitives: one-shot, 300–1200ms, removed on animationend */
+  .fx-arrive-ripple { animation: fxRipple .9s ease-out; }
+  .fx-arrive-wash { animation: fxWash 1.1s ease-out; }
+  .fx-arrive-spark { animation: fxSpark .7s ease-out; }
+  .fx-arrive-tint { animation: fxTint .6s ease-out; }
+  .fx-subtle { animation-duration: .45s !important; }
+  @keyframes fxRipple {
+    0% { box-shadow: inset 0 0 0 0 color-mix(in srgb, var(--acc) 35%, transparent); }
+    55% { box-shadow: inset 0 0 0 10px color-mix(in srgb, var(--acc) 12%, transparent); }
+    100% { box-shadow: inset 0 0 0 22px transparent; }
+  }
+  @keyframes fxWash {
+    0% { background: radial-gradient(circle at 50% 90%,
+      color-mix(in srgb, var(--acc) 22%, transparent), transparent 30%); }
+    60% { background: radial-gradient(circle at 50% 60%,
+      color-mix(in srgb, var(--acc) 14%, transparent), transparent 70%); }
+    100% { background: transparent; }
+  }
+  @keyframes fxSpark {
+    0% { background-image: radial-gradient(circle at 20% 80%, color-mix(in srgb, var(--acc) 45%, transparent) 1px, transparent 2px),
+      radial-gradient(circle at 75% 70%, color-mix(in srgb, var(--acc) 40%, transparent) 1px, transparent 2px),
+      radial-gradient(circle at 50% 85%, color-mix(in srgb, var(--signal) 40%, transparent) 1px, transparent 2px);
+      opacity: 0; }
+    35% { opacity: 1; }
+    100% { background-position: 0 -26px, 6px -34px, -4px -30px; opacity: 0; }
+  }
+  @keyframes fxTint {
+    0% { background: color-mix(in srgb, var(--acc) 10%, transparent); }
+    100% { background: transparent; }
+  }
+
   /* --- Listening room (LR-2) --- */
   .listen-room { display: flex; flex-direction: column; gap: 10px; }
   .listen-title { font-weight: 600; }
@@ -632,4 +718,7 @@
     .glyph.pulse-in, .entry.enter { animation: none; }
     .sc-appearance::before { transition: none; }
     dialog[open], dialog[open]::backdrop { animation: none; }
+    /* resonance arrivals never animate; static residue stays */
+    .fx-arrive-ripple, .fx-arrive-wash, .fx-arrive-spark, .fx-arrive-tint {
+      animation: none; }
   }

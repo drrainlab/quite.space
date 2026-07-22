@@ -39,6 +39,7 @@
       <span style="flex:1"></span>
       <button id="newPostBtn" class="btn-tinted" onclick="openComposer(null,'')">✍ New post</button>
       <button id="customizeBtn" class="icon-btn" style="display:none" onclick="openCustomize()" title="Customize" aria-label="Customize space">🎨</button>
+      <button id="resPalBtn" class="icon-btn" style="display:none" onclick="openResPaletteEditor()" title="Reaction palette" aria-label="Reaction palette">✧</button>
       <button id="inviteBtn" class="btn-tinted" style="display:none" onclick="openPassCurrent()">invite</button>
       <button class="icon-btn" onclick="toggleMembers()" title="Space info" aria-label="Space info">ⓘ</button>
     </div>
@@ -281,6 +282,15 @@
           <button data-v="minimal" onclick="setRenderMode('minimal')">Minimal</button>
         </div>
       </div>
+      <div class="list-row">
+        <span class="lr-label">Effects<span class="lr-sub"> · how reactions touch objects</span></span>
+        <div class="segmented" id="setEffects">
+          <button data-v="full" onclick="setEffectsMode('full')">Full</button>
+          <button data-v="subtle" onclick="setEffectsMode('subtle')">Subtle</button>
+          <button data-v="static" onclick="setEffectsMode('static')">Static</button>
+          <button data-v="off" onclick="setEffectsMode('off')">Off</button>
+        </div>
+      </div>
     </div>
   </div>
   <div class="settings-sec">
@@ -465,6 +475,24 @@
   <div id="qrBox"></div>
 </dialog>
 
+<dialog id="dlgResPalette" class="sheet">
+  <h3>✧ Reaction palette</h3>
+  <p class="hint">Up to six meanings this space speaks. Key · label · glyph.</p>
+  <div id="resPalSlots"></div>
+  <label class="hint">default (quick tap)
+    <input id="resPalDefault" placeholder="resonates"></label>
+  <div class="row">
+    <label class="ritual"><input type="checkbox" id="resPalUnicode"> allow any emoji</label>
+    <label class="ritual"><input type="checkbox" id="resPalCounts"> show counts</label>
+    <label class="ritual"><input type="checkbox" id="resPalEffects"> surface effects</label>
+  </div>
+  <div class="row">
+    <button class="btn-tinted" onclick="saveResPalette()">Save</button>
+    <button class="btn-plain" onclick="dlgResPalette.close()">Cancel</button>
+  </div>
+  <p class="out" id="resPalMsg"></p>
+</dialog>
+
 <dialog id="dlgListenRoom" class="sheet">
   <h3>🎧 Add a listening room</h3>
   <p class="hint">One track, one shared moment. The host presses play; everyone hears the same second.</p>
@@ -495,6 +523,8 @@
 <script src="publications.js"></script>
 <script src="apps.js"></script>
 <script src="listening.js"></script>
+<script src="resonance.js"></script>
+<script src="effects.js"></script>
 <script src="shelf.js"></script>
 <script src="app.js"></script>
 </body>

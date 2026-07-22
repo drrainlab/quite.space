@@ -98,6 +98,8 @@ function shelfObjectBody(it) {
     wrap.className = 'shelf-entry';
     const fn = FEED_RENDERERS[it.entry.kind];
     wrap.appendChild(fn ? fn(it.entry) : textNode('txt', it.entry.fallback || it.kind));
+    wrap.appendChild(renderResonanceRow(it.entry.resonance, it.target,
+      () => { refreshShelf(); refreshSpace(); }));
     return wrap;
   }
   return textNode('txt', it.kind || 'kept object');

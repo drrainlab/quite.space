@@ -123,23 +123,9 @@ function renderArticle(p) {
   }
   for (const b of doc.blocks || []) box.appendChild(renderPubBlock(b));
 
-  // Reactions on the stable target (survive revisions).
-  const rrow = document.createElement('div');
-  rrow.className = 'reactrow';
-  const emojis = new Set(['👍', '🔥', '🌿', ...Object.keys(p.reactions || {})]);
-  for (const em of emojis) {
-    const chip = document.createElement('span');
-    chip.className = 'react' + (p.my_reactions?.[em] ? ' mine' : '');
-    const n = p.reactions?.[em] || 0;
-    chip.textContent = n > 0 ? `${em} ${n}` : em;
-    chip.onclick = async () => {
-      await api(`/api/spaces/${current}/reactions`, { method: 'POST',
-        body: JSON.stringify({ target: p.reaction_target, emoji: em, active: !p.my_reactions?.[em] }) });
-      openPub(openDocID);
-    };
-    rrow.appendChild(chip);
-  }
-  box.appendChild(rrow);
+  // Resonance on the STABLE target (survives revisions).
+  box.appendChild(renderResonanceRow(p.resonance, p.reaction_target,
+    () => openPub(openDocID)));
 
   // Comments (thread-shaped model; flat render in v1).
   const ch = document.createElement('h3');

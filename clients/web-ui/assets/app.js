@@ -16,6 +16,7 @@ let hereMembers = new Set();
 // feedSig: per-entry signatures from the last render — the incremental feed
 // only touches the DOM when something actually changed (keeps players alive).
 let feedSig = [];
+let feedContentSig = [];
 // Space Composition Contract (SC-0): the appearance snapshot last applied.
 let appearanceSpace = null;
 
@@ -185,6 +186,10 @@ function setRenderMode(m) {
   localStorage.setItem('qp.rendermode', m); syncSettingsUI();
   appearanceSpace = null; if (current) loadSpaceAppearance(current); // re-apply at new detail
 }
+function setEffectsMode(m) {
+  localStorage.setItem('qp.effects', m); syncSettingsUI();
+  feedSig = []; feedContentSig = []; refreshSpace(); // re-apply residue at the new mode
+}
 function pickSeg(groupId, v) {
   document.querySelectorAll('#' + groupId + ' button').forEach(b =>
     b.classList.toggle('sel', b.dataset.v === v));
@@ -253,6 +258,9 @@ function syncSettingsUI() {
   const rm = localStorage.getItem('qp.rendermode') || 'auto';
   document.querySelectorAll('#setRenderMode button').forEach(b =>
     b.classList.toggle('sel', b.dataset.v === rm));
+  const fx = localStorage.getItem('qp.effects') || 'full';
+  document.querySelectorAll('#setEffects button').forEach(b =>
+    b.classList.toggle('sel', b.dataset.v === fx));
 }
 
 // ---- AI composition (SC-4): prompt → validated proposal → accept ----
@@ -462,6 +470,7 @@ async function refreshSpace() {
   document.getElementById('convTitle').textContent = sp ? (sp.title || t('conv.member')) : '';
   document.getElementById('inviteBtn').style.display = sp?.owned ? '' : 'none';
   document.getElementById('customizeBtn').style.display = sp?.owned ? '' : 'none';
+  document.getElementById('resPalBtn').style.display = sp?.owned ? '' : 'none';
 
   // persona line: the declared character, plus its exact meaning.
   const persona = document.getElementById('persona');
@@ -481,24 +490,44 @@ async function refreshSpace() {
   sel.innerHTML = '<option value="">presence…</option>' +
     states.map(s => `<option>${esc(s)}</option>`).join('');
 
+  await RES.load(current); // palette must exist before rows render
   const entries = await api(`/api/spaces/${current}/entries`);
   const log = document.getElementById('log');
   const stick = log.scrollTop + log.clientHeight >= log.scrollHeight - 40;
   if (seenSpace !== current) {
-    seenSpace = current; seenEntries = new Set(); hereMembers = new Set(); feedSig = [];
+    seenSpace = current; seenEntries = new Set(); hereMembers = new Set();
+    feedSig = []; feedContentSig = [];
+    RES.refresh(current);
     if (typeof pubView !== 'undefined' && pubView !== 'chat') switchView('chat');
   }
-  // Incremental feed render: a poll that changed nothing re-renders nothing
-  // (so a playing <video>/<audio> is never torn down); appended-only changes
-  // add just the new rows; anything else (revision, reaction, tombstone)
-  // rebuilds fully.
-  const sig = entries.map(e => e.id + ':' + (e.revised ? 1 : 0) + ':' +
-    (e.kept ? 'k' : '') + (e.keep_count || 0) + ':' +
-    (e.reactions || []).map(r => r.emoji + r.count + (r.mine ? 'm' : '')).join(','));
+  // Incremental feed render, three paths: (1) nothing changed → nothing
+  // re-renders (a playing <video>/<audio> is never torn down); (2) appended
+  // only → add the new rows; (3) ONLY resonance changed → patch the res
+  // rows in place and hand the deltas to effects. Anything else rebuilds.
+  const contentSig = entries.map(e => e.id + ':' + (e.revised ? 1 : 0) + ':' +
+    (e.kept ? 'k' : '') + (e.keep_count || 0));
+  const rSig = entries.map(e => resSig(e.resonance));
+  const sig = contentSig.map((c, i) => c + '|' + rSig[i]);
   const unchanged = sig.length === feedSig.length && sig.every((s, i) => s === feedSig[i]);
   const appendOnly = sig.length > feedSig.length && feedSig.every((s, i) => s === sig[i]);
+  const resOnly = !unchanged && !appendOnly &&
+    contentSig.length === feedContentSig.length &&
+    contentSig.every((c, i) => c === feedContentSig[i]);
   const firstPaint = seenEntries.size === 0;
-  if (!unchanged) {
+  if (resOnly) {
+    for (let i = 0; i < entries.length; i++) {
+      if (sig[i] === feedSig[i]) continue;
+      const e = entries[i];
+      const node = log.querySelector(`[data-eid="${e.id}"]`);
+      if (!node) { feedSig = []; feedContentSig = []; refreshSpace(); return; }
+      const fresh = renderResonanceRow(e.resonance, e.id);
+      const old = node.querySelector('.res-row');
+      if (old) old.replaceWith(fresh); else node.querySelector('.bubble')?.appendChild(fresh);
+      // Arrival effects key off the revision change (RP-2A hook).
+      if (typeof RESFX !== 'undefined') RESFX.onAggregateChange(node, e.resonance);
+    }
+    feedSig = sig; feedContentSig = contentSig;
+  } else if (!unchanged) {
     let prev = null;
     if (appendOnly && !firstPaint) {
       prev = entries[feedSig.length - 1] || null;
@@ -519,7 +548,7 @@ async function refreshSpace() {
         prev = e;
       }
     }
-    feedSig = sig;
+    feedSig = sig; feedContentSig = contentSig;
     if (stick) log.scrollTop = log.scrollHeight;
   }
 
@@ -1169,8 +1198,9 @@ function renderEntry(log, e, fresh, grouped) {
   const bubble = document.createElement('div');
   bubble.className = 'bubble';
   bubble.appendChild(renderBody(e));
-  bubble.appendChild(renderReactions(e));
+  bubble.appendChild(renderResonanceRow(e.resonance, e.id));
   d.appendChild(bubble);
+  d.dataset.eid = e.id;
 
   const acts = document.createElement('span');
   acts.className = 'mk';
@@ -1353,34 +1383,6 @@ function renderWave(b64) {
     w.appendChild(bar);
   }
   return w;
-}
-
-function renderReactions(e) {
-  const row = document.createElement('div');
-  row.className = 'reactrow';
-  for (const r of (e.reactions || [])) {
-    const el = document.createElement('span');
-    el.className = 'react' + (r.mine ? ' mine' : '');
-    el.textContent = `${r.emoji} ${r.count}`;
-    el.onclick = () => setReaction(e.id, r.emoji, !r.mine);
-    row.appendChild(el);
-  }
-  const add = document.createElement('span');
-  add.className = 'addreact'; add.textContent = '+';
-  add.onclick = () => {
-    const em = prompt('react with one emoji:');
-    if (em) setReaction(e.id, em, true);
-  };
-  row.appendChild(add);
-  return row;
-}
-
-async function setReaction(target, emoji, active) {
-  try {
-    await api(`/api/spaces/${current}/reactions`,
-      { method: 'POST', body: JSON.stringify({ target, emoji, active }) });
-    refreshSpace();
-  } catch (err) { alert(err.message); }
 }
 
 async function makeCardFrom(e) {
