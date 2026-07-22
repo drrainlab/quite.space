@@ -473,7 +473,10 @@ async function refreshSpace() {
   // Motion is quiet-by-default: the feed re-renders every poll, so only a
   // genuinely-new entry (id unseen for this space) gets the short enter
   // animation — never the whole list, never an idle loop.
-  if (seenSpace !== current) { seenSpace = current; seenEntries = new Set(); hereMembers = new Set(); }
+  if (seenSpace !== current) {
+    seenSpace = current; seenEntries = new Set(); hereMembers = new Set();
+    if (typeof pubView !== 'undefined' && pubView !== 'chat') switchView('chat');
+  }
   const firstPaint = seenEntries.size === 0;
   log.innerHTML = '';
   let prev = null;

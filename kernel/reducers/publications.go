@@ -7,6 +7,7 @@
 package reducers
 
 import (
+	"crypto/sha256"
 	"sort"
 
 	"github.com/drrainlab/quiet_places/protocol/id"
@@ -26,7 +27,15 @@ type pubRec struct {
 	archiveEvent id.EventID
 	archiveClock uint64
 
-	comments map[[16]byte]*PublicationComment
+	comments  map[[16]byte]*PublicationComment
+	reactions map[reactionKey]reactionState
+}
+
+// PubReactionTarget derives the STABLE reaction target for a document —
+// independent of revisions, so reactions survive edits (ADR-014 inv. 7).
+func PubReactionTarget(docID [16]byte) id.EventID {
+	h := sha256.Sum256(append([]byte("qs.pub.react.v1"), docID[:]...))
+	return id.EventID(h)
 }
 
 // PublicationComment is one thread node (flat rendering is a UI choice).
@@ -52,6 +61,8 @@ type Publication struct {
 	Clock           uint64
 	Archived        bool
 	Comments        []PublicationComment
+	// Reactions: emoji → principals with active reactions (LWW-merged).
+	Reactions map[string][]id.PrincipalID
 }
 
 func (s *State) pubRecFor(docID [16]byte) *pubRec {
@@ -60,10 +71,37 @@ func (s *State) pubRecFor(docID [16]byte) *pubRec {
 	}
 	rec, ok := s.publications[docID]
 	if !ok {
-		rec = &pubRec{comments: map[[16]byte]*PublicationComment{}}
+		rec = &pubRec{
+			comments:  map[[16]byte]*PublicationComment{},
+			reactions: map[reactionKey]reactionState{},
+		}
 		s.publications[docID] = rec
+		// Register the stable reaction target and drain reactions that
+		// arrived before the document (order tolerance, as installEntry).
+		if s.pubTargets == nil {
+			s.pubTargets = map[id.EventID][16]byte{}
+		}
+		target := PubReactionTarget(docID)
+		s.pubTargets[target] = docID
+		for _, p := range s.pendingReactions[target] {
+			s.applyPubReaction(docID, p.author, p.emoji, p.active, p.clock, p.eid)
+		}
+		delete(s.pendingReactions, target)
 	}
 	return rec
+}
+
+// applyPubReaction is the LWW merge for publication reactions.
+func (s *State) applyPubReaction(docID [16]byte, author id.PrincipalID, emoji string,
+	active bool, clock uint64, eid id.EventID) {
+
+	rec := s.pubRecFor(docID)
+	key := reactionKey{principal: author, emoji: emoji}
+	cur, exists := rec.reactions[key]
+	if exists && !later(clock, eid, cur.clock, cur.event) {
+		return
+	}
+	rec.reactions[key] = reactionState{active: active, clock: clock, event: eid}
 }
 
 func (s *State) applyPublicationRevision(env *signal.Envelope, eid id.EventID) {
@@ -168,6 +206,15 @@ func (s *State) projectPublications(archived bool) []Publication {
 		}
 		for _, c := range rec.comments {
 			pub.Comments = append(pub.Comments, *c)
+		}
+		pub.Reactions = map[string][]id.PrincipalID{}
+		for key, st := range rec.reactions {
+			if st.active {
+				pub.Reactions[key.emoji] = append(pub.Reactions[key.emoji], key.principal)
+			}
+		}
+		for _, ps := range pub.Reactions {
+			sort.Slice(ps, func(i, j int) bool { return string(ps[i][:]) < string(ps[j][:]) })
 		}
 		sort.Slice(pub.Comments, func(i, j int) bool {
 			if pub.Comments[i].Clock != pub.Comments[j].Clock {

@@ -116,6 +116,8 @@ type State struct {
 
 	// publications: per-document projection (ADR-014, publications.go).
 	publications map[[16]byte]*pubRec
+	// pubTargets: stable reaction target → document id.
+	pubTargets map[id.EventID][16]byte
 
 	// Unsupported schemas are counted, never dropped silently (ADR-009).
 	Unsupported map[string]int
@@ -273,7 +275,11 @@ func (s *State) Apply(env *signal.Envelope, eid id.EventID) {
 			s.Unsupported["malformed:"+env.Schema]++
 			return
 		}
-		if rec, ok := s.entries[rb.Target]; ok && rec.entry.Kind != "" {
+		// A reaction target is either a feed entry's event id or a STABLE
+		// publication target (ADR-014 invariant 7: never a revision event id).
+		if docID, ok := s.pubTargets[rb.Target]; ok {
+			s.applyPubReaction(docID, env.Principal, rb.Emoji, rb.Active, env.LogicalClock, eid)
+		} else if rec, ok := s.entries[rb.Target]; ok && rec.entry.Kind != "" {
 			s.applyReactionState(rec, env.Principal, rb.Emoji, rb.Active, env.LogicalClock, eid)
 		} else {
 			s.pendingReactions[rb.Target] = append(s.pendingReactions[rb.Target], pendingReaction{

@@ -31,7 +31,12 @@
   <div id="content">
     <div id="convbar">
       <span id="convTitle"></span>
+      <div class="segmented" id="viewSwitch">
+        <button data-v="chat" class="sel" onclick="switchView('chat')">Chat</button>
+        <button data-v="posts" onclick="switchView('posts')">Posts</button>
+      </div>
       <span style="flex:1"></span>
+      <button id="newPostBtn" class="btn-tinted" onclick="openComposer(null,'')">✍ New post</button>
       <button id="customizeBtn" class="icon-btn" style="display:none" onclick="openCustomize()" title="Customize" aria-label="Customize space">🎨</button>
       <button id="inviteBtn" class="btn-tinted" style="display:none" onclick="openPassCurrent()">invite</button>
       <button class="icon-btn" onclick="toggleMembers()" title="Space info" aria-label="Space info">ⓘ</button>
@@ -39,6 +44,10 @@
     <div id="persona"></div>
     <div id="honesty"></div>
     <div id="cards"></div>
+    <div id="posts" style="display:none">
+      <div id="pubFeed"></div>
+      <div id="pubArticle" style="display:none"></div>
+    </div>
     <div id="log"></div>
     <form id="composer" onsubmit="return say(event)">
       <button type="button" class="ic" onclick="fileInput.click()" title="attach image or file" aria-label="Attach image or file">📎</button>
@@ -327,6 +336,36 @@
   </div>
 </dialog>
 
+<dialog id="dlgComposer" class="sheet">
+  <h3>Compose a post</h3>
+  <input id="compTitle" placeholder="Title" maxlength="200">
+  <input id="compSummary" placeholder="Summary (optional)" maxlength="1000">
+  <div class="row">
+    <select id="compKind" style="width:auto">
+      <option value="article">article</option><option value="note">note</option>
+      <option value="release">release</option><option value="log">log</option>
+    </select>
+    <select id="compAddType" style="width:auto">
+      <option>heading</option><option>text</option><option>quote</option>
+      <option>callout</option><option>code</option><option>link</option>
+      <option>separator</option><option>credits</option>
+      <option>image</option><option>audio</option><option>file</option>
+    </select>
+    <button class="btn-tinted" onclick="addComposerBlock()">+ Block</button>
+  </div>
+  <div id="composerBlocks"></div>
+  <div class="row">
+    <input id="compAIPrompt" placeholder="✨ describe the post — AI drafts, you publish" style="flex:1">
+    <button class="btn-plain" onclick="aiDraftPost()">Draft</button>
+  </div>
+  <p class="hint" id="compMsg"></p>
+  <div class="row" style="justify-content:flex-end">
+    <button class="btn-plain" onclick="saveComposerDraft()">Save draft</button>
+    <button class="btn-plain" onclick="dlgComposer.close()">Close</button>
+    <button class="btn-filled" onclick="publishComposer()">Publish</button>
+  </div>
+</dialog>
+
 <dialog id="dlgGenerate" class="sheet">
   <h3>✨ Generate a look</h3>
   <p class="hint" id="genProviderNote" style="margin-left:4px"></p>
@@ -411,6 +450,7 @@
 <script src="i18n.js"></script>
 <script src="glyphs.js"></script>
 <script src="renderers.js"></script>
+<script src="publications.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/drrainlab/quiet_places/kernel/reducers"
 	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/protocol/publication"
 )
@@ -316,6 +317,18 @@ func (a *APIServer) publicationJSON(tid id.TerminalID, docID [16]byte) (map[stri
 		}
 		comments = append(comments, cm)
 	}
+	reactions := map[string]int{}
+	for emoji, ps := range pub.Reactions {
+		reactions[emoji] = len(ps)
+	}
+	mine := map[string]bool{}
+	for emoji, ps := range pub.Reactions {
+		for _, p := range ps {
+			if p == a.rt.Principal.ID {
+				mine[emoji] = true
+			}
+		}
+	}
 	return map[string]any{
 		"document":          documentToJSON(pub.Document),
 		"author":            pub.Author.String(),
@@ -323,6 +336,9 @@ func (a *APIServer) publicationJSON(tid id.TerminalID, docID [16]byte) (map[stri
 		"clock":             pub.Clock,
 		"archived":          pub.Archived,
 		"comments":          comments,
+		"reactions":         reactions,
+		"my_reactions":      mine,
+		"reaction_target":   reducers.PubReactionTarget(docID).Hex(),
 	}, true
 }
 
