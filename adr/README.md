@@ -32,6 +32,7 @@ Suggested template:
 - [x] [ADR-009 Schema evolution](ADR-009-schema-evolution.md) — three version axes, must-ignore, append-only key tables, opaque unknown schemas
 - [x] [ADR-010 Deletion semantics](ADR-010-deletion-semantics.md) — tombstones, prune stubs, sync exceptions, no "deleted everywhere" claim
 - [x] [ADR-011 Client packaging](ADR-011-client-packaging.md) — single CGO-free Go binary, embedded web UI, local typed API; sidecars and native shells optional
+- [x] [ADR-012 Space Pass = Join Pass](ADR-012-join-pass.md) — a pass is authority to request entry, not an access key; no epochs in the pass, pending has no access, one crash-safe idempotent acceptor, history starts at acceptance
 
 Acceptance for M0.0: no core entity has two conflicting definitions — the
 glossary in ADR-001 is the single source; other ADRs only reference it.
