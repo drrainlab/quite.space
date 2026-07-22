@@ -39,6 +39,13 @@ func runInspect(args []string) error {
 		fmt.Printf("%3d. %s seq=%d clock=%d schema=%s authorship=%s %s, %s\n",
 			i+1, id.EventIDOf(f), env.Sequence, env.LogicalClock,
 			env.Schema, env.ProducedBy, verified, known)
+		// Blocks degrade honestly on a text terminal: show the universal
+		// fallback (works even for block types this build does not know).
+		if schemas.IsBlockSchema(env.Schema) && env.PayloadEncoding == signal.PayloadCBOR {
+			if fb, err := schemas.DecodeBlockFallback(env.Payload); err == nil {
+				fmt.Printf("     └ %s\n", fb)
+			}
+		}
 	}
 	return nil
 }
