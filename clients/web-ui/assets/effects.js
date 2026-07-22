@@ -7,14 +7,41 @@
 
 const RESFX = (() => {
   // ---- effect registry (allowlist) ----
-  // key → {arrival css class, residue painter}. Everything unknown → tint.
+  // key → {arrival css class (on the HOST — transforms are paint-level,
+  // never layout), optional spawn(layer) for DOM particles}. Everything
+  // unknown → tint.
   const EFFECTS = {
-    'ripple.v1':    { arrival: 'fx-arrive-ripple' },
-    'halo.v1':      { arrival: 'fx-arrive-wash' },
-    'particles.v1': { arrival: 'fx-arrive-spark' },
-    'tint.v1':      { arrival: 'fx-arrive-tint' },
+    'heartbeat.v1': { arrival: 'fx-arrive-heartbeat' }, // resonates: two beats
+    'sunwash.v1':   { arrival: 'fx-arrive-sunwash' },   // warmth: golden wave
+    'particles.v1': { arrival: 'fx-arrive-spark' },     // spark: rising sparks
+    'zoom.v1':      { arrival: 'fx-arrive-zoom' },      // curious: lean closer
+    'plusfountain.v1': { arrival: 'fx-arrive-plus', spawn: spawnPluses }, // join
+    'hold.v1':      { arrival: 'fx-arrive-hold' },      // support: embracing ring
+    'settle.v1':    { arrival: 'fx-arrive-weight' },    // weight: grounded settle
+    'tint.v1':      { arrival: 'fx-arrive-tint' },      // unicode / fallback
   };
-  const KEY_EFFECT = { resonates: 'ripple.v1', warmth: 'halo.v1', spark: 'particles.v1' };
+  const KEY_EFFECT = {
+    resonates: 'heartbeat.v1', warmth: 'sunwash.v1', spark: 'particles.v1',
+    curious: 'zoom.v1', join: 'plusfountain.v1', support: 'hold.v1',
+    weight: 'settle.v1',
+  };
+
+  // spawnPluses: a small fountain of "+" rising from the bottom edge —
+  // DOM particles inside the fx layer, self-removing.
+  function spawnPluses(layer) {
+    const n = 7;
+    for (let i = 0; i < n; i++) {
+      const p = document.createElement('span');
+      p.className = 'fx-plus';
+      p.textContent = '+';
+      p.style.left = (12 + Math.random() * 76) + '%';
+      p.style.animationDelay = (i * 70) + 'ms';
+      p.style.fontSize = (10 + Math.random() * 6) + 'px';
+      layer.appendChild(p);
+      p.addEventListener('animationend', () => p.remove(), { once: true });
+      setTimeout(() => p.remove(), 1600);
+    }
+  }
 
   function effectFor(group) {
     if (group.kind === 'semantic') {
@@ -122,19 +149,25 @@ const RESFX = (() => {
     const eff = EFFECTS[effectFor(group)];
     if (!eff) return;
     const layer = ensureLayer(host);
+    // The class lives on the HOST: transform effects (heartbeat, zoom,
+    // settle) move the whole object; paint effects target its .fx-layer.
     const cls = eff.arrival + (mode === 'subtle' ? ' fx-subtle' : '');
     running.set(host, null);
     activeCount++;
-    layer.classList.add(...cls.split(' '));
+    host.classList.add(...cls.split(' '));
+    if (eff.spawn && mode !== 'subtle') eff.spawn(layer);
+    let finished = false;
     const done = () => {
-      layer.classList.remove(...cls.split(' '));
+      if (finished) return;
+      finished = true;
+      host.classList.remove(...cls.split(' '));
       activeCount--;
       const pending = running.get(host);
       running.delete(host);
       if (pending) setTimeout(() => fireArrival(host, pending), 60);
     };
-    layer.addEventListener('animationend', done, { once: true });
-    setTimeout(done, 1400); // safety net if animationend never fires
+    host.addEventListener('animationend', done, { once: true });
+    setTimeout(done, 1600); // safety net if animationend never fires
   }
 
   // onAggregateChange: called from the feed's resonance-only diff path — a
