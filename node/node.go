@@ -355,6 +355,32 @@ func (r *Runtime) MakeCard(tid id.TerminalID, title string, origin *id.EventID) 
 	return a.ID, nil
 }
 
+// EmitBlock publishes a pre-encoded block payload into a space.
+func (r *Runtime) EmitBlock(tid id.TerminalID, schema string, payload []byte) (id.EventID, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	st, ok := r.spaces[tid]
+	if !ok {
+		return id.EventID{}, errors.New("node: unknown space")
+	}
+	a, err := r.Self.Emit(st.space, schema, payload,
+		r.Self.DefaultAuthorship(), uint64(time.Now().Unix()))
+	if err != nil {
+		return id.EventID{}, err
+	}
+	return a.ID, nil
+}
+
+// ReactionSet publishes the DESIRED reaction state (state-based, plan §4).
+func (r *Runtime) ReactionSet(tid id.TerminalID, target id.EventID, emoji string, active bool) error {
+	payload, err := (&schemas.ReactionBlock{Target: target, Emoji: emoji, Active: active}).Encode()
+	if err != nil {
+		return err
+	}
+	_, err = r.EmitBlock(tid, schemas.BlockReaction, payload)
+	return err
+}
+
 // SetCardStatus updates a card.
 func (r *Runtime) SetCardStatus(tid id.TerminalID, card id.EventID, title, status string) error {
 	r.mu.Lock()
