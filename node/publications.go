@@ -1,0 +1,565 @@
+// Publications (ADR-014, PUB-0): drafts stay local and sealed; publishing
+// validates the document and emits a signed revision event with optimistic
+// concurrency — a stale base returns a conflict and the draft survives.
+package node
+
+import (
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/drrainlab/quiet_places/protocol/id"
+	"github.com/drrainlab/quiet_places/protocol/publication"
+)
+
+// ---- JSON <-> Document (the API/composer model) ----
+
+type blockJSON struct {
+	ID       string      `json:"id"`
+	Type     string      `json:"type"`
+	Props    *propsJSON  `json:"props,omitempty"`
+	RawB64   string      `json:"props_raw_b64,omitempty"` // opaque foreign props
+	Children []blockJSON `json:"children,omitempty"`
+}
+
+type propsJSON struct {
+	Text    string   `json:"text,omitempty"`
+	Extra   string   `json:"extra,omitempty"`
+	More    string   `json:"more,omitempty"`
+	Asset   string   `json:"asset,omitempty"`
+	Caption string   `json:"caption,omitempty"`
+	Items   []string `json:"items,omitempty"`
+}
+
+type documentJSON struct {
+	DocumentID string      `json:"document_id,omitempty"`
+	Kind       string      `json:"kind"`
+	Title      string      `json:"title"`
+	Summary    string      `json:"summary,omitempty"`
+	Cover      string      `json:"cover,omitempty"`
+	Authors    []string    `json:"authors,omitempty"`
+	Tags       []string    `json:"tags,omitempty"`
+	Layout     string      `json:"layout,omitempty"`
+	Discussion string      `json:"discussion,omitempty"`
+	Visibility string      `json:"visibility_intent"`
+	Blocks     []blockJSON `json:"blocks"`
+}
+
+func blockFromJSON(bj blockJSON) (publication.Block, error) {
+	b := publication.Block{ID: bj.ID, Type: bj.Type}
+	if bj.RawB64 != "" {
+		raw, err := base64.StdEncoding.DecodeString(bj.RawB64)
+		if err != nil {
+			return b, errors.New("node: bad opaque props encoding")
+		}
+		b.RawProps = raw
+	} else if p := bj.Props; p != nil {
+		switch {
+		case len(p.Items) > 0 || bj.Type == "gallery" || bj.Type == "credits":
+			b.RawProps = publication.EncodeListProps(publication.ListProps{Items: p.Items, Text: p.Text})
+		case p.Asset != "" || bj.Type == "image" || bj.Type == "audio" || bj.Type == "file" ||
+			bj.Type == "video-link" || bj.Type == "app":
+			b.RawProps = publication.EncodeAssetProps(publication.AssetProps{Asset: p.Asset, Text: p.Text, Caption: p.Caption})
+		default:
+			b.RawProps = publication.EncodeTextProps(publication.TextProps{Text: p.Text, Extra: p.Extra, More: p.More})
+		}
+	}
+	for _, cj := range bj.Children {
+		cb, err := blockFromJSON(cj)
+		if err != nil {
+			return b, err
+		}
+		b.Children = append(b.Children, cb)
+	}
+	return b, nil
+}
+
+func blockToJSON(b publication.Block) blockJSON {
+	bj := blockJSON{ID: b.ID, Type: b.Type}
+	if len(b.RawProps) > 0 {
+		if publication.KnownBlockType(b.Type) {
+			switch {
+			case b.Type == "gallery" || b.Type == "credits":
+				if p, err := publication.ParseListProps(b.RawProps); err == nil {
+					bj.Props = &propsJSON{Items: p.Items, Text: p.Text}
+				}
+			case b.Type == "image" || b.Type == "audio" || b.Type == "file" ||
+				b.Type == "video-link" || b.Type == "app":
+				if p, err := publication.ParseAssetProps(b.RawProps); err == nil {
+					bj.Props = &propsJSON{Asset: p.Asset, Text: p.Text, Caption: p.Caption}
+				}
+			default:
+				if p, err := publication.ParseTextProps(b.RawProps); err == nil {
+					bj.Props = &propsJSON{Text: p.Text, Extra: p.Extra, More: p.More}
+				}
+			}
+		}
+		if bj.Props == nil { // unknown/opaque — keep raw bytes visible
+			bj.RawB64 = base64.StdEncoding.EncodeToString(b.RawProps)
+		}
+	}
+	for _, c := range b.Children {
+		bj.Children = append(bj.Children, blockToJSON(c))
+	}
+	return bj
+}
+
+func documentFromJSON(dj documentJSON) (*publication.Document, error) {
+	doc := &publication.Document{
+		Kind: dj.Kind, Title: strings.TrimSpace(dj.Title), Summary: dj.Summary,
+		Cover: dj.Cover, DisplayAuthors: dj.Authors, Tags: dj.Tags,
+		Layout: dj.Layout, Discussion: dj.Discussion, Visibility: dj.Visibility,
+	}
+	if doc.Visibility == "" {
+		doc.Visibility = "space"
+	}
+	if doc.Kind == "" {
+		doc.Kind = "article"
+	}
+	if dj.DocumentID != "" {
+		b, err := hex.DecodeString(dj.DocumentID)
+		if err != nil || len(b) != 16 {
+			return nil, errors.New("node: bad document id")
+		}
+		copy(doc.DocumentID[:], b)
+	} else if _, err := rand.Read(doc.DocumentID[:]); err != nil {
+		return nil, err
+	}
+	for _, bj := range dj.Blocks {
+		b, err := blockFromJSON(bj)
+		if err != nil {
+			return nil, err
+		}
+		doc.Blocks = append(doc.Blocks, b)
+	}
+	return doc, nil
+}
+
+func documentToJSON(doc *publication.Document) documentJSON {
+	dj := documentJSON{
+		DocumentID: hex.EncodeToString(doc.DocumentID[:]),
+		Kind:       doc.Kind, Title: doc.Title, Summary: doc.Summary,
+		Cover: doc.Cover, Authors: doc.DisplayAuthors, Tags: doc.Tags,
+		Layout: doc.Layout, Discussion: doc.Discussion, Visibility: doc.Visibility,
+	}
+	for _, b := range doc.Blocks {
+		dj.Blocks = append(dj.Blocks, blockToJSON(b))
+	}
+	return dj
+}
+
+// ---- Runtime operations ----
+
+// spaceAssetOK returns the validator's asset check for one space.
+func (r *Runtime) spaceAssetOK(tid id.TerminalID) func(string) bool {
+	return func(hexID string) bool {
+		_, ok := r.assetIdx.refs[AssetKey{Space: tid, Asset: hexID}]
+		return ok
+	}
+}
+
+// ErrPublishConflict marks a stale base revision (optimistic concurrency).
+var ErrPublishConflict = errors.New("node: the post changed elsewhere — republish from the latest revision")
+
+// PublishDocument validates and emits a signed revision. baseRevision is the
+// revision the author edited (nil for a brand-new document); on a stale base
+// the publish is refused and nothing is emitted.
+func (r *Runtime) PublishDocument(tid id.TerminalID, doc *publication.Document, baseRevision *id.EventID) (id.EventID, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	st, ok := r.spaces[tid]
+	if !ok {
+		return id.EventID{}, errors.New("node: unknown space")
+	}
+	if err := publication.Validate(doc, r.spaceAssetOK(tid)); err != nil {
+		return id.EventID{}, err
+	}
+
+	cur, exists := st.space.State.PublicationByID(doc.DocumentID)
+	schema := publication.SchemaPublished
+	var prev *id.EventID
+	if exists {
+		schema = publication.SchemaRevised
+		tip := cur.RevisionEventID
+		prev = &tip
+		if baseRevision == nil || *baseRevision != tip {
+			return id.EventID{}, ErrPublishConflict
+		}
+	}
+	payload := (&publication.RevisionPayload{
+		Fallback: doc.Title, Document: doc.Encode(),
+		BaseRevision: baseRevision, PrevRevision: prev,
+	}).Encode()
+	a, err := r.emitLocked(st, schema, payload)
+	if err != nil {
+		return id.EventID{}, err
+	}
+	return a, nil
+}
+
+// ArchiveDocument emits the archive event and returns its id — a restore
+// must reference exactly this event (ADR-014 invariant 6).
+func (r *Runtime) ArchiveDocument(tid id.TerminalID, docID [16]byte) (id.EventID, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	st, ok := r.spaces[tid]
+	if !ok {
+		return id.EventID{}, errors.New("node: unknown space")
+	}
+	pub, ok := st.space.State.PublicationByID(docID)
+	if !ok {
+		return id.EventID{}, errors.New("node: unknown document")
+	}
+	payload := (&publication.LifecyclePayload{Fallback: pub.Title, DocumentID: docID}).Encode()
+	return r.emitLocked(st, publication.SchemaArchived, payload)
+}
+
+func (r *Runtime) RestoreDocument(tid id.TerminalID, docID [16]byte, archiveEvent id.EventID) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	st, ok := r.spaces[tid]
+	if !ok {
+		return errors.New("node: unknown space")
+	}
+	payload := (&publication.LifecyclePayload{
+		Fallback: "restored", DocumentID: docID, ArchivedRevision: &archiveEvent,
+	}).Encode()
+	_, err := r.emitLocked(st, publication.SchemaRestored, payload)
+	return err
+}
+
+// CommentOnDocument emits a threaded comment.
+func (r *Runtime) CommentOnDocument(tid id.TerminalID, docID [16]byte, parent *[16]byte, text string) (id.EventID, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	st, ok := r.spaces[tid]
+	if !ok {
+		return id.EventID{}, errors.New("node: unknown space")
+	}
+	p := &publication.CommentPayload{Text: strings.TrimSpace(text), DocumentID: docID, ParentID: parent}
+	if _, err := rand.Read(p.CommentID[:]); err != nil {
+		return id.EventID{}, err
+	}
+	return r.emitLocked(st, publication.SchemaComment, p.Encode())
+}
+
+// emitLocked emits with r.mu already held (EmitBlock re-locks; this doesn't).
+func (r *Runtime) emitLocked(st *spaceState, schema string, payload []byte) (id.EventID, error) {
+	a, err := r.Self.Emit(st.space, schema, payload,
+		r.Self.DefaultAuthorship(), nowUnix())
+	if err != nil {
+		return id.EventID{}, err
+	}
+	return a.ID, nil
+}
+
+// ---- Drafts (local, sealed — never in the log) ----
+
+func draftName(tid id.TerminalID, docID string) string {
+	return "draft-" + tid.Hex()[:16] + "-" + docID
+}
+
+// SaveDraft seals the JSON document as-is (opaque to the node).
+func (r *Runtime) SaveDraft(tid id.TerminalID, docID string, body []byte) error {
+	if len(docID) != 32 { // hex of 16 bytes
+		return errors.New("node: draft needs a document id")
+	}
+	return r.root.SaveSealed(draftName(tid, docID), body)
+}
+
+func (r *Runtime) LoadDraft(tid id.TerminalID, docID string) ([]byte, error) {
+	return r.root.LoadSealed(draftName(tid, docID))
+}
+
+func (r *Runtime) DeleteDraft(tid id.TerminalID, docID string) error {
+	return r.root.DeleteSealed(draftName(tid, docID))
+}
+
+func (r *Runtime) ListDrafts(tid id.TerminalID) ([]string, error) {
+	names, err := r.root.ListSealed("draft-" + tid.Hex()[:16] + "-")
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		out = append(out, strings.TrimPrefix(n, "draft-"+tid.Hex()[:16]+"-"))
+	}
+	return out, nil
+}
+
+// ---- API ----
+
+func (a *APIServer) publicationJSON(tid id.TerminalID, docID [16]byte) (map[string]any, bool) {
+	sp, ok := a.rt.Space(tid)
+	if !ok {
+		return nil, false
+	}
+	pub, ok := sp.State.PublicationByID(docID)
+	if !ok {
+		return nil, false
+	}
+	comments := make([]map[string]any, 0, len(pub.Comments))
+	for _, c := range pub.Comments {
+		cm := map[string]any{
+			"comment_id": hex.EncodeToString(c.CommentID[:]),
+			"text":       c.Text,
+			"author":     c.Author.String(),
+			"clock":      c.Clock,
+		}
+		if c.ParentID != nil {
+			cm["parent_comment_id"] = hex.EncodeToString(c.ParentID[:])
+		}
+		comments = append(comments, cm)
+	}
+	return map[string]any{
+		"document":          documentToJSON(pub.Document),
+		"author":            pub.Author.String(),
+		"revision_event_id": pub.RevisionEventID.Hex(),
+		"clock":             pub.Clock,
+		"archived":          pub.Archived,
+		"comments":          comments,
+	}, true
+}
+
+func (a *APIServer) handleListPublications(w http.ResponseWriter, r *http.Request) {
+	tid, err := a.spaceID(r)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	sp, ok := a.rt.Space(tid)
+	if !ok {
+		httpErr(w, http.StatusNotFound, errors.New("unknown space"))
+		return
+	}
+	out := []map[string]any{}
+	for _, p := range sp.State.Publications() {
+		out = append(out, map[string]any{
+			"document_id":       hex.EncodeToString(p.DocumentID[:]),
+			"title":             p.Title,
+			"summary":           p.Document.Summary,
+			"kind":              p.Document.Kind,
+			"cover":             p.Document.Cover,
+			"author":            p.Author.String(),
+			"clock":             p.Clock,
+			"revision_event_id": p.RevisionEventID.Hex(),
+			"comment_count":     len(p.Comments),
+		})
+	}
+	writeJSON(w, map[string]any{"publications": out})
+}
+
+func (a *APIServer) docIDParam(r *http.Request) ([16]byte, error) {
+	var out [16]byte
+	b, err := hex.DecodeString(r.PathValue("doc"))
+	if err != nil || len(b) != 16 {
+		return out, errors.New("bad document id")
+	}
+	copy(out[:], b)
+	return out, nil
+}
+
+func (a *APIServer) handleGetPublication(w http.ResponseWriter, r *http.Request) {
+	tid, err := a.spaceID(r)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	docID, err := a.docIDParam(r)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	j, ok := a.publicationJSON(tid, docID)
+	if !ok {
+		httpErr(w, http.StatusNotFound, errors.New("unknown document"))
+		return
+	}
+	writeJSON(w, j)
+}
+
+func (a *APIServer) handlePublish(w http.ResponseWriter, r *http.Request) {
+	tid, err := a.spaceID(r)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	body, err := readBody[struct {
+		Document documentJSON `json:"document"`
+		Base     string       `json:"base_revision_event_id"`
+	}](r)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	doc, err := documentFromJSON(body.Document)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	var base *id.EventID
+	if body.Base != "" {
+		b, err := hex.DecodeString(body.Base)
+		if err != nil || len(b) != 32 {
+			httpErr(w, http.StatusBadRequest, errors.New("bad base revision id"))
+			return
+		}
+		var e id.EventID
+		copy(e[:], b)
+		base = &e
+	}
+	eid, err := a.rt.PublishDocument(tid, doc, base)
+	if errors.Is(err, ErrPublishConflict) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(map[string]any{"error": err.Error(), "conflict": true})
+		return
+	}
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	// A successful publish consumes the draft.
+	_ = a.rt.DeleteDraft(tid, hex.EncodeToString(doc.DocumentID[:]))
+	writeJSON(w, map[string]any{
+		"document_id":       hex.EncodeToString(doc.DocumentID[:]),
+		"revision_event_id": eid.Hex(),
+	})
+}
+
+func (a *APIServer) handleArchivePublication(w http.ResponseWriter, r *http.Request) {
+	tid, err := a.spaceID(r)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	docID, err := a.docIDParam(r)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	archEvent, err := a.rt.ArchiveDocument(tid, docID)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	// The archive event id is what a future restore must reference.
+	writeJSON(w, map[string]string{"status": "archived", "archive_event_id": archEvent.Hex()})
+}
+
+func (a *APIServer) handleComment(w http.ResponseWriter, r *http.Request) {
+	tid, err := a.spaceID(r)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	docID, err := a.docIDParam(r)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	body, err := readBody[struct {
+		Text   string `json:"text"`
+		Parent string `json:"parent_comment_id"`
+	}](r)
+	if err != nil || strings.TrimSpace(body.Text) == "" {
+		httpErr(w, http.StatusBadRequest, errors.New("text required"))
+		return
+	}
+	var parent *[16]byte
+	if body.Parent != "" {
+		b, err := hex.DecodeString(body.Parent)
+		if err != nil || len(b) != 16 {
+			httpErr(w, http.StatusBadRequest, errors.New("bad parent id"))
+			return
+		}
+		var p [16]byte
+		copy(p[:], b)
+		parent = &p
+	}
+	eid, err := a.rt.CommentOnDocument(tid, docID, parent, body.Text)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, map[string]string{"id": eid.Hex()})
+}
+
+func (a *APIServer) handleDrafts(w http.ResponseWriter, r *http.Request) {
+	tid, err := a.spaceID(r)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		ids, err := a.rt.ListDrafts(tid)
+		if err != nil {
+			httpErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		out := []map[string]any{}
+		for _, docID := range ids {
+			if body, err := a.rt.LoadDraft(tid, docID); err == nil {
+				var dj documentJSON
+				title := ""
+				if json.Unmarshal(body, &dj) == nil {
+					title = dj.Title
+				}
+				out = append(out, map[string]any{"document_id": docID, "title": title})
+			}
+		}
+		writeJSON(w, map[string]any{"drafts": out})
+	case http.MethodPost:
+		body, err := readBody[struct {
+			DocumentID string          `json:"document_id"`
+			Document   json.RawMessage `json:"document"`
+		}](r)
+		if err != nil || body.DocumentID == "" {
+			httpErr(w, http.StatusBadRequest, errors.New("document_id and document required"))
+			return
+		}
+		if err := a.rt.SaveDraft(tid, body.DocumentID, body.Document); err != nil {
+			httpErr(w, http.StatusBadRequest, err)
+			return
+		}
+		writeJSON(w, map[string]string{"status": "saved"})
+	default:
+		httpErr(w, http.StatusMethodNotAllowed, errors.New("unsupported method"))
+	}
+}
+
+func (a *APIServer) handleGetDraft(w http.ResponseWriter, r *http.Request) {
+	tid, err := a.spaceID(r)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	body, err := a.rt.LoadDraft(tid, r.PathValue("doc"))
+	if err != nil {
+		httpErr(w, http.StatusNotFound, errors.New("no such draft"))
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(body)
+}
+
+func (a *APIServer) handleDeleteDraft(w http.ResponseWriter, r *http.Request) {
+	tid, err := a.spaceID(r)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := a.rt.DeleteDraft(tid, r.PathValue("doc")); err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, map[string]string{"status": "deleted"})
+}
+
+func nowUnix() uint64 { return uint64(time.Now().Unix()) }

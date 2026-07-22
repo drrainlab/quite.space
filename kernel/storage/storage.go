@@ -18,6 +18,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
 
 	"github.com/drrainlab/quiet_places/kernel/crypto"
 	"github.com/drrainlab/quiet_places/kernel/identity"
@@ -568,4 +571,110 @@ func (r *Root) HasBlob(h id.Hash) bool {
 func (r *Root) blobPath(h id.Hash) string {
 	hex := h.Hex()
 	return filepath.Join(r.dir, "blobs", "sha256", hex[:2], hex)
+}
+
+// ---- Generic sealed blobs (ADR-014: local drafts and similar node-private
+// data). Sealed with the same root key as the keystore; names are sanitized
+// into a flat namespace under sealed/ so a caller can never traverse paths.
+
+var sealedAAD = []byte("quiet-places-sealed-v0")
+
+// MaxSealedSize bounds one sealed blob (drafts are documents, not media).
+const MaxSealedSize = 1 << 20
+
+var sealedNameRe = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,128}$`)
+
+func (r *Root) sealedPath(name string) (string, error) {
+	if !sealedNameRe.MatchString(name) || strings.Contains(name, "..") {
+		return "", errors.New("storage: invalid sealed blob name")
+	}
+	dir := filepath.Join(r.dir, "sealed")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, name+".sealed"), nil
+}
+
+// SaveSealed encrypts and atomically writes a named blob.
+func (r *Root) SaveSealed(name string, data []byte) error {
+	if len(data) > MaxSealedSize {
+		return errors.New("storage: sealed blob too large")
+	}
+	path, err := r.sealedPath(name)
+	if err != nil {
+		return err
+	}
+	aead, err := chacha20poly1305.NewX(r.key[:])
+	if err != nil {
+		return err
+	}
+	nonce := make([]byte, chacha20poly1305.NonceSizeX)
+	if _, err := rand.Read(nonce); err != nil {
+		return err
+	}
+	sealed := append(append([]byte(nil), nonce...), aead.Seal(nil, nonce, data, sealedAAD)...)
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, sealed, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+// LoadSealed reads and opens a named blob ((nil, os.ErrNotExist) when absent).
+func (r *Root) LoadSealed(name string) ([]byte, error) {
+	path, err := r.sealedPath(name)
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if len(data) < chacha20poly1305.NonceSizeX+1 {
+		return nil, errors.New("storage: corrupted sealed blob")
+	}
+	aead, err := chacha20poly1305.NewX(r.key[:])
+	if err != nil {
+		return nil, err
+	}
+	nonce, box := data[:chacha20poly1305.NonceSizeX], data[chacha20poly1305.NonceSizeX:]
+	plain, err := aead.Open(nil, nonce, box, sealedAAD)
+	if err != nil {
+		return nil, errors.New("storage: sealed blob does not open")
+	}
+	return plain, nil
+}
+
+// DeleteSealed removes a named blob (missing is not an error).
+func (r *Root) DeleteSealed(name string) error {
+	path, err := r.sealedPath(name)
+	if err != nil {
+		return err
+	}
+	err = os.Remove(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	return err
+}
+
+// ListSealed returns the names with the given prefix (index rebuilt by scan).
+func (r *Root) ListSealed(prefix string) ([]string, error) {
+	dir := filepath.Join(r.dir, "sealed")
+	ents, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, e := range ents {
+		name := strings.TrimSuffix(e.Name(), ".sealed")
+		if name != e.Name() && strings.HasPrefix(name, prefix) {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out, nil
 }

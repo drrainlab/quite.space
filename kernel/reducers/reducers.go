@@ -14,6 +14,7 @@ import (
 	"sort"
 
 	"github.com/drrainlab/quiet_places/protocol/id"
+	"github.com/drrainlab/quiet_places/protocol/publication"
 	"github.com/drrainlab/quiet_places/protocol/schemas"
 	"github.com/drrainlab/quiet_places/protocol/signal"
 )
@@ -112,6 +113,9 @@ type State struct {
 	pendingReactions map[id.EventID][]pendingReaction
 	cards            map[id.EventID]*Card
 	observation      *Observation
+
+	// publications: per-document projection (ADR-014, publications.go).
+	publications map[[16]byte]*pubRec
 
 	// Unsupported schemas are counted, never dropped silently (ADR-009).
 	Unsupported map[string]int
@@ -306,6 +310,14 @@ func (s *State) Apply(env *signal.Envelope, eid id.EventID) {
 			existing.Assignee = c.Assignee
 			existing.Clock = env.LogicalClock
 		}
+	case publication.SchemaPublished, publication.SchemaRevised:
+		s.applyPublicationRevision(env, eid)
+	case publication.SchemaArchived:
+		s.applyPublicationLifecycle(env, eid, true)
+	case publication.SchemaRestored:
+		s.applyPublicationLifecycle(env, eid, false)
+	case publication.SchemaComment:
+		s.applyPublicationComment(env, eid)
 	case schemas.ObservationTemp:
 		o, err := schemas.DecodeObservation(env.Payload)
 		if err != nil {
