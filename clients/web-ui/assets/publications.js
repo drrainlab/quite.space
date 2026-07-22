@@ -44,6 +44,13 @@ async function refreshPosts() {
       card.className = 'pub-card';
       card.setAttribute('role', 'button');
       card.tabIndex = 0;
+      if (p.cover) {
+        const cov = document.createElement('div');
+        cov.className = 'pub-card-cover';
+        cov.style.backgroundImage =
+          `url(/api/spaces/${current}/assets/${p.cover}?token=${token})`;
+        card.appendChild(cov);
+      }
       const t = document.createElement('div');
       t.className = 'pub-title'; t.textContent = p.title;
       card.appendChild(t);
@@ -92,6 +99,13 @@ function renderArticle(p) {
   bar.appendChild(edit);
   box.appendChild(bar);
 
+  if (doc.cover) {
+    const cov = document.createElement('img');
+    cov.className = 'pub-hero';
+    cov.alt = '';
+    cov.src = `/api/spaces/${current}/assets/${doc.cover}?token=${token}`;
+    box.appendChild(cov);
+  }
   const h = document.createElement('h2');
   h.className = 'pub-h1'; h.textContent = doc.title;
   box.appendChild(h);
@@ -330,9 +344,52 @@ function openComposer(doc, baseRevision) {
   document.getElementById('compSummary').value = composerDoc.summary || '';
   document.getElementById('compKind').value = composerDoc.kind || 'article';
   document.getElementById('compMsg').textContent = '';
+  renderCompCover();
   renderComposerChips();
   renderComposerBlocks();
   dlgComposer.showModal();
+}
+
+// ---- cover: a slim drop strip above the title ----
+function renderCompCover() {
+  const box = document.getElementById('compCover');
+  box.innerHTML = '';
+  const zone = document.createElement('div');
+  zone.className = 'comp-cover' + (composerDoc.cover ? ' has' : '');
+  const hint = document.createElement('span');
+  hint.className = 'comp-drop-hint';
+  if (composerDoc.cover) {
+    zone.style.backgroundImage =
+      `url(/api/spaces/${current}/assets/${composerDoc.cover}?token=${token})`;
+    hint.textContent = 'cover · click to replace';
+    const rm = document.createElement('button');
+    rm.className = 'icon-btn comp-cover-rm'; rm.textContent = '✕';
+    rm.title = 'Remove cover';
+    rm.onclick = (e) => { e.stopPropagation(); composerDoc.cover = ''; renderCompCover(); };
+    zone.appendChild(rm);
+  } else {
+    hint.textContent = 'Drop a cover image here — or click to browse';
+  }
+  zone.appendChild(hint);
+  const fileInput = document.createElement('input');
+  fileInput.type = 'file'; fileInput.accept = 'image/*'; fileInput.style.display = 'none';
+  zone.appendChild(fileInput);
+  async function takeCover(file) {
+    if (!file || !file.type.startsWith('image/')) return;
+    hint.textContent = 'Uploading…';
+    try {
+      const up = await uploadAssetFile(file);
+      composerDoc.cover = up.asset_id;
+      renderCompCover();
+    } catch (err) { hint.textContent = '✗ ' + err.message; }
+  }
+  zone.onclick = () => fileInput.click();
+  fileInput.onchange = () => takeCover(fileInput.files[0]);
+  zone.ondragover = (e) => { e.preventDefault(); zone.classList.add('over'); };
+  zone.ondragleave = () => zone.classList.remove('over');
+  zone.ondrop = (e) => { e.preventDefault(); zone.classList.remove('over');
+    takeCover(e.dataTransfer.files[0]); };
+  box.appendChild(zone);
 }
 
 // uploadAssetFile sends one file to the space's asset store; the node emits a
@@ -451,7 +508,37 @@ function renderComposerBlocks() {
   (composerDoc.blocks || []).forEach((b, i) => {
     const row = document.createElement('div');
     row.className = 'comp-block';
+    row.dataset.index = i;
     b.props = b.props || {};
+
+    // Drag-to-reorder: the ⠿ handle arms draggability so text selection in
+    // the editors keeps working; rows re-render on drop.
+    const grip = document.createElement('span');
+    grip.className = 'comp-grip'; grip.textContent = '⠿'; grip.title = 'Drag to reorder';
+    grip.onmousedown = () => { row.draggable = true; };
+    row.addEventListener('dragend', () => { row.draggable = false;
+      document.querySelectorAll('.comp-block.drop-above').forEach(x => x.classList.remove('drop-above')); });
+    row.addEventListener('dragstart', (e) => {
+      e.dataTransfer.setData('text/qp-block', String(i));
+      e.dataTransfer.effectAllowed = 'move';
+    });
+    row.addEventListener('dragover', (e) => {
+      if (![...e.dataTransfer.types].includes('text/qp-block')) return;
+      e.preventDefault();
+      row.classList.add('drop-above');
+    });
+    row.addEventListener('dragleave', () => row.classList.remove('drop-above'));
+    row.addEventListener('drop', (e) => {
+      const from = parseInt(e.dataTransfer.getData('text/qp-block'), 10);
+      if (Number.isNaN(from)) return;
+      e.preventDefault();
+      const to = i;
+      if (from === to) { row.classList.remove('drop-above'); return; }
+      const [moved] = composerDoc.blocks.splice(from, 1);
+      composerDoc.blocks.splice(to > from ? to - 1 : to, 0, moved);
+      renderComposerBlocks();
+    });
+    row.appendChild(grip);
 
     // Controls appear on hover; the type label stays quiet.
     const head = document.createElement('div');

@@ -545,6 +545,30 @@
   .comp-extra { font-size: 12px; color: var(--dim); border: 0 !important;
     background: transparent !important; padding: 2px !important; }
   .comp-extra:focus { outline: none; }
+  /* cover drop strip + hero */
+  .comp-cover { position: relative; border: 1.5px dashed var(--line);
+    border-radius: var(--radius-md); min-height: 44px; display: grid;
+    place-items: center; cursor: pointer; margin-bottom: 8px;
+    background-size: cover; background-position: center;
+    transition: border-color .15s, min-height .2s; }
+  .comp-cover.has { min-height: 120px; border-style: solid; }
+  .comp-cover.has .comp-drop-hint { background: rgba(0,0,0,.55); color: #fff;
+    padding: 2px 10px; border-radius: 999px; }
+  .comp-cover:hover, .comp-cover.over { border-color: var(--acc); }
+  .comp-cover-rm { position: absolute; top: 6px; right: 6px;
+    background: rgba(0,0,0,.55); color: #fff; }
+  .pub-hero { width: 100%; max-height: 260px; object-fit: cover;
+    border-radius: var(--radius-md); margin: 6px 0; }
+  .pub-card-cover { height: 110px; border-radius: var(--radius-sm);
+    background-size: cover; background-position: center; margin-bottom: 8px; }
+  /* drag-to-reorder */
+  .comp-grip { position: absolute; left: -4px; top: 50%; transform: translateY(-50%);
+    color: var(--muted); cursor: grab; padding: 4px; opacity: 0;
+    transition: opacity .15s; user-select: none; }
+  .comp-block:hover .comp-grip { opacity: 1; }
+  .comp-grip:active { cursor: grabbing; }
+  .comp-block { padding-left: 18px; }
+  .comp-block.drop-above { box-shadow: 0 -2px 0 var(--acc); }
   /* media drop zone */
   .comp-drop { border: 1.5px dashed var(--line); border-radius: var(--radius-md);
     padding: 14px; text-align: center; cursor: pointer;

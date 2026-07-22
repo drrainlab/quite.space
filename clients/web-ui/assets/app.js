@@ -13,6 +13,9 @@ let seenSpace = null;
 // Members known to be "here" last render — used to fire the arrival pulse
 // exactly once, on the transition into presence (never as an idle loop).
 let hereMembers = new Set();
+// feedSig: per-entry signatures from the last render — the incremental feed
+// only touches the DOM when something actually changed (keeps players alive).
+let feedSig = [];
 // Space Composition Contract (SC-0): the appearance snapshot last applied.
 let appearanceSpace = null;
 
@@ -470,24 +473,43 @@ async function refreshSpace() {
   const entries = await api(`/api/spaces/${current}/entries`);
   const log = document.getElementById('log');
   const stick = log.scrollTop + log.clientHeight >= log.scrollHeight - 40;
-  // Motion is quiet-by-default: the feed re-renders every poll, so only a
-  // genuinely-new entry (id unseen for this space) gets the short enter
-  // animation — never the whole list, never an idle loop.
   if (seenSpace !== current) {
-    seenSpace = current; seenEntries = new Set(); hereMembers = new Set();
+    seenSpace = current; seenEntries = new Set(); hereMembers = new Set(); feedSig = [];
     if (typeof pubView !== 'undefined' && pubView !== 'chat') switchView('chat');
   }
+  // Incremental feed render: a poll that changed nothing re-renders nothing
+  // (so a playing <video>/<audio> is never torn down); appended-only changes
+  // add just the new rows; anything else (revision, reaction, tombstone)
+  // rebuilds fully.
+  const sig = entries.map(e => e.id + ':' + (e.revised ? 1 : 0) + ':' +
+    (e.reactions || []).map(r => r.emoji + r.count + (r.mine ? 'm' : '')).join(','));
+  const unchanged = sig.length === feedSig.length && sig.every((s, i) => s === feedSig[i]);
+  const appendOnly = sig.length > feedSig.length && feedSig.every((s, i) => s === sig[i]);
   const firstPaint = seenEntries.size === 0;
-  log.innerHTML = '';
-  let prev = null;
-  for (const e of entries) {
-    const fresh = !firstPaint && e.id && !seenEntries.has(e.id);
-    if (e.id) seenEntries.add(e.id);
-    const grouped = prev && prev.author === e.author && prev.produced_by === e.produced_by;
-    renderEntry(log, e, fresh, grouped);
-    prev = e;
+  if (!unchanged) {
+    let prev = null;
+    if (appendOnly && !firstPaint) {
+      prev = entries[feedSig.length - 1] || null;
+      for (let i = feedSig.length; i < entries.length; i++) {
+        const e = entries[i];
+        if (e.id) seenEntries.add(e.id);
+        const grouped = prev && prev.author === e.author && prev.produced_by === e.produced_by;
+        renderEntry(log, e, true, grouped);
+        prev = e;
+      }
+    } else {
+      log.innerHTML = '';
+      for (const e of entries) {
+        const fresh = !firstPaint && e.id && !seenEntries.has(e.id);
+        if (e.id) seenEntries.add(e.id);
+        const grouped = prev && prev.author === e.author && prev.produced_by === e.produced_by;
+        renderEntry(log, e, fresh, grouped);
+        prev = e;
+      }
+    }
+    feedSig = sig;
+    if (stick) log.scrollTop = log.scrollHeight;
   }
-  if (stick) log.scrollTop = log.scrollHeight;
 
   const st = await api(`/api/spaces/${current}/state`);
   const cards = document.getElementById('cards');
