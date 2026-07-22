@@ -73,6 +73,14 @@ const (
 	AgencyAIAgent
 )
 
+func (a AgencyMode) String() string {
+	names := []string{"unknown", "human", "deterministic", "ai_agent"}
+	if int(a) < len(names) {
+		return names[a]
+	}
+	return "unknown"
+}
+
 // Autonomy levels A0–A4 (plan §10.1). A4 is excluded from MVP.
 type Autonomy uint8
 

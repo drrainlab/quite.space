@@ -34,9 +34,23 @@ Guiding principle:
 
 ## Status
 
-**Pre-M0 — protocol seed in design.** No code yet; the repository currently
-holds the founding documents and the directory skeleton. The kernel stack is
-Go (engineering plan §21).
+**M0 — Protocol Seed: complete.** ADR-001–010 accepted; Go kernel implements
+the deterministic CBOR codec with golden test vectors, identity (device
+certificates, revocation, recovery bundles), terminal registry with
+capability enforcement, the append-only event log (hash chains, fork
+quarantine, crash-safe segments), the truth & claims engine with honesty
+snapshot tests, sync v0 with fragmentation down to 64-byte MTUs, transports
+T0/T1/T3/T4 (loopback, bundle, blind relay, low-bandwidth simulator) with a
+conformance suite, and six headless terminals.
+
+Try the Phase 0 proof (no server, no accounts):
+
+```sh
+go run ./cmd/terminal demo
+```
+
+Not yet here (M1): payload encryption (ADR-005 epochs), LAN discovery,
+SQLite-backed storage, capability invites, desktop client.
 
 ## Documents
 
