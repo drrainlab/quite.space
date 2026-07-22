@@ -13,9 +13,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/drrainlab/quiet_places/kernel/assets"
 	"github.com/drrainlab/quiet_places/kernel/reducers"
 	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/protocol/publication"
+	"github.com/drrainlab/quiet_places/protocol/schemas"
 )
 
 // ---- JSON <-> Document (the API/composer model) ----
@@ -563,6 +565,66 @@ func (a *APIServer) handleGetDraft(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(body)
+}
+
+// handleUploadAsset ingests a file from the composer and emits a
+// block.attached.v1 carrier so every replica can index and decrypt the asset
+// — WITHOUT a chat feed entry. Returns the public asset id for the document.
+func (a *APIServer) handleUploadAsset(w http.ResponseWriter, r *http.Request) {
+	tid, err := a.spaceID(r)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, MaxMultipartBody)
+	mr, err := r.MultipartReader()
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, errors.New("multipart body required"))
+		return
+	}
+	part, err := mr.NextPart()
+	if err != nil || part.FormName() != "metadata" {
+		httpErr(w, http.StatusBadRequest, errors.New("first part must be metadata"))
+		return
+	}
+	var meta struct {
+		Filename  string `json:"filename"`
+		MediaType string `json:"media_type"`
+		Size      int64  `json:"size"`
+	}
+	if err := json.NewDecoder(part).Decode(&meta); err != nil || meta.Size <= 0 {
+		httpErr(w, http.StatusBadRequest, errors.New("metadata with a positive size required"))
+		return
+	}
+	part, err = mr.NextPart()
+	if err != nil || part.FormName() != "file" {
+		httpErr(w, http.StatusBadRequest, errors.New("second part must be the file"))
+		return
+	}
+	role := "original"
+	ref, err := a.rt.IngestAsset(part, meta.Size, assets.Metadata{MediaType: meta.MediaType, Role: role})
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	block := &schemas.AttachedBlock{
+		Filename: meta.Filename, MediaType: meta.MediaType, Original: ref,
+	}
+	payload, err := block.Encode()
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if _, err := a.rt.EmitBlock(tid, schemas.BlockAttached, payload); err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, map[string]any{
+		"asset_id":   ref.PublicIDHex(),
+		"media_type": ref.MediaType,
+		"size":       ref.Size,
+		"filename":   meta.Filename,
+	})
 }
 
 func (a *APIServer) handleDeleteDraft(w http.ResponseWriter, r *http.Request) {

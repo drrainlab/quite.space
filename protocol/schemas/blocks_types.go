@@ -754,4 +754,67 @@ func init() {
 	Register(BlockLink, func(p []byte) error { _, err := DecodeLinkBlock(p); return err })
 	Register(BlockReaction, func(p []byte) error { _, err := DecodeReactionBlock(p); return err })
 	Register(BlockLiveSignal, func(p []byte) error { _, err := DecodeLiveSignalBlock(p); return err })
+	Register(BlockAttached, func(p []byte) error { _, err := DecodeAttachedBlock(p); return err })
+}
+
+// ---- AttachedBlock (block.attached.v1) ----
+//
+// An asset CARRIER: it puts an AssetRef into the log so every replica can
+// index, authorize and decrypt the asset — without creating a feed entry.
+// Publications reference the asset by its public id (composer uploads).
+
+type AttachedBlock struct {
+	Filename  string
+	MediaType string
+	Original  *AssetRef
+}
+
+func (b *AttachedBlock) Fallback() string {
+	return "attached: " + b.Filename
+}
+
+func (b *AttachedBlock) Encode() ([]byte, error) {
+	b.Filename = NormalizeFilename(b.Filename)
+	if b.Original == nil {
+		return nil, errors.New("schemas: attached block requires an asset")
+	}
+	orig, err := b.Original.encode()
+	if err != nil {
+		return nil, err
+	}
+	buf := codec.AppendMap(nil, 4)
+	buf = codec.AppendUint(buf, 1)
+	buf = codec.AppendText(buf, b.Fallback())
+	buf = codec.AppendUint(buf, 2)
+	buf = codec.AppendText(buf, b.Filename)
+	buf = codec.AppendUint(buf, 3)
+	buf = codec.AppendText(buf, b.MediaType)
+	buf = codec.AppendUint(buf, 4)
+	buf = append(buf, orig...)
+	return finishBlock(buf)
+}
+
+func DecodeAttachedBlock(p []byte) (*AttachedBlock, error) {
+	b := &AttachedBlock{}
+	err := walkBlock(p, func(k uint64, d *codec.Decoder) (er error) {
+		switch k {
+		case 2:
+			b.Filename, er = d.ReadText()
+		case 3:
+			b.MediaType, er = d.ReadText()
+		case 4:
+			b.Original, er = decodeAssetRef(d)
+		default:
+			er = d.SkipItem()
+		}
+		return er
+	})
+	if err != nil {
+		return nil, err
+	}
+	if b.Original == nil {
+		return nil, errors.New("schemas: attached block missing asset")
+	}
+	b.Filename = NormalizeFilename(b.Filename)
+	return b, nil
 }

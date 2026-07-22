@@ -101,6 +101,7 @@ func (a *APIServer) Handler() http.Handler {
 	mux.HandleFunc("PATCH /api/spaces/{id}/appearance", a.auth(a.handlePatchAppearance))
 	mux.HandleFunc("POST /api/spaces/{id}/appearance/proposals", a.auth(a.handleProposeAppearance))
 	mux.HandleFunc("GET /api/spaces/{id}/publications", a.auth(a.handleListPublications))
+	mux.HandleFunc("POST /api/spaces/{id}/assets", a.auth(a.handleUploadAsset))
 	mux.HandleFunc("POST /api/spaces/{id}/publications/proposals", a.auth(a.handleProposeDocument))
 	mux.HandleFunc("POST /api/spaces/{id}/publications", a.auth(a.handlePublish))
 	mux.HandleFunc("GET /api/spaces/{id}/publications/{doc}", a.auth(a.handleGetPublication))

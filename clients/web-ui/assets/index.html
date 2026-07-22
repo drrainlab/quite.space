@@ -336,27 +336,19 @@
   </div>
 </dialog>
 
-<dialog id="dlgComposer" class="sheet">
-  <h3>Compose a post</h3>
-  <input id="compTitle" placeholder="Title" maxlength="200">
-  <input id="compSummary" placeholder="Summary (optional)" maxlength="1000">
-  <div class="row">
-    <select id="compKind" style="width:auto">
+<dialog id="dlgComposer" class="sheet composer-sheet">
+  <div class="comp-head">
+    <h3 style="margin:0">Compose a post</h3>
+    <select id="compKind" class="comp-kind">
       <option value="article">article</option><option value="note">note</option>
       <option value="release">release</option><option value="log">log</option>
     </select>
-    <select id="compAddType" style="width:auto">
-      <option>heading</option><option>text</option><option>quote</option>
-      <option>callout</option><option>code</option><option>link</option>
-      <option>separator</option><option>credits</option>
-      <option>image</option><option>audio</option><option>file</option>
-    </select>
-    <button class="btn-tinted" onclick="addComposerBlock()">+ Block</button>
-    <button class="btn-plain" onclick="insertAppBlock('poll')">+ Poll</button>
-    <button class="btn-plain" onclick="insertAppBlock('form')">+ Form</button>
   </div>
+  <input id="compTitle" class="comp-title" placeholder="Title" maxlength="200">
+  <input id="compSummary" class="comp-summary" placeholder="A short summary (optional)" maxlength="1000">
   <div id="composerBlocks"></div>
-  <div class="row">
+  <div class="comp-chips" id="compChips"></div>
+  <div class="row comp-ai">
     <input id="compAIPrompt" placeholder="✨ describe the post — AI drafts, you publish" style="flex:1">
     <button class="btn-plain" onclick="aiDraftPost()">Draft</button>
   </div>

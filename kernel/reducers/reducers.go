@@ -337,6 +337,9 @@ func (s *State) Apply(env *signal.Envelope, eid id.EventID) {
 		s.applyAppInstance(env, eid)
 	case appdef.SchemaPollVote, appdef.SchemaFormResponse:
 		s.applyAppState(env, eid)
+	case schemas.BlockAttached:
+		// An asset carrier: indexed via the OnBlock hook, never a feed entry.
+		return
 	case schemas.ObservationTemp:
 		o, err := schemas.DecodeObservation(env.Payload)
 		if err != nil {

@@ -25,6 +25,7 @@ import (
 // Block schema ids, v1.
 const (
 	BlockVisual     = "block.visual.v1"
+	BlockAttached   = "block.attached.v1" // asset carrier only — no feed entry
 	BlockVoice      = "block.voice.v1"
 	BlockAudio      = "block.audio.v1"
 	BlockFile       = "block.file.v1"
@@ -115,6 +116,10 @@ var _ = validateBlockFallbackOnly // referenced by future block registrations
 // reading of "cannot parse".
 func ExtractAssetRefs(schema string, payload []byte) []*AssetRef {
 	switch schema {
+	case BlockAttached:
+		if b, err := DecodeAttachedBlock(payload); err == nil {
+			return []*AssetRef{b.Original}
+		}
 	case BlockVisual:
 		if b, err := DecodeVisualBlock(payload); err == nil {
 			return []*AssetRef{b.Original}

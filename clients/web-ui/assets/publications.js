@@ -283,9 +283,40 @@ function pubAssetNode(kind, p) {
 }
 
 // ---- composer ----
+// Notion-flavored: one-click chips add blocks, media blocks are drop zones
+// with live previews (upload → block.attached.v1 carrier → asset id), text
+// areas auto-grow, up/down/remove per block.
 
-const COMPOSER_TYPES = ['heading', 'text', 'quote', 'callout', 'code', 'link',
-  'separator', 'credits', 'image', 'audio', 'file'];
+const COMPOSER_CHIPS = [
+  { t: 'text', label: 'Text' }, { t: 'heading', label: 'Heading' },
+  { t: 'image', label: '🖼 Image' }, { t: 'audio', label: '♫ Audio' },
+  { t: 'file', label: '📄 File' }, { t: 'quote', label: '❝ Quote' },
+  { t: 'callout', label: 'Callout' }, { t: 'code', label: 'Code' },
+  { t: 'link', label: 'Link' }, { t: 'credits', label: 'Credits' },
+  { t: 'separator', label: '—' },
+  { t: 'poll', label: '📊 Poll', app: true }, { t: 'form', label: '📝 Form', app: true },
+];
+
+function renderComposerChips() {
+  const box = document.getElementById('compChips');
+  box.innerHTML = '';
+  for (const c of COMPOSER_CHIPS) {
+    const chip = document.createElement('button');
+    chip.className = 'comp-chip';
+    chip.textContent = '+ ' + c.label;
+    chip.onclick = () => {
+      if (c.app) { insertAppBlock(c.t); return; }
+      composerDoc.blocks.push({ id: 'b' + randHex16().slice(0, 8), type: c.t, props: {} });
+      renderComposerBlocks();
+      // Focus the freshly added block's first field.
+      setTimeout(() => {
+        const rows = document.querySelectorAll('#composerBlocks .comp-block');
+        rows[rows.length - 1]?.querySelector('textarea, input')?.focus();
+      }, 30);
+    };
+    box.appendChild(chip);
+  }
+}
 
 function openComposer(doc, baseRevision) {
   composerDoc = doc ? JSON.parse(JSON.stringify(doc)) : {
@@ -297,80 +328,196 @@ function openComposer(doc, baseRevision) {
   document.getElementById('compSummary').value = composerDoc.summary || '';
   document.getElementById('compKind').value = composerDoc.kind || 'article';
   document.getElementById('compMsg').textContent = '';
+  renderComposerChips();
   renderComposerBlocks();
   dlgComposer.showModal();
 }
 
+// uploadAssetFile sends one file to the space's asset store; the node emits a
+// block.attached.v1 carrier so every replica can index + decrypt it.
+async function uploadAssetFile(file) {
+  const fd = new FormData();
+  fd.append('metadata', new Blob([JSON.stringify({
+    filename: file.name, media_type: file.type || 'application/octet-stream',
+    size: file.size,
+  })], { type: 'application/json' }));
+  fd.append('file', file);
+  const r = await fetch(`/api/spaces/${current}/assets`, {
+    method: 'POST', headers: { 'X-QP-Token': token }, body: fd,
+  });
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || 'upload failed');
+  return j; // { asset_id, media_type, size, filename }
+}
+
+// mediaAccept maps a media block type to its file-picker accept filter.
+function mediaAccept(type) {
+  return type === 'image' ? 'image/*' : type === 'audio' ? 'audio/*' : '';
+}
+
+// mediaDropZone builds the drop/browse surface with a live preview.
+function mediaDropZone(b) {
+  const zone = document.createElement('div');
+  zone.className = 'comp-drop';
+  const preview = document.createElement('div');
+  preview.className = 'comp-drop-preview';
+  const hint = document.createElement('div');
+  hint.className = 'comp-drop-hint';
+  const fileInput = document.createElement('input');
+  fileInput.type = 'file';
+  fileInput.style.display = 'none';
+  const acc = mediaAccept(b.type);
+  if (acc) fileInput.accept = acc;
+
+  function showPreview() {
+    preview.innerHTML = '';
+    if (!b.props.asset) {
+      hint.textContent = `Drop ${b.type === 'image' ? 'an image' : b.type === 'audio' ? 'an audio file' : 'a file'} here — or click to browse`;
+      return;
+    }
+    hint.textContent = (b.props.text || 'uploaded') + ' · click to replace';
+    if (b.type === 'image') {
+      const img = document.createElement('img');
+      img.alt = b.props.text || '';
+      img.src = `/api/spaces/${current}/assets/${b.props.asset}?token=${token}`;
+      preview.appendChild(img);
+    } else if (b.type === 'audio') {
+      const au = document.createElement('audio');
+      au.controls = true;
+      au.src = `/api/spaces/${current}/assets/${b.props.asset}?token=${token}`;
+      preview.appendChild(au);
+    } else {
+      const f = document.createElement('div');
+      f.className = 'pub-meta';
+      f.textContent = '📄 ' + (b.props.text || 'file');
+      preview.appendChild(f);
+    }
+  }
+
+  async function takeFile(file) {
+    if (!file) return;
+    hint.textContent = 'Uploading…';
+    zone.classList.add('busy');
+    try {
+      const up = await uploadAssetFile(file);
+      b.props.asset = up.asset_id;
+      if (!b.props.text) b.props.text = up.filename;
+      showPreview();
+    } catch (err) {
+      hint.textContent = '✗ ' + err.message;
+    } finally { zone.classList.remove('busy'); }
+  }
+
+  zone.onclick = () => fileInput.click();
+  fileInput.onchange = () => takeFile(fileInput.files[0]);
+  zone.ondragover = (e) => { e.preventDefault(); zone.classList.add('over'); };
+  zone.ondragleave = () => zone.classList.remove('over');
+  zone.ondrop = (e) => {
+    e.preventDefault(); zone.classList.remove('over');
+    takeFile(e.dataTransfer.files[0]);
+  };
+
+  zone.appendChild(preview);
+  zone.appendChild(hint);
+  zone.appendChild(fileInput);
+  showPreview();
+  return zone;
+}
+
+// autoGrow keeps a textarea sized to its content.
+function autoGrow(ta) {
+  const fit = () => { ta.style.height = 'auto'; ta.style.height = (ta.scrollHeight + 2) + 'px'; };
+  ta.addEventListener('input', fit);
+  setTimeout(fit, 0);
+  return ta;
+}
+
+const BLOCK_PLACEHOLDERS = {
+  text: 'Write…', heading: 'Heading', quote: 'A quote…',
+  callout: 'Something worth highlighting…', code: '// code', link: 'https://…',
+};
+
 function renderComposerBlocks() {
   const box = document.getElementById('composerBlocks');
   box.innerHTML = '';
+  if (!(composerDoc.blocks || []).length) {
+    const empty = document.createElement('div');
+    empty.className = 'comp-empty';
+    empty.textContent = 'Add blocks below — text, media, a poll…';
+    box.appendChild(empty);
+  }
   (composerDoc.blocks || []).forEach((b, i) => {
     const row = document.createElement('div');
     row.className = 'comp-block';
+    b.props = b.props || {};
+
+    // Controls appear on hover; the type label stays quiet.
     const head = document.createElement('div');
     head.className = 'comp-block-head';
     const label = document.createElement('span');
-    label.className = 'pub-meta'; label.textContent = b.type;
+    label.className = 'comp-block-type'; label.textContent = b.type;
     head.appendChild(label);
-    const up = document.createElement('button');
-    up.className = 'icon-btn'; up.textContent = '↑'; up.title = 'Move up';
-    up.onclick = () => { if (i > 0) { const t2 = composerDoc.blocks[i - 1];
-      composerDoc.blocks[i - 1] = b; composerDoc.blocks[i] = t2; renderComposerBlocks(); } };
-    const down = document.createElement('button');
-    down.className = 'icon-btn'; down.textContent = '↓'; down.title = 'Move down';
-    down.onclick = () => { if (i < composerDoc.blocks.length - 1) {
-      const t2 = composerDoc.blocks[i + 1];
-      composerDoc.blocks[i + 1] = b; composerDoc.blocks[i] = t2; renderComposerBlocks(); } };
-    const del = document.createElement('button');
-    del.className = 'icon-btn'; del.textContent = '✕'; del.title = 'Remove';
-    del.onclick = () => { composerDoc.blocks.splice(i, 1); renderComposerBlocks(); };
-    head.appendChild(up); head.appendChild(down); head.appendChild(del);
+    const mk = (txt, title, fn, disabled) => {
+      const btn = document.createElement('button');
+      btn.className = 'icon-btn comp-ctl'; btn.textContent = txt; btn.title = title;
+      btn.disabled = !!disabled; btn.onclick = fn;
+      return btn;
+    };
+    head.appendChild(mk('↑', 'Move up', () => { const t2 = composerDoc.blocks[i - 1];
+      composerDoc.blocks[i - 1] = b; composerDoc.blocks[i] = t2; renderComposerBlocks(); }, i === 0));
+    head.appendChild(mk('↓', 'Move down', () => { const t2 = composerDoc.blocks[i + 1];
+      composerDoc.blocks[i + 1] = b; composerDoc.blocks[i] = t2; renderComposerBlocks(); },
+      i === composerDoc.blocks.length - 1));
+    head.appendChild(mk('✕', 'Remove', () => { composerDoc.blocks.splice(i, 1); renderComposerBlocks(); }));
     row.appendChild(head);
 
-    b.props = b.props || {};
     if (b.type === 'separator') {
-      // no fields
+      row.appendChild(document.createElement('hr'));
     } else if (b.type === 'credits') {
-      row.appendChild(compInput('role, name, role, name…',
-        (b.props.items || []).join(', '),
-        v => { b.props.items = v.split(',').map(s => s.trim()).filter(Boolean); }));
+      const inp = document.createElement('input');
+      inp.placeholder = 'role, name, role, name…';
+      inp.value = (b.props.items || []).join(', ');
+      inp.oninput = () => { b.props.items = inp.value.split(',').map(s => s.trim()).filter(Boolean); };
+      row.appendChild(inp);
     } else if (['image', 'audio', 'file'].includes(b.type)) {
-      row.appendChild(compInput('asset id (hex — from a shared file in chat)',
-        b.props.asset || '', v => { b.props.asset = v.trim(); }));
-      row.appendChild(compInput('alt / filename', b.props.text || '',
-        v => { b.props.text = v; }));
+      row.appendChild(mediaDropZone(b));
+      const alt = document.createElement('input');
+      alt.placeholder = b.type === 'image' ? 'alt text — what is in the image' : 'title';
+      alt.value = b.props.text || '';
+      alt.oninput = () => { b.props.text = alt.value; };
+      row.appendChild(alt);
+    } else if (b.type === 'app') {
+      const note = document.createElement('div');
+      note.className = 'pub-meta';
+      note.textContent = '📊 interactive block · ' + (b.props.asset || '').slice(0, 8);
+      row.appendChild(note);
     } else {
       const ta = document.createElement('textarea');
-      ta.rows = b.type === 'text' || b.type === 'code' ? 3 : 1;
-      ta.placeholder = b.type === 'link' ? 'https://…' : b.type + ' text';
+      ta.rows = 1;
+      ta.className = b.type === 'heading' ? 'comp-ta-heading' : b.type === 'code' ? 'comp-ta-code' : '';
+      ta.placeholder = BLOCK_PLACEHOLDERS[b.type] || b.type;
       ta.value = b.props.text || '';
       ta.oninput = () => { b.props.text = ta.value; };
-      row.appendChild(ta);
+      row.appendChild(autoGrow(ta));
       if (['quote', 'callout', 'code'].includes(b.type)) {
-        row.appendChild(compInput(
-          b.type === 'quote' ? 'attribution' : b.type === 'code' ? 'language' : 'tone',
-          b.props.extra || '', v => { b.props.extra = v; }));
+        const extra = document.createElement('input');
+        extra.className = 'comp-extra';
+        extra.placeholder = b.type === 'quote' ? 'attribution' : b.type === 'code' ? 'language' : 'tone (info | warning)';
+        extra.value = b.props.extra || '';
+        extra.oninput = () => { b.props.extra = extra.value; };
+        row.appendChild(extra);
       }
       if (b.type === 'link') {
-        row.appendChild(compInput('link title', b.props.more || '',
-          v => { b.props.more = v; }));
+        const more = document.createElement('input');
+        more.className = 'comp-extra';
+        more.placeholder = 'link title';
+        more.value = b.props.more || '';
+        more.oninput = () => { b.props.more = more.value; };
+        row.appendChild(more);
       }
     }
     box.appendChild(row);
   });
-}
-
-function compInput(placeholder, value, oninput) {
-  const inp = document.createElement('input');
-  inp.placeholder = placeholder; inp.value = value;
-  inp.oninput = () => oninput(inp.value);
-  return inp;
-}
-
-function addComposerBlock() {
-  const type = document.getElementById('compAddType').value;
-  composerDoc.blocks.push({ id: 'b' + randHex16().slice(0, 8), type, props: {} });
-  renderComposerBlocks();
 }
 
 function collectComposerDoc() {
