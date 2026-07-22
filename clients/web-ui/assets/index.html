@@ -141,7 +141,7 @@
 <header>
   <b>quiet places</b>
   <span id="fp" class="dim"></span>
-  <span id="lan" class="dim"></span>
+  <span id="lan" class="dim" onclick="dlgLan.showModal()" style="cursor:pointer" title="LAN peers"></span>
   <span id="mesh" class="dim" onclick="dlgMesh.showModal()" style="cursor:pointer" title="Meshtastic radio"></span>
   <span id="relayBtn" class="dim" onclick="dlgRelay.showModal()" style="cursor:pointer" title="blind relay">relay</span>
 </header>
@@ -233,6 +233,18 @@
   <p class="out" id="meXpub"></p>
   <p class="hint">fingerprint (compare out-of-band): <span id="meFp"></span></p>
   <div class="row"><button onclick="dlgMe.close()">close</button></div>
+</dialog>
+
+<dialog id="dlgLan">
+  <h3>LAN peer</h3>
+  <p class="hint">nodes on one network usually find each other by multicast
+  announce. If discovery is filtered (common on many networks, and between
+  two nodes on one machine), connect directly: the peer's port is shown in
+  their header as <code>LAN :PORT</code>.</p>
+  <input id="lanAddr" placeholder="peer address, e.g. 127.0.0.1:61898 or 192.168.1.7:52011">
+  <div class="row"><button onclick="lanConnect()">connect</button>
+  <button onclick="dlgLan.close()">close</button></div>
+  <p class="hint" id="lanInfo"></p>
 </dialog>
 
 <dialog id="dlgMesh">
@@ -620,6 +632,17 @@ async function toggleCard(c) {
   await api(`/api/spaces/${current}/cards/${c.id}/status`,
     { method: 'POST', body: JSON.stringify({ title: c.title, status: next }) });
   refreshSpace();
+}
+
+async function lanConnect() {
+  const addr = document.getElementById('lanAddr').value.trim();
+  if (!addr) return;
+  const info = document.getElementById('lanInfo');
+  try {
+    await api('/api/lan/connect', { method: 'POST', body: JSON.stringify({ addr }) });
+    info.textContent = 'connected — spaces will converge within a few seconds.';
+    refresh();
+  } catch (err) { info.textContent = 'connect failed: ' + err.message; }
 }
 
 async function meshConnect() {
