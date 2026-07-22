@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quiet Places</title>
+<style>
+  :root {
+    --bg: #0c1210; --panel: #111917; --line: #1e2b27;
+    --fg: #c8d8d0; --dim: #6d817a; --acc: #64d8a4; --warn: #d8b464;
+    --human: #64d8a4; --ai: #b48ce0; --bot: #64a8d8; --sensor: #d8b464;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: var(--bg); color: var(--fg);
+    font: 14px/1.5 "SF Mono", ui-monospace, Menlo, monospace;
+    height: 100vh; display: flex; flex-direction: column;
+  }
+  header {
+    padding: 10px 16px; border-bottom: 1px solid var(--line);
+    display: flex; gap: 16px; align-items: baseline; flex-wrap: wrap;
+  }
+  header b { color: var(--acc); letter-spacing: 1px; }
+  header .dim { color: var(--dim); font-size: 12px; }
+  main { flex: 1; display: flex; min-height: 0; }
+  #sidebar {
+    width: 260px; border-right: 1px solid var(--line); padding: 12px;
+    display: flex; flex-direction: column; gap: 8px; overflow-y: auto;
+  }
+  .space {
+    padding: 8px 10px; border: 1px solid var(--line); border-radius: 4px;
+    cursor: pointer; background: var(--panel);
+  }
+  .space.active { border-color: var(--acc); }
+  .space .t { color: var(--fg); }
+  .space .m { color: var(--dim); font-size: 12px; }
+  .space .undec { color: var(--warn); }
+  #content { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  #honesty {
+    padding: 6px 16px; border-bottom: 1px solid var(--line);
+    color: var(--dim); font-size: 12px; min-height: 30px;
+  }
+  #honesty .warn { color: var(--warn); }
+  #log { flex: 1; overflow-y: auto; padding: 12px 16px; }
+  .msg { margin-bottom: 8px; }
+  .msg .who { font-size: 11px; }
+  .badge {
+    display: inline-block; padding: 0 6px; border-radius: 3px;
+    font-size: 10px; border: 1px solid var(--line); margin-right: 6px;
+  }
+  .b-human { color: var(--human); } .b-ai_agent { color: var(--ai); }
+  .b-deterministic_bot { color: var(--bot); } .b-sensor { color: var(--sensor); }
+  .b-unknown { color: var(--dim); }
+  .msg .txt { white-space: pre-wrap; }
+  .msg .meta { color: var(--dim); font-size: 11px; }
+  .msg .mk { color: var(--dim); font-size: 11px; cursor: pointer; text-decoration: underline; }
+  #cards { padding: 0 16px 8px; }
+  .card {
+    display: inline-block; border: 1px solid var(--line); border-radius: 4px;
+    padding: 4px 8px; margin: 0 8px 6px 0; font-size: 12px; cursor: pointer;
+  }
+  .card.done { color: var(--dim); text-decoration: line-through; }
+  #composer { display: flex; border-top: 1px solid var(--line); }
+  #composer input {
+    flex: 1; background: var(--panel); color: var(--fg);
+    border: 0; padding: 12px 16px; font: inherit; outline: none;
+  }
+  button {
+    background: var(--panel); color: var(--acc); border: 1px solid var(--line);
+    border-radius: 4px; padding: 6px 12px; font: inherit; cursor: pointer;
+  }
+  button:hover { border-color: var(--acc); }
+  dialog {
+    background: var(--panel); color: var(--fg); border: 1px solid var(--line);
+    border-radius: 6px; padding: 20px; max-width: 520px;
+  }
+  dialog::backdrop { background: rgba(0,0,0,.6); }
+  dialog input, dialog textarea {
+    width: 100%; background: var(--bg); color: var(--fg); font: inherit;
+    border: 1px solid var(--line); border-radius: 4px; padding: 8px; margin: 6px 0;
+  }
+  dialog .out { word-break: break-all; font-size: 11px; color: var(--acc); }
+  .row { display: flex; gap: 8px; margin-top: 8px; }
+  h3 { margin-bottom: 6px; color: var(--acc); font-size: 13px; }
+  .hint { color: var(--dim); font-size: 11px; }
+</style>
+</head>
+<body>
+<header>
+  <b>quiet places</b>
+  <span id="fp" class="dim"></span>
+  <span id="lan" class="dim"></span>
+</header>
+<main>
+  <div id="sidebar">
+    <div class="row">
+      <button onclick="dlgNew.showModal()">+ space</button>
+      <button onclick="dlgJoin.showModal()">join</button>
+      <button onclick="showIdentity()">me</button>
+    </div>
+    <div id="spaces"></div>
+  </div>
+  <div id="content">
+    <div id="honesty"></div>
+    <div id="cards"></div>
+    <div id="log"></div>
+    <form id="composer" onsubmit="return say(event)">
+      <input id="text" placeholder="write into the space…" autocomplete="off">
+      <button type="submit" style="border:0">send</button>
+    </form>
+  </div>
+</main>
+
+<dialog id="dlgNew">
+  <h3>new private space</h3>
+  <input id="newTitle" placeholder="title">
+  <div class="row"><button onclick="createSpace()">create</button>
+  <button onclick="dlgNew.close()">cancel</button></div>
+</dialog>
+
+<dialog id="dlgJoin">
+  <h3>join with invite</h3>
+  <textarea id="joinInvite" rows="4" placeholder="paste invite string"></textarea>
+  <div class="row"><button onclick="joinSpace()">join</button>
+  <button onclick="dlgJoin.close()">cancel</button></div>
+</dialog>
+
+<dialog id="dlgMe">
+  <h3>this device</h3>
+  <p class="hint">share these two lines with a space owner to get invited:</p>
+  <p class="out" id="meDevice"></p>
+  <p class="out" id="meXpub"></p>
+  <p class="hint">fingerprint (compare out-of-band): <span id="meFp"></span></p>
+  <div class="row"><button onclick="dlgMe.close()">close</button></div>
+</dialog>
+
+<dialog id="dlgInvite">
+  <h3>invite to <span id="invSpace"></span></h3>
+  <input id="invDevice" placeholder="peer device id (hex)">
+  <input id="invXpub" placeholder="peer device xpub (hex)">
+  <div class="row"><button onclick="mintInvite()">mint invite</button>
+  <button onclick="dlgInvite.close()">close</button></div>
+  <p class="hint">send the string below to the peer over any channel:</p>
+  <p class="out" id="invOut"></p>
+</dialog>
+
+<script>
+const token = new URLSearchParams(location.search).get('token') || '';
+const api = (path, opts = {}) =>
+  fetch(path, { ...opts, headers: { 'X-QP-Token': token, 'Content-Type': 'application/json', ...(opts.headers||{}) } })
+    .then(async r => { if (!r.ok) throw new Error((await r.json()).error || r.status); return r.json(); });
+
+let current = null;
+let status = null;
+
+async function refresh() {
+  try {
+    status = await api('/api/status');
+    document.getElementById('fp').textContent = status.fingerprint;
+    const lan = status.lan;
+    document.getElementById('lan').textContent =
+      lan.listening ? `LAN :${lan.port} · ${lan.peers} peer${lan.peers===1?'':'s'}` : 'LAN off';
+
+    const spaces = await api('/api/spaces');
+    const box = document.getElementById('spaces');
+    box.innerHTML = '';
+    for (const s of spaces) {
+      const d = document.createElement('div');
+      d.className = 'space' + (s.id === current ? ' active' : '');
+      d.innerHTML = `<div class="t">${esc(s.title || s.id.slice(0,12))}${s.owned ? ' ·owner' : ''}</div>
+        <div class="m">${s.events} events · ${s.messages} msgs` +
+        (s.undecryptable ? ` · <span class="undec">${s.undecryptable} unreadable</span>` : '') +
+        (s.peers ? ` · ${s.peers} peer` : '') + `</div>`;
+      d.onclick = () => { current = s.id; refresh(); };
+      if (s.owned) {
+        const b = document.createElement('button');
+        b.textContent = 'invite'; b.style.marginTop = '4px'; b.style.fontSize = '11px';
+        b.onclick = (e) => { e.stopPropagation(); openInvite(s); };
+        d.appendChild(b);
+      }
+      box.appendChild(d);
+    }
+    if (!current && spaces.length) { current = spaces[0].id; }
+    if (current) await refreshSpace();
+  } catch (e) { console.error(e); }
+}
+
+async function refreshSpace() {
+  const msgs = await api(`/api/spaces/${current}/messages`);
+  const log = document.getElementById('log');
+  const stick = log.scrollTop + log.clientHeight >= log.scrollHeight - 40;
+  log.innerHTML = '';
+  for (const m of msgs) {
+    const d = document.createElement('div');
+    d.className = 'msg';
+    d.innerHTML =
+      `<div class="who"><span class="badge b-${esc(m.produced_by)}">${esc(m.produced_by)}</span>` +
+      `<span class="meta">${esc(m.author)}${m.revised ? ' · edited' : ''}</span> ` +
+      `<span class="mk" onclick="makeCard('${m.id}', this)">→card</span></div>` +
+      `<div class="txt">${esc(m.text)}</div>`;
+    log.appendChild(d);
+  }
+  if (stick) log.scrollTop = log.scrollHeight;
+
+  const st = await api(`/api/spaces/${current}/state`);
+  const cards = document.getElementById('cards');
+  cards.innerHTML = '';
+  for (const c of st.cards) {
+    const el = document.createElement('span');
+    el.className = 'card' + (c.status === 'done' ? ' done' : '');
+    el.textContent = `[${c.status}] ${c.title}`;
+    el.title = 'click to toggle status';
+    el.onclick = () => toggleCard(c);
+    cards.appendChild(el);
+  }
+  const parts = [];
+  if (st.undecryptable > 0)
+    parts.push(`<span class="warn">${st.undecryptable} events you cannot read (no key — shown, not hidden)</span>`);
+  if (st.observation) {
+    const o = st.observation;
+    parts.push(`sensor: ${esc(o.display)}${o.simulated ? ' <span class="warn">SIMULATED</span>' : ''}` +
+      ` · ${o.freshness}${o.freshness !== 'current' ? ` (${o.age_seconds}s old)` : ''}`);
+  }
+  document.getElementById('honesty').innerHTML = parts.join(' · ');
+}
+
+async function say(e) {
+  e.preventDefault();
+  const inp = document.getElementById('text');
+  if (!inp.value.trim() || !current) return false;
+  try {
+    await api(`/api/spaces/${current}/messages`, { method: 'POST', body: JSON.stringify({ text: inp.value }) });
+    inp.value = '';
+    await refreshSpace();
+  } catch (err) { alert(err.message); }
+  return false;
+}
+
+async function createSpace() {
+  const t = document.getElementById('newTitle').value.trim();
+  if (!t) return;
+  const r = await api('/api/spaces', { method: 'POST', body: JSON.stringify({ title: t }) });
+  current = r.id; dlgNew.close(); refresh();
+}
+
+async function joinSpace() {
+  const inv = document.getElementById('joinInvite').value.trim();
+  if (!inv) return;
+  try {
+    const r = await api('/api/invites/accept', { method: 'POST', body: JSON.stringify({ invite: inv }) });
+    current = r.id; dlgJoin.close(); refresh();
+  } catch (err) { alert(err.message); }
+}
+
+function showIdentity() {
+  document.getElementById('meDevice').textContent = status.device_id;
+  document.getElementById('meXpub').textContent = status.device_xpub;
+  document.getElementById('meFp').textContent = status.fingerprint;
+  dlgMe.showModal();
+}
+
+let inviteSpace = null;
+function openInvite(s) {
+  inviteSpace = s.id;
+  document.getElementById('invSpace').textContent = s.title || s.id.slice(0,12);
+  document.getElementById('invOut').textContent = '';
+  dlgInvite.showModal();
+}
+
+async function mintInvite() {
+  try {
+    const r = await api(`/api/spaces/${inviteSpace}/invites`, {
+      method: 'POST',
+      body: JSON.stringify({
+        device: document.getElementById('invDevice').value.trim(),
+        xpub: document.getElementById('invXpub').value.trim(),
+      }),
+    });
+    document.getElementById('invOut').textContent = r.invite;
+  } catch (err) { alert(err.message); }
+}
+
+async function makeCard(originId, el) {
+  const title = el.closest('.msg').querySelector('.txt').textContent.slice(0, 120);
+  await api(`/api/spaces/${current}/cards`, { method: 'POST', body: JSON.stringify({ title, origin: originId }) });
+  refreshSpace();
+}
+
+async function toggleCard(c) {
+  const next = c.status === 'open' ? 'done' : 'open';
+  await api(`/api/spaces/${current}/cards/${c.id}/status`,
+    { method: 'POST', body: JSON.stringify({ title: c.title, status: next }) });
+  refreshSpace();
+}
+
+const esc = (s) => String(s).replace(/[&<>"']/g, ch =>
+  ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[ch]));
+
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>

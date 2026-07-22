@@ -12,16 +12,21 @@ import (
 	"github.com/drrainlab/quiet_places/terminals"
 )
 
-// New creates a duplex human terminal.
-func New(label string) (*terminals.Participant, error) {
-	return terminals.NewParticipant(manifest.Manifest{
+// Template is the human terminal manifest template.
+func Template(label string) manifest.Manifest {
+	return manifest.Manifest{
 		Kind:           manifest.KindHuman,
 		DeclaredLabels: []string{label},
 		IOMode:         manifest.IODuplex,
 		Capabilities: []string{capability.SignalPublish, capability.SignalReceive,
 			capability.PresencePublish},
 		AgencyMode: manifest.AgencyHuman,
-	})
+	}
+}
+
+// New creates a duplex human terminal.
+func New(label string) (*terminals.Participant, error) {
+	return terminals.NewParticipant(Template(label))
 }
 
 // Say publishes a human text message.

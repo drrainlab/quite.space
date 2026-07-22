@@ -199,7 +199,7 @@ func TestDiscoveryHints(t *testing.T) {
 		t.Skipf("UDP unavailable in this environment: %v", err)
 	}
 	defer stop()
-	if err := AnnounceOnce(addr, 4242, [][]byte{Hint(term, Bucket(now))}); err != nil {
+	if err := AnnounceOnce(addr, 4242, [][]byte{Hint(term, Bucket(now))}, 77); err != nil {
 		t.Skipf("UDP send unavailable: %v", err)
 	}
 	deadline := time.Now().Add(2 * time.Second)

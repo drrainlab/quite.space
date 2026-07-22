@@ -241,6 +241,16 @@ func (l *Log) Forked(dev id.DeviceID) bool {
 	return ok && c.forked
 }
 
+// ChainTip returns a device chain's last applied sequence and event id, so
+// an author can resume its chain after a restart.
+func (l *Log) ChainTip(dev id.DeviceID) (seq uint64, tip id.EventID, ok bool) {
+	c, exists := l.chains[dev]
+	if !exists || c.next <= 1 {
+		return 0, id.EventID{}, false
+	}
+	return c.next - 1, c.tip, true
+}
+
 // ---- Sync support (plan §17.2) ----
 
 // ChainState is one device's summary entry.

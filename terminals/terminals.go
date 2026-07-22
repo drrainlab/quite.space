@@ -44,6 +44,7 @@ type Space struct {
 	priv          ed25519.PrivateKey
 	priv2         *privateState
 	ManifestFrame []byte
+	maxClock      uint64
 }
 
 // NewSpace creates a Space Terminal: keypair, signed manifest, empty log.
@@ -92,6 +93,9 @@ func newReplica(tid id.TerminalID) *Space {
 // decrypting sealed payloads when this replica holds the epoch key.
 func (s *Space) absorb(a eventlog.Applied) {
 	env := a.Env
+	if env.LogicalClock > s.maxClock {
+		s.maxClock = env.LogicalClock
+	}
 	if env.Schema == schemas.MembershipEpoch {
 		s.absorbEpoch(env)
 		return // key distribution is not user-visible state
@@ -165,29 +169,8 @@ func NewParticipant(template manifest.Manifest) (*Participant, error) {
 	if err != nil {
 		return nil, err
 	}
-	pub, priv, err := ed25519.GenerateKey(identity.NewRand())
-	if err != nil {
-		return nil, err
-	}
-	p := &Participant{
-		Principal:    prin,
-		Device:       dev,
-		terminalPriv: priv,
-		chains:       map[id.TerminalID]*chainState{},
-	}
-	copy(p.TerminalID[:], pub)
-	template.Terminal = p.TerminalID
-	template.Controller = prin.ID
-	if template.Revision == 0 {
-		template.Revision = 1
-	}
-	frame, err := template.Sign(priv)
-	if err != nil {
-		return nil, err
-	}
-	p.Manifest = &template
-	p.ManifestFrame = frame
-	return p, nil
+	p, _, err := NewParticipantFrom(prin, dev, nil, template)
+	return p, err
 }
 
 // allowedAuthorship maps declared agency to permissible authorship marks.

@@ -90,6 +90,19 @@ type Keystore struct {
 	TerminalSeeds map[id.TerminalID][]byte
 	// Epochs holds known epoch keys per private space.
 	Epochs map[id.TerminalID][]crypto.EpochKey
+	// SelfTerminalSeed is the user's participant terminal key.
+	SelfTerminalSeed []byte
+	// Spaces holds per-space metadata needed to reopen them.
+	Spaces map[id.TerminalID]SpaceMeta
+}
+
+// SpaceMeta is what the node must remember about a space besides its log.
+type SpaceMeta struct {
+	Title         string
+	Owned         bool
+	ManifestFrame []byte
+	// Members is the controller's rotation list (owned spaces only).
+	Members map[id.DeviceID][32]byte
 }
 
 // NewKeystore captures a fresh identity's key material.
@@ -100,6 +113,7 @@ func NewKeystore(p *identity.Principal, d *identity.Device) *Keystore {
 		DeviceX25519:  d.X25519Priv(),
 		TerminalSeeds: map[id.TerminalID][]byte{},
 		Epochs:        map[id.TerminalID][]crypto.EpochKey{},
+		Spaces:        map[id.TerminalID]SpaceMeta{},
 	}
 }
 
@@ -116,17 +130,19 @@ func (k *Keystore) Identity() (*identity.Principal, *identity.Device, error) {
 	return p, d, nil
 }
 
-// keystore wire key table v0.
+// keystore wire key table v0 (append-only, ADR-009).
 const (
 	ksKeyPrincipal = 1
 	ksKeyDevice    = 2
 	ksKeyDeviceX   = 3
 	ksKeyTerminals = 4
 	ksKeyEpochs    = 5
+	ksKeySelfTerm  = 6
+	ksKeySpaces    = 7
 )
 
 func (k *Keystore) encode() []byte {
-	buf := codec.AppendMap(nil, 5)
+	buf := codec.AppendMap(nil, 7)
 	buf = codec.AppendUint(buf, ksKeyPrincipal)
 	buf = codec.AppendBytes(buf, k.PrincipalSeed)
 	buf = codec.AppendUint(buf, ksKeyDevice)
@@ -152,7 +168,53 @@ func (k *Keystore) encode() []byte {
 			buf = codec.AppendBytes(buf, e.Key[:])
 		}
 	}
+	buf = codec.AppendUint(buf, ksKeySelfTerm)
+	buf = codec.AppendBytes(buf, k.SelfTerminalSeed)
+	buf = codec.AppendUint(buf, ksKeySpaces)
+	buf = codec.AppendArray(buf, len(k.Spaces))
+	for _, sm := range sortedSpaces(k.Spaces) {
+		buf = codec.AppendArray(buf, 5)
+		buf = codec.AppendBytes(buf, sm.id[:])
+		buf = codec.AppendText(buf, sm.meta.Title)
+		buf = codec.AppendBool(buf, sm.meta.Owned)
+		buf = codec.AppendBytes(buf, sm.meta.ManifestFrame)
+		buf = codec.AppendArray(buf, len(sm.members))
+		for _, mm := range sm.members {
+			buf = codec.AppendArray(buf, 2)
+			buf = codec.AppendBytes(buf, mm.dev[:])
+			buf = codec.AppendBytes(buf, mm.xpub[:])
+		}
+	}
 	return buf
+}
+
+type spaceEntry struct {
+	id      id.TerminalID
+	meta    SpaceMeta
+	members []memberEntry
+}
+
+type memberEntry struct {
+	dev  id.DeviceID
+	xpub [32]byte
+}
+
+func sortedSpaces(m map[id.TerminalID]SpaceMeta) []spaceEntry {
+	out := make([]spaceEntry, 0, len(m))
+	for tid, meta := range m {
+		e := spaceEntry{id: tid, meta: meta}
+		for dev, xpub := range meta.Members {
+			e.members = append(e.members, memberEntry{dev, xpub})
+		}
+		for i := 1; i < len(e.members); i++ {
+			for j := i; j > 0 && string(e.members[j-1].dev[:]) > string(e.members[j].dev[:]); j-- {
+				e.members[j-1], e.members[j] = e.members[j], e.members[j-1]
+			}
+		}
+		out = append(out, e)
+	}
+	sortByID(out, func(t spaceEntry) id.TerminalID { return t.id })
+	return out
 }
 
 type terminalSeed struct {
@@ -204,6 +266,7 @@ func decodeKeystore(data []byte) (*Keystore, error) {
 	k := &Keystore{
 		TerminalSeeds: map[id.TerminalID][]byte{},
 		Epochs:        map[id.TerminalID][]crypto.EpochKey{},
+		Spaces:        map[id.TerminalID]SpaceMeta{},
 	}
 	for {
 		key, ok, er := m.Next()
@@ -293,6 +356,68 @@ func decodeKeystore(data []byte) (*Keystore, error) {
 					copy(e.Key[:], kb)
 					k.Epochs[tid] = append(k.Epochs[tid], e)
 				}
+			}
+		case ksKeySelfTerm:
+			var b []byte
+			b, er = d.ReadBytes()
+			k.SelfTerminalSeed = append([]byte(nil), b...)
+		case ksKeySpaces:
+			var cnt int
+			cnt, er = d.ReadArray()
+			if er != nil {
+				return nil, er
+			}
+			for range cnt {
+				if _, er = d.ReadArray(); er != nil {
+					return nil, er
+				}
+				var tidB []byte
+				if tidB, er = d.ReadBytes(); er != nil {
+					return nil, er
+				}
+				if len(tidB) != id.Size {
+					return nil, errors.New("storage: bad space id")
+				}
+				var tid id.TerminalID
+				copy(tid[:], tidB)
+				var meta SpaceMeta
+				if meta.Title, er = d.ReadText(); er != nil {
+					return nil, er
+				}
+				if meta.Owned, er = d.ReadBool(); er != nil {
+					return nil, er
+				}
+				var mf []byte
+				if mf, er = d.ReadBytes(); er != nil {
+					return nil, er
+				}
+				meta.ManifestFrame = append([]byte(nil), mf...)
+				var mcnt int
+				if mcnt, er = d.ReadArray(); er != nil {
+					return nil, er
+				}
+				meta.Members = map[id.DeviceID][32]byte{}
+				for range mcnt {
+					if _, er = d.ReadArray(); er != nil {
+						return nil, er
+					}
+					var devB, xpubB []byte
+					if devB, er = d.ReadBytes(); er != nil {
+						return nil, er
+					}
+					if xpubB, er = d.ReadBytes(); er != nil {
+						return nil, er
+					}
+					if len(devB) != id.Size || len(xpubB) != 32 {
+						return nil, errors.New("storage: bad member entry")
+					}
+					var dev id.DeviceID
+					var xpub [32]byte
+					copy(dev[:], devB)
+					copy(xpub[:], xpubB)
+					meta.Members[dev] = xpub
+				}
+				k.Spaces[tid] = meta
 			}
 		default:
 			er = d.SkipItem()

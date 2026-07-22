@@ -234,19 +234,34 @@ func (s *Space) NewInvite(inviteeDevice id.DeviceID, inviteeXpub [32]byte) ([]by
 	return wrapper, nil
 }
 
-// AcceptInvite verifies an invite and builds a joined private replica bound
-// to the invitee device.
+// AcceptInvite verifies an invite and builds a joined in-memory private
+// replica bound to the invitee device.
 func AcceptInvite(invite []byte, dev *identity.Device) (*Space, error) {
+	spaceID, manifestFrame, keys, err := DecodeInvite(invite, dev)
+	if err != nil {
+		return nil, err
+	}
+	s := Replica(spaceID)
+	s.ManifestFrame = manifestFrame
+	s.EnablePrivate(dev)
+	s.RestoreEpochs(keys)
+	return s, nil
+}
+
+// DecodeInvite verifies an invite's signature and addressing and returns
+// the space id, manifest frame, and unwrapped epoch keys. Callers decide
+// where the replica lives (memory or disk).
+func DecodeInvite(invite []byte, dev *identity.Device) (id.TerminalID, []byte, []crypto.EpochKey, error) {
 	d := codec.NewDecoder(invite)
 	m, err := d.ReadMapHeader()
 	if err != nil {
-		return nil, err
+		return id.TerminalID{}, nil, nil, err
 	}
 	var body, sig []byte
 	for {
 		k, ok, er := m.Next()
 		if er != nil {
-			return nil, er
+			return id.TerminalID{}, nil, nil, er
 		}
 		if !ok {
 			break
@@ -260,20 +275,20 @@ func AcceptInvite(invite []byte, dev *identity.Device) (*Space, error) {
 			er = d.SkipItem()
 		}
 		if er != nil {
-			return nil, er
+			return id.TerminalID{}, nil, nil, er
 		}
 	}
 	if err := d.Done(); err != nil {
-		return nil, err
+		return id.TerminalID{}, nil, nil, err
 	}
 	if body == nil || len(sig) != ed25519.SignatureSize {
-		return nil, errors.New("terminals: malformed invite")
+		return id.TerminalID{}, nil, nil, errors.New("terminals: malformed invite")
 	}
 
 	bd := codec.NewDecoder(body)
 	bm, err := bd.ReadMapHeader()
 	if err != nil {
-		return nil, err
+		return id.TerminalID{}, nil, nil, err
 	}
 	var spaceID id.TerminalID
 	var invitee id.DeviceID
@@ -286,7 +301,7 @@ func AcceptInvite(invite []byte, dev *identity.Device) (*Space, error) {
 	for {
 		k, ok, er := bm.Next()
 		if er != nil {
-			return nil, er
+			return id.TerminalID{}, nil, nil, er
 		}
 		if !ok {
 			break
@@ -308,21 +323,21 @@ func AcceptInvite(invite []byte, dev *identity.Device) (*Space, error) {
 			var cnt int
 			cnt, er = bd.ReadArray()
 			if er != nil {
-				return nil, er
+				return id.TerminalID{}, nil, nil, er
 			}
 			for range cnt {
 				if _, er = bd.ReadArray(); er != nil {
-					return nil, er
+					return id.TerminalID{}, nil, nil, er
 				}
 				var e epochEntry
 				if e.n, er = bd.ReadUint(); er != nil {
-					return nil, er
+					return id.TerminalID{}, nil, nil, er
 				}
 				if e.enc, er = bd.ReadBytes(); er != nil {
-					return nil, er
+					return id.TerminalID{}, nil, nil, er
 				}
 				if e.ct, er = bd.ReadBytes(); er != nil {
-					return nil, er
+					return id.TerminalID{}, nil, nil, er
 				}
 				epochs = append(epochs, e)
 			}
@@ -332,33 +347,28 @@ func AcceptInvite(invite []byte, dev *identity.Device) (*Space, error) {
 			er = bd.SkipItem()
 		}
 		if er != nil {
-			return nil, er
+			return id.TerminalID{}, nil, nil, er
 		}
 	}
 	if err := bd.Done(); err != nil {
-		return nil, err
+		return id.TerminalID{}, nil, nil, err
 	}
 	// The invite is signed by the space's terminal key: the space id IS the
 	// verification key (ADR-001).
 	if !ed25519.Verify(ed25519.PublicKey(spaceID[:]), body, sig) {
-		return nil, errors.New("terminals: invite signature invalid")
+		return id.TerminalID{}, nil, nil, errors.New("terminals: invite signature invalid")
 	}
 	if invitee != dev.ID {
-		return nil, errors.New("terminals: invite addressed to a different device")
+		return id.TerminalID{}, nil, nil, errors.New("terminals: invite addressed to a different device")
 	}
-	s := Replica(spaceID)
-	s.ManifestFrame = append([]byte(nil), manifestFrame...)
-	s.EnablePrivate(dev)
+	var keys []crypto.EpochKey
 	for _, e := range epochs {
 		wraps := []crypto.Wrap{{Device: dev.ID, Enc: e.enc, CT: e.ct}}
 		key, err := crypto.UnwrapEpoch(spaceID, e.n, wraps, dev.ID, dev.X25519Priv())
 		if err != nil {
-			return nil, fmt.Errorf("terminals: cannot unwrap epoch %d: %w", e.n, err)
+			return id.TerminalID{}, nil, nil, fmt.Errorf("terminals: cannot unwrap epoch %d: %w", e.n, err)
 		}
-		s.priv2.epochs[e.n] = key
-		if e.n > s.priv2.current {
-			s.priv2.current = e.n
-		}
+		keys = append(keys, key)
 	}
-	return s, nil
+	return spaceID, append([]byte(nil), manifestFrame...), keys, nil
 }

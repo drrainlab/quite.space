@@ -19,6 +19,10 @@ func main() {
 	switch os.Args[1] {
 	case "demo":
 		err = runDemo()
+	case "ui":
+		err = runUI(os.Args[2:], true)
+	case "node":
+		err = runUI(os.Args[2:], false)
 	case "identity":
 		err = runIdentity(os.Args[2:])
 	case "inspect":
@@ -37,6 +41,10 @@ func usage() {
 	fmt.Fprint(os.Stderr, `terminal — Quiet Places / Terminal Network M0 CLI
 
 usage:
+  terminal ui   --passphrase P [--data DIR] [--name N] [--no-browser] [--no-lan]
+                                         run the node and open the web UI
+  terminal node --passphrase P [--data DIR]
+                                         run headless (API only, no UI assets)
   terminal demo                          run the reproducible two-node demo
   terminal identity new --passphrase P --out FILE
                                          create an identity, export encrypted
@@ -104,10 +112,17 @@ func runIdentity(args []string) error {
 func parseFlags(args []string) map[string]string {
 	out := map[string]string{}
 	for i := 0; i < len(args); i++ {
-		if len(args[i]) > 2 && args[i][:2] == "--" && i+1 < len(args) {
-			out[args[i][2:]] = args[i+1]
-			i++
+		if len(args[i]) <= 2 || args[i][:2] != "--" {
+			continue
 		}
+		name := args[i][2:]
+		// A flag followed by another flag (or nothing) is boolean.
+		if i+1 >= len(args) || (len(args[i+1]) > 2 && args[i+1][:2] == "--") {
+			out[name] = "1"
+			continue
+		}
+		out[name] = args[i+1]
+		i++
 	}
 	return out
 }

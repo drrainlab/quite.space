@@ -233,16 +233,18 @@ type Announcement struct {
 	Addr  string // host:port to dial (host filled by the receiver)
 	Port  int
 	Hints [][]byte
+	Nonce uint64 // lets a node ignore its own beacons
 }
 
 // announce payload key table v0.
 const (
 	annKeyPort  = 1
 	annKeyHints = 2
+	annKeyNonce = 3
 )
 
-func encodeAnnounce(port int, hints [][]byte) []byte {
-	buf := codec.AppendMap(nil, 2)
+func encodeAnnounce(port int, hints [][]byte, nonce uint64) []byte {
+	buf := codec.AppendMap(nil, 3)
 	buf = codec.AppendUint(buf, annKeyPort)
 	buf = codec.AppendUint(buf, uint64(port))
 	buf = codec.AppendUint(buf, annKeyHints)
@@ -250,6 +252,8 @@ func encodeAnnounce(port int, hints [][]byte) []byte {
 	for _, h := range hints {
 		buf = codec.AppendBytes(buf, h)
 	}
+	buf = codec.AppendUint(buf, annKeyNonce)
+	buf = codec.AppendUint(buf, nonce)
 	return buf
 }
 
@@ -286,6 +290,8 @@ func decodeAnnounce(data []byte) (*Announcement, error) {
 				}
 				a.Hints = append(a.Hints, append([]byte(nil), h...))
 			}
+		case annKeyNonce:
+			a.Nonce, er = d.ReadUint()
 		default:
 			er = d.SkipItem()
 		}
@@ -304,7 +310,7 @@ func decodeAnnounce(data []byte) (*Announcement, error) {
 
 // AnnounceOnce broadcasts one beacon for the given hints to the multicast
 // group (or any UDP address, e.g. 127.0.0.1:<port> in tests).
-func AnnounceOnce(udpAddr string, tcpPort int, hints [][]byte) error {
+func AnnounceOnce(udpAddr string, tcpPort int, hints [][]byte, nonce uint64) error {
 	raddr, err := net.ResolveUDPAddr("udp4", udpAddr)
 	if err != nil {
 		return err
@@ -314,7 +320,7 @@ func AnnounceOnce(udpAddr string, tcpPort int, hints [][]byte) error {
 		return err
 	}
 	defer c.Close()
-	_, err = c.Write(encodeAnnounce(tcpPort, hints))
+	_, err = c.Write(encodeAnnounce(tcpPort, hints, nonce))
 	return err
 }
 
