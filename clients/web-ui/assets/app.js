@@ -371,7 +371,9 @@ function connectionSummary(status) {
   return { text: peers > 0 ? t('conn.summary', { state, count: peers }) : state, cls };
 }
 
+let authDead = false; // wrong/missing token → stop polling, keep the console quiet
 async function refresh() {
+  if (authDead) return;
   try {
     status = await api('/api/status');
     document.body.classList.toggle('protocol', PROTOCOL);
@@ -431,7 +433,16 @@ async function refresh() {
     }
     if (!current && spacesCache.length) { current = spacesCache[0].id; }
     if (current) await refreshSpace();
-  } catch (e) { console.error(e); }
+  } catch (e) {
+    if (String(e.message || e).includes('token')) {
+      // No valid session token in the URL: stop polling instead of filling
+      // the console — the node prints the tokened URL on startup.
+      authDead = true;
+      console.warn('quiet spaces: open the tokened URL printed by the node (…/?token=…)');
+      return;
+    }
+    console.error(e);
+  }
 }
 
 function currentSpace() { return spacesCache.find(s => s.id === current); }
@@ -482,6 +493,7 @@ async function refreshSpace() {
   // add just the new rows; anything else (revision, reaction, tombstone)
   // rebuilds fully.
   const sig = entries.map(e => e.id + ':' + (e.revised ? 1 : 0) + ':' +
+    (e.kept ? 'k' : '') + (e.keep_count || 0) + ':' +
     (e.reactions || []).map(r => r.emoji + r.count + (r.mine ? 'm' : '')).join(','));
   const unchanged = sig.length === feedSig.length && sig.every((s, i) => s === feedSig[i]);
   const appendOnly = sig.length > feedSig.length && feedSig.every((s, i) => s === sig[i]);
@@ -748,7 +760,9 @@ async function checkOnboarding() {
       obStep('welcome');
       dlgWelcome.showModal();
     }
-  } catch (e) { console.error(e); }
+  } catch (e) {
+    if (!String(e.message || e).includes('token')) console.error(e);
+  }
 }
 
 function obStep(which) {
@@ -978,9 +992,20 @@ const WHO = [
 ];
 let wizArch = 'campfire';
 
+let wizTemplate = null;
+
 function openWizard() {
+  wizTemplate = null;
   const wg = document.getElementById('whoGrid');
   wg.innerHTML = '';
+  // Release space (LR-4): the one-click studio preset for listening
+  // sessions — the flagship path gets a front door.
+  const tpl = document.createElement('div');
+  tpl.className = 'arch-card release-tpl';
+  tpl.innerHTML = `<div class="an">🎧 Release space</div>` +
+    `<div class="ad">studio preset for listening sessions — one click</div>`;
+  tpl.onclick = () => applyReleaseTemplate();
+  wg.appendChild(tpl);
   for (const [label, arch] of WHO) {
     const d = document.createElement('div');
     d.className = 'arch-card';
@@ -1017,6 +1042,19 @@ function openWizard() {
   updSeed();
   wizStep(1);
   dlgWiz.showModal();
+}
+
+function applyReleaseTemplate() {
+  wizTemplate = 'release';
+  selectArch('studio');
+  document.getElementById('wMood').value = 'dusk';
+  document.getElementById('wMaterial').value = 'light';
+  document.getElementById('wMotion').value = 'slow';
+  updSeed();
+  document.querySelectorAll('#ritualList input').forEach(i => {
+    i.checked = i.value === 'listening_session';
+  });
+  wizStep(4); // straight to the name — everything else is the preset
 }
 
 function selectArch(k) {
@@ -1062,6 +1100,20 @@ async function wizCreate() {
       memory, rituals, presence,
     })});
     current = r.id; dlgWiz.close(); refresh();
+    if (wizTemplate === 'release') {
+      // First-post hint: open the composer pre-filled for the first listen.
+      wizTemplate = null;
+      setTimeout(() => {
+        openComposer(null, '');
+        composerDoc.title = 'First listen';
+        composerDoc.summary = 'Drop the track, gather the room.';
+        document.getElementById('compTitle').value = composerDoc.title;
+        document.getElementById('compSummary').value = composerDoc.summary;
+        composerDoc.blocks.push({ id: 'b' + randHex16().slice(0, 8), type: 'text',
+          props: { text: 'Tonight we listen together. Add a 🎧 Listening room below and press play when everyone is here.' } });
+        renderComposerBlocks();
+      }, 350);
+    }
   } catch (err) { alert(err.message); }
 }
 
@@ -1120,10 +1172,21 @@ function renderEntry(log, e, fresh, grouped) {
   bubble.appendChild(renderReactions(e));
   d.appendChild(bubble);
 
+  const acts = document.createElement('span');
+  acts.className = 'mk';
   const mk = document.createElement('span');
-  mk.className = 'mk'; mk.textContent = t('conv.save_card');
+  mk.textContent = t('conv.save_card');
   mk.onclick = () => makeCardFrom(e);
-  d.appendChild(mk);
+  acts.appendChild(mk);
+  // Keep in space (LR-1): kept state comes from the API, never guessed.
+  const kp = document.createElement('span');
+  kp.className = 'keep-act' + (e.kept ? ' kept' : '');
+  kp.textContent = e.kept ? `✦ kept${e.keep_count > 1 ? ' · ' + e.keep_count : ''}`
+    : (e.keep_count > 0 ? `✦ keep · ${e.keep_count}` : '✦ keep');
+  kp.title = e.kept ? 'un-keep (remove from the Shelf)' : 'keep in space (Shelf)';
+  kp.onclick = () => keepToggle(e);
+  acts.appendChild(kp);
+  d.appendChild(acts);
   log.appendChild(d);
 }
 

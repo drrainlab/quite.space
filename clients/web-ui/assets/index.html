@@ -34,6 +34,7 @@
       <div class="segmented" id="viewSwitch">
         <button data-v="chat" class="sel" onclick="switchView('chat')">Chat</button>
         <button data-v="posts" onclick="switchView('posts')">Posts</button>
+        <button data-v="shelf" onclick="switchView('shelf')">Shelf</button>
       </div>
       <span style="flex:1"></span>
       <button id="newPostBtn" class="btn-tinted" onclick="openComposer(null,'')">✍ New post</button>
@@ -48,6 +49,7 @@
       <div id="pubFeed"></div>
       <div id="pubArticle" style="display:none"></div>
     </div>
+    <div id="shelf" style="display:none"></div>
     <div id="log"></div>
     <form id="composer" onsubmit="return say(event)">
       <div id="attachWrap">
@@ -463,11 +465,37 @@
   <div id="qrBox"></div>
 </dialog>
 
+<dialog id="dlgListenRoom" class="sheet">
+  <h3>🎧 Add a listening room</h3>
+  <p class="hint">One track, one shared moment. The host presses play; everyone hears the same second.</p>
+  <input id="listenTitle" placeholder="Title — e.g. EP demo, first listen">
+  <div id="listenDrop"></div>
+  <div class="row">
+    <button class="btn-tinted" onclick="confirmListenRoom()">Add</button>
+    <button class="btn-plain" onclick="dlgListenRoom.close()">Cancel</button>
+  </div>
+  <p class="out" id="listenMsg"></p>
+</dialog>
+
+<dialog id="dlgKeep">
+  <h3>✦ Keep in space</h3>
+  <p class="hint">Kept moments live on the Shelf — the space's shared memory.</p>
+  <input id="keepNote" maxlength="500" placeholder="a note for the shelf (optional)">
+  <div class="row">
+    <button class="btn-tinted" onclick="confirmKeep()">Keep</button>
+    <button onclick="dlgKeep.close()">cancel</button>
+  </div>
+  <p class="out" id="keepMsg"></p>
+</dialog>
+
 <script src="i18n.js"></script>
 <script src="glyphs.js"></script>
+<script src="registry.js"></script>
 <script src="renderers.js"></script>
 <script src="publications.js"></script>
 <script src="apps.js"></script>
+<script src="listening.js"></script>
+<script src="shelf.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

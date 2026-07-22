@@ -45,6 +45,7 @@ async function renderAppInstance(instanceID) {
     switch (inst.app_id) {
       case 'poll': renderPoll(box, inst, state); break;
       case 'form': renderForm(box, inst, state); break;
+      case 'listening-room': renderListeningRoom(box, inst); break;
       default: renderGenericApp(box, def, state);
     }
   } catch (e) {
@@ -178,6 +179,7 @@ const APP_BLOCK_FORMS = {
 };
 
 function insertAppBlock(kind) {
+  if (kind === 'listening') { openListeningDialog(); return; }
   appBlockKind = kind;
   const f = APP_BLOCK_FORMS[kind];
   document.getElementById('appBlockTitle').textContent = f.title;

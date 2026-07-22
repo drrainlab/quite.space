@@ -19,12 +19,15 @@ function switchView(v) {
   pubView = v;
   document.querySelectorAll('#viewSwitch button').forEach(b =>
     b.classList.toggle('sel', b.dataset.v === v));
-  const posts = v === 'posts';
-  document.getElementById('log').style.display = posts ? 'none' : '';
-  document.getElementById('composer').style.display = posts ? 'none' : '';
-  document.getElementById('cards').style.display = posts ? 'none' : '';
+  const posts = v === 'posts', shelf = v === 'shelf';
+  const chat = !posts && !shelf;
+  document.getElementById('log').style.display = chat ? '' : 'none';
+  document.getElementById('composer').style.display = chat ? '' : 'none';
+  document.getElementById('cards').style.display = chat ? '' : 'none';
   document.getElementById('posts').style.display = posts ? '' : 'none';
+  document.getElementById('shelf').style.display = shelf ? '' : 'none';
   if (posts) refreshPosts();
+  if (shelf) refreshShelf();
 }
 
 async function refreshPosts() {
@@ -311,6 +314,7 @@ const COMPOSER_CHIPS = [
   { t: 'link', label: 'Link' }, { t: 'credits', label: 'Credits' },
   { t: 'separator', label: '—' },
   { t: 'poll', label: '📊 Poll', app: true }, { t: 'form', label: '📝 Form', app: true },
+  { t: 'listening', label: '🎧 Listening room', app: true },
 ];
 
 function renderComposerChips() {
