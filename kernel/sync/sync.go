@@ -8,10 +8,12 @@ package sync
 import (
 	"errors"
 	"fmt"
+	"sort"
 
 	"github.com/drrainlab/quiet_places/kernel/eventlog"
 	"github.com/drrainlab/quiet_places/protocol/codec"
 	"github.com/drrainlab/quiet_places/protocol/id"
+	"github.com/drrainlab/quiet_places/protocol/signal"
 	"github.com/drrainlab/quiet_places/transports"
 )
 
@@ -75,6 +77,11 @@ type Engine struct {
 	BlobAllowed func(h id.Hash) bool
 	// OnBlobStored fires when a requested blob lands (fetch coordinator).
 	OnBlobStored func(h id.Hash)
+
+	// OnSent fires after a frames batch was handed to the endpoint —
+	// the delivery-ladder hook for handed_to_transport (ADR-015 §5,
+	// never more than transport-level custody: ADR-007).
+	OnSent func(eventIDs []id.EventID)
 
 	// pending holds requested wire ids awaiting delivery. The engine is not
 	// safe for concurrent use; callers serialize (the node runtime holds
@@ -549,8 +556,17 @@ func (e *Engine) acceptBlob(data []byte) bool {
 	return true
 }
 
+// maxChainBurst bounds how many frames one chain may send before the
+// scheduler moves to the next eligible chain (fairness: a high-priority
+// chain must not starve the others forever; order INSIDE a chain is
+// sacred — contiguity is what convergence rests on).
+const maxChainBurst = 16
+
 // pushMissing sends the peer everything our log has beyond their summary,
-// chunked to the message budget.
+// chunked to the message budget. Chains are scheduled by the priority lane
+// of their pending head (security/control before messages before blobs,
+// ADR-015 §5) with a per-chain burst cap and round-robin among the
+// eligible heads.
 func (e *Engine) pushMissing(ep transports.Endpoint, sum *summary) error {
 	// On tiny MTUs keep messages a few fragments long: losing one fragment
 	// loses the whole message, so smaller messages converge faster on lossy
@@ -560,29 +576,75 @@ func (e *Engine) pushMissing(ep transports.Endpoint, sum *summary) error {
 		budget = min(framesBudget, max(mtu*4, 512))
 	}
 	var batch [][]byte
+	var batchIDs []id.EventID
 	batchSize := 0
 	flush := func() error {
 		if len(batch) == 0 {
 			return nil
 		}
 		msg := e.encodeFrames(batch)
-		batch = nil
+		sent := batchIDs
+		batch, batchIDs = nil, nil
 		batchSize = 0
-		return e.sendMsg(ep, msg)
+		if err := e.sendMsg(ep, msg); err != nil {
+			return err
+		}
+		if e.OnSent != nil {
+			e.OnSent(sent)
+		}
+		return nil
 	}
+
+	// Collect pending ranges with the lane of each chain's head frame.
+	type pendingChain struct {
+		frames [][]byte
+		lane   signal.Priority
+		next   int
+	}
+	var chains []*pendingChain
 	for _, c := range e.Log.Summary() {
 		theirs := sum.chains[c.Device]
 		if c.ContiguousUntil <= theirs {
 			continue
 		}
-		for _, f := range e.Log.FramesInRange(c.Device, theirs+1, c.ContiguousUntil) {
-			if batchSize+len(f) > budget && len(batch) > 0 {
-				if err := flush(); err != nil {
-					return err
-				}
+		frames := e.Log.FramesInRange(c.Device, theirs+1, c.ContiguousUntil)
+		if len(frames) == 0 {
+			continue
+		}
+		lane := signal.PriorityMessage
+		if env, err := signal.Decode(frames[0]); err == nil && env.Priority != 0 {
+			lane = env.Priority
+		}
+		chains = append(chains, &pendingChain{frames: frames, lane: lane})
+	}
+	// Lane order (lower value = more urgent), stable across runs.
+	sort.SliceStable(chains, func(i, j int) bool { return chains[i].lane < chains[j].lane })
+
+	// Weighted round-robin: bursts of maxChainBurst per chain, cycling over
+	// eligible chains in lane order until all drained.
+	remaining := len(chains)
+	for remaining > 0 {
+		for _, c := range chains {
+			if c.next >= len(c.frames) {
+				continue
 			}
-			batch = append(batch, f)
-			batchSize += len(f)
+			burst := 0
+			for c.next < len(c.frames) && burst < maxChainBurst {
+				f := c.frames[c.next]
+				if batchSize+len(f) > budget && len(batch) > 0 {
+					if err := flush(); err != nil {
+						return err
+					}
+				}
+				batch = append(batch, f)
+				batchIDs = append(batchIDs, id.EventIDOf(f))
+				batchSize += len(f)
+				c.next++
+				burst++
+			}
+			if c.next >= len(c.frames) {
+				remaining--
+			}
 		}
 	}
 	return flush()

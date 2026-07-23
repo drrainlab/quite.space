@@ -49,7 +49,7 @@ func (r *Runtime) StartMeshtastic(target string) error {
 	r.mu.Lock()
 	r.mesh = radio
 	r.mu.Unlock()
-	r.adoptLink(radio, meshPumpEvery, meshSummaryEvery)
+	r.adoptLink(radio, meshPumpEvery, meshSummaryEvery, "radio")
 	return nil
 }
 

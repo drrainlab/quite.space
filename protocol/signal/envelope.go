@@ -116,8 +116,43 @@ type Envelope struct {
 	Payload         []byte
 	Priority        Priority
 	ExpiresAt       uint64 // unix seconds; 0 = no expiry
-	MaxForwards     uint64 // 0 = unlimited
+	MaxForwards     uint64 // wire key; read via ForwardingScope (ADR-015)
 	Signature       []byte // 64 bytes, by the device key
+}
+
+// ForwardingScope is the ADR-015 reading of the MaxForwards wire field: an
+// AUTHOR-DECLARED forwarding class, never a mutable hop counter — the field
+// sits inside the signed map, so no hop may decrement it without breaking
+// the signature. Loop prevention comes from seen-caches and split-horizon,
+// not from hop budgets.
+type ForwardingScope int
+
+const (
+	// CustodyAllowed (wire 0, the default): the frame may be stored and
+	// forwarded by custody holders (bridges, relay push).
+	CustodyAllowed ForwardingScope = iota
+	// NoCustody (wire 1): custody holders refuse to store-and-forward this
+	// frame — fit for presence and ephemeral telemetry. Direct link
+	// delivery (including node→bridge hops that do NOT take custody) is
+	// unaffected.
+	NoCustody
+)
+
+// ForwardingScope reads the envelope's forwarding class. Values ≥2 are
+// reserved and treated as CustodyAllowed until a future ADR defines them.
+func (e *Envelope) ForwardingScope() ForwardingScope {
+	if e.MaxForwards == 1 {
+		return NoCustody
+	}
+	return CustodyAllowed
+}
+
+// Expired reports whether the envelope's author-declared expiry has passed.
+// Expiry is CUSTODY expiry (ADR-015): ingest always accepts history —
+// custody holders use this to refuse storing or spending airtime on the
+// frame, never to punch holes in contiguous chains.
+func (e *Envelope) Expired(nowUnix uint64) bool {
+	return e.ExpiresAt != 0 && nowUnix >= e.ExpiresAt
 }
 
 // encodeBody writes the canonical map, with or without the signature entry

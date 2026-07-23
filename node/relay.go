@@ -13,6 +13,7 @@ import (
 	"github.com/drrainlab/quiet_places/kernel/eventlog"
 	"github.com/drrainlab/quiet_places/protocol/claims"
 	"github.com/drrainlab/quiet_places/protocol/id"
+	"github.com/drrainlab/quiet_places/protocol/signal"
 	"github.com/drrainlab/quiet_places/transports/bundle"
 	"github.com/drrainlab/quiet_places/transports/relay"
 )
@@ -111,7 +112,15 @@ func (r *Runtime) PushToRelay(addr string, tid id.TerminalID) (int, uint64, erro
 	}
 	var frames [][]byte
 	var eventIDs []id.EventID
+	now := uint64(time.Now().Unix())
 	if err := st.space.Log.Replay(func(a eventlog.Applied) error {
+		// Custody filter (ADR-015): expired frames never spend relay
+		// storage or later airtime; NoCustody frames refuse
+		// store-and-forward by author declaration. The relay itself
+		// stays structure-blind — the PUSHER excludes them.
+		if a.Env.Expired(now) || a.Env.ForwardingScope() == signal.NoCustody {
+			return nil
+		}
 		frames = append(frames, a.Frame)
 		eventIDs = append(eventIDs, a.ID)
 		return nil
@@ -129,7 +138,7 @@ func (r *Runtime) PushToRelay(addr string, tid id.TerminalID) (int, uint64, erro
 		return 0, 0, err
 	}
 	defer client.Close()
-	now := uint64(time.Now().Unix())
+	now = uint64(time.Now().Unix())
 	hint := relay.Hint(tid, relay.Bucket(now))
 	deadline, err := client.Put(hint, now+uint64(DefaultRelayTTL/time.Second), body)
 	if err != nil {

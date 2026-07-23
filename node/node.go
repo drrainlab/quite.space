@@ -18,6 +18,7 @@ import (
 	"github.com/drrainlab/quiet_places/kernel/storage"
 	kernelsync "github.com/drrainlab/quiet_places/kernel/sync"
 	"github.com/drrainlab/quiet_places/node/llm"
+	"github.com/drrainlab/quiet_places/protocol/claims"
 	"github.com/drrainlab/quiet_places/protocol/contract"
 	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/protocol/manifest"
@@ -53,6 +54,48 @@ type Runtime struct {
 
 	// relayClk is the SyncClock calibration against a common relay (LR-2).
 	relayClk relayClock
+
+	// curLink labels the link currently being pumped (set under r.mu by the
+	// pumping goroutine); carried is the bounded eventID→links projection
+	// feeding the delivery-route line (ADR-015 §5). Both r.mu-guarded.
+	curLink      string
+	carried      map[id.EventID][]string
+	carriedOrder []id.EventID
+}
+
+// maxCarried bounds the delivery-route projection (a UI hint, not state).
+const maxCarried = 4096
+
+// trackCarried records that an event was handed to a link. Caller holds r.mu.
+func (r *Runtime) trackCarried(eid id.EventID, link string) {
+	if link == "" {
+		return
+	}
+	if r.carried == nil {
+		r.carried = map[id.EventID][]string{}
+	}
+	links, ok := r.carried[eid]
+	for _, l := range links {
+		if l == link {
+			return
+		}
+	}
+	if !ok {
+		r.carriedOrder = append(r.carriedOrder, eid)
+		if len(r.carriedOrder) > maxCarried {
+			evict := r.carriedOrder[0]
+			r.carriedOrder = r.carriedOrder[1:]
+			delete(r.carried, evict)
+		}
+	}
+	r.carried[eid] = append(links, link)
+}
+
+// CarriedBy reports which links carried an event (delivery-route line).
+func (r *Runtime) CarriedBy(eid id.EventID) []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.carried[eid]...)
 }
 
 // link is any live transport connection the runtime can pump.
@@ -181,6 +224,27 @@ func (r *Runtime) attach(tid id.TerminalID, s *terminals.Space) {
 		// New epochs may arrive over sync; keep the keystore current.
 		if a.Env.Schema == schemas.MembershipEpoch {
 			r.persistEpochsLocked(tid, s)
+		}
+	}
+	// Delivery ladder (ADR-015 §5): the absorb funnel sees local emits AND
+	// synced frames — our OWN events start their honest climb here:
+	// created_local always, queued once any transport is live. Both are
+	// local claims, never destination proof (ADR-007).
+	s.OnAbsorb = func(a eventlog.Applied) {
+		if a.Env.Device == r.Device.ID {
+			_ = s.Trust.RecordLocal(a.ID, tid, claims.DeliveryCreatedLocal)
+			if r.lanNode != nil || r.mesh != nil {
+				_ = s.Trust.RecordLocal(a.ID, tid, claims.DeliveryQueued)
+			}
+		}
+	}
+	// handed_to_transport: fired by the sync engine when a frames batch is
+	// in the endpoint's hands. The link label is set by the pumping
+	// goroutine under r.mu (the engine is caller-serialized).
+	st.eng.OnSent = func(ids []id.EventID) {
+		for _, eid := range ids {
+			_ = s.Trust.RecordLocal(eid, tid, claims.DeliveryHandedToTransport)
+			r.trackCarried(eid, r.curLink)
 		}
 	}
 	// Asset exchange: serve only wire ids this space legitimately

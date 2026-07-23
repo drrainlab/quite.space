@@ -125,14 +125,15 @@ func (r *Runtime) announceOnce(announceAddr string, port int, nonce uint64) {
 
 // adoptConn attaches a LAN connection with realtime cadence.
 func (r *Runtime) adoptConn(c *lan.Conn) {
-	r.adoptLink(c, pumpEvery, 2*time.Second)
+	r.adoptLink(c, pumpEvery, 2*time.Second, "lan")
 }
 
 // adoptLink attaches any link to every space and pumps it until it dies.
 // Frames for other terminals are simply not matched by the engines — each
 // engine checks its own terminal id. Cadence is per-transport: a LAN link
 // pumps in milliseconds; a LoRa link must respect airtime (plan §19 T6).
-func (r *Runtime) adoptLink(c link, pump, summaryEvery time.Duration) {
+// label names the link kind for the delivery-route projection (ADR-015).
+func (r *Runtime) adoptLink(c link, pump, summaryEvery time.Duration, label string) {
 	r.mu.Lock()
 	states := make([]*spaceState, 0, len(r.spaces))
 	for _, st := range r.spaces {
@@ -158,6 +159,7 @@ func (r *Runtime) adoptLink(c link, pump, summaryEvery time.Duration) {
 				return
 			}
 			r.mu.Lock()
+			r.curLink = label // OnSent closures read this under the same lock
 			if time.Since(lastSummary) > summaryEvery {
 				for _, st := range states {
 					_ = st.eng.SendSummary(c)
@@ -167,6 +169,7 @@ func (r *Runtime) adoptLink(c link, pump, summaryEvery time.Duration) {
 			for _, st := range states {
 				_, _, _ = st.eng.Pump(c)
 			}
+			r.curLink = ""
 			r.mu.Unlock()
 		}
 	}()

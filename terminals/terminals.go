@@ -48,6 +48,11 @@ type Space struct {
 	// other post-reduction hooks live above the terminals layer).
 	OnBlock func(env *signal.Envelope, eid id.EventID)
 
+	// OnAbsorb fires for EVERY absorbed event — local emits and synced
+	// frames alike (the single funnel). The node runtime uses it for the
+	// delivery ladder (ADR-015 §5); it must not re-enter the space.
+	OnAbsorb func(a eventlog.Applied)
+
 	// priv is held only by the creating node (the controller's replica).
 	priv          ed25519.PrivateKey
 	priv2         *privateState
@@ -170,6 +175,9 @@ func (s *Space) absorb(a eventlog.Applied) {
 			})
 		}
 	}
+	if s.OnAbsorb != nil {
+		s.OnAbsorb(a)
+	}
 }
 
 // Absorb ingests a frame that arrived from outside (sync, bundle).
@@ -257,6 +265,7 @@ func (p *Participant) Emit(s *Space, schema string, payload []byte,
 	encoding := signal.PayloadCBOR
 	wirePayload := payload
 	priority := signal.PriorityMessage
+	var headerExpiry, maxForwards uint64
 	switch schema {
 	case schemas.MembershipEpoch:
 		priority = signal.PrioritySecurity
@@ -264,6 +273,13 @@ func (p *Participant) Emit(s *Space, schema string, payload []byte,
 		priority = signal.PriorityManifest
 	case schemas.PresenceUpdate:
 		priority = signal.PriorityStatePatch
+		// Presence is ephemeral by nature: mirror the payload TTL into the
+		// custody-expiry header and declare NoCustody (ADR-015) — bridges
+		// and relays never store-and-forward stale presence.
+		if pp, err := schemas.DecodePresence(payload); err == nil {
+			headerExpiry = pp.ExpiresAt
+			maxForwards = 1
+		}
 	case schemas.ObservationTemp:
 		priority = signal.PriorityTelemetry
 	}
@@ -298,6 +314,8 @@ func (p *Participant) Emit(s *Space, schema string, payload []byte,
 		PayloadEncoding: encoding,
 		Payload:         wirePayload,
 		Priority:        priority,
+		ExpiresAt:       headerExpiry,
+		MaxForwards:     maxForwards,
 	}
 	if c.seq > 1 {
 		prev := c.tip
