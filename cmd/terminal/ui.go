@@ -57,7 +57,17 @@ func runUI(args []string, withUI bool) error {
 	if target := flags["mesh"]; target != "" {
 		start := rt.StartMeshtastic
 		wire := "raw"
-		if flags["compact"] != "" {
+		switch flags["compact"] {
+		case "table", "2b":
+			start = rt.StartMeshtasticTable
+			wire = "compact+idtable"
+		case "", "0":
+			// raw default for real radios
+			if flags["compact"] != "" {
+				start = rt.StartMeshtasticCompact
+				wire = "compact"
+			}
+		default:
 			start = rt.StartMeshtasticCompact
 			wire = "compact"
 		}

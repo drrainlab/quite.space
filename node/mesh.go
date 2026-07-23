@@ -37,10 +37,32 @@ func (r *Runtime) StartMeshtastic(target string) error {
 // (deflate-when-smaller, sub-fragmentation, byte-exact reversibility).
 // Every peer on the carrier must also run compact.
 func (r *Runtime) StartMeshtasticCompact(target string) error {
-	return r.startMesh(target, true)
+	return r.startMeshWire(target, wireCompact)
 }
 
+// StartMeshtasticTable attaches a radio with the TN-2B stateful profile
+// (id-table compaction on top of compact). Every peer must run it.
+func (r *Runtime) StartMeshtasticTable(target string) error {
+	return r.startMeshWire(target, wireTable)
+}
+
+type meshWire int
+
+const (
+	wireRaw meshWire = iota
+	wireCompact
+	wireTable
+)
+
 func (r *Runtime) startMesh(target string, compactOn bool) error {
+	wire := wireRaw
+	if compactOn {
+		wire = wireCompact
+	}
+	return r.startMeshWire(target, wire)
+}
+
+func (r *Runtime) startMeshWire(target string, wire meshWire) error {
 	r.mu.Lock()
 	if r.mesh != nil {
 		if closed, _ := r.mesh.Closed(); !closed {
@@ -67,8 +89,11 @@ func (r *Runtime) startMesh(target string, compactOn bool) error {
 	r.mesh = radio
 	r.mu.Unlock()
 	var lk link = radio
-	if compactOn {
+	switch wire {
+	case wireCompact:
 		lk = compactLink{Endpoint: compact.Wrap(radio), radio: radio}
+	case wireTable:
+		lk = compactLink{Endpoint: compact.WrapStateful(radio), radio: radio}
 	}
 	r.adoptLink(lk, meshPumpEvery, meshSummaryEvery, "radio")
 	return nil
