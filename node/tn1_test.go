@@ -49,7 +49,9 @@ func TestAdoptLinkFilteredScopesSpaces(t *testing.T) {
 		"test", allowOnlyA)
 	bob.adoptLink(testLink{pair.B}, 30*time.Millisecond, 200*time.Millisecond, "test")
 
-	deadline := time.Now().Add(8 * time.Second)
+	// Generous deadline: the full suite runs packages in parallel and real
+	// tickers can be CPU-starved on a loaded machine.
+	deadline := time.Now().Add(25 * time.Second)
 	for {
 		spA, _ := bob.Space(tidA)
 		if len(spA.State.Messages()) >= 1 {

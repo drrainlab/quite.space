@@ -61,6 +61,10 @@ type Runtime struct {
 	curLink      string
 	carried      map[id.EventID][]string
 	carriedOrder []id.EventID
+
+	// custodians: pinned bridge custodian keys per link domain (ADR-015
+	// §7, TOFU forbidden). r.mu-guarded.
+	custodians map[string][]byte
 }
 
 // maxCarried bounds the delivery-route projection (a UI hint, not state).
@@ -247,6 +251,9 @@ func (r *Runtime) attach(tid id.TerminalID, s *terminals.Space) {
 			r.trackCarried(eid, r.curLink)
 		}
 	}
+	// Bridge custody ACKs: honored only under a pinned custodian key for
+	// the ingress link (custodian.go).
+	st.eng.OnCustodyReceipt = func(raw []byte) { r.handleCustodyReceipt(tid, raw) }
 	// Asset exchange: serve only wire ids this space legitimately
 	// publishes; accept only what we requested (kernel/sync enforces both).
 	st.eng.Blobs = r.root

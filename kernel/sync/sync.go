@@ -82,6 +82,11 @@ type Engine struct {
 	// never more than transport-level custody: ADR-007).
 	OnSent func(eventIDs []id.EventID)
 
+	// OnCustodyReceipt receives raw custodian-signed receipt bytes from a
+	// bridge on this link. The NODE verifies against its pinned custodian
+	// keys — the engine only routes (an unpinned receipt records nothing).
+	OnCustodyReceipt func(receipt []byte)
+
 	// pending holds requested wire ids awaiting delivery. The engine is not
 	// safe for concurrent use; callers serialize (the node runtime holds
 	// its own lock around every engine call).
@@ -175,6 +180,7 @@ type message struct {
 	frames  [][]byte
 	hashes  []id.Hash
 	blobs   [][]byte
+	receipt []byte
 }
 
 func decodeMessage(data []byte) (*message, error) {
@@ -278,6 +284,12 @@ func decodeMessage(data []byte) (*message, error) {
 					return nil, errors.New("sync: blob over size limit")
 				}
 				msg.blobs = append(msg.blobs, append([]byte(nil), b...))
+			}
+		case keyReceipt:
+			var b []byte
+			b, err = d.ReadBytes()
+			if err == nil {
+				msg.receipt = append([]byte(nil), b...)
 			}
 		default:
 			err = d.SkipItem()
@@ -396,6 +408,10 @@ func (e *Engine) Pump(ep transports.Endpoint) (applied int, rejected int, err er
 				if !e.acceptBlob(b) {
 					rejected++
 				}
+			}
+		case msgCustody:
+			if e.OnCustodyReceipt != nil && len(msg.receipt) > 0 {
+				e.OnCustodyReceipt(msg.receipt)
 			}
 		}
 	}
