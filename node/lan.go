@@ -7,6 +7,7 @@ package node
 import (
 	"crypto/rand"
 	"encoding/binary"
+	"github.com/drrainlab/quiet_places/kernel/routing"
 	"time"
 
 	"github.com/drrainlab/quiet_places/transports/lan"
@@ -134,9 +135,24 @@ func (r *Runtime) adoptConn(c *lan.Conn) {
 // pumps in milliseconds; a LoRa link must respect airtime (plan §19 T6).
 // label names the link kind for the delivery-route projection (ADR-015).
 func (r *Runtime) adoptLink(c link, pump, summaryEvery time.Duration, label string) {
+	r.adoptLinkFiltered(c, pump, summaryEvery, label, nil)
+}
+
+// adoptLinkFiltered is the TN-1 seam: allow (when non-nil) scopes which
+// spaces sync over this link, judged by FrameMeta of the space's identity
+// (destination = the space terminal). nil = bit-identical attach-all
+// behavior. This is the hook a node needs to serve a bridge a subset of
+// its spaces without adopting the full router.
+func (r *Runtime) adoptLinkFiltered(c link, pump, summaryEvery time.Duration,
+	label string, allow func(routing.FrameMeta) bool) {
 	r.mu.Lock()
 	states := make([]*spaceState, 0, len(r.spaces))
-	for _, st := range r.spaces {
+	for tid, st := range r.spaces {
+		if allow != nil && !allow(routing.FrameMeta{
+			Destination: tid, IngressLink: routing.LinkID(label),
+		}) {
+			continue
+		}
 		st.conns = append(st.conns, c)
 		states = append(states, st)
 	}
