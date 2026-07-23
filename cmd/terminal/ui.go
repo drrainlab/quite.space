@@ -55,11 +55,17 @@ func runUI(args []string, withUI bool) error {
 		}
 	}
 	if target := flags["mesh"]; target != "" {
-		if err := rt.StartMeshtastic(target); err != nil {
+		start := rt.StartMeshtastic
+		wire := "raw"
+		if flags["compact"] != "" {
+			start = rt.StartMeshtasticCompact
+			wire = "compact"
+		}
+		if err := start(target); err != nil {
 			fmt.Println("mesh: connection failed:", err)
 		} else {
-			fmt.Printf("mesh: connected as node %d via %s (summaries every 60s — LoRa airtime)\n",
-				rt.Mesh().NodeNum, target)
+			fmt.Printf("mesh: connected as node %d via %s (%s wire, summaries every 60s — LoRa airtime)\n",
+				rt.Mesh().NodeNum, target, wire)
 		}
 	}
 

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/drrainlab/quiet_places/transports"
+	"github.com/drrainlab/quiet_places/transports/compact"
 	"github.com/drrainlab/quiet_places/transports/meshtastic"
 )
 
@@ -23,7 +25,22 @@ var (
 //
 //	tcp:HOST[:PORT]     WiFi node or meshtasticd (default port 4403)
 //	serial:/dev/PATH    USB-attached node
+//
+// Real radios default to the RAW wire (a raw-only peer cannot parse the
+// compact profile — TN-2A negotiation is operator config, auto is TN-2B);
+// StartMeshtasticCompact opts a link into the compact profile.
 func (r *Runtime) StartMeshtastic(target string) error {
+	return r.startMesh(target, false)
+}
+
+// StartMeshtasticCompact attaches a radio with the TN-2A compact profile
+// (deflate-when-smaller, sub-fragmentation, byte-exact reversibility).
+// Every peer on the carrier must also run compact.
+func (r *Runtime) StartMeshtasticCompact(target string) error {
+	return r.startMesh(target, true)
+}
+
+func (r *Runtime) startMesh(target string, compactOn bool) error {
 	r.mu.Lock()
 	if r.mesh != nil {
 		if closed, _ := r.mesh.Closed(); !closed {
@@ -49,9 +66,21 @@ func (r *Runtime) StartMeshtastic(target string) error {
 	r.mu.Lock()
 	r.mesh = radio
 	r.mu.Unlock()
-	r.adoptLink(radio, meshPumpEvery, meshSummaryEvery, "radio")
+	var lk link = radio
+	if compactOn {
+		lk = compactLink{Endpoint: compact.Wrap(radio), radio: radio}
+	}
+	r.adoptLink(lk, meshPumpEvery, meshSummaryEvery, "radio")
 	return nil
 }
+
+// compactLink pairs the compact-wrapped endpoint with the radio's liveness.
+type compactLink struct {
+	transports.Endpoint
+	radio *meshtastic.Radio
+}
+
+func (c compactLink) Closed() (bool, error) { return c.radio.Closed() }
 
 // MeshStatus is the transport diagnostic for the UI.
 type MeshStatus struct {

@@ -7,7 +7,6 @@ package sync
 
 import (
 	"errors"
-	"fmt"
 	"sort"
 
 	"github.com/drrainlab/quiet_places/kernel/eventlog"
@@ -89,7 +88,7 @@ type Engine struct {
 	pending map[id.Hash]bool
 
 	nextStream uint64
-	reasm      map[uint64]*reassembly
+	reasmSt    *Reassembler
 }
 
 type reassembly struct {
@@ -99,7 +98,7 @@ type reassembly struct {
 
 // NewEngine wraps a log for syncing.
 func NewEngine(log *eventlog.Log) *Engine {
-	return &Engine{Log: log, reasm: map[uint64]*reassembly{}, pending: map[id.Hash]bool{}}
+	return &Engine{Log: log, reasmSt: NewReassembler(), pending: map[id.Hash]bool{}}
 }
 
 // ---- Message encoding ----
@@ -300,29 +299,7 @@ func decodeMessage(data []byte) (*message, error) {
 
 func (e *Engine) fragment(msg []byte, mtu int) ([][]byte, error) {
 	e.nextStream++
-	stream := e.nextStream
-	if mtu <= 0 {
-		pkt := fragHeader(stream, 0, 1)
-		pkt = codec.AppendUint(pkt, fragKeyChunk)
-		pkt = codec.AppendBytes(pkt, msg)
-		return [][]byte{pkt}, nil
-	}
-	if mtu < minMTU {
-		return nil, fmt.Errorf("sync: MTU %d below minimum %d", mtu, minMTU)
-	}
-	overhead := len(fragHeader(stream, 0, 1)) + 4 // header + bytes-length head
-	chunkSize := mtu - overhead
-	total := (len(msg) + chunkSize - 1) / chunkSize
-	var out [][]byte
-	for i := 0; i < total; i++ {
-		start := i * chunkSize
-		end := min(start+chunkSize, len(msg))
-		pkt := fragHeader(stream, i, total)
-		pkt = codec.AppendUint(pkt, fragKeyChunk)
-		pkt = codec.AppendBytes(pkt, msg[start:end])
-		out = append(out, pkt)
-	}
-	return out, nil
+	return FragmentStream(e.nextStream, msg, mtu)
 }
 
 func fragHeader(stream uint64, index, total int) []byte {
@@ -339,67 +316,10 @@ func fragHeader(stream uint64, index, total int) []byte {
 // reassemble consumes a fragment packet; returns the whole message when
 // complete. Duplicate fragments are no-ops.
 func (e *Engine) reassemble(pkt []byte) ([]byte, error) {
-	d := codec.NewDecoder(pkt)
-	m, err := d.ReadMapHeader()
-	if err != nil {
-		return nil, err
+	if e.reasmSt == nil {
+		e.reasmSt = NewReassembler()
 	}
-	var stream, index, total uint64
-	var chunk []byte
-	for {
-		k, ok, er := m.Next()
-		if er != nil {
-			return nil, er
-		}
-		if !ok {
-			break
-		}
-		switch k {
-		case fragKeyStream:
-			stream, er = d.ReadUint()
-		case fragKeyIndex:
-			index, er = d.ReadUint()
-		case fragKeyTotal:
-			total, er = d.ReadUint()
-		case fragKeyChunk:
-			chunk, er = d.ReadBytes()
-		default:
-			er = d.SkipItem()
-		}
-		if er != nil {
-			return nil, er
-		}
-	}
-	if err := d.Done(); err != nil {
-		return nil, err
-	}
-	if total == 0 || index >= total || chunk == nil {
-		return nil, errors.New("sync: malformed fragment")
-	}
-	if total == 1 {
-		return append([]byte(nil), chunk...), nil
-	}
-	r, ok := e.reasm[stream]
-	if !ok {
-		r = &reassembly{total: int(total), chunks: map[int][]byte{}}
-		e.reasm[stream] = r
-	}
-	if _, dup := r.chunks[int(index)]; !dup {
-		r.chunks[int(index)] = append([]byte(nil), chunk...)
-	}
-	if len(r.chunks) < r.total {
-		return nil, nil // incomplete
-	}
-	delete(e.reasm, stream)
-	var msg []byte
-	for i := 0; i < r.total; i++ {
-		part, ok := r.chunks[i]
-		if !ok {
-			return nil, errors.New("sync: reassembly hole")
-		}
-		msg = append(msg, part...)
-	}
-	return msg, nil
+	return e.reasmSt.Feed(pkt)
 }
 
 // ---- Protocol driver ----
@@ -429,6 +349,10 @@ func (e *Engine) sendMsg(ep transports.Endpoint, msg []byte) error {
 func (e *Engine) Pump(ep transports.Endpoint) (applied int, rejected int, err error) {
 	for _, pkt := range ep.Poll() {
 		raw, err := e.reassemble(pkt)
+		if errors.Is(err, ErrNotFragment) {
+			// A wrapper (compact profile) may deliver whole messages.
+			raw, err = pkt, nil
+		}
 		if err != nil || raw == nil {
 			if err != nil {
 				rejected++
