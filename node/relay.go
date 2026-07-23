@@ -101,9 +101,17 @@ func (r *Runtime) collectBlobs(space id.TerminalID, policy AssetPolicy, budget i
 	return blobs, rep
 }
 
-// PushToRelay uploads the full space bundle under the current-bucket hint.
-// Returns how many events were pushed and the relay's accepted deadline.
+// PushToRelay is the MANUAL full dead-drop (the "push current space"
+// button): frames + available asset chunks up to the budget — an explicit
+// user action to hand everything over. The large-packet relay node carries
+// it. The BACKGROUND auto-sync uses AssetsManifests instead (media bytes
+// stay on-demand — pushing whole assets every cycle is what hung large
+// spaces and blew the old 1 MiB packet cap).
 func (r *Runtime) PushToRelay(addr string, tid id.TerminalID) (int, uint64, error) {
+	return r.pushToRelay(addr, tid, AssetsAvailable)
+}
+
+func (r *Runtime) pushToRelay(addr string, tid id.TerminalID, policy AssetPolicy) (int, uint64, error) {
 	r.mu.Lock()
 	st, ok := r.spaces[tid]
 	if !ok {
@@ -128,8 +136,7 @@ func (r *Runtime) PushToRelay(addr string, tid id.TerminalID) (int, uint64, erro
 		r.mu.Unlock()
 		return 0, 0, err
 	}
-	// Dead-drop default: manifests + available chunks up to the budget.
-	blobs, _ := r.collectBlobs(tid, AssetsAvailable, DefaultBundleBudget)
+	blobs, _ := r.collectBlobs(tid, policy, DefaultBundleBudget)
 	body := bundle.EncodeWithBlobs(tid, frames, blobs)
 	r.mu.Unlock()
 

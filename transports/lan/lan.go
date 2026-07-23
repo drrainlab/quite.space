@@ -30,7 +30,13 @@ import (
 )
 
 const (
+	// maxPacket bounds a single LAN sync packet (a DoS guard: sync never
+	// sends more than ~1 MiB per packet — framesBudget is 32 KiB, a blob
+	// 1 MiB). The relay carries whole bundles and opens a node with a much
+	// larger cap (RelayMaxPacket).
 	maxPacket = 1 << 20
+	// RelayMaxPacket fits a full relay item (16 MiB default) plus framing.
+	RelayMaxPacket = 20 << 20
 	// multicast group for announces; any node may listen.
 	MulticastAddr = "239.255.71.80:47180"
 )
@@ -42,14 +48,18 @@ const (
 // packets for Poll.
 type Conn struct {
 	c      net.Conn
+	cap    int
 	mu     sync.Mutex
 	inbox  [][]byte
 	closed bool
 	err    error
 }
 
-func newConn(c net.Conn) *Conn {
-	cc := &Conn{c: c}
+func newConn(c net.Conn, cap int) *Conn {
+	if cap <= 0 {
+		cap = maxPacket
+	}
+	cc := &Conn{c: c, cap: cap}
 	go cc.readLoop()
 	return cc
 }
@@ -62,7 +72,7 @@ func (c *Conn) readLoop() {
 			return
 		}
 		n := binary.BigEndian.Uint32(header)
-		if n == 0 || n > maxPacket {
+		if n == 0 || n > uint32(c.cap) {
 			c.fail(fmt.Errorf("lan: bad packet length %d", n))
 			return
 		}
@@ -89,7 +99,7 @@ func (c *Conn) fail(err error) {
 
 // Send writes one packet to the peer.
 func (c *Conn) Send(pkt []byte) error {
-	if len(pkt) == 0 || len(pkt) > maxPacket {
+	if len(pkt) == 0 || len(pkt) > c.cap {
 		return fmt.Errorf("lan: packet length %d out of range", len(pkt))
 	}
 	c.mu.Lock()
@@ -139,10 +149,15 @@ func (c *Conn) Close() error { return c.c.Close() }
 type Node struct {
 	tlsCert  tls.Certificate
 	listener net.Listener
+	maxPkt   int
 }
 
-// NewNode generates the ephemeral session certificate.
-func NewNode() (*Node, error) {
+// NewNode generates the ephemeral session certificate (default 1 MiB cap).
+func NewNode() (*Node, error) { return NewNodeWithMaxPacket(maxPacket) }
+
+// NewNodeWithMaxPacket creates a node whose connections accept packets up
+// to maxPkt bytes (the relay uses RelayMaxPacket to carry whole bundles).
+func NewNodeWithMaxPacket(maxPkt int) (*Node, error) {
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, err
@@ -156,7 +171,8 @@ func NewNode() (*Node, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Node{tlsCert: tls.Certificate{Certificate: [][]byte{der}, PrivateKey: priv}}, nil
+	return &Node{tlsCert: tls.Certificate{Certificate: [][]byte{der}, PrivateKey: priv},
+		maxPkt: maxPkt}, nil
 }
 
 func (n *Node) serverConfig() *tls.Config {
@@ -184,7 +200,7 @@ func (n *Node) Listen(addr string, onConn func(*Conn)) (int, error) {
 			if err != nil {
 				return
 			}
-			onConn(newConn(c))
+			onConn(newConn(c, n.maxPkt))
 		}
 	}()
 	return l.Addr().(*net.TCPAddr).Port, nil
@@ -204,7 +220,7 @@ func (n *Node) Dial(addr string) (*Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newConn(c), nil
+	return newConn(c, n.maxPkt), nil
 }
 
 // ---- Discovery (privacy-preserving hints) ----

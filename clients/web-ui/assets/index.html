@@ -294,6 +294,20 @@
     </div>
   </div>
   <div class="settings-sec">
+    <p class="hint">Relay · sync when off your network</p>
+    <div class="list">
+      <div class="list-row">
+        <span class="lr-label">Address<span class="lr-sub"> · a blind relay carries encrypted bundles</span></span>
+        <input type="text" id="relaySetAddr" placeholder="host:port, e.g. 203.0.113.7:7411 (blank = off)">
+      </div>
+    </div>
+    <p class="hint" id="relaySetMsg" style="margin-left:4px"></p>
+    <div class="row">
+      <button class="btn-tinted" onclick="saveRelay()">Save &amp; sync</button>
+    </div>
+    <p class="hint" style="margin-left:4px">Set an address and this device pushes &amp; pulls automatically every few seconds. Media stays on-demand — only text and manifests travel; open a media card to fetch its bytes. “Accepted by relay” is never “delivered”.</p>
+  </div>
+  <div class="settings-sec">
     <p class="hint">AI regeneration</p>
     <div class="list">
       <div class="list-row">

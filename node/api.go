@@ -138,6 +138,7 @@ func (a *APIServer) Handler() http.Handler {
 	mux.HandleFunc("POST /api/mesh/connect", a.auth(a.handleMeshConnect))
 	mux.HandleFunc("POST /api/relay/push", a.auth(a.handleRelayPush))
 	mux.HandleFunc("POST /api/relay/pull", a.auth(a.handleRelayPull))
+	mux.HandleFunc("GET /api/relay/status", a.auth(a.handleRelayStatus))
 	if a.ui != nil {
 		mux.Handle("GET /", http.FileServerFS(a.ui))
 	}

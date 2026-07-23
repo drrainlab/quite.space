@@ -65,6 +65,10 @@ type Runtime struct {
 	// custodians: pinned bridge custodian keys per link domain (ADR-015
 	// §7, TOFU forbidden). r.mu-guarded.
 	custodians map[string][]byte
+
+	// relaySync is the background relay push/pull loop (nil until first
+	// configured). r.mu guards the pointer; the state has its own lock.
+	relaySync *relaySyncState
 }
 
 // maxCarried bounds the delivery-route projection (a UI hint, not state).
@@ -205,6 +209,10 @@ func Open(dataDir string, passphrase []byte, displayName string) (*Runtime, erro
 	}
 	if err := r.saveKeystore(); err != nil {
 		return nil, err
+	}
+	// Resume background relay sync if a relay was configured.
+	if relay := r.GetSettings().Relay; relay != "" {
+		r.applyRelaySync(relay)
 	}
 	return r, nil
 }

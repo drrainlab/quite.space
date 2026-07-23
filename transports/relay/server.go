@@ -38,7 +38,9 @@ func StartServer(addr string, limits ServerLimits) (*Server, int, error) {
 		limits: limits,
 		stop:   make(chan struct{}),
 	}
-	node, err := lan.NewNode()
+	// The relay carries whole bundles (frames + manifests) up to its item
+	// cap, well past the 1 MiB LAN sync framing — open a large-packet node.
+	node, err := lan.NewNodeWithMaxPacket(lan.RelayMaxPacket)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -158,7 +160,7 @@ type Client struct {
 
 // DialClient connects to a relay.
 func DialClient(addr string) (*Client, error) {
-	node, err := lan.NewNode()
+	node, err := lan.NewNodeWithMaxPacket(lan.RelayMaxPacket)
 	if err != nil {
 		return nil, err
 	}

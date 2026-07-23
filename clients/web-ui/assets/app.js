@@ -245,8 +245,35 @@ async function openSettings() {
       ? 'key saved — leave blank to keep' : 'stored on this device only';
     pickProvider(llmSettings.provider || 'anthropic', true);
     document.getElementById('llmMsg').textContent = '';
+    document.getElementById('relaySetAddr').value = s.relay || '';
+    document.getElementById('relaySetMsg').textContent = '';
   } catch (e) { /* settings unavailable */ }
   dlgSettings.showModal();
+}
+
+// saveRelay persists the relay address; the node (re)starts background sync.
+async function saveRelay() {
+  const addr = document.getElementById('relaySetAddr').value.trim();
+  const msg = document.getElementById('relaySetMsg');
+  try {
+    await api('/api/settings', { method: 'POST',
+      body: JSON.stringify({ ...currentSettingsBody(), relay: addr }) });
+    msg.textContent = addr ? 'saved — syncing through ' + addr : 'relay sync off';
+  } catch (e) { msg.textContent = e.message; }
+}
+
+// currentSettingsBody snapshots the LLM fields so a relay save doesn't wipe
+// them (the settings POST is a full replace; the key stays blank = keep).
+function currentSettingsBody() {
+  return {
+    theme: localStorage.getItem('qp.theme') || 'auto',
+    preset: localStorage.getItem('qp.preset') || 'quiet-glass',
+    render_mode: localStorage.getItem('qp.rendermode') || 'auto',
+    llm: {
+      provider: llmSettings.provider || '', model: llmSettings.model || '',
+      base_url: llmSettings.base_url || '', api_key: '',
+    },
+  };
 }
 function syncSettingsUI() {
   const theme = localStorage.getItem('qp.theme') || 'auto';
@@ -344,6 +371,7 @@ async function saveLLM() {
       theme: localStorage.getItem('qp.theme') || 'auto',
       preset: localStorage.getItem('qp.preset') || 'quiet-glass',
       render_mode: localStorage.getItem('qp.rendermode') || 'auto',
+      relay: (document.getElementById('relaySetAddr').value || '').trim(),
       llm: { provider: llmSettings.provider, model: llmSettings.model,
         base_url: llmSettings.base_url, api_key: key || undefined },
     }) });
@@ -398,6 +426,18 @@ async function refresh() {
       const s = connectionSummary(status);
       cText.textContent = s.text;
       conn.className = 'conn-chip ' + s.cls;
+      // Relay auto-sync: when there's no direct peer, show that the relay
+      // is carrying us (honest — store-and-forward, not live).
+      const peers = (status.lan.peers || 0) + (status.mesh.connected ? 1 : 0);
+      if (peers === 0) {
+        try {
+          const rs = await api('/api/relay/status');
+          if (rs.active) {
+            cText.textContent = 'relay ⟳' + (rs.last_error ? ' · issue' : '');
+            conn.className = 'conn-chip' + (rs.last_error ? ' off' : '');
+          }
+        } catch (e) { /* relay status optional */ }
+      }
     }
     document.getElementById('fp').textContent = PROTOCOL ? status.fingerprint : '';
 

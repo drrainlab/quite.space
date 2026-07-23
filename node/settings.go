@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/drrainlab/quiet_places/node/llm"
@@ -19,6 +20,10 @@ type Settings struct {
 	Preset     string     `json:"preset"`      // quiet-glass | daylight | minimal-mono | comfort
 	RenderMode string     `json:"render_mode"` // auto | full | reduced | minimal
 	LLM        llm.Config `json:"llm"`
+	// Relay: address of a blind relay to auto-sync through (host:port). Empty
+	// disables background relay sync. Set it and the node pushes changed
+	// spaces + pulls on a timer — no manual push/pull needed.
+	Relay string `json:"relay"`
 }
 
 // GetSettings returns the decoded settings (zero-value if unset).
@@ -36,7 +41,6 @@ func (r *Runtime) GetSettings() Settings {
 // key" (the UI sends the key only when the user changes it).
 func (r *Runtime) SetSettings(s Settings) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	var cur Settings
 	if len(r.ks.Settings) > 0 {
 		_ = json.Unmarshal(r.ks.Settings, &cur)
@@ -46,10 +50,20 @@ func (r *Runtime) SetSettings(s Settings) error {
 	}
 	b, err := json.Marshal(s)
 	if err != nil {
+		r.mu.Unlock()
 		return err
 	}
 	r.ks.Settings = b
-	return r.saveKeystore()
+	err = r.saveKeystore()
+	relayChanged := s.Relay != cur.Relay
+	r.mu.Unlock() // release before applyRelaySync (it takes r.mu itself)
+	if err != nil {
+		return err
+	}
+	if relayChanged {
+		r.applyRelaySync(s.Relay)
+	}
+	return nil
 }
 
 // LLMConfig returns the current provider config (with the real key) for
@@ -82,6 +96,7 @@ func (r *Runtime) TestLLM(ctx context.Context) error {
 func settingsJSON(s Settings) map[string]any {
 	return map[string]any{
 		"theme": s.Theme, "preset": s.Preset, "render_mode": s.RenderMode,
+		"relay": s.Relay,
 		"llm": map[string]any{
 			"provider": s.LLM.Provider, "model": s.LLM.Model,
 			"base_url": s.LLM.BaseURL, "has_key": s.LLM.APIKey != "",
@@ -98,6 +113,7 @@ func (a *APIServer) handleSetSettings(w http.ResponseWriter, r *http.Request) {
 		Theme      string `json:"theme"`
 		Preset     string `json:"preset"`
 		RenderMode string `json:"render_mode"`
+		Relay      string `json:"relay"`
 		LLM        struct {
 			Provider string `json:"provider"`
 			Model    string `json:"model"`
@@ -109,7 +125,8 @@ func (a *APIServer) handleSetSettings(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusBadRequest, err)
 		return
 	}
-	s := Settings{Theme: body.Theme, Preset: body.Preset, RenderMode: body.RenderMode}
+	s := Settings{Theme: body.Theme, Preset: body.Preset, RenderMode: body.RenderMode,
+		Relay: strings.TrimSpace(body.Relay)}
 	s.LLM.Provider = body.LLM.Provider
 	s.LLM.Model = body.LLM.Model
 	s.LLM.BaseURL = body.LLM.BaseURL
