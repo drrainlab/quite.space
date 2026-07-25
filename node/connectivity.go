@@ -10,6 +10,7 @@
 package node
 
 import (
+	"errors"
 	"strings"
 	"time"
 
@@ -199,14 +200,18 @@ func (e ErrTransportBlocked) Error() string {
 // out is carrying it. It extends nothing on the protocol ladder — Proof is
 // the ADR-007 level and nothing here may raise it.
 type DeliveryView struct {
-	EventID   id.EventID
-	Space     id.TerminalID
-	State     string
-	Proof     string
+	EventID id.EventID
+	Space   id.TerminalID
+	State   string
+	Proof   string
+	// Transport is the route that last carried it; Route is the one that
+	// would carry it now. They differ while a route is failing over.
 	Transport string
-	// Waiting names a transport that cannot carry this message and why, so
-	// the UI can say "waiting for a faster link" instead of showing a retry
-	// that will never succeed.
+	Route     string
+	// Waiting says why nothing is moving, when nothing is: "connectivity"
+	// when policy permits no route, "faster_link" when the message cannot
+	// fit the only route permitted. Empty when something is in hand — a
+	// message in a gateway's custody is not waiting on us.
 	Waiting string
 	Attempt string
 	Lease   string
@@ -236,10 +241,31 @@ func (r *Runtime) Delivery(eid id.EventID) (DeliveryView, bool) {
 		Lease:        in.Lease,
 		LeaseExpires: in.LeaseExpires,
 	}
-	mode := r.connectivity().modeFor(in.Space)
-	if in.BlockedOn(TransportRadio) == BlockTooLarge &&
-		(mode == ModeMeshtasticOnly || !r.anySpaceAllows(TransportRelay)) {
-		v.Waiting = "faster_link"
+	// Why is nothing happening? The three answers a person can act on are
+	// different, and collapsing them into "pending" is what makes a client
+	// feel broken: they turned something off, this message needs a bigger
+	// pipe, or a gateway is holding it and there is nothing to do but wait.
+	if k, ok := r.SelectTransport(in, time.Now()); ok {
+		v.Route = k.String()
+	} else {
+		// Order matters. If policy permits no route at all, a faster link
+		// would not help and saying so would send someone hunting for a
+		// better connection when they had simply switched everything off.
+		// Only when something IS permitted, and this message cannot use it,
+		// is size the answer.
+		v.Waiting = "connectivity"
+		c := r.connectivity()
+		for _, k := range transportPreference {
+			if c.allows(k, in.Space) {
+				if in.BlockedOn(k) != BlockNone {
+					v.Waiting = "faster_link"
+				}
+				break
+			}
+		}
+	}
+	if in.State == IntentCustody {
+		v.Waiting = "" // someone else has it; that is not waiting on us
 	}
 	return v, true
 }
@@ -283,26 +309,141 @@ func (r *Runtime) relayGate() error {
 	return ErrTransportBlocked{Transport: TransportRelay, Mode: r.connectivity().Mode}
 }
 
-// hysteresis keeps Auto from flapping between transports the moment one
-// twitches. A link that has just come back is not yet trusted; a link that
-// has just failed is not immediately abandoned.
-const transportHysteresis = 20 * time.Second
+// Hysteresis is deliberately ASYMMETRIC, and that asymmetry is the whole
+// design. Damping exists to stop Auto oscillating between two healthy
+// routes; it must never slow down escape from a broken one. So:
+//
+//	the current route fails      → switch immediately
+//	a better route reappears     → wait until it has been stable
+//
+// A symmetric delay would mean a node whose radio just died sits mute for
+// twenty seconds with a working internet connection in front of it.
+const (
+	// transportHysteresis is how long a recovered route must hold before
+	// Auto will move BACK to it. Only the promotion edge waits.
+	transportHysteresis = 20 * time.Second
+	// unhealthyAfter is how many consecutive failures mark a route down.
+	// One failure is a packet; three is a link.
+	unhealthyAfter = 3
+)
 
-// stableSince reports whether a transport has held its current state long
-// enough for Auto to act on it. Caller holds r.mu.
-func (r *Runtime) stableSince(k TransportKind, up bool, now time.Time) bool {
+// transportState tracks one route's health for Auto.
+type transportState struct {
+	up       bool
+	since    time.Time
+	failures int
+}
+
+// preference orders routes by what they cost the person: a local link is
+// free and instant, the relay costs bandwidth, the radio costs airtime and
+// battery and is shared with everyone else on the segment.
+var transportPreference = []TransportKind{TransportLAN, TransportRelay, TransportRadio}
+
+// noteTransportResult records what actually happened on a route. Caller
+// must not hold r.mu.
+//
+// ErrTooLarge is NOT a health signal. The link is fine; this message does
+// not fit it. Counting it would let one oversized message mark a perfectly
+// good radio as broken and drag every other message off it.
+func (r *Runtime) noteTransportResult(k TransportKind, err error, now time.Time) {
+	if errors.Is(err, routing.ErrTooLarge) {
+		return
+	}
+	if _, blocked := err.(ErrTransportBlocked); blocked {
+		return // policy, not health
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if r.transportFlap == nil {
 		r.transportFlap = map[TransportKind]transportState{}
 	}
-	cur, ok := r.transportFlap[k]
-	if !ok || cur.up != up {
-		r.transportFlap[k] = transportState{up: up, since: now}
-		return false
+	cur, seen := r.transportFlap[k]
+	if !seen {
+		cur = transportState{up: true, since: now}
 	}
-	return now.Sub(cur.since) >= transportHysteresis
+	if err == nil {
+		cur.failures = 0
+		if !cur.up {
+			cur.up = true
+			cur.since = now // starts the promotion clock
+		}
+	} else {
+		cur.failures++
+		if cur.up && cur.failures >= unhealthyAfter {
+			cur.up = false
+			cur.since = now
+		}
+	}
+	r.transportFlap[k] = cur
 }
 
-type transportState struct {
-	up    bool
-	since time.Time
+// healthOf reports a route's state, defaulting to healthy: a route nobody
+// has tried yet is worth trying.
+func (r *Runtime) healthOf(k TransportKind, now time.Time) (up bool, stable bool) {
+	cur, seen := r.transportFlap[k]
+	if !seen {
+		return true, true
+	}
+	return cur.up, now.Sub(cur.since) >= transportHysteresis
+}
+
+// SelectTransport picks the route for one message, in the order that makes
+// the choice explainable: eligibility, then health, then stickiness to the
+// route already carrying it, then preference, and only then promotion.
+//
+// ok=false means the message waits — which is a state, not a failure.
+func (r *Runtime) SelectTransport(in DeliveryIntent, now time.Time) (TransportKind, bool) {
+	eligible := r.eligibleTransports(in)
+	if len(eligible) == 0 {
+		return TransportAny, false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	allowed := map[TransportKind]bool{}
+	for _, k := range eligible {
+		allowed[k] = true
+	}
+	var healthy []TransportKind
+	for _, k := range transportPreference {
+		if !allowed[k] {
+			continue
+		}
+		if up, _ := r.healthOf(k, now); up {
+			healthy = append(healthy, k)
+		}
+	}
+
+	current := transportOfLink(in.Transport)
+	if allowed[current] {
+		if up, _ := r.healthOf(current, now); up {
+			// Stick with what is working unless something strictly better
+			// has been stable long enough to trust. Moving an attempt that
+			// is already under way costs a re-send for no gain.
+			for _, k := range healthy {
+				if k == current {
+					break // nothing better is available
+				}
+				if _, stable := r.healthOf(k, now); stable {
+					return k, true
+				}
+			}
+			return current, true
+		}
+		// The current route is down: leave NOW. No waiting, no stability
+		// requirement — the alternative is silence while a link that works
+		// sits unused.
+	}
+	if len(healthy) > 0 {
+		return healthy[0], true
+	}
+	// Nothing is healthy. Try the most preferred eligible route anyway:
+	// "everything failed recently" is not evidence that everything is still
+	// failing, and refusing to try guarantees the outage continues.
+	for _, k := range transportPreference {
+		if allowed[k] {
+			return k, true
+		}
+	}
+	return TransportAny, false
 }

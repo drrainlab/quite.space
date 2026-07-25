@@ -1,6 +1,7 @@
 package node
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -364,5 +365,161 @@ func TestPerSpaceIsolationOnASharedRelay(t *testing.T) {
 	}
 	if alice.TransportAllowed(TransportRelay, quiet) {
 		t.Fatal("the quiet room gained relay access")
+	}
+}
+
+// Damping is asymmetric on purpose: escaping a broken route is immediate,
+// returning to a recovered one waits. A symmetric delay would leave a node
+// whose radio just died sitting mute with a working link in front of it.
+func TestAutoLeavesABrokenRouteImmediatelyButReturnsSlowly(t *testing.T) {
+	rt := openRuntime(t, t.TempDir(), "bob")
+	defer rt.Close()
+	tid, err := rt.CreateSpace("Auto")
+	if err != nil {
+		t.Fatal(err)
+	}
+	setMode(t, rt, ModeAuto)
+	now := time.Now()
+	eid := id.EventID{0xC1}
+	rt.mu.Lock()
+	in, err := rt.ledger.Enqueue(eid, tid, 128, now)
+	rt.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// It settles on the cheapest route available.
+	first, ok := rt.SelectTransport(in, now)
+	if !ok || first != TransportLAN {
+		t.Fatalf("Auto did not prefer the local link: %v %v", first, ok)
+	}
+	in.Transport = first.String()
+
+	// The LAN starts failing. One failure is a packet, not a link.
+	rt.noteTransportResult(TransportLAN, errors.New("boom"), now)
+	if k, _ := rt.SelectTransport(in, now); k != TransportLAN {
+		t.Fatal("a single failure abandoned a working route")
+	}
+	for range unhealthyAfter {
+		rt.noteTransportResult(TransportLAN, errors.New("boom"), now)
+	}
+	// Now it leaves — with no waiting at all.
+	k, ok := rt.SelectTransport(in, now)
+	if !ok || k == TransportLAN {
+		t.Fatalf("Auto stayed on a dead route: %v", k)
+	}
+	if k != TransportRelay {
+		t.Fatalf("failover did not take the next preferred route: %v", k)
+	}
+	in.Transport = k.String()
+
+	// The LAN comes back. It must NOT be taken immediately, or a flapping
+	// link would drag every message back and forth across it.
+	rt.noteTransportResult(TransportLAN, nil, now)
+	if got, _ := rt.SelectTransport(in, now); got != TransportRelay {
+		t.Fatalf("a just-recovered route was trusted at once: %v", got)
+	}
+	// Once it has held, Auto promotes back to the cheaper route.
+	later := now.Add(transportHysteresis + time.Second)
+	if got, _ := rt.SelectTransport(in, later); got != TransportLAN {
+		t.Fatalf("a stable recovered route was never promoted: %v", got)
+	}
+}
+
+// A message that does not fit a link says nothing about the link. Counting
+// ErrTooLarge as a health failure would let one oversized message mark a
+// working radio as broken and drag every other message off it.
+func TestOversizedMessageDoesNotMarkARouteUnhealthy(t *testing.T) {
+	rt := openRuntime(t, t.TempDir(), "bob")
+	defer rt.Close()
+	setMode(t, rt, ModeAuto)
+	now := time.Now()
+
+	for range unhealthyAfter * 3 {
+		rt.noteTransportResult(TransportRadio, routing.ErrTooLarge, now)
+	}
+	rt.mu.Lock()
+	up, _ := rt.healthOf(TransportRadio, now)
+	rt.mu.Unlock()
+	if !up {
+		t.Fatal("a size mismatch marked the radio as a broken link")
+	}
+
+	// A policy refusal is not a health signal either.
+	for range unhealthyAfter * 3 {
+		rt.noteTransportResult(TransportRelay,
+			ErrTransportBlocked{Transport: TransportRelay, Mode: ModeMeshtasticOnly}, now)
+	}
+	rt.mu.Lock()
+	up, _ = rt.healthOf(TransportRelay, now)
+	rt.mu.Unlock()
+	if !up {
+		t.Fatal("being told not to use a route marked it broken")
+	}
+}
+
+// The projection answers the question a person actually has — why is
+// nothing happening — with the three answers they can act on.
+func TestDeliveryProjectionSaysWhyNothingIsMoving(t *testing.T) {
+	rt := openRuntime(t, t.TempDir(), "bob")
+	defer rt.Close()
+	tid, err := rt.CreateSpace("Why")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+
+	small := id.EventID{0xD1}
+	big := id.EventID{0xD2}
+	rt.mu.Lock()
+	_, _ = rt.ledger.Enqueue(small, tid, 128, now)
+	_, _ = rt.ledger.Enqueue(big, tid, oversized(), now)
+	rt.mu.Unlock()
+
+	// Auto: both have a route, nothing is waiting.
+	setMode(t, rt, ModeAuto)
+	for _, e := range []id.EventID{small, big} {
+		v, _ := rt.Delivery(e)
+		if v.Waiting != "" || v.Route == "" {
+			t.Fatalf("a message with a route was shown as waiting: %+v", v)
+		}
+	}
+
+	// Meshtastic only: the small one rides, the big one cannot.
+	setMode(t, rt, ModeMeshtasticOnly)
+	if v, _ := rt.Delivery(small); v.Waiting != "" || v.Route != "radio" {
+		t.Fatalf("the small message should ride the radio: %+v", v)
+	}
+	if v, _ := rt.Delivery(big); v.Waiting != "faster_link" {
+		t.Fatalf("the oversized message should be waiting for a faster link: %+v", v)
+	}
+
+	// Offline: nothing has a route, and the reason is the choice, not size.
+	setMode(t, rt, ModeOffline)
+	for _, e := range []id.EventID{small, big} {
+		v, _ := rt.Delivery(e)
+		if v.Waiting != "connectivity" {
+			t.Fatalf("offline should say connectivity, got %+v", v)
+		}
+	}
+
+	// In a gateway's custody, nothing is waiting on us at all.
+	rt.mu.Lock()
+	_, _, err = rt.ledger.Update(small, now, func(cur *DeliveryIntent) bool {
+		cur.State = IntentCustody
+		cur.Lease = "L1"
+		cur.LeaseExpires = now.Add(time.Hour).Unix()
+		return true
+	})
+	rt.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, _ := rt.Delivery(small)
+	if v.Waiting != "" {
+		t.Fatalf("a message someone else is holding was shown as waiting: %+v", v)
+	}
+	if v.State != "in_custody" || v.Lease != "L1" {
+		t.Fatalf("the projection lost the custody detail: %+v", v)
 	}
 }
