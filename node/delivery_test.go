@@ -364,3 +364,70 @@ func TestCustodyExpiryReturnsResponsibilityWithoutAWithdrawal(t *testing.T) {
 			"hang forever on a gateway that went quiet")
 	}
 }
+
+// Custody transfers ONLY for the intents that were actually in the batch
+// the gateway answered — never for everything that happens to share the
+// attempt token.
+//
+// This is not hypothetical. The token is per-space, so an event authored
+// after a batch went out is assigned the SAME open attempt: it belongs to
+// the epoch that is still running. If responsibility followed the token
+// alone, that event would be credited with a promise made about frames it
+// was not part of, and would sit "in custody" at a gateway that has never
+// seen it. The receipt's frame list is what scopes the transfer.
+func TestCustodyAppliesOnlyToTheBatchThatWasSent(t *testing.T) {
+	f := newCustodyFixture(t)
+	attempt := f.openAttempt(t)
+
+	// A second event authored AFTER the first batch went out. It joins the
+	// running epoch, so it carries the same token.
+	later, err := f.rt.Say(f.tid, "written after the batch left", SayOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.rt.mu.Lock()
+	same, ok := f.rt.openAttempt(f.tid, f.now)
+	f.rt.mu.Unlock()
+	if !ok || same != attempt {
+		t.Fatalf("the epoch changed unexpectedly: ok=%v %s vs %s", ok,
+			attempt.Hex(), same.Hex())
+	}
+	lateIntent, ok := f.rt.ledger.Get(later)
+	if !ok {
+		t.Fatal("the later event is not tracked")
+	}
+	if lateIntent.Attempt != attempt {
+		t.Fatalf("the later event did not join the running epoch: %s",
+			lateIntent.Attempt.Hex())
+	}
+
+	// The gateway answers the FIRST batch only — its receipt names exactly
+	// the frames it took.
+	rec := f.receipt(bridge.ReceiptAccepted, attempt[:], "L1", f.now.Add(time.Hour))
+	rec.FrameIDs = []id.EventID{f.eid}
+
+	f.rt.mu.Lock()
+	got := f.rt.applyReceiptToLedger(f.eid, rec, f.now)
+	f.rt.mu.Unlock()
+	if got != ReceiptTookCustody {
+		t.Fatalf("the batch that WAS sent did not take custody: %v", got)
+	}
+
+	// The later event shares the attempt and must be untouched.
+	after, _ := f.rt.ledger.Get(later)
+	if after.State == IntentCustody {
+		t.Fatal("an event that was never in the batch was credited with the " +
+			"gateway's promise, purely for sharing an attempt token")
+	}
+	if after.Lease != "" {
+		t.Fatalf("a lease leaked to an event outside the batch: %q", after.Lease)
+	}
+	if after.Proof >= claims.DeliveryAcceptedByRelay {
+		t.Fatalf("proof was raised for an event nobody acknowledged: %v", after.Proof)
+	}
+	// And the one that WAS in the batch is properly covered.
+	covered, _ := f.rt.ledger.Get(f.eid)
+	if covered.State != IntentCustody || covered.Lease != "L1" {
+		t.Fatalf("the acknowledged event is not in custody: %+v", covered)
+	}
+}
