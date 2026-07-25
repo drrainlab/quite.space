@@ -102,7 +102,7 @@ type Bridge struct {
 
 	// accepted remembers recently acknowledged frames so a repeat gets the
 	// same answer; pendingAcks are receipts waiting for airtime.
-	accepted    map[id.EventID]time.Time
+	accepted    map[id.EventID]acceptedRec
 	pendingAcks []pendingAck
 }
 
@@ -155,7 +155,7 @@ func New(cfg Config) (*Bridge, error) {
 		subs:      map[id.TerminalID]Subscription{},
 		carried:   map[id.TerminalID]map[id.DeviceID]*chainCursor{},
 		wake:      map[id.TerminalID]*wakeState{},
-		accepted:  map[id.EventID]time.Time{},
+		accepted:  map[id.EventID]acceptedRec{},
 	}
 	if cfg.AirtimePerMin <= 0 {
 		b.airtime = routing.DefaultAirtime(time.Now())
@@ -276,24 +276,25 @@ func (b *Bridge) PumpRadio(now time.Time) int {
 		// while it was mid-conversation.
 		b.answeredWake(term)
 		b.noteRadioPeer(term, now)
+		// Frames in one message share an attempt, so they share a lease
+		// group; acknowledge them together under the lease of the first
+		// accepted record.
 		var held []id.EventID
+		var lease routing.CustodyLeaseID
 		for _, f := range frames {
+			l, ok := b.acceptCustody(f, b.cfg.RadioLink, b.cfg.RadioDomain, now, attempt)
+			if !ok {
+				continue
+			}
 			eid := id.EventIDOf(f)
-			switch {
-			case b.takeCustodyGuaranteed(f, b.cfg.RadioLink, b.cfg.RadioDomain, now, attempt):
-				b.rememberAccepted(eid, now)
-				held = append(held, eid)
-			case b.wasAccepted(eid):
-				// A repeat of something already accepted — most likely the
-				// sender never heard the first ACK. Re-acknowledge with the
-				// SAME acceptance time: an idempotent answer, not a new
-				// promise. Without this a lost ACK could never be repaired
-				// and the node would retransmit until it gave up.
-				held = append(held, eid)
+			b.rememberAccepted(eid, attempt, l, now)
+			held = append(held, eid)
+			if lease.Zero() {
+				lease = l
 			}
 		}
 		if len(held) > 0 {
-			b.queueAck(term, held, attempt, leaseOf(held), now)
+			b.queueAck(term, held, attempt, lease.String(), now)
 			// Durable before the pass ends: an obligation the bridge forgot
 			// across a restart is indistinguishable from one it never had.
 			_ = b.saveAcks()
@@ -315,13 +316,63 @@ func (b *Bridge) takeCustody(frame []byte, link routing.LinkID,
 	return b.custody(frame, link, domain, now, false, nil)
 }
 
-// takeCustodyGuaranteed is takeCustody for a frame the bridge is about to
-// ACKNOWLEDGE. Room is reserved before the promise exists; if the store can
-// only fit it by dropping another acknowledged record, custody is refused
-// and no ACK is sent, so the sender keeps responsibility.
-func (b *Bridge) takeCustodyGuaranteed(frame []byte, link routing.LinkID,
-	domain routing.LoopDomainID, now time.Time, attempt []byte) bool {
-	return b.custody(frame, link, domain, now, true, attempt)
+// acceptCustody takes custody of a frame on behalf of a named attempt and
+// returns the lease to acknowledge it under. Room is reserved before the
+// promise exists; if the store can only fit it by dropping another
+// acknowledged record, custody is refused and no ACK is sent, so the sender
+// keeps responsibility.
+//
+// It is IDEMPOTENT on (boundary, attempt, frame). That is the ordinary loss
+// path, not an edge case: the first acknowledgement goes missing, the
+// sender retransmits the same attempt, and the gateway must answer with the
+// promise it already made. Minting a second lease would tell the sender its
+// message was accepted twice and leave a second record to expire.
+func (b *Bridge) acceptCustody(frame []byte, link routing.LinkID,
+	domain routing.LoopDomainID, now time.Time, attempt []byte) (routing.CustodyLeaseID, bool) {
+
+	env, err := routing.RouteOf(frame, link, domain)
+	if err != nil {
+		return routing.CustodyLeaseID{}, false
+	}
+	switch verdict, lease := b.classify(env.Route.EventID, attempt, frame, now); verdict {
+	case acceptReissue:
+		// Custody may still be live, in which case the record is the
+		// authority on its own lease; otherwise the frame has been
+		// forwarded on and only the promise remains, which stays true.
+		if rec, live := b.queue.Held(env.Route.EventID); live &&
+			string(rec.Attempt) == string(attempt) {
+			return rec.Lease, true
+		}
+		b.mu.Lock()
+		b.stats.Deduped++
+		b.mu.Unlock()
+		return lease, true
+	case acceptEcho:
+		b.mu.Lock()
+		b.stats.Deduped++
+		b.mu.Unlock()
+		return routing.CustodyLeaseID{}, false
+	}
+	rec, reused, err := b.queue.AcceptCustody(env.Meta(), env.Ciphertext, domain, now, attempt)
+	if err != nil {
+		b.bumpRefused(1)
+		if errors.Is(err, routing.ErrNoRoom) {
+			b.mu.Lock()
+			b.stats.NoRoom++
+			b.mu.Unlock()
+		}
+		return routing.CustodyLeaseID{}, false
+	}
+	if reused {
+		b.mu.Lock()
+		b.stats.Deduped++
+		b.mu.Unlock()
+		return rec.Lease, true
+	}
+	b.seen.Seen(routing.KeyOf(frame), now)
+	b.routes.Observe(env.Route.DestinationHint, link, now)
+	b.noteCarried(env.Meta())
+	return rec.Lease, true
 }
 
 func (b *Bridge) custody(frame []byte, link routing.LinkID,

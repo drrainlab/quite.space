@@ -17,6 +17,7 @@
 package bridge
 
 import (
+	"maps"
 	"os"
 	"time"
 
@@ -35,8 +36,10 @@ const (
 	ackKeyAttempt  = 8
 	ackKeyLease    = 9
 
-	accKeyEvent = 1
-	accKeyAt    = 2
+	accKeyEvent   = 1
+	accKeyAt      = 2
+	accKeyAttempt = 3
+	accKeyLease   = 4
 )
 
 func (b *Bridge) acksPath() string { return b.cfg.DataDir + "/custody-acks.snap" }
@@ -45,10 +48,8 @@ func (b *Bridge) acksPath() string { return b.cfg.DataDir + "/custody-acks.snap"
 func (b *Bridge) saveAcks() error {
 	b.mu.Lock()
 	pending := append([]pendingAck(nil), b.pendingAcks...)
-	accepted := make(map[id.EventID]time.Time, len(b.accepted))
-	for k, v := range b.accepted {
-		accepted[k] = v
-	}
+	accepted := make(map[id.EventID]acceptedRec, len(b.accepted))
+	maps.Copy(accepted, b.accepted)
 	b.mu.Unlock()
 
 	buf := codec.AppendArray(nil, len(pending))
@@ -85,13 +86,20 @@ func (b *Bridge) saveAcks() error {
 	}
 
 	// The acceptance memory follows as a second array in the same file.
+	// The attempt and the lease travel with it: without them a restarted
+	// gateway could not tell a retransmission of an answered hand-off from
+	// a fresh one, and would take the frame into custody a second time.
 	buf = codec.AppendArray(buf, len(accepted))
-	for eid, at := range accepted {
-		buf = codec.AppendMap(buf, 2)
+	for eid, r := range accepted {
+		buf = codec.AppendMap(buf, 4)
 		buf = codec.AppendUint(buf, accKeyEvent)
 		buf = codec.AppendBytes(buf, eid[:])
 		buf = codec.AppendUint(buf, accKeyAt)
-		buf = codec.AppendUint(buf, uint64(max(at.Unix(), 0)))
+		buf = codec.AppendUint(buf, uint64(max(r.at.Unix(), 0)))
+		buf = codec.AppendUint(buf, accKeyAttempt)
+		buf = codec.AppendBytes(buf, []byte(r.attempt))
+		buf = codec.AppendUint(buf, accKeyLease)
+		buf = codec.AppendBytes(buf, r.lease[:])
 	}
 
 	tmp := b.acksPath() + ".tmp"
@@ -200,7 +208,7 @@ func (b *Bridge) loadAcks() {
 		}
 	}
 
-	accepted := map[id.EventID]time.Time{}
+	accepted := map[id.EventID]acceptedRec{}
 	if an, err := d.ReadArray(); err == nil {
 		for range an {
 			m, err := d.ReadMapHeader()
@@ -208,7 +216,7 @@ func (b *Bridge) loadAcks() {
 				break
 			}
 			var eid id.EventID
-			var at time.Time
+			var rec acceptedRec
 			for {
 				k, ok, err := m.Next()
 				if err != nil || !ok {
@@ -226,15 +234,29 @@ func (b *Bridge) loadAcks() {
 					if err != nil {
 						return
 					}
-					at = time.Unix(int64(v), 0)
+					rec.at = time.Unix(int64(v), 0)
+				case accKeyAttempt:
+					raw, err := d.ReadBytes()
+					if err != nil {
+						return
+					}
+					rec.attempt = string(raw)
+				case accKeyLease:
+					raw, err := d.ReadBytes()
+					if err != nil {
+						return
+					}
+					if len(raw) == len(rec.lease) {
+						copy(rec.lease[:], raw)
+					}
 				default:
 					if err := d.SkipItem(); err != nil {
 						return
 					}
 				}
 			}
-			if !at.IsZero() {
-				accepted[eid] = at
+			if !rec.at.IsZero() {
+				accepted[eid] = rec
 			}
 		}
 	}

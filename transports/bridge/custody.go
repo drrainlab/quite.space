@@ -102,6 +102,17 @@ const (
 	lapseMaxTries = 4
 )
 
+// acceptedRec remembers one hand-off this gateway answered for, so the
+// answer can be repeated after the frame itself has been forwarded on and
+// released. Custody ends when the frame moves; the PROMISE that it was
+// accepted stays true, and a sender whose acknowledgement was lost has to
+// be able to hear it again.
+type acceptedRec struct {
+	at      time.Time
+	attempt string
+	lease   routing.CustodyLeaseID
+}
+
 // acceptedAt answers "when did I take custody of this frame". The queue is
 // asked first: EnqueuedAt was written and fsynced with the record itself,
 // so it is the one answer that survives a crash between taking custody and
@@ -113,21 +124,74 @@ func (b *Bridge) acceptedAt(eid id.EventID) (time.Time, bool) {
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	at, ok := b.accepted[eid]
-	return at, ok
+	r, ok := b.accepted[eid]
+	return r.at, ok
+}
+
+// acceptance verdict for one frame arriving on the carrier.
+type acceptVerdict uint8
+
+const (
+	// acceptFresh: never accepted here — take custody.
+	acceptFresh acceptVerdict = iota
+	// acceptReissue: this EXACT hand-off was answered before. Reissue the
+	// same promise; do not take the frame again.
+	acceptReissue
+	// acceptRetry: accepted before under a DIFFERENT attempt. Custody for
+	// that attempt ended and responsibility came back to the sender, so
+	// this is genuinely new work and gets its own promise.
+	acceptRetry
+	// acceptEcho: carried before but never accepted from this side — a
+	// frame this gateway (or its twin on the segment) put on the air
+	// coming back to it. Not a hand-off at all.
+	acceptEcho
+)
+
+// classify decides what an arriving frame IS. Three cases look identical on
+// the wire and must not be collapsed:
+//
+//   - the sender never heard our acknowledgement and retransmitted;
+//   - the sender's custody ended and it is handing the frame over again;
+//   - nobody handed us anything and we are hearing our own downlink.
+//
+// The third is what makes this more than a duplicate check. A gateway
+// broadcasts internet-side frames onto the carrier; those frames come back
+// off the air, and a classifier that only knew about uplink acceptances
+// would take them into custody and push them to the relay the frames just
+// came from. With two gateways on one segment each would do it to the
+// other's broadcasts.
+func (b *Bridge) classify(eid id.EventID, attempt []byte, frame []byte,
+	now time.Time) (acceptVerdict, routing.CustodyLeaseID) {
+
+	b.mu.Lock()
+	rec, accepted := b.accepted[eid]
+	b.mu.Unlock()
+	if accepted {
+		if rec.attempt == string(attempt) {
+			return acceptReissue, rec.lease
+		}
+		return acceptRetry, routing.CustodyLeaseID{}
+	}
+	// Never accepted from the carrier. If it has crossed this bridge at all
+	// it came the other way, and hearing it back is an echo.
+	if b.seen.Seen(routing.KeyOf(frame), now) {
+		return acceptEcho, routing.CustodyLeaseID{}
+	}
+	return acceptFresh, routing.CustodyLeaseID{}
 }
 
 // rememberAccepted records that custody of a frame was taken at a moment,
 // so a repeat can be answered identically.
-func (b *Bridge) rememberAccepted(eid id.EventID, now time.Time) {
+func (b *Bridge) rememberAccepted(eid id.EventID, attempt []byte,
+	lease routing.CustodyLeaseID, now time.Time) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.accepted == nil {
-		b.accepted = map[id.EventID]time.Time{}
+		b.accepted = map[id.EventID]acceptedRec{}
 	}
 	if len(b.accepted) >= acceptedCap {
-		for k, at := range b.accepted {
-			if now.Sub(at) > acceptedMemory {
+		for k, r := range b.accepted {
+			if now.Sub(r.at) > acceptedMemory {
 				delete(b.accepted, k)
 			}
 		}
@@ -135,14 +199,7 @@ func (b *Bridge) rememberAccepted(eid id.EventID, now time.Time) {
 			return // still full: forget the new one rather than an old promise
 		}
 	}
-	b.accepted[eid] = now
-}
-
-// wasAccepted reports whether this frame was already taken into custody
-// recently enough to answer for.
-func (b *Bridge) wasAccepted(eid id.EventID) bool {
-	_, ok := b.acceptedAt(eid)
-	return ok
+	b.accepted[eid] = acceptedRec{at: now, attempt: string(attempt), lease: lease}
 }
 
 // queueAck schedules a custody acknowledgement for the next control pass.
@@ -346,6 +403,7 @@ func (b *Bridge) noteLapsed(lapsed []*routing.CustodyRecord, kind ackKind, now t
 	type group struct {
 		ids     []id.EventID
 		attempt []byte
+		lease   string
 		expires uint64
 	}
 	groups := map[key]*group{}
@@ -353,7 +411,7 @@ func (b *Bridge) noteLapsed(lapsed []*routing.CustodyRecord, kind ackKind, now t
 		k := key{rec.Destination, string(rec.Attempt)}
 		g := groups[k]
 		if g == nil {
-			g = &group{attempt: rec.Attempt}
+			g = &group{attempt: rec.Attempt, lease: rec.Lease.String()}
 			groups[k] = g
 		}
 		g.ids = append(g.ids, id.EventIDOf(rec.Frame))
@@ -369,7 +427,7 @@ func (b *Bridge) noteLapsed(lapsed []*routing.CustodyRecord, kind ackKind, now t
 		}
 	}
 	for k, g := range groups {
-		b.queueLapse(k.term, g.ids, g.attempt, leaseOf(g.ids), g.expires, kind, now)
+		b.queueLapse(k.term, g.ids, g.attempt, g.lease, g.expires, kind, now)
 		b.mu.Lock()
 		b.stats.CustodyLapsed += len(g.ids)
 		b.mu.Unlock()
@@ -377,14 +435,4 @@ func (b *Bridge) noteLapsed(lapsed []*routing.CustodyRecord, kind ackKind, now t
 	if len(groups) > 0 {
 		_ = b.saveAcks()
 	}
-}
-
-// leaseOf names the custody this receipt is about, so repeats are
-// recognisable as repeats and a diagnostic can point at one row in one
-// store. It refines the attempt token; it never substitutes for it.
-func leaseOf(ids []id.EventID) string {
-	if len(ids) == 0 {
-		return ""
-	}
-	return ids[0].Hex()[:16]
 }

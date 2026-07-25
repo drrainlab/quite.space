@@ -568,3 +568,215 @@ func TestWithdrawalRepeatsAndCarriesTheOriginalHorizon(t *testing.T) {
 		t.Fatalf("withdrawal is still on the air long after the horizon: %d", sent)
 	}
 }
+
+// The ordinary loss path, and the reason acceptance identity has to include
+// the attempt: the first acknowledgement goes missing, the sender
+// retransmits the SAME attempt, and the gateway must answer with the
+// promise it already made — same lease, no second custody record.
+func TestRetransmittedAttemptReissuesTheSameLease(t *testing.T) {
+	var dest id.TerminalID
+	dest[0] = 0xF5
+	pair := loopback.NewPair(loopback.Faults{Seed: 41})
+	b := testBridge(t, pair.B, "127.0.0.1:1", []Subscription{serving(dest, 0x95, 0x96)})
+	now := time.Now()
+	attempt := []byte("attempt-A-0123456")
+
+	f := mkFrame(t, dest, 0x95, 1, nil, "did the gateway hear me")
+	send := func() {
+		if err := sendWrapped(t, pair.A,
+			kernelsync.EncodeFramesMessageWithAttempt(dest, [][]byte{f}, attempt)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	send()
+	b.PumpRadio(now)
+	b.PushAcks(now)
+	first := readReceipts(t, pair.A)
+	if len(first) != 1 || first[0].Kind != ReceiptAccepted {
+		t.Fatalf("no acceptance to repeat: %+v", first)
+	}
+	if len(first[0].Attempt) == 0 {
+		t.Fatal("the acceptance does not name the attempt it answers")
+	}
+	if first[0].Lease == "" {
+		t.Fatal("the acceptance does not name the custody it granted")
+	}
+	if b.QueueLen() != 1 {
+		t.Fatalf("custody records after one accept: %d", b.QueueLen())
+	}
+
+	// That receipt is lost on the air; the sender retransmits attempt A.
+	send()
+	b.PumpRadio(now.Add(time.Minute))
+	b.PushAcks(now.Add(time.Minute))
+	again := readReceipts(t, pair.A)
+	if len(again) != 1 {
+		t.Fatalf("a retransmitted attempt produced %d receipts", len(again))
+	}
+	if again[0].Lease != first[0].Lease {
+		t.Fatalf("the retransmission minted a SECOND promise: lease %s then %s",
+			first[0].Lease, again[0].Lease)
+	}
+	if again[0].AcceptedAt != first[0].AcceptedAt {
+		t.Fatalf("the reissued receipt invented a new acceptance time")
+	}
+	if b.QueueLen() != 1 {
+		t.Fatalf("the retransmission created a second custody record: %d", b.QueueLen())
+	}
+
+	// A genuinely NEW attempt for the same frame is a different hand-off
+	// and gets its own promise. An acceptance key on the event alone would
+	// refuse this as a duplicate and the sender would never be answered
+	// again after its first custody ended.
+	newAttempt := []byte("attempt-B-7654321")
+	if err := sendWrapped(t, pair.A,
+		kernelsync.EncodeFramesMessageWithAttempt(dest, [][]byte{f}, newAttempt)); err != nil {
+		t.Fatal(err)
+	}
+	b.PumpRadio(now.Add(2 * time.Minute))
+	b.PushAcks(now.Add(2 * time.Minute))
+	fresh := readReceipts(t, pair.A)
+	if len(fresh) != 1 {
+		t.Fatalf("a new attempt produced %d receipts", len(fresh))
+	}
+	if fresh[0].Lease == first[0].Lease {
+		t.Fatal("a new attempt reused the old attempt's promise")
+	}
+	if string(fresh[0].Attempt) != string(newAttempt) {
+		t.Fatalf("the receipt answers the wrong attempt: %q", fresh[0].Attempt)
+	}
+}
+
+// Leases survive what identity derived from storage layout would not.
+func TestLeaseSurvivesRestartAndCompaction(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now()
+	q, err := routing.OpenQueue(dir, routing.DefaultQueueCaps())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var dest id.TerminalID
+	dest[0] = 0xF6
+	f := mkFrame(t, dest, 0x97, 1, nil, "hold this across a restart")
+	meta, err := routing.MetaOf(f, "mesh:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, reused, err := q.AcceptCustody(meta, f, "mesh-dom", now, []byte("attempt-A"))
+	if err != nil || reused {
+		t.Fatalf("first acceptance: reused=%v err=%v", reused, err)
+	}
+	original := rec.Lease
+	if original.Zero() {
+		t.Fatal("an accepted custody has no identity")
+	}
+
+	// Fill and compact: a lease derived from a file offset would move here.
+	for i := byte(2); i <= 12; i++ {
+		other := mkFrame(t, dest, 0x97+i, 1, nil, "filler")
+		m, err := routing.MetaOf(other, "mesh:test")
+		if err != nil {
+			t.Fatal(err)
+		}
+		filler, _, err := q.AcceptCustody(m, other, "mesh-dom", now, []byte("attempt-A"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		q.Ack(filler.ID)
+	}
+	if err := q.Compact(); err != nil {
+		t.Fatal(err)
+	}
+	q.Close()
+
+	q2, err := routing.OpenQueue(dir, routing.DefaultQueueCaps())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer q2.Close()
+	back, ok := q2.Held(meta.EventID)
+	if !ok {
+		t.Fatal("custody lost across restart")
+	}
+	if back.Lease != original {
+		t.Fatalf("the promise changed identity: %s then %s", original, back.Lease)
+	}
+	// And the acceptance index survived, so a retransmission still finds it.
+	again, reused, err := q2.AcceptCustody(meta, f, "mesh-dom", now, []byte("attempt-A"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reused {
+		t.Fatal("after a restart the same attempt was accepted as new custody")
+	}
+	if again.Lease != original {
+		t.Fatalf("reissue after restart used a different lease: %s", again.Lease)
+	}
+}
+
+// A gateway hearing its own downlink back off the carrier must not treat it
+// as a hand-off. This is not a theoretical duplicate: the bridge broadcasts
+// internet-side frames onto the segment, they come back off the air, and a
+// classifier that only knew about uplink acceptances would take them into
+// custody and push them to the relay they just came FROM. With two gateways
+// on one segment each would do it to the other's broadcasts, and the
+// segment would never go quiet.
+func TestOwnDownlinkHeardBackIsNotAHandOff(t *testing.T) {
+	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+	relayAddr := fmt.Sprintf("127.0.0.1:%d", port)
+
+	var dest id.TerminalID
+	dest[0] = 0xE9
+	pair := loopback.NewPair(loopback.Faults{Seed: 51})
+	b := testBridge(t, pair.B, relayAddr, []Subscription{serving(dest, 0x9A, 0x9B)})
+	now := time.Now()
+
+	// An internet-side frame arrives for the radio node and is put on air.
+	down := mkFrame(t, dest, 0x9B, 1, nil, "from the internet")
+	client, err := relay.DialClient(relayAddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nowU := uint64(now.Unix())
+	if _, err := client.Put(relay.HintFor(dest, deviceOf(0x9A), relay.Bucket(nowU)),
+		nowU+3600, encodeBundle(t, dest, down)); err != nil {
+		t.Fatal(err)
+	}
+	client.Close()
+	if took, err := b.PullRelay(now); err != nil || took != 1 {
+		t.Fatalf("downlink pull: %d %v", took, err)
+	}
+	if sent := b.PushRadio(now); sent != 1 {
+		t.Fatalf("downlink broadcast: %d", sent)
+	}
+	pair.A.Poll() // the carrier carries it away
+
+	before := b.Stats()
+
+	// The same frame comes back off the air — a repeater, the other
+	// gateway, or a node re-broadcasting. It carries no attempt token
+	// because nobody is handing it over.
+	if err := sendWrapped(t, pair.A, kernelsync.EncodeFramesMessage(dest, [][]byte{down})); err != nil {
+		t.Fatal(err)
+	}
+	b.PumpRadio(now.Add(time.Second))
+	if sent := b.PushAcks(now.Add(time.Second)); sent != 0 {
+		t.Fatalf("the gateway acknowledged its own broadcast as a hand-off: %d receipts", sent)
+	}
+	pushed, err := b.PushRelay(now.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pushed != 0 {
+		t.Fatalf("an echo of the gateway's own downlink was pushed back to "+
+			"the relay it came from: %d frames", pushed)
+	}
+	if s := b.Stats(); s.Deduped <= before.Deduped {
+		t.Fatal("the echo was not recognised as one")
+	}
+}
