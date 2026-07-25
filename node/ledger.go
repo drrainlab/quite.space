@@ -126,6 +126,10 @@ type DeliveryIntent struct {
 
 	NextAttemptAt int64
 	UpdatedAt     int64
+
+	// Size is the signed frame's length. Kept so per-transport eligibility
+	// can be derived without reaching back into the log for every decision.
+	Size int
 }
 
 // Retryable reports whether this intent needs another attempt at `now`.
@@ -160,6 +164,7 @@ const (
 	lgKeyLeaseExp  = 10
 	lgKeyNextAt    = 11
 	lgKeyUpdated   = 12
+	lgKeySize      = 13
 
 	lgRecPut  = 1
 	lgRecDrop = 2
@@ -245,7 +250,7 @@ func (l *Ledger) apply(body []byte) {
 	if err != nil {
 		return
 	}
-	var kind, attemptNo, state, proof, leaseExp, nextAt, updated uint64
+	var kind, attemptNo, state, proof, leaseExp, nextAt, updated, size uint64
 	in := &DeliveryIntent{}
 	for {
 		k, ok, er := m.Next()
@@ -286,6 +291,8 @@ func (l *Ledger) apply(body []byte) {
 			nextAt, er = d.ReadUint()
 		case lgKeyUpdated:
 			updated, er = d.ReadUint()
+		case lgKeySize:
+			size, er = d.ReadUint()
 		default:
 			er = d.SkipItem()
 		}
@@ -301,6 +308,7 @@ func (l *Ledger) apply(body []byte) {
 		in.LeaseExpires = int64(leaseExp)
 		in.NextAttemptAt = int64(nextAt)
 		in.UpdatedAt = int64(updated)
+		in.Size = int(size)
 		if _, existed := l.live[in.EventID]; existed {
 			l.dead++
 		}
@@ -314,7 +322,7 @@ func (l *Ledger) apply(body []byte) {
 }
 
 func encodeIntent(kind uint64, in *DeliveryIntent) []byte {
-	buf := codec.AppendMap(nil, 12)
+	buf := codec.AppendMap(nil, 13)
 	buf = codec.AppendUint(buf, lgKeyKind)
 	buf = codec.AppendUint(buf, kind)
 	buf = codec.AppendUint(buf, lgKeyEvent)
@@ -339,6 +347,8 @@ func encodeIntent(kind uint64, in *DeliveryIntent) []byte {
 	buf = codec.AppendUint(buf, uint64(max(in.NextAttemptAt, 0)))
 	buf = codec.AppendUint(buf, lgKeyUpdated)
 	buf = codec.AppendUint(buf, uint64(max(in.UpdatedAt, 0)))
+	buf = codec.AppendUint(buf, lgKeySize)
+	buf = codec.AppendUint(buf, uint64(max(in.Size, 0)))
 	return buf
 }
 
@@ -361,7 +371,7 @@ func (l *Ledger) appendRecord(body []byte, sync bool) error {
 // EventID: re-recording an event already tracked returns the existing
 // intent untouched, so a restart that re-walks the log cannot multiply
 // responsibility or reset an attempt that is still in flight.
-func (l *Ledger) Enqueue(eid id.EventID, space id.TerminalID, now time.Time) (DeliveryIntent, error) {
+func (l *Ledger) Enqueue(eid id.EventID, space id.TerminalID, size int, now time.Time) (DeliveryIntent, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if cur, ok := l.live[eid]; ok {
@@ -373,6 +383,7 @@ func (l *Ledger) Enqueue(eid id.EventID, space id.TerminalID, now time.Time) (De
 	in := &DeliveryIntent{
 		EventID:   eid,
 		Space:     space,
+		Size:      size,
 		State:     IntentPending,
 		Proof:     claims.DeliveryCreatedLocal,
 		UpdatedAt: now.Unix(),
@@ -534,4 +545,67 @@ func sortIntentPtrs(in []*DeliveryIntent) {
 	sort.Slice(in, func(i, j int) bool {
 		return string(in[i].EventID[:]) < string(in[j].EventID[:])
 	})
+}
+
+// TransportKind names a way out of this device. Eligibility is asked per
+// transport, because "this message cannot go by radio" says nothing about
+// whether it can go over the internet — and treating it as a property of
+// the EVENT would strand a message that has a perfectly good path.
+type TransportKind uint8
+
+const (
+	TransportAny TransportKind = iota
+	TransportRadio
+	TransportRelay
+	TransportLAN
+)
+
+func (k TransportKind) String() string {
+	switch k {
+	case TransportRadio:
+		return "radio"
+	case TransportRelay:
+		return "relay"
+	case TransportLAN:
+		return "lan"
+	}
+	return "any"
+}
+
+// BlockReason says why a transport cannot carry this intent right now.
+type BlockReason uint8
+
+const (
+	// BlockNone: this transport can carry it.
+	BlockNone BlockReason = iota
+	// BlockTooLarge: the frame exceeds what this carrier will send. Not a
+	// failure of the event — a property of the pairing.
+	BlockTooLarge
+)
+
+func (b BlockReason) String() string {
+	if b == BlockTooLarge {
+		return "too_large"
+	}
+	return ""
+}
+
+// BlockedOn reports why a transport cannot carry this intent, or BlockNone.
+//
+// It is DERIVED from the frame size rather than stored as a flag. A stored
+// flag would outlive its cause: raise the outbound cap, switch to a modem
+// preset with a bigger payload, and every message marked "too large" would
+// stay marked until something thought to clear it. Deriving it means the
+// answer changes the moment the limit does, which is exactly what an
+// operator expects after changing a setting.
+func (in DeliveryIntent) BlockedOn(k TransportKind) BlockReason {
+	if k == TransportRadio && in.Size > 0 && in.Size > radioOutboundCap() {
+		return BlockTooLarge
+	}
+	return BlockNone
+}
+
+// EligibleOn answers whether this transport is worth trying at all.
+func (in DeliveryIntent) EligibleOn(k TransportKind) bool {
+	return in.BlockedOn(k) == BlockNone
 }

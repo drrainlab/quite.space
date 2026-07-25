@@ -33,13 +33,13 @@ func TestLedgerSurvivesCrashAndEnqueueIsIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := byte(1); i <= 3; i++ {
-		if _, err := l.Enqueue(eid(i), tid(9), now); err != nil {
+		if _, err := l.Enqueue(eid(i), tid(9), 128, now); err != nil {
 			t.Fatal(err)
 		}
 	}
 	// A second pass over the same events — what a restart's log replay does.
 	for i := byte(1); i <= 3; i++ {
-		if _, err := l.Enqueue(eid(i), tid(9), now.Add(time.Minute)); err != nil {
+		if _, err := l.Enqueue(eid(i), tid(9), 128, now.Add(time.Minute)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -78,7 +78,7 @@ func TestLedgerTornTailTruncated(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := byte(1); i <= 3; i++ {
-		if _, err := l.Enqueue(eid(i), tid(9), now); err != nil {
+		if _, err := l.Enqueue(eid(i), tid(9), 128, now); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -109,7 +109,7 @@ func TestLedgerTornTailTruncated(t *testing.T) {
 	if len(after) != len(data) {
 		t.Fatalf("tail not truncated: %d bytes, want %d", len(after), len(data))
 	}
-	if _, err := l2.Enqueue(eid(4), tid(9), now); err != nil {
+	if _, err := l2.Enqueue(eid(4), tid(9), 128, now); err != nil {
 		t.Fatal(err)
 	}
 	l2.Close()
@@ -133,7 +133,7 @@ func TestCustodySuspendsRetryUntilTheHorizonPasses(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer l.Close()
-	if _, err := l.Enqueue(eid(1), tid(9), now); err != nil {
+	if _, err := l.Enqueue(eid(1), tid(9), 128, now); err != nil {
 		t.Fatal(err)
 	}
 	// Fresh intents are due immediately.
@@ -178,7 +178,7 @@ func TestLedgerUpdateRollsBackWhenTheWriteFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := l.Enqueue(eid(1), tid(9), now); err != nil {
+	if _, err := l.Enqueue(eid(1), tid(9), 128, now); err != nil {
 		t.Fatal(err)
 	}
 	// Close the file underneath: the next append fails.
@@ -209,7 +209,7 @@ func TestLedgerCompaction(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := byte(1); i <= 5; i++ {
-		if _, err := l.Enqueue(eid(i), tid(9), now); err != nil {
+		if _, err := l.Enqueue(eid(i), tid(9), 128, now); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -269,18 +269,18 @@ func TestLedgerQuotaRefusesRatherThanEvicts(t *testing.T) {
 	}
 	defer l.Close()
 	for i := byte(1); i <= 2; i++ {
-		if _, err := l.Enqueue(eid(i), tid(9), now); err != nil {
+		if _, err := l.Enqueue(eid(i), tid(9), 128, now); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, err := l.Enqueue(eid(3), tid(9), now); err != ErrLedgerFull {
+	if _, err := l.Enqueue(eid(3), tid(9), 128, now); err != ErrLedgerFull {
 		t.Fatalf("a full ledger accepted a third intent: %v", err)
 	}
 	if _, ok := l.Get(eid(1)); !ok {
 		t.Fatal("an existing intent was evicted to make room")
 	}
 	// An already-tracked event is still idempotent when full.
-	if _, err := l.Enqueue(eid(1), tid(9), now); err != nil {
+	if _, err := l.Enqueue(eid(1), tid(9), 128, now); err != nil {
 		t.Fatalf("a full ledger refused an event it already tracks: %v", err)
 	}
 }

@@ -68,6 +68,9 @@ func (r *Runtime) OpenPublicSpace(spaceID id.TerminalID, relayAddr string) error
 // anti-equivocation): seq must not regress; an equal seq must carry the
 // same content digest — a different one is refused and surfaced.
 func (r *Runtime) fetchPublicProjection(addr string, tid id.TerminalID) error {
+	if err := r.relayGate(); err != nil {
+		return err
+	}
 	client, err := relay.DialClient(addr)
 	if err != nil {
 		return err
@@ -280,6 +283,9 @@ func (r *Runtime) pushPublicIngress(addr string, tid id.TerminalID) error {
 		return nil
 	}
 	body := bundle.EncodeWithWants(tid, frames, nil, wants, self[:])
+	if err := r.relayGate(); err != nil {
+		return err
+	}
 	client, err := relay.DialClient(addr)
 	if err != nil {
 		return err
@@ -304,6 +310,9 @@ func (r *Runtime) collectPublicIngress(addr string, tid id.TerminalID) (int, err
 		return 0, nil // TRUE freeze: ingress is not read at all
 	}
 	r.mu.Unlock()
+	if err := r.relayGate(); err != nil {
+		return 0, err
+	}
 	client, err := relay.DialClient(addr)
 	if err != nil {
 		return 0, err
@@ -674,6 +683,9 @@ func (r *Runtime) publishPublicProjectionForce(addr string, tid id.TerminalID, f
 		return false, nil // nothing new and no heartbeat due — spare the relay
 	}
 
+	if err := r.relayGate(); err != nil {
+		return false, err
+	}
 	client, err := relay.DialClient(addr)
 	if err != nil {
 		return false, err

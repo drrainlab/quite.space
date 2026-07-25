@@ -113,6 +113,14 @@ func (r *Runtime) collectBlobs(space id.TerminalID, policy AssetPolicy, budget i
 // stay on-demand — pushing whole assets every cycle is what hung large
 // spaces and blew the old 1 MiB packet cap).
 func (r *Runtime) PushToRelay(addr string, tid id.TerminalID) (int, uint64, error) {
+	// The gate is the FIRST thing, not merely the last thing before the
+	// dial: a forbidden transport must produce no work, no frames prepared,
+	// and above all no connection. Checking later would still let a space
+	// with nothing to send skip the refusal entirely.
+	if !r.TransportAllowed(TransportRelay, tid) {
+		return 0, 0, ErrTransportBlocked{
+			Transport: TransportRelay, Mode: r.connectivity().modeFor(tid)}
+	}
 	n, _, deadline, err := r.pushToRelay(addr, tid, AssetsAvailable)
 	return n, deadline, err
 }
@@ -188,6 +196,9 @@ func (r *Runtime) pushToRelay(addr string, tid id.TerminalID, policy AssetPolicy
 		// no-op. Reporting recipients==0 lets the auto-sync loop retry rather
 		// than mark these frames as handed off.
 		return len(frames), 0, 0, nil
+	}
+	if err := r.relayGate(); err != nil {
+		return 0, 0, 0, err
 	}
 	client, err := relay.DialClient(addr)
 	if err != nil {
@@ -331,6 +342,9 @@ func (r *Runtime) answerWants(client *relay.Client, tid id.TerminalID, wanter []
 // previous hint buckets) and absorbs them. Idempotent: duplicates are
 // no-ops in the event log.
 func (r *Runtime) PullFromRelay(addr string) (applied int, err error) {
+	if err := r.relayGate(); err != nil {
+		return 0, err
+	}
 	r.mu.Lock()
 	tids := make([]id.TerminalID, 0, len(r.spaces))
 	for tid := range r.spaces {
@@ -341,6 +355,9 @@ func (r *Runtime) PullFromRelay(addr string) (applied int, err error) {
 		return 0, nil
 	}
 
+	if err := r.relayGate(); err != nil {
+		return 0, err
+	}
 	client, err := relay.DialClient(addr)
 	if err != nil {
 		return 0, err

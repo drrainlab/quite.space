@@ -27,6 +27,9 @@ type Settings struct {
 	Relay string `json:"relay"`
 	// RelaySyncSeconds is the background push/pull cadence; 0 = default 2s.
 	RelaySyncSeconds int `json:"relay_sync_seconds"`
+	// Connectivity is the transport policy: which ways out of this device
+	// are permitted. Enforced BEFORE a connection is opened.
+	Connectivity Connectivity `json:"connectivity"`
 	// Attention is the QuietRank policy. It lives in this device-local blob
 	// and is never emitted, bundled, or relayed.
 	Attention *attention.Policy `json:"attention,omitempty"`

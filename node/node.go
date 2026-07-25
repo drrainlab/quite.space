@@ -79,6 +79,8 @@ type Runtime struct {
 	// receiptAudits keeps verified receipts that named a hand-off no longer
 	// current, so a stale acknowledgement is debuggable rather than silent.
 	receiptAudits map[id.EventID][]ReceiptAudit
+	// transportFlap damps Auto-mode transport switching.
+	transportFlap map[TransportKind]transportState
 
 	// relaySync is the background relay push/pull loop (nil until first
 	// configured). r.mu guards the pointer; the state has its own lock.
@@ -315,7 +317,7 @@ func (r *Runtime) attach(tid id.TerminalID, s *terminals.Space) {
 			// Responsibility starts here, for events WE authored. Idempotent
 			// on the event id, so replaying the log after a restart cannot
 			// multiply it or reset an attempt still in flight.
-			r.trackOutbound(a.ID, tid, time.Now())
+			r.trackOutbound(a.ID, tid, len(a.Frame), time.Now())
 		}
 	}
 	// handed_to_transport: fired by the sync engine when a frames batch is

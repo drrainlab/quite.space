@@ -329,9 +329,10 @@ func (r *Runtime) markHandedToTransport(ids []id.EventID, transport string,
 // trackOutbound starts tracking responsibility for an event this device
 // authored. Idempotent, so replaying the log after a restart cannot
 // multiply it or reset an attempt still in flight. Caller holds r.mu.
-func (r *Runtime) trackOutbound(eid id.EventID, tid id.TerminalID, now time.Time) {
+func (r *Runtime) trackOutbound(eid id.EventID, tid id.TerminalID, size int,
+	now time.Time) {
 	if r.ledger == nil {
 		return
 	}
-	_, _ = r.ledger.Enqueue(eid, tid, now)
+	_, _ = r.ledger.Enqueue(eid, tid, size, now)
 }
