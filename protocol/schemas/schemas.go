@@ -73,21 +73,38 @@ func Validate(schemaID string, payload []byte) error {
 
 // ---- Core payload types ----
 
-// TextMessage is message.text.v1: {1: text, 2?: reply_to event id}.
+// TextMessage is message.text.v1:
+// {1: text, 2?: reply_to event id, 3?: mentions [principal id, …]}.
+//
+// Mentions are a SIGNED STRUCTURAL field, not markup inside the text: the
+// text stays plain text, so "someone is addressing me" never depends on
+// parsing conventions. Key 3 is an append-only addition (ADR-009) — older
+// decoders skip it and keep working.
 type TextMessage struct {
-	Text    string
-	ReplyTo *id.EventID
+	Text     string
+	ReplyTo  *id.EventID
+	Mentions []id.PrincipalID
 }
 
 // MaxTextLen bounds a chat message payload.
 const MaxTextLen = 16 * 1024
 
+// MaxMentions bounds the mention list (a message addresses people, it does
+// not broadcast to a roster).
+const MaxMentions = 16
+
 func (t *TextMessage) Encode() ([]byte, error) {
 	if t.Text == "" || len(t.Text) > MaxTextLen {
 		return nil, errors.New("schemas: text empty or too long")
 	}
+	if len(t.Mentions) > MaxMentions {
+		return nil, errors.New("schemas: too many mentions")
+	}
 	n := 1
 	if t.ReplyTo != nil {
+		n++
+	}
+	if len(t.Mentions) > 0 {
 		n++
 	}
 	buf := codec.AppendMap(nil, n)
@@ -96,6 +113,13 @@ func (t *TextMessage) Encode() ([]byte, error) {
 	if t.ReplyTo != nil {
 		buf = codec.AppendUint(buf, 2)
 		buf = codec.AppendBytes(buf, t.ReplyTo[:])
+	}
+	if len(t.Mentions) > 0 {
+		buf = codec.AppendUint(buf, 3)
+		buf = codec.AppendArray(buf, len(t.Mentions))
+		for i := range t.Mentions {
+			buf = codec.AppendBytes(buf, t.Mentions[i][:])
+		}
 	}
 	return buf, nil
 }
@@ -128,6 +152,27 @@ func DecodeTextMessage(payload []byte) (*TextMessage, error) {
 				var e id.EventID
 				copy(e[:], b)
 				t.ReplyTo = &e
+			}
+		case 3:
+			var cnt int
+			cnt, err = d.ReadArray()
+			if err != nil {
+				return nil, err
+			}
+			if cnt > MaxMentions {
+				return nil, errors.New("schemas: too many mentions")
+			}
+			for range cnt {
+				b, er := d.ReadBytes()
+				if er != nil {
+					return nil, er
+				}
+				if len(b) != id.Size {
+					return nil, errors.New("schemas: mention must be 32 bytes")
+				}
+				var p id.PrincipalID
+				copy(p[:], b)
+				t.Mentions = append(t.Mentions, p)
 			}
 		default:
 			err = d.SkipItem()
