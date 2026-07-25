@@ -1,9 +1,11 @@
 package node
 
 import (
+	"runtime"
 	"testing"
 	"time"
 
+	"github.com/drrainlab/quiet_places/kernel/eventlog"
 	"github.com/drrainlab/quiet_places/kernel/routing"
 	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/transports"
@@ -13,6 +15,32 @@ import (
 type testLink struct{ transports.Endpoint }
 
 func (testLink) Closed() (bool, error) { return false, nil }
+
+// appliedCh taps a space's sync-apply hook so a test can wait for the event
+// it actually cares about instead of polling a clock. The engine is
+// caller-serialized under r.mu, and the tap is installed under the same
+// lock, so this races with nothing.
+func appliedCh(t *testing.T, rt *Runtime, tid id.TerminalID) <-chan id.EventID {
+	t.Helper()
+	ch := make(chan id.EventID, 32)
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	st, ok := rt.spaces[tid]
+	if !ok {
+		t.Fatalf("space %s not attached", tid.Hex()[:6])
+	}
+	prev := st.eng.OnApplied
+	st.eng.OnApplied = func(a eventlog.Applied) {
+		if prev != nil {
+			prev(a)
+		}
+		select {
+		case ch <- a.ID:
+		default: // a slow reader must never stall the pump
+		}
+	}
+	return ch
+}
 
 // TN-1 seam: a filtered link syncs ONLY the allowed spaces; the peer never
 // sees the filtered-out space over that link.
@@ -43,29 +71,138 @@ func TestAdoptLinkFilteredScopesSpaces(t *testing.T) {
 		}
 	}
 
+	allowed := appliedCh(t, bob, tidA)
+	filtered := appliedCh(t, bob, tidB)
+	// Joining already put each space's genesis in Bob's log. The leak test
+	// is about GROWTH over the scoped link, not about emptiness.
+	bBefore, _ := bob.Space(tidB)
+	baseB := bBefore.Log.Len()
+
 	pair := loopback.NewPair(loopback.Faults{Seed: 5})
 	allowOnlyA := func(m routing.FrameMeta) bool { return m.Destination == tidA }
 	alice.adoptLinkFiltered(testLink{pair.A}, 30*time.Millisecond, 200*time.Millisecond,
 		"test", allowOnlyA)
 	bob.adoptLink(testLink{pair.B}, 30*time.Millisecond, 200*time.Millisecond, "test")
 
-	// Generous deadline: the full suite runs packages in parallel and real
-	// tickers can be CPU-starved on a loaded machine.
-	deadline := time.Now().Add(25 * time.Second)
-	for {
-		spA, _ := bob.Space(tidA)
-		if len(spA.State.Messages()) >= 1 {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("allowed space did not sync")
-		}
-		time.Sleep(50 * time.Millisecond)
+	dump := func() string {
+		bA, _ := bob.Space(tidA)
+		bB, _ := bob.Space(tidB)
+		aA, _ := alice.Space(tidA)
+		aB, _ := alice.Space(tidB)
+		return "alice log A=" + itoa(aA.Log.Len()) + " B=" + itoa(aB.Log.Len()) +
+			" · bob log A=" + itoa(bA.Log.Len()) + " B=" + itoa(bB.Log.Len()) +
+			" · bob msgs A=" + itoa(len(bA.State.Messages())) +
+			" B=" + itoa(len(bB.State.Messages()))
 	}
-	// Give the filtered space every chance to leak, then assert it didn't.
-	time.Sleep(1 * time.Second)
-	spB, _ := bob.Space(tidB)
-	if n := len(spB.State.Messages()); n != 0 {
+	// One generous ceiling for the whole exchange. It is a backstop for a
+	// hung link, not the thing being measured — every wait below ends on an
+	// event, so a healthy run finishes in milliseconds regardless.
+	deadline := time.After(30 * time.Second)
+	await := func(what string) {
+		for {
+			select {
+			case <-allowed:
+				return
+			case eid := <-filtered:
+				t.Fatalf("the filtered space leaked over the scoped link "+
+					"(event %s while waiting for %s): %s", eid.Hex()[:8], what, dump())
+			case <-deadline:
+				buf := make([]byte, 1<<20)
+				n := runtime.Stack(buf, true)
+				t.Fatalf("timeout waiting for %s: %s\n=== GOROUTINES ===\n%s",
+					what, dump(), buf[:n])
+			}
+		}
+	}
+
+	// The allowed space converges.
+	await("the allowed space to sync")
+	bA, _ := bob.Space(tidA)
+	if len(bA.State.Messages()) == 0 {
+		t.Fatalf("applied an event but no message surfaced: %s", dump())
+	}
+
+	// A SECOND event over the same link proves the filtered space had a full
+	// pump round-trip to leak in and did not — a far stronger argument than
+	// sleeping for a second and hoping that was long enough.
+	if _, err := alice.Say(tidA, "still only this space", SayOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	await("a second event over the same link")
+
+	bB, _ := bob.Space(tidB)
+	if n := len(bB.State.Messages()); n != 0 {
 		t.Fatalf("filtered space leaked %d messages over the scoped link", n)
+	}
+	if grew := bB.Log.Len() - baseB; grew != 0 {
+		t.Fatalf("filtered space gained %d frames over the scoped link "+
+			"(had %d from the invite): %s", grew, baseB, dump())
+	}
+}
+
+// Two spaces over ONE link must both converge — the bug this pins is not a
+// filter question but a demultiplexing one.
+//
+// Each space has its own sync engine, and every engine used to call
+// Pump(ep), which polls. Poll drains the whole queue. So the first engine
+// in the list swallowed every packet on the link, discarded the ones
+// addressed to its siblings as "not my terminal", and those spaces never
+// synced at all. The order came from a map, so it presented as an
+// occasional slow test rather than as a space that silently stopped
+// working — which is what it was.
+func TestOneLinkCarriesEveryJoinedSpace(t *testing.T) {
+	alice := openRuntime(t, t.TempDir(), "alice")
+	defer alice.Close()
+	bob := openRuntime(t, t.TempDir(), "bob")
+	defer bob.Close()
+
+	const spaces = 4
+	tids := make([]id.TerminalID, 0, spaces)
+	for i := range spaces {
+		tid, err := alice.CreateSpace("Room " + itoa(i))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := alice.Say(tid, "hello from room "+itoa(i), SayOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		invite, err := alice.MintInvite(tid, bob.Device.ID, bob.Device.X25519Pub)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := bob.JoinInvite(invite); err != nil {
+			t.Fatal(err)
+		}
+		tids = append(tids, tid)
+	}
+
+	waits := make([]<-chan id.EventID, spaces)
+	for i, tid := range tids {
+		waits[i] = appliedCh(t, bob, tid)
+	}
+
+	pair := loopback.NewPair(loopback.Faults{Seed: 9})
+	alice.adoptLink(testLink{pair.A}, 30*time.Millisecond, 200*time.Millisecond, "test")
+	bob.adoptLink(testLink{pair.B}, 30*time.Millisecond, 200*time.Millisecond, "test")
+
+	deadline := time.After(30 * time.Second)
+	for i, ch := range waits {
+		select {
+		case <-ch:
+		case <-deadline:
+			var stuck []string
+			for j, tid := range tids {
+				sp, _ := bob.Space(tid)
+				stuck = append(stuck, "room"+itoa(j)+"="+itoa(len(sp.State.Messages())))
+			}
+			t.Fatalf("room %d never synced over the shared link; bob has %v "+
+				"— one space is eating the others' packets", i, stuck)
+		}
+	}
+	for i, tid := range tids {
+		sp, _ := bob.Space(tid)
+		if len(sp.State.Messages()) == 0 {
+			t.Fatalf("room %d applied an event but shows no message", i)
+		}
 	}
 }

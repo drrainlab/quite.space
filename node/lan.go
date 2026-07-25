@@ -7,9 +7,12 @@ package node
 import (
 	"crypto/rand"
 	"encoding/binary"
-	"github.com/drrainlab/quiet_places/kernel/routing"
+	"errors"
 	"time"
 
+	"github.com/drrainlab/quiet_places/kernel/routing"
+	kernelsync "github.com/drrainlab/quiet_places/kernel/sync"
+	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/transports/lan"
 )
 
@@ -147,6 +150,7 @@ func (r *Runtime) adoptLinkFiltered(c link, pump, summaryEvery time.Duration,
 	label string, allow func(routing.FrameMeta) bool) {
 	r.mu.Lock()
 	states := make([]*spaceState, 0, len(r.spaces))
+	byTerm := make(map[id.TerminalID]*spaceState, len(r.spaces))
 	for tid, st := range r.spaces {
 		if allow != nil && !allow(routing.FrameMeta{
 			Destination: tid, IngressLink: routing.LinkID(label),
@@ -155,6 +159,7 @@ func (r *Runtime) adoptLinkFiltered(c link, pump, summaryEvery time.Duration,
 		}
 		st.conns = append(st.conns, c)
 		states = append(states, st)
+		byTerm[tid] = st
 	}
 	r.mu.Unlock()
 
@@ -163,6 +168,10 @@ func (r *Runtime) adoptLinkFiltered(c link, pump, summaryEvery time.Duration,
 		defer r.wg.Done()
 		t := time.NewTicker(pump)
 		defer t.Stop()
+		// ONE reassembler for the link, not one per space. Fragments from
+		// every terminal share this wire, and reassembly is a property of
+		// the wire.
+		reasm := kernelsync.NewReassembler()
 		lastSummary := time.Time{}
 		for {
 			select {
@@ -182,8 +191,27 @@ func (r *Runtime) adoptLinkFiltered(c link, pump, summaryEvery time.Duration,
 				}
 				lastSummary = time.Now()
 			}
-			for _, st := range states {
-				_, _, _ = st.eng.Pump(c)
+			// Poll ONCE and route by terminal. Letting each space call
+			// Pump would mean each one draining the shared queue: the first
+			// engine in the list swallowed every packet, discarded the ones
+			// addressed to its siblings, and those spaces then never synced
+			// over this link at all. It looked like an occasional slow test
+			// because the list order comes from a map.
+			for _, pkt := range c.Poll() {
+				raw, err := reasm.Feed(pkt)
+				if errors.Is(err, kernelsync.ErrNotFragment) {
+					raw, err = pkt, nil // a wrapper may deliver whole messages
+				}
+				if err != nil || raw == nil {
+					continue
+				}
+				term, ok := kernelsync.PeekTerminal(raw)
+				if !ok {
+					continue
+				}
+				if st := byTerm[term]; st != nil {
+					_, _, _ = st.eng.Handle(c, raw)
+				}
 			}
 			r.curLink = ""
 			r.mu.Unlock()

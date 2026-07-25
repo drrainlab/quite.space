@@ -129,3 +129,14 @@ func ExtractSummaryChains(raw []byte) (id.TerminalID, []ChainAdvert, bool) {
 	}
 	return msg.term, out, true
 }
+
+// PeekTerminal reports which terminal a sync message belongs to, without
+// interpreting it further. This is what a link shared by several terminals
+// routes on.
+func PeekTerminal(raw []byte) (id.TerminalID, bool) {
+	msg, err := decodeMessage(raw)
+	if err != nil {
+		return id.TerminalID{}, false
+	}
+	return msg.term, true
+}

@@ -9,6 +9,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/drrainlab/quiet_places/kernel/trust"
+	"github.com/drrainlab/quiet_places/protocol/claims"
+	"github.com/drrainlab/quiet_places/protocol/id"
 )
 
 func openRuntime(t *testing.T, dir, name string) *Runtime {
@@ -217,4 +221,38 @@ func TestAPI(t *testing.T) {
 	if len(state.Cards) != 1 || state.Cards[0].Status != "done" {
 		t.Fatalf("card state wrong: %+v", state.Cards)
 	}
+}
+
+// Runtime projections — reducer state, the trust ladder — are mutated by
+// pump goroutines while holding r.mu. A test that watches a live link must
+// read them under the same lock; reading directly is a data race that the
+// detector will find eventually, usually on someone else's change.
+func msgCount(rt *Runtime, tid id.TerminalID) int {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	st, ok := rt.spaces[tid]
+	if !ok {
+		return 0
+	}
+	return len(st.space.State.Messages())
+}
+
+func deliveryLevel(rt *Runtime, tid id.TerminalID, eid id.EventID) claims.DeliveryLevel {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	st, ok := rt.spaces[tid]
+	if !ok {
+		return claims.DeliveryUnknown
+	}
+	return st.space.Trust.Delivery(eid, tid).Level
+}
+
+func deliveryStatus(rt *Runtime, tid id.TerminalID, eid id.EventID) trust.DeliveryStatus {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	st, ok := rt.spaces[tid]
+	if !ok {
+		return trust.DeliveryStatus{}
+	}
+	return st.space.Trust.Delivery(eid, tid)
 }

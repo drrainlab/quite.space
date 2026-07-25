@@ -98,8 +98,7 @@ func TestCustodyAckOverRadioMovesTheLadder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sb, _ := bob.Space(tid)
-	if lvl := sb.Trust.Delivery(eid, tid).Level; lvl >= claims.DeliveryAcceptedByRelay {
+	if lvl := deliveryLevel(bob, tid, eid); lvl >= claims.DeliveryAcceptedByRelay {
 		t.Fatalf("ladder started too high: %v", lvl)
 	}
 
@@ -110,7 +109,7 @@ func TestCustodyAckOverRadioMovesTheLadder(t *testing.T) {
 		br.PushAcks(now)
 		br.WakeRadio(now)
 		br.PushRadio(now)
-		if sb.Trust.Delivery(eid, tid).Level == claims.DeliveryAcceptedByRelay {
+		if deliveryLevel(bob, tid, eid) == claims.DeliveryAcceptedByRelay {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -121,7 +120,7 @@ func TestCustodyAckOverRadioMovesTheLadder(t *testing.T) {
 
 	// The ladder moved for the right reason, and no further: custody by a
 	// gateway is NOT delivery to a person, and must never be shown as one.
-	st := sb.Trust.Delivery(eid, tid)
+	st := deliveryStatus(bob, tid, eid)
 	if st.Level.RequiresDestinationProof() {
 		t.Fatal("a gateway's custody was recorded as proof of destination")
 	}

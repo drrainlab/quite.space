@@ -126,8 +126,7 @@ func TestRadioBridgeClosesTheLoop(t *testing.T) {
 		if _, err := alice.PullFromRelay(relayAddr); err != nil {
 			t.Log("alice pull:", err)
 		}
-		sa, _ := alice.Space(tid)
-		if len(sa.State.Messages()) >= 1 {
+		if msgCount(alice, tid) >= 1 {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -158,8 +157,7 @@ func TestRadioBridgeClosesTheLoop(t *testing.T) {
 	deadline = time.Now().Add(20 * time.Second)
 	for {
 		cycle()
-		sb, _ := bob.Space(tid)
-		if len(sb.State.Messages()) >= 2 {
+		if msgCount(bob, tid) >= 2 {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -312,9 +310,7 @@ func TestRadioSegmentStaysQuiet(t *testing.T) {
 	deadline := start.Add(20 * time.Second)
 	for {
 		cycle()
-		sb, _ := bob.Space(tid)
-		sc, _ := carol.Space(tid)
-		if len(sb.State.Messages()) >= 1 && len(sc.State.Messages()) >= 1 {
+		if msgCount(bob, tid) >= 1 && msgCount(carol, tid) >= 1 {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -352,8 +348,7 @@ func TestRadioSegmentStaysQuiet(t *testing.T) {
 	}
 	// And the duplicate the second gateway inevitably re-airs is collapsed by
 	// the nodes, not left to become a second message on someone's screen.
-	sb, _ := bob.Space(tid)
-	if n := len(sb.State.Messages()); n != 1 {
+	if n := msgCount(bob, tid); n != 1 {
 		t.Fatalf("two gateways produced %d copies of one message", n)
 	}
 }

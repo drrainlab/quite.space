@@ -65,8 +65,7 @@ func TestDeliveryLadderHonestClimb(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sp, _ := alice.Space(tid)
-	if d := sp.Trust.Delivery(eid0, tid); d.Level != claims.DeliveryCreatedLocal {
+	if d := deliveryStatus(alice, tid, eid0); d.Level != claims.DeliveryCreatedLocal {
 		t.Fatalf("expected created_local, got %v", d.Level)
 	}
 
@@ -95,7 +94,7 @@ func TestDeliveryLadderHonestClimb(t *testing.T) {
 	}
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		d := sp.Trust.Delivery(eid, tid)
+		d := deliveryStatus(alice, tid, eid)
 		if d.Level >= claims.DeliveryHandedToTransport {
 			// Transport custody only — never destination proof (ADR-007).
 			if d.Level.RequiresDestinationProof() {

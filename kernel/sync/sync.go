@@ -92,8 +92,7 @@ type Engine struct {
 	// its own lock around every engine call).
 	pending map[id.Hash]bool
 
-	nextStream uint64
-	reasmSt    *Reassembler
+	reasmSt *Reassembler
 }
 
 type reassembly struct {
@@ -310,8 +309,7 @@ func decodeMessage(data []byte) (*message, error) {
 // ---- Fragmentation (radio-scale MTUs, plan §19 T4) ----
 
 func (e *Engine) fragment(msg []byte, mtu int) ([][]byte, error) {
-	e.nextStream++
-	return FragmentStream(e.nextStream, msg, mtu)
+	return FragmentStream(NextStreamID(), msg, mtu)
 }
 
 func fragHeader(stream uint64, index, total int) []byte {
@@ -358,6 +356,12 @@ func (e *Engine) sendMsg(ep transports.Endpoint, msg []byte) error {
 // Returns the number of events newly applied. Errors on individual frames
 // (unknown author, fork) are counted, not fatal — one bad author must not
 // stop sync for everyone (plan §17.4 partial failure).
+//
+// Pump owns the endpoint: it polls, so it must be the ONLY reader. When one
+// link carries several terminals, poll and reassemble once at the link
+// level and dispatch whole messages with Handle instead — two engines both
+// calling Pump on one endpoint would take turns eating each other's
+// packets, and the loser would simply never sync.
 func (e *Engine) Pump(ep transports.Endpoint) (applied int, rejected int, err error) {
 	for _, pkt := range ep.Poll() {
 		raw, err := e.reassemble(pkt)
@@ -371,48 +375,59 @@ func (e *Engine) Pump(ep transports.Endpoint) (applied int, rejected int, err er
 			}
 			continue
 		}
-		msg, err := decodeMessage(raw)
-		if err != nil {
-			rejected++
-			continue
+		a, r, herr := e.Handle(ep, raw)
+		applied += a
+		rejected += r
+		if herr != nil {
+			return applied, rejected, herr
 		}
-		if msg.term != e.Log.Terminal {
-			rejected++ // not our terminal; a router would dispatch here
-			continue
+	}
+	return applied, rejected, nil
+}
+
+// Handle processes ONE already-reassembled message and replies on ep. It is
+// the seam for a link shared by several terminals: the caller polls and
+// reassembles once, then routes by terminal.
+func (e *Engine) Handle(ep transports.Endpoint, raw []byte) (applied int, rejected int, err error) {
+	msg, derr := decodeMessage(raw)
+	if derr != nil {
+		return 0, 1, nil
+	}
+	if msg.term != e.Log.Terminal {
+		return 0, 1, nil // not ours; the caller should have routed it
+	}
+	switch msg.msgType {
+	case msgSummary:
+		if err := e.pushMissing(ep, msg.sum); err != nil {
+			return applied, rejected, err
 		}
-		switch msg.msgType {
-		case msgSummary:
-			if err := e.pushMissing(ep, msg.sum); err != nil {
-				return applied, rejected, err
+	case msgFrames:
+		for _, f := range msg.frames {
+			as, err := e.Log.Ingest(f)
+			if err != nil {
+				rejected++
+				continue
 			}
-		case msgFrames:
-			for _, f := range msg.frames {
-				as, err := e.Log.Ingest(f)
-				if err != nil {
-					rejected++
-					continue
-				}
-				for _, a := range as {
-					applied++
-					if e.OnApplied != nil {
-						e.OnApplied(a)
-					}
+			for _, a := range as {
+				applied++
+				if e.OnApplied != nil {
+					e.OnApplied(a)
 				}
 			}
-		case msgBlobReq:
-			if err := e.serveBlobs(ep, msg.hashes); err != nil {
-				return applied, rejected, err
+		}
+	case msgBlobReq:
+		if err := e.serveBlobs(ep, msg.hashes); err != nil {
+			return applied, rejected, err
+		}
+	case msgBlobData:
+		for _, b := range msg.blobs {
+			if !e.acceptBlob(b) {
+				rejected++
 			}
-		case msgBlobData:
-			for _, b := range msg.blobs {
-				if !e.acceptBlob(b) {
-					rejected++
-				}
-			}
-		case msgCustody:
-			if e.OnCustodyReceipt != nil && len(msg.receipt) > 0 {
-				e.OnCustodyReceipt(msg.receipt)
-			}
+		}
+	case msgCustody:
+		if e.OnCustodyReceipt != nil && len(msg.receipt) > 0 {
+			e.OnCustodyReceipt(msg.receipt)
 		}
 	}
 	return applied, rejected, nil

@@ -7,6 +7,7 @@ package sync
 import (
 	"errors"
 	"fmt"
+	"sync/atomic"
 
 	"github.com/drrainlab/quiet_places/protocol/codec"
 )
@@ -122,3 +123,14 @@ func (r *Reassembler) Feed(pkt []byte) ([]byte, error) {
 	}
 	return msg, nil
 }
+
+// streamSeq allocates fragment stream ids. It is PROCESS-global on purpose.
+// Stream ids identify a reassembly in progress on a link, and a link can
+// carry several terminals — each with its own engine. Per-engine counters
+// all start at zero, so two engines sharing a link would hand a receiver
+// two different messages under the same stream id, and on any MTU large
+// enough to fragment, the receiver would splice them together.
+var streamSeq atomic.Uint64
+
+// NextStreamID returns a fragment stream id unique within this process.
+func NextStreamID() uint64 { return streamSeq.Add(1) }
