@@ -50,8 +50,7 @@ func TestRelayAutoSync(t *testing.T) {
 	// Bob receives Alice's message (owner -> joiner).
 	deadline := time.Now().Add(20 * time.Second)
 	for {
-		spB, _ := bob.Space(tid)
-		if len(spB.State.Messages()) >= 1 {
+		if msgCount(bob, tid) >= 1 {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -70,8 +69,7 @@ func TestRelayAutoSync(t *testing.T) {
 	}
 	deadline = time.Now().Add(20 * time.Second)
 	for {
-		spA, _ := alice.Space(tid)
-		if len(spA.State.Messages()) >= 2 {
+		if msgCount(alice, tid) >= 2 {
 			break
 		}
 		if time.Now().After(deadline) {

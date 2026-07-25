@@ -121,3 +121,37 @@ radio»), then real hardware (Pi + serial radio).
 Accept: lost DEFINE; receiver reboot under a warm sender; generation
 mismatch; undefined-index drop + heal; warm-link savings ~90–120 B/frame
 (≥35% target); mixed raw↔compact↔versions.
+
+## Verification baseline (from RB-0B onward)
+
+`go test -race ./...` is GREEN and is a required gate from RB-1 onward, not
+an occasional check.
+
+It is worth the runtime because of what it cost to get here. The RB wave
+found two bugs that a clean race baseline makes cheap to catch and an
+unclean one hides:
+
+- engines sharing one link stole each other's packets, which presented as a
+  12% flaky test rather than as spaces that silently never synced;
+- fragment stream ids collided across processes, which on hardware would
+  have read as Meshtastic losing messages at random.
+
+Neither was found by a failing assertion. Both were found by making a test
+say what it was actually waiting for and dumping state when it did not
+arrive.
+
+RB-1 adds a persistent delivery ledger, reconnect loops and transport
+policy — more background workers touching more shared state. New races
+there must be visible immediately instead of drowning in pre-existing noise.
+
+Two rules that keep the baseline clean:
+
+- **Tests never read `Space.State` or `Space.Trust` directly while a link
+  is live.** Those are written by pump goroutines holding `r.mu`. Read them
+  through the locked helpers in `node/node_test.go` (`withSpace`,
+  `msgCount`, `deliveryStatus`, …). Production readers already hold the
+  lock; it is only tests that reach past it.
+- **Wait on events, not on the clock.** `appliedCh` taps the sync-apply
+  hook. A timeout is a backstop for a hung link, never the thing being
+  measured, and it must dump enough state to diagnose from one line of
+  output.

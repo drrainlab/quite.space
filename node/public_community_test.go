@@ -49,8 +49,7 @@ func TestCommunityColdStartJoinAndPublish(t *testing.T) {
 	// The first fetch may race the owner's first auto-publish — wait for it.
 	waitUntil(t, 20*time.Second, "joiner never saw the projection", func() bool {
 		_ = joiner.fetchPublicProjection(addr, tid)
-		sp, _ := joiner.Space(tid)
-		return len(sp.State.Messages()) >= 1
+		return msgCount(joiner, tid) >= 1
 	})
 	if err := joiner.JoinPublicSpace(tid); err != nil {
 		t.Fatal(err)
@@ -64,8 +63,7 @@ func TestCommunityColdStartJoinAndPublish(t *testing.T) {
 
 	// Owner materializes the contribution; a third stranger reads BOTH.
 	waitUntil(t, 25*time.Second, "owner never materialized the contribution", func() bool {
-		sp, _ := owner.Space(tid)
-		return len(sp.State.Messages()) == 2
+		return msgCount(owner, tid) == 2
 	})
 	third := openRuntime(t, t.TempDir(), "third")
 	defer third.Close()
@@ -74,8 +72,7 @@ func TestCommunityColdStartJoinAndPublish(t *testing.T) {
 	}
 	waitUntil(t, 20*time.Second, "third stranger never saw both messages", func() bool {
 		_ = third.fetchPublicProjection(addr, tid)
-		sp, _ := third.Space(tid)
-		return len(sp.State.Messages()) == 2
+		return msgCount(third, tid) == 2
 	})
 
 	// I8 restart survival: the joiner restarts; its pending set re-pushes;
@@ -99,8 +96,7 @@ func TestCommunityColdStartJoinAndPublish(t *testing.T) {
 	if _, err := owner.collectPublicIngress(addr, tid); err != nil {
 		t.Fatal(err)
 	}
-	sp, _ := owner.Space(tid)
-	if got := len(sp.State.Messages()); got != 2 {
+	if got := msgCount(owner, tid); got != 2 {
 		t.Fatalf("re-pushed pending duplicated content: %d messages", got)
 	}
 }
@@ -155,8 +151,7 @@ func TestCuratorActivationByPublicLink(t *testing.T) {
 	if _, err := owner.collectPublicIngress(addr, tid); err != nil {
 		t.Fatal(err)
 	}
-	sp, _ := owner.Space(tid)
-	if got := len(sp.State.Messages()); got != 2 {
+	if got := msgCount(owner, tid); got != 2 {
 		t.Fatalf("curator post not materialized by owner: %d", got)
 	}
 
@@ -214,8 +209,7 @@ func TestCommunityMediaCustody(t *testing.T) {
 	}
 	waitUntil(t, 20*time.Second, "artist never saw the projection", func() bool {
 		_ = artist.fetchPublicProjection(addr, tid)
-		sp, _ := artist.Space(tid)
-		return len(sp.State.Messages()) >= 1
+		return msgCount(artist, tid) >= 1
 	})
 	if err := artist.JoinPublicSpace(tid); err != nil {
 		t.Fatal(err)
@@ -232,8 +226,7 @@ func TestCommunityMediaCustody(t *testing.T) {
 
 	// Owner materializes BOTH events (canonical log, chain intact)...
 	waitUntil(t, 25*time.Second, "owner never materialized the contribution", func() bool {
-		sp, _ := owner.Space(tid)
-		return len(sp.State.Messages()) == 2 // "post your art" + "hope you like it"
+		return msgCount(owner, tid) == 2 // "post your art" + "hope you like it"
 	})
 	// ...and eventually takes custody of the blob (wants → artist answers).
 	waitUntil(t, 30*time.Second, "owner never took custody of the blob", func() bool {
@@ -249,14 +242,14 @@ func TestCommunityMediaCustody(t *testing.T) {
 	}
 	waitUntil(t, 25*time.Second, "reader never saw the media publication", func() bool {
 		_ = reader.fetchPublicProjection(addr, tid)
-		sp, _ := reader.Space(tid)
-		entries := sp.State.Entries()
-		for _, e := range entries {
-			if e.Kind == "visual" {
-				return true
+		return withSpace(reader, tid, func(s *terminals.Space) bool {
+			for _, e := range s.State.Entries() {
+				if e.Kind == "visual" {
+					return true
+				}
 			}
-		}
-		return false
+			return false
+		})
 	})
 }
 

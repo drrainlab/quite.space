@@ -13,6 +13,7 @@ import (
 	"github.com/drrainlab/quiet_places/kernel/trust"
 	"github.com/drrainlab/quiet_places/protocol/claims"
 	"github.com/drrainlab/quiet_places/protocol/id"
+	"github.com/drrainlab/quiet_places/terminals"
 )
 
 func openRuntime(t *testing.T, dir, name string) *Runtime {
@@ -111,12 +112,11 @@ func TestTwoNodesInviteAndSync(t *testing.T) {
 
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		sB, _ := rtB.Space(tid)
-		if len(sB.State.Messages()) >= 1 {
+		if msgCount(rtB, tid) >= 1 {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("no convergence: B has %d events", sB.Log.Len())
+			t.Fatalf("no convergence: B has %d events", logLen(rtB, tid))
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
@@ -126,8 +126,7 @@ func TestTwoNodesInviteAndSync(t *testing.T) {
 		t.Fatal(err)
 	}
 	for {
-		sA, _ := rtA.Space(tid)
-		if len(sA.State.Messages()) >= 2 {
+		if msgCount(rtA, tid) >= 2 {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -223,36 +222,55 @@ func TestAPI(t *testing.T) {
 	}
 }
 
+// withSpace reads a runtime-guarded projection under the same lock the pump
+// goroutines hold. Every read of Space.State or Space.Trust from a test that
+// has a live link must go through here: those structures are written by the
+// pump while it holds r.mu, and reading them directly is a data race the
+// detector will eventually surface on somebody else's unrelated change.
+func withSpace[T any](rt *Runtime, tid id.TerminalID, f func(*terminals.Space) T) T {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	st, ok := rt.spaces[tid]
+	if !ok {
+		var zero T
+		return zero
+	}
+	return f(st.space)
+}
+
 // Runtime projections — reducer state, the trust ladder — are mutated by
 // pump goroutines while holding r.mu. A test that watches a live link must
 // read them under the same lock; reading directly is a data race that the
 // detector will find eventually, usually on someone else's change.
 func msgCount(rt *Runtime, tid id.TerminalID) int {
-	rt.mu.Lock()
-	defer rt.mu.Unlock()
-	st, ok := rt.spaces[tid]
-	if !ok {
-		return 0
-	}
-	return len(st.space.State.Messages())
+	return withSpace(rt, tid, func(s *terminals.Space) int {
+		return len(s.State.Messages())
+	})
 }
 
 func deliveryLevel(rt *Runtime, tid id.TerminalID, eid id.EventID) claims.DeliveryLevel {
-	rt.mu.Lock()
-	defer rt.mu.Unlock()
-	st, ok := rt.spaces[tid]
-	if !ok {
-		return claims.DeliveryUnknown
-	}
-	return st.space.Trust.Delivery(eid, tid).Level
+	return deliveryStatus(rt, tid, eid).Level
 }
 
 func deliveryStatus(rt *Runtime, tid id.TerminalID, eid id.EventID) trust.DeliveryStatus {
-	rt.mu.Lock()
-	defer rt.mu.Unlock()
-	st, ok := rt.spaces[tid]
-	if !ok {
-		return trust.DeliveryStatus{}
-	}
-	return st.space.Trust.Delivery(eid, tid)
+	return withSpace(rt, tid, func(s *terminals.Space) trust.DeliveryStatus {
+		return s.Trust.Delivery(eid, tid)
+	})
+}
+
+// logLen snapshots the raw log length under the lock.
+func logLen(rt *Runtime, tid id.TerminalID) int {
+	return withSpace(rt, tid, func(s *terminals.Space) int { return s.Log.Len() })
+}
+
+// msgTexts snapshots message text under the lock.
+func msgTexts(rt *Runtime, tid id.TerminalID) []string {
+	return withSpace(rt, tid, func(s *terminals.Space) []string {
+		msgs := s.State.Messages()
+		out := make([]string, 0, len(msgs))
+		for _, m := range msgs {
+			out = append(out, m.Text)
+		}
+		return out
+	})
 }

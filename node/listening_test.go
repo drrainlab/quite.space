@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/drrainlab/quiet_places/protocol/listening"
+	"github.com/drrainlab/quiet_places/terminals"
 	"github.com/drrainlab/quiet_places/transports/relay"
 )
 
@@ -115,8 +116,10 @@ func TestListeningFollowerRefused(t *testing.T) {
 	}
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		sB, _ := bob.Space(tid)
-		if _, ok := sB.State.AppInstanceByID(mustIID(t, inst.InstanceID)); ok {
+		if withSpace(bob, tid, func(s *terminals.Space) bool {
+			_, ok := s.State.AppInstanceByID(mustIID(t, inst.InstanceID))
+			return ok
+		}) {
 			break
 		}
 		if time.Now().After(deadline) {

@@ -52,11 +52,10 @@ func TestPublicProjectionEndToEnd(t *testing.T) {
 		if err := reader.OpenPublicSpace(tid, addr); err != nil {
 			t.Fatalf("stranger %d open: %v", i, err)
 		}
-		sp, _ := reader.Space(tid)
-		msgs := sp.State.Messages()
-		if len(msgs) != 3 {
-			t.Fatalf("stranger %d materialized %d messages", i, len(msgs))
+		if n := msgCount(reader, tid); n != 3 {
+			t.Fatalf("stranger %d materialized %d messages", i, n)
 		}
+		sp, _ := reader.Space(tid)
 		if sp.Private {
 			t.Fatalf("stranger %d replica marked private", i)
 		}
@@ -113,8 +112,7 @@ func TestPublicProjectionEndToEnd(t *testing.T) {
 	if err := late.OpenPublicSpace(tid, addr); err != nil {
 		t.Fatal(err)
 	}
-	sp, _ := late.Space(tid)
-	if got := len(sp.State.Messages()); got != 4 {
+	if got := msgCount(late, tid); got != 4 {
 		t.Fatalf("late reader sees %d messages, want 4", got)
 	}
 }
@@ -158,8 +156,7 @@ func TestPublicProjectionAutoSync(t *testing.T) {
 	}
 	deadline := time.Now().Add(20 * time.Second)
 	for {
-		sp, _ := reader.Space(tid)
-		if len(sp.State.Messages()) >= 1 {
+		if msgCount(reader, tid) >= 1 {
 			break
 		}
 		if time.Now().After(deadline) {

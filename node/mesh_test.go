@@ -57,19 +57,17 @@ func TestTwoNodesSyncOverMeshtastic(t *testing.T) {
 
 	deadline := time.Now().Add(15 * time.Second)
 	for {
-		sB, _ := rtB.Space(tid)
-		if len(sB.State.Messages()) >= 1 {
+		if msgCount(rtB, tid) >= 1 {
 			break
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("no convergence over mesh: B has %d events, mesh A %+v B %+v",
-				sB.Log.Len(), rtA.Mesh(), rtB.Mesh())
+				logLen(rtB, tid), rtA.Mesh(), rtB.Mesh())
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	sB, _ := rtB.Space(tid)
-	if sB.State.Messages()[0].Text != "meet at the ridge at dawn" {
-		t.Fatal("message mangled over mesh")
+	if got := msgTexts(rtB, tid); got[0] != "meet at the ridge at dawn" {
+		t.Fatalf("message mangled over mesh: %q", got[0])
 	}
 
 	// Reply back over the same radio link.
@@ -77,8 +75,7 @@ func TestTwoNodesSyncOverMeshtastic(t *testing.T) {
 		t.Fatal(err)
 	}
 	for {
-		sA, _ := rtA.Space(tid)
-		if len(sA.State.Messages()) >= 2 {
+		if msgCount(rtA, tid) >= 2 {
 			break
 		}
 		if time.Now().After(deadline) {

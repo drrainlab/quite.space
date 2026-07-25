@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/drrainlab/quiet_places/protocol/resonance"
+	"github.com/drrainlab/quiet_places/terminals"
 )
 
 func semanticRe(key, fb string) resonance.Reaction {
@@ -119,15 +120,17 @@ func TestResonanceTwoNodeSync(t *testing.T) {
 			time.Sleep(50 * time.Millisecond)
 		}
 	}
-	spB, _ := bob.Space(tid)
-	waitFor("message sync", func() bool { return len(spB.State.Messages()) >= 1 })
+	waitFor("message sync", func() bool { return msgCount(bob, tid) >= 1 })
 
 	// Bob reacts; Alice sees the aggregate.
 	if err := bob.ResonanceSet(tid, eid, semanticRe("resonates", "〰️")); err != nil {
 		t.Fatal(err)
 	}
-	spA, _ := alice.Space(tid)
-	waitFor("reaction sync", func() bool { return spA.State.ResonanceFor(eid).Total == 1 })
+	waitFor("reaction sync", func() bool {
+		return withSpace(alice, tid, func(s *terminals.Space) int {
+			return s.State.ResonanceFor(eid).Total
+		}) == 1
+	})
 
 	// Alice (owner) publishes a palette; it reaches Bob and changes HIS
 	// emit gate.
@@ -138,8 +141,10 @@ func TestResonanceTwoNodeSync(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor("palette sync", func() bool {
-		p, own := spB.State.ActivePalette()
-		return own && p.PaletteID == "studio.v1"
+		return withSpace(bob, tid, func(s *terminals.Space) bool {
+			p, own := s.State.ActivePalette()
+			return own && p.PaletteID == "studio.v1"
+		})
 	})
 	if err := bob.ResonanceSet(tid, eid,
 		resonance.Reaction{Kind: resonance.KindUnicode, Value: "🔥"}); err == nil {
@@ -167,10 +172,14 @@ func TestResonanceTwoNodeSync(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor("forged palette counted on alice", func() bool {
-		spA.State.Digest() // touch nothing; just poll
-		return spA.State.Unsupported["resonance:unauthorized_palette"] >= 1
+		return withSpace(alice, tid, func(s *terminals.Space) int {
+			return s.State.Unsupported["resonance:unauthorized_palette"]
+		}) >= 1
 	})
-	if p, _ := spA.State.ActivePalette(); p.PaletteID != "studio.v1" {
-		t.Fatalf("forged palette must not fold: %q", p.PaletteID)
+	if p := withSpace(alice, tid, func(s *terminals.Space) string {
+		pal, _ := s.State.ActivePalette()
+		return pal.PaletteID
+	}); p != "studio.v1" {
+		t.Fatalf("forged palette must not fold: %q", p)
 	}
 }
