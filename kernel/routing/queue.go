@@ -7,7 +7,9 @@
 package routing
 
 import (
+	"crypto/rand"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"hash/crc32"
@@ -58,6 +60,48 @@ type CustodyRecord struct {
 	// restart, and it must name the hand-off it belongs to or the sender
 	// cannot tell it apart from a receipt for a newer attempt.
 	Attempt []byte
+
+	// Lease is this custody's own identity: minted here, opaque to the
+	// sender, stable across restart and compaction. It is random rather
+	// than derived, because every derivation available was wrong — a file
+	// offset moves when the segment is compacted, a timestamp makes
+	// identity depend on a clock, and an event id cannot distinguish two
+	// custodies of the same event by different attempts or gateways.
+	Lease CustodyLeaseID
+}
+
+// CustodyLeaseID names one accepted custody. Three ids with three jobs:
+// EventID says WHAT the message is, AttemptID says which of the sender's
+// responsibility epochs it belongs to, and this says which gateway promise
+// is being made or withdrawn.
+type CustodyLeaseID [16]byte
+
+// Zero reports the unset lease.
+func (c CustodyLeaseID) Zero() bool { return c == CustodyLeaseID{} }
+
+// String renders the lease for receipts and diagnostics.
+func (c CustodyLeaseID) String() string { return hex.EncodeToString(c[:]) }
+
+// ParseLease decodes a lease id; the zero value on anything malformed.
+func ParseLease(s string) (CustodyLeaseID, bool) {
+	var l CustodyLeaseID
+	b, err := hex.DecodeString(s)
+	if err != nil || len(b) != len(l) {
+		return CustodyLeaseID{}, false
+	}
+	copy(l[:], b)
+	return l, true
+}
+
+// acceptKey is the durable identity of ONE custody acceptance. Including
+// the attempt is what lets a sender retry the same event after custody
+// ended: the frame is identical, so any event-only key would refuse it as
+// a duplicate and the sender would never hear an acknowledgement again.
+// Including the domain keeps two boundaries from sharing a promise.
+type acceptKey struct {
+	domain  LoopDomainID
+	attempt string
+	event   id.EventID
 }
 
 // QueueCaps bound the store (Pi-readiness).
@@ -94,10 +138,14 @@ type Queue struct {
 	// append — so anything that needs to answer "did I take this, and when"
 	// should ask here rather than keep a second copy that can disagree.
 	byEvent map[id.EventID]uint64
-	dead    int64 // bytes of tombstoned records in the segment
-	total   int64 // bytes of live frames
-	perDst  map[id.TerminalID]int64
-	caps    QueueCaps
+	// byAccept indexes live records by acceptance identity, so a
+	// retransmission of the same attempt finds the custody it already has
+	// instead of creating a second one.
+	byAccept map[acceptKey]uint64
+	dead     int64 // bytes of tombstoned records in the segment
+	total    int64 // bytes of live frames
+	perDst   map[id.TerminalID]int64
+	caps     QueueCaps
 }
 
 const (
@@ -121,6 +169,7 @@ const (
 	qKeyEligible  = 11
 	qKeyGuarantee = 12
 	qKeyAttempt   = 13
+	qKeyLease     = 14
 )
 
 // ErrNoRoom is returned when custody cannot be taken without evicting a
@@ -135,8 +184,9 @@ func OpenQueue(dir string, caps QueueCaps) (*Queue, error) {
 		return nil, err
 	}
 	q := &Queue{dir: dir, live: map[uint64]*CustodyRecord{},
-		byEvent: map[id.EventID]uint64{},
-		perDst:  map[id.TerminalID]int64{}, caps: caps}
+		byEvent:  map[id.EventID]uint64{},
+		byAccept: map[acceptKey]uint64{},
+		perDst:   map[id.TerminalID]int64{}, caps: caps}
 	path := filepath.Join(dir, "custody.seg")
 	if err := q.replay(path); err != nil {
 		return nil, err
@@ -235,6 +285,12 @@ func (q *Queue) applyRecord(body []byte) {
 			var b []byte
 			b, er = d.ReadBytes()
 			rec.Attempt = append([]byte(nil), b...)
+		case qKeyLease:
+			var b []byte
+			b, er = d.ReadBytes()
+			if er == nil && len(b) == len(rec.Lease) {
+				copy(rec.Lease[:], b)
+			}
 		default:
 			er = d.SkipItem()
 		}
@@ -256,6 +312,7 @@ func (q *Queue) applyRecord(body []byte) {
 		rec.Guaranteed = guarantee != 0
 		q.live[rid] = rec
 		q.byEvent[id.EventIDOf(rec.Frame)] = rid
+		q.byAccept[acceptKeyOf(rec)] = rid
 		q.total += int64(len(rec.Frame))
 		q.perDst[rec.Destination] += int64(len(rec.Frame))
 	case recDefer:
@@ -265,6 +322,8 @@ func (q *Queue) applyRecord(body []byte) {
 		}
 	case recTomb:
 		if old, ok := q.live[rid]; ok {
+			delete(q.byEvent, id.EventIDOf(old.Frame))
+			delete(q.byAccept, acceptKeyOf(old))
 			q.total -= int64(len(old.Frame))
 			q.perDst[old.Destination] -= int64(len(old.Frame))
 			q.dead += int64(len(old.Frame))
@@ -288,7 +347,20 @@ func (q *Queue) appendRecord(body []byte, sync bool) error {
 }
 
 func encodePut(rec *CustodyRecord) []byte {
-	buf := codec.AppendMap(nil, 12)
+	// The header count MUST match what follows. Optional keys appended
+	// after a fixed count are written and then never read: the decoder
+	// stops at the declared number of pairs, so the attempt token and the
+	// lease survived a write and vanished on the next restart — silently,
+	// which is how a gateway would have come back up unable to name the
+	// custody it was still holding.
+	n := 12
+	if len(rec.Attempt) > 0 {
+		n++
+	}
+	if !rec.Lease.Zero() {
+		n++
+	}
+	buf := codec.AppendMap(nil, n)
 	buf = codec.AppendUint(buf, qKeyKind)
 	buf = codec.AppendUint(buf, recPut)
 	buf = codec.AppendUint(buf, qKeyID)
@@ -317,7 +389,20 @@ func encodePut(rec *CustodyRecord) []byte {
 		buf = codec.AppendUint(buf, qKeyAttempt)
 		buf = codec.AppendBytes(buf, rec.Attempt)
 	}
+	if !rec.Lease.Zero() {
+		buf = codec.AppendUint(buf, qKeyLease)
+		buf = codec.AppendBytes(buf, rec.Lease[:])
+	}
 	return buf
+}
+
+// acceptKeyOf derives the acceptance identity of a record.
+func acceptKeyOf(rec *CustodyRecord) acceptKey {
+	return acceptKey{
+		domain:  rec.IngressDomain,
+		attempt: string(rec.Attempt),
+		event:   id.EventIDOf(rec.Frame),
+	}
 }
 
 func b2u(b bool) uint64 {
@@ -371,6 +456,49 @@ func (q *Queue) EnqueueGuaranteed(meta FrameMeta, frame []byte, domain LoopDomai
 	return q.enqueue(meta, frame, domain, now, true, attempt)
 }
 
+// AcceptCustody is the IDEMPOTENT entry point for taking custody of a frame
+// on behalf of a named attempt. It is what makes the ordinary loss path
+// work: the first acknowledgement goes missing, the sender retransmits the
+// same attempt, and the gateway must answer with the promise it already
+// made rather than mint a second one.
+//
+// reused=true means this exact acceptance — same boundary, same attempt,
+// same frame — is already held; the caller re-issues the SAME lease and
+// enqueues nothing. A different attempt for the same frame is a genuinely
+// new acceptance and gets its own lease, which is why the key includes the
+// attempt: an event-only key would refuse a legitimate retry as a duplicate
+// and the sender would never be acknowledged again.
+func (q *Queue) AcceptCustody(meta FrameMeta, frame []byte, domain LoopDomainID,
+	now time.Time, attempt []byte) (rec CustodyRecord, reused bool, err error) {
+
+	// Derive the event id from the FRAME, never from the caller's meta. The
+	// live index does, so trusting a caller-supplied id here would let the
+	// two disagree and an acceptance become unfindable by the very lookup
+	// meant to make it idempotent.
+	k := acceptKey{domain: domain, attempt: string(attempt), event: id.EventIDOf(frame)}
+	q.mu.Lock()
+	if rid, ok := q.byAccept[k]; ok {
+		if live, ok := q.live[rid]; ok {
+			cp := *live
+			q.mu.Unlock()
+			return cp, true, nil
+		}
+	}
+	q.mu.Unlock()
+
+	rid, err := q.enqueue(meta, frame, domain, now, true, attempt)
+	if err != nil {
+		return CustodyRecord{}, false, err
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	live, ok := q.live[rid]
+	if !ok {
+		return CustodyRecord{}, false, errors.New("routing: custody vanished after append")
+	}
+	return *live, false, nil
+}
+
 func (q *Queue) enqueue(meta FrameMeta, frame []byte, domain LoopDomainID,
 	now time.Time, guaranteed bool, attempt []byte) (uint64, error) {
 
@@ -399,12 +527,21 @@ func (q *Queue) enqueue(meta FrameMeta, frame []byte, domain LoopDomainID,
 		Guaranteed: guaranteed,
 		Attempt:    append([]byte(nil), attempt...),
 	}
+	// The lease is minted BEFORE the append, so the identity a receipt will
+	// quote is the one on disk. Minting it afterwards would leave a window
+	// where custody exists with no name to acknowledge it by.
+	if guaranteed {
+		if _, err := rand.Read(rec.Lease[:]); err != nil {
+			return 0, err
+		}
+	}
 	q.nextID++
 	if err := q.appendRecord(encodePut(rec), true); err != nil {
 		return 0, err
 	}
 	q.live[rec.ID] = rec
 	q.byEvent[id.EventIDOf(rec.Frame)] = rec.ID
+	q.byAccept[acceptKeyOf(rec)] = rec.ID
 	q.total += int64(len(rec.Frame))
 	q.perDst[rec.Destination] += int64(len(rec.Frame))
 	return rec.ID, nil
@@ -467,6 +604,7 @@ func (q *Queue) tombLocked(rid uint64) {
 	}
 	_ = q.appendRecord(encodeTomb(rid), false)
 	delete(q.byEvent, id.EventIDOf(rec.Frame))
+	delete(q.byAccept, acceptKeyOf(rec))
 	q.total -= int64(len(rec.Frame))
 	q.perDst[rec.Destination] -= int64(len(rec.Frame))
 	q.dead += int64(len(rec.Frame))

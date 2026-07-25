@@ -483,3 +483,80 @@ func TestRequeueSoakStaysBounded(t *testing.T) {
 		t.Fatal("the record never became eligible again after the soak")
 	}
 }
+
+// Every optional custody field, written and read back field for field.
+//
+// This exists because of how the last one broke: encodePut declared a fixed
+// map header and then appended optional keys after it, so the attempt token
+// and the lease were written to disk and never read again. The decoder
+// stopped at the declared count. Nothing failed, nothing logged — a gateway
+// simply came back up unable to name the custody it was still holding.
+//
+// A round-trip test that only checks the fields it happens to think of
+// would have missed it too. This one compares the whole record.
+func TestCustodyRecordRoundTripsEveryField(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Unix(1_784_000_000, 0)
+	q, err := OpenQueue(dir, QueueCaps{
+		MaxTotalBytes: 1 << 20, MaxPerDestBytes: 1 << 20, OperatorTTL: 48 * time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta := testMeta(7, signal.PrioritySecurity, uint64(now.Add(time.Hour).Unix()))
+	meta.IngressLink = "mesh:radio0"
+	frame := []byte("signed-frame-bytes-stand-in")
+	attempt := []byte("attempt-token-16b")
+
+	rec, _, err := q.AcceptCustody(meta, frame, "meshtastic-quiet@beta", now, attempt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eid := id.EventIDOf(frame)
+	// Give the retry schedule a non-zero value too, so no field is left at
+	// its zero value where a dropped write would be invisible.
+	q.Requeue(rec.ID, now.Add(45*time.Second))
+	before, ok := q.Held(eid)
+	if !ok {
+		t.Fatal("record missing before restart")
+	}
+	q.Close()
+
+	q2, err := OpenQueue(dir, QueueCaps{
+		MaxTotalBytes: 1 << 20, MaxPerDestBytes: 1 << 20, OperatorTTL: 48 * time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer q2.Close()
+	after, ok := q2.Held(eid)
+	if !ok {
+		t.Fatal("record lost across restart")
+	}
+
+	for _, f := range []struct {
+		name      string
+		got, want any
+	}{
+		{"ID", after.ID, before.ID},
+		{"Frame", string(after.Frame), string(before.Frame)},
+		{"Destination", after.Destination, before.Destination},
+		{"Priority", after.Priority, before.Priority},
+		{"ExpiresAt", after.ExpiresAt, before.ExpiresAt},
+		{"IngressLink", after.IngressLink, before.IngressLink},
+		{"IngressDomain", after.IngressDomain, before.IngressDomain},
+		{"EnqueuedAt", after.EnqueuedAt, before.EnqueuedAt},
+		{"Attempts", after.Attempts, before.Attempts},
+		{"NextEligibleAt", after.NextEligibleAt, before.NextEligibleAt},
+		{"Guaranteed", after.Guaranteed, before.Guaranteed},
+		{"Attempt", string(after.Attempt), string(before.Attempt)},
+		{"Lease", after.Lease, before.Lease},
+	} {
+		if f.got != f.want {
+			t.Errorf("%s did not survive the restart: got %v, want %v",
+				f.name, f.got, f.want)
+		}
+	}
+	// And the values are actually meaningful, not all zero.
+	if len(after.Attempt) == 0 || after.Lease.Zero() || after.NextEligibleAt == 0 {
+		t.Fatalf("the test asserted equality between empty values: %+v", after)
+	}
+}
