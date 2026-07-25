@@ -52,11 +52,17 @@ type EntryContent struct {
 	Unknown *UnknownContent
 }
 
-// TextContent is a chat text entry (message.text.v1).
+// TextContent is a chat text entry (message.text.v1). Mentions are the
+// author's SIGNED claim of who is addressed — anyone may mention anyone, but
+// the claim itself is authenticated, so readers never have to guess from the
+// text. ReplyTo here is a genuine reply pointer; note that
+// message.revised.v1 reuses the same wire field as its revision target, so
+// only MessageText entries carry a reply edge.
 type TextContent struct {
-	Text    string
-	ReplyTo *id.EventID
-	Revised bool
+	Text     string
+	ReplyTo  *id.EventID
+	Mentions []id.PrincipalID
+	Revised  bool
 }
 
 // UnknownContent keeps a future block visible and honest.
@@ -71,6 +77,7 @@ type Entry struct {
 	ID         id.EventID
 	Author     id.PrincipalID
 	Clock      uint64
+	CreatedAt  uint64 // author wall-clock (advisory) — display order
 	ProducedBy signal.Authorship
 	Kind       EntryKind
 	Content    EntryContent
@@ -122,6 +129,13 @@ type State struct {
 	// Controller is the space controller from the manifest — static space
 	// metadata (never event-derived), used only to authorize keep moderation.
 	Controller *id.PrincipalID
+
+	// Authorized is the curated-space publish filter (PA-0): nil means no
+	// policy (everything materializes). When set, events from principals
+	// outside the set are not materialized — defense in depth behind the
+	// log admission gate, for frames that reached this replica by paths
+	// that predate or bypass admission.
+	Authorized map[id.PrincipalID]bool
 
 	// Unsupported schemas are counted, never dropped silently (ADR-009).
 	Unsupported map[string]int
@@ -176,7 +190,7 @@ func (s *State) entryRecFor(eid id.EventID) *entryRec {
 func (s *State) installEntry(eid id.EventID, env *signal.Envelope, kind EntryKind, content EntryContent) {
 	rec := s.entryRecFor(eid)
 	rec.entry = Entry{
-		ID: eid, Author: env.Principal, Clock: env.LogicalClock,
+		ID: eid, Author: env.Principal, Clock: env.LogicalClock, CreatedAt: env.CreatedAt,
 		ProducedBy: env.ProducedBy, Kind: kind, Content: content,
 	}
 	if _, t := s.orphanTombs[eid]; t {
@@ -191,6 +205,12 @@ func (s *State) installEntry(eid id.EventID, env *signal.Envelope, kind EntryKin
 
 // Apply folds one applied event into the state.
 func (s *State) Apply(env *signal.Envelope, eid id.EventID) {
+	// Curated-space publish policy (PA-0, defense in depth): the primary
+	// gate is log admission; anything that slipped past it still never
+	// materializes here.
+	if s.Authorized != nil && !s.Authorized[env.Principal] {
+		return
+	}
 	switch env.Schema {
 	case schemas.MessageText:
 		m, err := schemas.DecodeTextMessage(env.Payload)
@@ -198,7 +218,8 @@ func (s *State) Apply(env *signal.Envelope, eid id.EventID) {
 			s.Unsupported["malformed:"+env.Schema]++
 			return
 		}
-		s.installEntry(eid, env, KindText, EntryContent{Text: &TextContent{Text: m.Text, ReplyTo: m.ReplyTo}})
+		s.installEntry(eid, env, KindText, EntryContent{Text: &TextContent{
+			Text: m.Text, ReplyTo: m.ReplyTo, Mentions: m.Mentions}})
 	case schemas.MessageRevised:
 		m, err := schemas.DecodeTextMessage(env.Payload)
 		if err != nil || m.ReplyTo == nil {
@@ -375,9 +396,24 @@ func (s *State) Entries() []Entry {
 		out = append(out, e)
 	}
 	sort.Slice(out, func(i, j int) bool {
-		return !later(out[i].Clock, out[i].ID, out[j].Clock, out[j].ID)
+		return displayBefore(out[i], out[j])
 	})
 	return out
+}
+
+// displayBefore orders the feed for humans: wall-clock (CreatedAt) first, then
+// the deterministic (LogicalClock, EventID) tiebreak. Logical clock remains
+// the causal authority (ADR-004) — this only reorders equal-time concurrent
+// items so a later message never renders above an earlier one just because
+// the authors' own log lengths differ. Every replica still agrees exactly.
+func displayBefore(a, b Entry) bool {
+	if a.CreatedAt != b.CreatedAt {
+		return a.CreatedAt < b.CreatedAt
+	}
+	if a.Clock != b.Clock {
+		return a.Clock < b.Clock
+	}
+	return string(a.ID[:]) < string(b.ID[:])
 }
 
 // EntryByID projects one live entry (Shelf enrichment). Tombstoned entries
@@ -404,6 +440,7 @@ type Message struct {
 	Author     id.PrincipalID
 	Text       string
 	ReplyTo    *id.EventID
+	Mentions   []id.PrincipalID
 	Clock      uint64
 	ProducedBy signal.Authorship
 	Revised    bool
@@ -417,8 +454,8 @@ func (s *State) Messages() []Message {
 		}
 		out = append(out, Message{
 			ID: e.ID, Author: e.Author, Text: e.Content.Text.Text,
-			ReplyTo: e.Content.Text.ReplyTo, Clock: e.Clock,
-			ProducedBy: e.ProducedBy, Revised: e.Content.Text.Revised,
+			ReplyTo: e.Content.Text.ReplyTo, Mentions: e.Content.Text.Mentions,
+			Clock: e.Clock, ProducedBy: e.ProducedBy, Revised: e.Content.Text.Revised,
 		})
 	}
 	return out

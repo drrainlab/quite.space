@@ -15,11 +15,40 @@ type ServerLimits struct {
 	MaxItemBytes int
 	PerHint      int
 	MaxTTL       time.Duration
+	// PA-0 fetch bounds: hints per fetch request, bytes per fetch reply,
+	// fetches per connection per minute. Zero values take the defaults.
+	FetchMaxHints    int
+	FetchMaxBytes    int
+	FetchRatePerMin  int
 }
 
 // DefaultLimits are conservative community-node settings.
 func DefaultLimits() ServerLimits {
-	return ServerLimits{MaxItemBytes: 16 << 20, PerHint: 64, MaxTTL: 7 * 24 * time.Hour}
+	return ServerLimits{
+		MaxItemBytes: 16 << 20, PerHint: 64, MaxTTL: 7 * 24 * time.Hour,
+		FetchMaxHints: 64, FetchMaxBytes: 8 << 20, FetchRatePerMin: 60,
+	}
+}
+
+func (l ServerLimits) fetchMaxHints() int {
+	if l.FetchMaxHints <= 0 {
+		return 64
+	}
+	return l.FetchMaxHints
+}
+
+func (l ServerLimits) fetchMaxBytes() int {
+	if l.FetchMaxBytes <= 0 {
+		return 8 << 20
+	}
+	return l.FetchMaxBytes
+}
+
+func (l ServerLimits) fetchRatePerMin() int {
+	if l.FetchRatePerMin <= 0 {
+		return 60
+	}
+	return l.FetchRatePerMin
 }
 
 // Server is a running relay.
@@ -74,10 +103,23 @@ func (s *Server) Close() {
 // Pending reports held items (diagnostics).
 func (s *Server) Pending() int { return s.store.Pending() }
 
+// WipeForTest drops a hint's items — simulates a squatter wipe / storage
+// loss in tests. Never part of the wire protocol.
+func (s *Server) WipeForTest(hint []byte) {
+	s.store.Collect(string(hint), 0)
+}
+
+// connState is per-connection abuse accounting (PA-0 fetch rate limit).
+type connState struct {
+	fetches     int
+	fetchWindow time.Time
+}
+
 func (s *Server) serve(c *lan.Conn) {
 	t := time.NewTicker(20 * time.Millisecond)
 	defer t.Stop()
 	idle := time.Now()
+	cs := &connState{fetchWindow: time.Now()}
 	for {
 		select {
 		case <-s.stop:
@@ -97,7 +139,7 @@ func (s *Server) serve(c *lan.Conn) {
 			if err != nil {
 				continue
 			}
-			reply := s.handle(msg)
+			reply := s.handle(msg, cs)
 			if reply != nil {
 				_ = c.Send(reply.Encode())
 			}
@@ -105,7 +147,7 @@ func (s *Server) serve(c *lan.Conn) {
 	}
 }
 
-func (s *Server) handle(m *Msg) *Msg {
+func (s *Server) handle(m *Msg, cs *connState) *Msg {
 	now := uint64(time.Now().Unix())
 	switch m.Type {
 	case msgPut:
@@ -141,6 +183,52 @@ func (s *Server) handle(m *Msg) *Msg {
 		// LR-2 calibration source: this clock's only property is that every
 		// participant asking THIS relay gets the same one.
 		return &Msg{Type: msgTimeOK, Now: uint64(time.Now().UnixMilli())}
+	case msgReplace:
+		if len(m.Hint) != HintLen || len(m.Body) == 0 {
+			return &Msg{Type: msgError, Reason: "malformed replace"}
+		}
+		expires := m.Expires
+		maxExpiry := now + uint64(s.limits.MaxTTL/time.Second)
+		if expires == 0 || expires > maxExpiry {
+			expires = maxExpiry
+		}
+		if !s.store.Replace(Item{
+			DestinationHint: string(m.Hint),
+			ExpiresAt:       expires,
+			Ciphertext:      m.Body,
+		}) {
+			return &Msg{Type: msgError, Reason: "quota exceeded or item too large"}
+		}
+		return &Msg{Type: msgPutOK, Expires: expires}
+	case msgFetch:
+		// Non-destructive read for public mailboxes: rate-limited per
+		// connection, hint- and byte-capped per request.
+		if time.Since(cs.fetchWindow) > time.Minute {
+			cs.fetchWindow, cs.fetches = time.Now(), 0
+		}
+		cs.fetches++
+		if cs.fetches > s.limits.fetchRatePerMin() {
+			return &Msg{Type: msgError, Reason: "rate limited"}
+		}
+		if len(m.Hints) > s.limits.fetchMaxHints() {
+			return &Msg{Type: msgError, Reason: "too many hints"}
+		}
+		budget := s.limits.fetchMaxBytes()
+		var items [][]byte
+		for _, h := range m.Hints {
+			got := s.store.Fetch(string(h), now, budget)
+			for _, it := range got {
+				budget -= len(it)
+			}
+			items = append(items, got...)
+			if budget <= 0 {
+				break
+			}
+		}
+		if items == nil {
+			items = [][]byte{}
+		}
+		return &Msg{Type: msgFetchItems, Items: items}
 	default:
 		return &Msg{Type: msgError, Reason: "unknown message type"}
 	}
@@ -236,4 +324,31 @@ func (c *Client) Collect(hints [][]byte) ([][]byte, error) {
 		return nil, errors.New("relay: unexpected reply")
 	}
 	return reply.Items, nil
+}
+
+// Fetch reads the given hints WITHOUT removing anything — the many-reader
+// verb for public mailboxes (PA-0). Server-side budgets bound the reply.
+func (c *Client) Fetch(hints [][]byte) ([][]byte, error) {
+	reply, err := c.roundTrip(&Msg{Type: msgFetch, Hints: hints}, 10*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	if reply.Type != msgFetchItems {
+		return nil, errors.New("relay: unexpected reply")
+	}
+	return reply.Items, nil
+}
+
+// Replace atomically swaps a hint's contents with one item (the public
+// projection mailbox). Same receipt semantics as Put: accepted, not
+// delivered.
+func (c *Client) Replace(hint []byte, expiresAt uint64, body []byte) (uint64, error) {
+	reply, err := c.roundTrip(&Msg{Type: msgReplace, Hint: hint, Expires: expiresAt, Body: body}, 10*time.Second)
+	if err != nil {
+		return 0, err
+	}
+	if reply.Type != msgPutOK {
+		return 0, errors.New("relay: unexpected reply")
+	}
+	return reply.Expires, nil
 }

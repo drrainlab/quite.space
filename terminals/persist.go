@@ -50,10 +50,17 @@ func OpenReplicaAt(tid id.TerminalID, dir string) (*Space, error) {
 // controller state already restored) and absorbs the replayed events.
 func (s *Space) AttachLog(log *eventlog.Log, replayed []eventlog.Applied) {
 	s.Log = log
+	// The admission gate lives on the log — re-derive it for the new one
+	// (PA-0: a swapped log must never drop curated-space enforcement).
+	s.refreshPolicy()
 	for _, a := range replayed {
 		s.absorb(a)
 	}
 }
+
+// RefreshPolicy re-derives policy enforcement from the current manifest —
+// for callers that swap s.Log directly instead of using AttachLog.
+func (s *Space) RefreshPolicy() { s.refreshPolicy() }
 
 // TerminalSeed exports the controller's terminal key seed for the keystore.
 // Only the creating replica holds it.
@@ -77,10 +84,19 @@ func (s *Space) RestoreController(terminalSeed, manifestFrame []byte, members ma
 	}
 	s.priv = priv
 	s.ManifestFrame = append([]byte(nil), manifestFrame...)
+	s.refreshPolicy()
 	for dev, xpub := range members {
 		s.AddMember(dev, xpub)
 	}
 	return nil
+}
+
+// SetManifestFrame installs a (verified) manifest frame and re-derives the
+// access policy from it (PA-0). Callers must have verified the frame against
+// the space id before installing.
+func (s *Space) SetManifestFrame(frame []byte) {
+	s.ManifestFrame = append([]byte(nil), frame...)
+	s.refreshPolicy()
 }
 
 // Members exports the controller's member list for the keystore.

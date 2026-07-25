@@ -29,7 +29,7 @@ func TestStoreAndForwardThroughBlindRelay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	msgID, err := rtA.Say(tid, "left the recorder in the usual place")
+	msgID, err := rtA.Say(tid, "left the recorder in the usual place", SayOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

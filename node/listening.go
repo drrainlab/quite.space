@@ -249,10 +249,10 @@ func (a *APIServer) handleListeningSession(w http.ResponseWriter, r *http.Reques
 	}
 
 	out := map[string]any{
-		"host":        sess.Host.Hex(),
-		"host_name":   names[sess.Host],
-		"i_am_host":   sess.Host == me,
-		"ignored":     map[string]int{"non_host": sess.IgnoredNonHost, "malformed": sess.IgnoredMalformed},
+		"host":      sess.Host.Hex(),
+		"host_name": names[sess.Host],
+		"i_am_host": sess.Host == me,
+		"ignored":   map[string]int{"non_host": sess.IgnoredNonHost, "malformed": sess.IgnoredMalformed},
 	}
 	if sess.HasCommand {
 		out["command"] = sess.Command

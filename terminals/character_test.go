@@ -80,14 +80,14 @@ func TestPrivateHistoryInvite(t *testing.T) {
 	if _, err := alice.RotateEpoch(s); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := human.Say(alice, s, "before bob existed", 100); err != nil {
+	if _, err := human.Say(alice, s, "before bob existed", human.SayOptions{}, 100); err != nil {
 		t.Fatal(err)
 	}
 	// Rotate to epoch 2, then invite WITHOUT history.
 	if _, err := alice.RotateEpoch(s); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := human.Say(alice, s, "the present day", 200); err != nil {
+	if _, err := human.Say(alice, s, "the present day", human.SayOptions{}, 200); err != nil {
 		t.Fatal(err)
 	}
 	bob, _ := human.New("bob")

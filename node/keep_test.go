@@ -16,7 +16,7 @@ func TestKeepEmitGatesAndShelf(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	eid, err := rt.Say(tid, "the track everyone loved")
+	eid, err := rt.Say(tid, "the track everyone loved", SayOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,7 @@ func TestKeepNoteBound(t *testing.T) {
 	rt := openRuntime(t, t.TempDir(), "alice")
 	defer rt.Close()
 	tid, _ := rt.CreateSpace("s")
-	eid, _ := rt.Say(tid, "m")
+	eid, _ := rt.Say(tid, "m", SayOptions{})
 	long := strings.Repeat("x", 501)
 	if err := rt.Keep(tid, eid, long); err == nil {
 		t.Fatal("over-long note must be rejected")

@@ -31,7 +31,7 @@ func TestAdoptLinkFilteredScopesSpaces(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tid := range []id.TerminalID{tidA, tidB} {
-		if _, err := alice.Say(tid, "hello from "+tid.Hex()[:6]); err != nil {
+		if _, err := alice.Say(tid, "hello from "+tid.Hex()[:6], SayOptions{}); err != nil {
 			t.Fatal(err)
 		}
 		invite, err := alice.MintInvite(tid, bob.Device.ID, bob.Device.X25519Pub)

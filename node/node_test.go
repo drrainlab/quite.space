@@ -32,7 +32,7 @@ func TestRestartContinuesSeamlessly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := rt.Say(tid, "before restart"); err != nil {
+	if _, err := rt.Say(tid, "before restart", SayOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	rt.Close()
@@ -51,7 +51,7 @@ func TestRestartContinuesSeamlessly(t *testing.T) {
 		t.Fatalf("messages lost: %+v", msgs)
 	}
 	// Writing must continue the same device chain (no fork, no reset).
-	if _, err := rt2.Say(tid, "after restart"); err != nil {
+	if _, err := rt2.Say(tid, "after restart", SayOptions{}); err != nil {
 		t.Fatalf("cannot write after restart: %v", err)
 	}
 	if len(s.State.Messages()) != 2 {
@@ -78,7 +78,7 @@ func TestTwoNodesInviteAndSync(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := rtA.Say(tid, "welcome"); err != nil {
+	if _, err := rtA.Say(tid, "welcome", SayOptions{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -118,7 +118,7 @@ func TestTwoNodesInviteAndSync(t *testing.T) {
 	}
 
 	// B answers; A receives.
-	if _, err := rtB.Say(tid, "glad to be here"); err != nil {
+	if _, err := rtB.Say(tid, "glad to be here", SayOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	for {

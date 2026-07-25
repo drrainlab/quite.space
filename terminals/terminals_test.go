@@ -137,7 +137,7 @@ func TestEchoBotFlow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := human.Say(alice, s, "hello bot", 100); err != nil {
+	if _, err := human.Say(alice, s, "hello bot", human.SayOptions{}, 100); err != nil {
 		t.Fatal(err)
 	}
 	answered := map[id.EventID]bool{}
@@ -185,11 +185,13 @@ func TestBlindRelayStoreAndForward(t *testing.T) {
 	if !store.Put(item) {
 		t.Fatal("relay refused item")
 	}
-	// Quota: the 17th item for one hint is refused.
+	// Quota: the 17th DISTINCT item for one hint is refused. (Identical
+	// bytes are idempotent by design since PA-0 — they never consume a
+	// second slot, so the flood must vary.)
 	for i := 0; i < 16; i++ {
-		store.Put(relay.Item{DestinationHint: "flood", ExpiresAt: 2000, Ciphertext: []byte{1}})
+		store.Put(relay.Item{DestinationHint: "flood", ExpiresAt: 2000, Ciphertext: []byte{1, byte(i)}})
 	}
-	if store.Put(relay.Item{DestinationHint: "flood", ExpiresAt: 2000, Ciphertext: []byte{1}}) {
+	if store.Put(relay.Item{DestinationHint: "flood", ExpiresAt: 2000, Ciphertext: []byte{2, 0}}) {
 		t.Fatal("quota not enforced")
 	}
 	// Collect before expiry: delivered once, then gone.

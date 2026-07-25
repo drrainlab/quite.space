@@ -59,7 +59,7 @@ func runDemo() error {
 		return err
 	}
 	say("[node A] sensor published 23.60°C (declared simulated=true, stale_after=600s)")
-	if _, err := human.Say(alice, spaceA, "recording field ambience tonight", now+10); err != nil {
+	if _, err := human.Say(alice, spaceA, "recording field ambience tonight", human.SayOptions{}, now+10); err != nil {
 		return err
 	}
 	if err := human.SetPresence(alice, spaceA, "listening", now+10, 300); err != nil {

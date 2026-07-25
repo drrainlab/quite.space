@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/drrainlab/quiet_places/kernel/storage"
 	"github.com/drrainlab/quiet_places/protocol/id"
 )
 
@@ -17,13 +18,10 @@ func (a *APIServer) handleRelayStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, a.rt.RelaySync())
 }
 
-// relaySyncEvery is the background cadence (store-and-forward tolerates
-// minutes of latency; this keeps it lively without hammering the relay).
-const relaySyncEvery = 15 * time.Second
-
 type relaySyncState struct {
 	mu       sync.Mutex
 	addr     string
+	interval time.Duration
 	stop     chan struct{}
 	lastLen  map[id.TerminalID]int
 	lastErr  string
@@ -31,14 +29,27 @@ type relaySyncState struct {
 	lastPull time.Time
 	pushed   int
 	pulled   int
+	// Public projection publishing triggers (PA-0.4B): authorized log
+	// growth, bucket rotation, or a stale heartbeat each force a Replace.
+	lastPubLen     map[id.TerminalID]int
+	lastPubBucket  map[id.TerminalID]uint64
+	lastPubRefresh map[id.TerminalID]time.Time
 }
 
-// applyRelaySync (re)starts the background loop for a new relay address.
-// An empty address stops it. Safe to call from settings changes.
-func (r *Runtime) applyRelaySync(addr string) {
+// applyRelaySync (re)starts the background loop for a relay address and
+// cadence. An empty address stops it. Safe to call from settings changes.
+func (r *Runtime) applyRelaySync(addr string, interval time.Duration) {
+	if interval <= 0 {
+		interval = 2 * time.Second
+	}
 	r.mu.Lock()
 	if r.relaySync == nil {
-		r.relaySync = &relaySyncState{lastLen: map[id.TerminalID]int{}}
+		r.relaySync = &relaySyncState{
+			lastLen:        map[id.TerminalID]int{},
+			lastPubLen:     map[id.TerminalID]int{},
+			lastPubBucket:  map[id.TerminalID]uint64{},
+			lastPubRefresh: map[id.TerminalID]time.Time{},
+		}
 	}
 	rs := r.relaySync
 	r.mu.Unlock()
@@ -49,6 +60,7 @@ func (r *Runtime) applyRelaySync(addr string) {
 		rs.stop = nil
 	}
 	rs.addr = addr
+	rs.interval = interval
 	rs.lastErr = ""
 	if addr == "" {
 		rs.mu.Unlock()
@@ -61,7 +73,7 @@ func (r *Runtime) applyRelaySync(addr string) {
 	r.wg.Add(1)
 	go func() {
 		defer r.wg.Done()
-		t := time.NewTicker(relaySyncEvery)
+		t := time.NewTicker(interval)
 		defer t.Stop()
 		r.relaySyncOnce(addr) // an immediate first pass
 		for {
@@ -86,12 +98,24 @@ func (r *Runtime) relaySyncOnce(addr string) {
 	// Snapshot spaces and their current log lengths under the lock.
 	r.mu.Lock()
 	type spaceLen struct {
-		tid id.TerminalID
-		n   int
+		tid     id.TerminalID
+		n       int
+		pub     bool // owned public space → projection publisher
+		reader  bool // reader replica → projection consumer
+		contrib bool // joined community member / curator → ingress uplink
 	}
 	spaces := make([]spaceLen, 0, len(r.spaces))
 	for tid, st := range r.spaces {
-		spaces = append(spaces, spaceLen{tid, st.space.Log.Len()})
+		meta := r.ks.Spaces[tid]
+		pol := st.space.Policy()
+		spaces = append(spaces, spaceLen{
+			tid: tid, n: st.space.Log.Len(),
+			pub:    meta.Owned && pol.IsPublic(),
+			reader: meta.Role == storage.RoleReader,
+			// A joined community member or activated curator: reads via
+			// projections like everyone else, uplinks via ingress.
+			contrib: !meta.Owned && meta.Role == "" && pol.IsPublic(),
+		})
 	}
 	r.mu.Unlock()
 
@@ -101,20 +125,90 @@ func (r *Runtime) relaySyncOnce(addr string) {
 		rs.mu.Lock()
 		prev := rs.lastLen[sp.tid]
 		rs.mu.Unlock()
-		if sp.n <= prev {
-			continue // nothing new since the last push
+		// Push when the log grew OR we have an outstanding media request to
+		// carry (relayWants): a fetch with no new messages must still get its
+		// "wants" out to a holder.
+		r.mu.Lock()
+		wanting := len(r.relayWants[sp.tid]) > 0
+		r.mu.Unlock()
+		if sp.n <= prev && !wanting {
+			continue // nothing new to push and nothing to ask for
 		}
 		// Background push is LIGHT: frames + manifests only. Media bytes
 		// stay content-addressed and travel on demand, not every cycle.
-		n, _, err := r.pushToRelay(addr, sp.tid, AssetsManifests)
+		n, recipients, _, err := r.pushToRelay(addr, sp.tid, AssetsManifests)
 		if err != nil {
 			lastErr = err.Error()
+			continue
+		}
+		if recipients == 0 {
+			// Nobody addressable yet (fresh joiner before its first pull, or a
+			// solo space): leave lastLen untouched so we retry once we learn a
+			// peer device, instead of marking these frames as handed off.
 			continue
 		}
 		pushed += n
 		rs.mu.Lock()
 		rs.lastLen[sp.tid] = sp.n
 		rs.mu.Unlock()
+	}
+
+	// PA-0.4B — public projections. Publishers Replace their outbox when
+	// the log grew, the 6h bucket rotated, or the heartbeat expired (a
+	// squatter wipe / relay restart must self-heal without new content).
+	// Readers Fetch their spaces' outboxes.
+	nowBucket := relayBucketNow()
+	for _, sp := range spaces {
+		if sp.pub {
+			// Drain community ingress FIRST: contributions land in the
+			// canonical log, then the publish trigger sees the growth.
+			if got, err := r.collectPublicIngress(addr, sp.tid); err != nil {
+				lastErr = err.Error()
+			} else if got > 0 {
+				r.mu.Lock()
+				if st, ok := r.spaces[sp.tid]; ok {
+					sp.n = st.space.Log.Len()
+				}
+				r.mu.Unlock()
+			}
+			rs.mu.Lock()
+			rotated := rs.lastPubBucket[sp.tid] != nowBucket
+			stale := time.Since(rs.lastPubRefresh[sp.tid]) > publicHeartbeat
+			rs.mu.Unlock()
+			// Every cycle BUILDS (content changes — log growth, custody
+			// flips, aging — surface as a digest change and publish
+			// themselves); the relay is force-touched only on bucket
+			// rotation or the heartbeat.
+			touched, err := r.publishPublicProjectionForce(addr, sp.tid, rotated || stale)
+			if err != nil {
+				lastErr = err.Error()
+				continue
+			}
+			rs.mu.Lock()
+			rs.lastPubLen[sp.tid] = sp.n
+			rs.lastPubBucket[sp.tid] = nowBucket
+			if touched {
+				rs.lastPubRefresh[sp.tid] = time.Now()
+			}
+			rs.mu.Unlock()
+			continue
+		}
+		if sp.reader || sp.contrib {
+			// Everyone who is not the publisher reads the space through its
+			// signed projection — contributors included (their local log
+			// holds only their own frames).
+			if err := r.fetchPublicProjection(addr, sp.tid); err != nil {
+				// "no projection yet" is routine for a fresh space — only
+				// surface real transport errors.
+				if err.Error() != "node: no projection available at the relay" {
+					lastErr = err.Error()
+				}
+			}
+			// Contributor uplink and/or media wants ride the ingress.
+			if err := r.pushPublicIngress(addr, sp.tid); err != nil {
+				lastErr = err.Error()
+			}
+		}
 	}
 
 	pulled, err := r.PullFromRelay(addr)
@@ -137,28 +231,46 @@ func (r *Runtime) relaySyncOnce(addr string) {
 
 // RelaySyncStatus is the honest diagnostic for the UI.
 type RelaySyncStatus struct {
-	Addr    string `json:"addr"`
-	Active  bool   `json:"active"`
-	Pushed  int    `json:"pushed"`
-	Pulled  int    `json:"pulled"`
-	LastErr string `json:"last_error,omitempty"`
-	AgoPush int    `json:"seconds_since_push,omitempty"`
-	AgoPull int    `json:"seconds_since_pull,omitempty"`
+	Addr    string              `json:"addr"`
+	Active  bool                `json:"active"`
+	Pushed  int                 `json:"pushed"`
+	Pulled  int                 `json:"pulled"`
+	LastErr string              `json:"last_error,omitempty"`
+	AgoPush int                 `json:"seconds_since_push,omitempty"`
+	AgoPull int                 `json:"seconds_since_pull,omitempty"`
+	Public  []PublicSpaceStatus `json:"public,omitempty"`
+}
+
+// PublicSpaceStatus is the per-public-space checkpoint/ingress diagnostic
+// (PA-1.3): what a publisher is emitting, what a reader has accepted, and
+// whether the space is frozen — so an operator can tell "quiet" from
+// "stuck" at a glance.
+type PublicSpaceStatus struct {
+	SpaceID      string `json:"space_id"`
+	Title        string `json:"title"`
+	Role         string `json:"role"` // publisher | reader | contributor
+	Visibility   string `json:"visibility"`
+	Frozen       bool   `json:"frozen,omitempty"`
+	Seq          uint64 `json:"seq,omitempty"`
+	AgoPublish   int    `json:"seconds_since_publish,omitempty"`
+	IgnoredTotal uint64 `json:"ignored_total,omitempty"`
 }
 
 // RelaySync reports the background loop state.
 func (r *Runtime) RelaySync() RelaySyncStatus {
 	r.mu.Lock()
 	rs := r.relaySync
+	public := r.publicSpaceStatusesLocked()
 	r.mu.Unlock()
 	if rs == nil {
-		return RelaySyncStatus{}
+		return RelaySyncStatus{Public: public}
 	}
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
 	st := RelaySyncStatus{
 		Addr: rs.addr, Active: rs.addr != "" && rs.stop != nil,
 		Pushed: rs.pushed, Pulled: rs.pulled, LastErr: rs.lastErr,
+		Public: public,
 	}
 	if !rs.lastPush.IsZero() {
 		st.AgoPush = int(time.Since(rs.lastPush).Seconds())
@@ -166,5 +278,46 @@ func (r *Runtime) RelaySync() RelaySyncStatus {
 	if !rs.lastPull.IsZero() {
 		st.AgoPull = int(time.Since(rs.lastPull).Seconds())
 	}
+	// Publisher freshness comes from the projection refresh timer.
+	for i := range st.Public {
+		if st.Public[i].Role != "publisher" {
+			continue
+		}
+		if tid, err := id.ParseTerminalID(st.Public[i].SpaceID); err == nil {
+			if t := rs.lastPubRefresh[tid]; !t.IsZero() {
+				st.Public[i].AgoPublish = int(time.Since(t).Seconds())
+			}
+		}
+	}
 	return st
+}
+
+// publicSpaceStatusesLocked gathers per-public-space diagnostics. Caller
+// holds r.mu.
+func (r *Runtime) publicSpaceStatusesLocked() []PublicSpaceStatus {
+	var out []PublicSpaceStatus
+	for tid, st := range r.spaces {
+		pol := st.space.Policy()
+		if !pol.IsPublic() {
+			continue
+		}
+		meta := r.ks.Spaces[tid]
+		role := "contributor"
+		switch {
+		case meta.Owned:
+			role = "publisher"
+		case meta.Role == storage.RoleReader:
+			role = "reader"
+		}
+		out = append(out, PublicSpaceStatus{
+			SpaceID:      tid.Hex(),
+			Title:        meta.Title,
+			Role:         role,
+			Visibility:   string(pol.Effective()),
+			Frozen:       pol.Frozen,
+			Seq:          r.ks.PublicPublish[tid].ProjectionSeq,
+			IgnoredTotal: st.space.PolicyStats.IgnoredTotal,
+		})
+	}
+	return out
 }

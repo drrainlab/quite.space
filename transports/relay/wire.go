@@ -34,9 +34,71 @@ func Hint(terminal id.TerminalID, bucket uint64) []byte {
 	return h.Sum(nil)[:HintLen]
 }
 
+// HintFor derives a PER-RECIPIENT mailbox hint: the box where one device
+// collects a terminal's frames pushed for it. The shared Hint(terminal,
+// bucket) mailbox is single-reader — destructive Collect means whichever
+// space member polls first drains copies meant for the others. Per-recipient
+// boxes give every member their own inbox, so many members can poll the same
+// relay concurrently (e.g. a 2 s auto-sync cadence) without eating each
+// other's mail. The relay stays blind: it still sees only opaque 16-byte
+// hints and cannot tell a per-recipient box from a per-terminal one.
+func HintFor(terminal id.TerminalID, recipient id.DeviceID, bucket uint64) []byte {
+	h := sha256.New()
+	h.Write([]byte("qp-relay-inbox-v0:"))
+	h.Write(terminal[:])
+	h.Write(recipient[:])
+	var b [8]byte
+	binary.BigEndian.PutUint64(b[:], bucket)
+	h.Write(b[:])
+	return h.Sum(nil)[:HintLen]
+}
+
 // Bucket returns the hint rotation bucket (6-hour windows, shared with LAN
 // discovery granularity).
 func Bucket(nowUnix uint64) uint64 { return nowUnix / (6 * 3600) }
+
+// ---- PA-0 public-space mailbox namespaces ----
+//
+// Three distinct hint derivations keep the relay blind while separating
+// traffic classes: the relay sees only opaque 16-byte hints and cannot tell
+// an outbox from an inbox from a member mailbox.
+
+// HintPublicOutbox is the owner→everyone mailbox: the signed public
+// projection lives here (one item, atomically Replaced). Anyone who knows
+// the space id derives it — that IS the read capability of a public space.
+func HintPublicOutbox(space id.TerminalID, bucket uint64) []byte {
+	h := sha256.New()
+	h.Write([]byte("qp-relay-pub-out-v0:"))
+	h.Write(space[:])
+	var b [8]byte
+	binary.BigEndian.PutUint64(b[:], bucket)
+	h.Write(b[:])
+	return h.Sum(nil)[:HintLen]
+}
+
+// IngressShards is the deterministic shard fan-out of the public ingress
+// (participants→owner): one author always lands in one shard, and the
+// per-hint item cap multiplies by the shard count.
+const IngressShards = 8
+
+// IngressShard maps a contributor device to its ingress shard.
+func IngressShard(dev id.DeviceID) byte {
+	d := sha256.Sum256(dev[:])
+	return d[0] % IngressShards
+}
+
+// HintPublicIngress is one shard of the participants→owner mailbox
+// (append-only Put with short TTL; the owner Fetches all shards).
+func HintPublicIngress(space id.TerminalID, bucket uint64, shard byte) []byte {
+	h := sha256.New()
+	h.Write([]byte("qp-relay-pub-in-v0:"))
+	h.Write(space[:])
+	var b [8]byte
+	binary.BigEndian.PutUint64(b[:], bucket)
+	h.Write(b[:])
+	h.Write([]byte{shard})
+	return h.Sum(nil)[:HintLen]
+}
 
 // Message types.
 const (
@@ -49,6 +111,15 @@ const (
 	// sessions. The relay's clock carries no authority beyond being SHARED.
 	msgTime   = 6
 	msgTimeOK = 7
+	// PA-0 public mailboxes (append-only table, ADR-009):
+	// msgFetch reads WITHOUT removing (public outbox has many readers);
+	// msgFetchItems is its reply, distinct from msgItems so a client can
+	// never confuse a destructive collect with a fetch;
+	// msgReplace atomically swaps a hint's contents with one item (the
+	// projection mailbox holds exactly the latest projection).
+	msgFetch      = 8
+	msgFetchItems = 9
+	msgReplace    = 10
 )
 
 // Message key table v0 (append-only, ADR-009).

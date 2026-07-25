@@ -6,6 +6,7 @@ package human
 import (
 	"github.com/drrainlab/quiet_places/kernel/eventlog"
 	"github.com/drrainlab/quiet_places/protocol/capability"
+	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/protocol/manifest"
 	"github.com/drrainlab/quiet_places/protocol/schemas"
 	"github.com/drrainlab/quiet_places/protocol/signal"
@@ -29,9 +30,19 @@ func New(label string) (*terminals.Participant, error) {
 	return terminals.NewParticipant(Template(label))
 }
 
+// SayOptions carries the optional edges of a message. It is a struct rather
+// than more positional parameters so later waves can add addressing without
+// breaking every call site.
+type SayOptions struct {
+	ReplyTo  *id.EventID
+	Mentions []id.PrincipalID
+}
+
 // Say publishes a human text message.
-func Say(p *terminals.Participant, s *terminals.Space, text string, at uint64) (eventlog.Applied, error) {
-	payload, err := (&schemas.TextMessage{Text: text}).Encode()
+func Say(p *terminals.Participant, s *terminals.Space, text string, opt SayOptions, at uint64) (eventlog.Applied, error) {
+	payload, err := (&schemas.TextMessage{
+		Text: text, ReplyTo: opt.ReplyTo, Mentions: opt.Mentions,
+	}).Encode()
 	if err != nil {
 		return eventlog.Applied{}, err
 	}

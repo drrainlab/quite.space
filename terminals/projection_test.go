@@ -1,0 +1,228 @@
+// PA-0.4A/B acceptance: the signed public projection is independently
+// installable (I6), its metadata+contents are bound by the space signature
+// (I7), and installing the bounded selection materializes exactly the
+// publisher's projected state (I9) — including for a completely fresh
+// reader with zero prior knowledge.
+package terminals_test
+
+import (
+	"fmt"
+	"testing"
+	"time"
+
+	"github.com/drrainlab/quiet_places/protocol/id"
+	"github.com/drrainlab/quiet_places/protocol/projection"
+	"github.com/drrainlab/quiet_places/terminals"
+	"github.com/drrainlab/quiet_places/terminals/human"
+)
+
+func openCommunityPolicy() terminals.SpacePolicy {
+	return terminals.SpacePolicy{
+		Visibility: terminals.VisibilityUnlisted,
+		Join:       terminals.JoinOpen,
+	}
+}
+
+func buildPublicSpace(t *testing.T, n int) (*terminals.Space, *terminals.Participant) {
+	t.Helper()
+	owner, err := human.New("owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := terminals.NewSpaceWithPolicy("Fieldnotes", owner.Principal.ID,
+		terminals.DefaultCharacter("forest"), openCommunityPolicy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := uint64(time.Now().Unix()) - uint64(n)
+	for i := 0; i < n; i++ {
+		if _, err := human.Say(owner, s, fmt.Sprintf("note %d", i), human.SayOptions{}, base+uint64(i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return s, owner
+}
+
+// I6 + I9, untruncated: a fresh reader installs the projection and lands on
+// the publisher's exact message state.
+func TestProjectionFreshReaderMaterializes(t *testing.T) {
+	s, owner := buildPublicSpace(t, 20)
+	wire, digest, err := s.BuildPublicProjection(1, owner.Device.ID,
+		uint64(time.Now().Unix()), terminals.DefaultProjectionLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, err := projection.Decode(wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env.Truncated {
+		t.Fatal("20 notes must not truncate under default limits")
+	}
+	reader := terminals.Replica(s.ID)
+	reader.ReadOnly = true
+	applied, err := reader.InstallPublicProjection(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if applied == 0 {
+		t.Fatal("nothing applied")
+	}
+	om, rm := s.State.Messages(), reader.State.Messages()
+	if len(om) != len(rm) {
+		t.Fatalf("reader materialized %d of %d messages", len(rm), len(om))
+	}
+	for i := range om {
+		if om[i].Text != rm[i].Text || om[i].ID != rm[i].ID {
+			t.Fatalf("message %d diverged: %q vs %q", i, om[i].Text, rm[i].Text)
+		}
+	}
+	// Title/character arrived with the verified manifest.
+	title, c := reader.Character()
+	if title != "Fieldnotes" || c.Archetype != "forest" {
+		t.Fatalf("manifest not installed: %q %q", title, c.Archetype)
+	}
+	// Reinstall is idempotent.
+	if again, _ := reader.InstallPublicProjection(env); again != 0 {
+		t.Fatalf("reinstall applied %d duplicates", again)
+	}
+	_ = digest
+}
+
+// The I6 truncation test: an author chain far beyond MaxFrames — the fresh
+// reader must land on the NEWEST state with zero unresolved predecessor
+// dependencies (the projection store is gap-tolerant by design).
+func TestTruncatedProjectionInstallsClean(t *testing.T) {
+	s, owner := buildPublicSpace(t, 60)
+	lim := terminals.PublicProjectionLimits{MaxFrames: 30, MaxBytes: 6 << 20, MaxAge: 0}
+	wire, _, err := s.BuildPublicProjection(3, owner.Device.ID,
+		uint64(time.Now().Unix()), lim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, err := projection.Decode(wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !env.Truncated {
+		t.Fatal("60 frames under MaxFrames=30 must truncate")
+	}
+	if len(env.Frames) > 30 {
+		t.Fatalf("frame bound violated: %d", len(env.Frames))
+	}
+	if env.OldestTime == 0 {
+		t.Fatal("truncated projection must state its oldest retained time")
+	}
+	if len(env.CutPoints) == 0 {
+		t.Fatal("truncation must record chain cut points")
+	}
+	reader := terminals.Replica(s.ID)
+	if _, err := reader.InstallPublicProjection(env); err != nil {
+		t.Fatal(err)
+	}
+	rm := reader.State.Messages()
+	if len(rm) == 0 {
+		t.Fatal("reader materialized nothing from a truncated projection")
+	}
+	// The NEWEST message survives; every materialized message is a suffix
+	// of the owner's feed (deterministic display order).
+	om := s.State.Messages()
+	if rm[len(rm)-1].Text != om[len(om)-1].Text {
+		t.Fatalf("newest message lost: %q vs %q",
+			rm[len(rm)-1].Text, om[len(om)-1].Text)
+	}
+	offset := len(om) - len(rm)
+	for i := range rm {
+		if rm[i].Text != om[offset+i].Text {
+			t.Fatalf("retained window is not the newest suffix at %d", i)
+		}
+	}
+}
+
+// I7: the signature binds seq + truncation metadata + contents — any
+// mutation fails verification; a forged/huge seq cannot be minted without
+// the space key.
+func TestProjectionSignatureBindsEverything(t *testing.T) {
+	s, owner := buildPublicSpace(t, 5)
+	wire, _, err := s.BuildPublicProjection(7, owner.Device.ID,
+		uint64(time.Now().Unix()), terminals.DefaultProjectionLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, err := projection.Decode(wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := projection.Verify(base); err != nil {
+		t.Fatal(err)
+	}
+	mutate := func(name string, f func(e *projection.Envelope)) {
+		e, err := projection.Decode(wire)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f(e)
+		if err := projection.Verify(e); err == nil {
+			t.Fatalf("%s: mutation passed verification", name)
+		}
+	}
+	mutate("forged seq", func(e *projection.Envelope) { e.Seq = 1 << 60 })
+	mutate("hidden truncation", func(e *projection.Envelope) { e.Truncated = !e.Truncated })
+	mutate("dropped frame", func(e *projection.Envelope) { e.Frames = e.Frames[1:] })
+	mutate("swapped publisher", func(e *projection.Envelope) { e.PublisherDevice = id.DeviceID{9} })
+	mutate("older time lie", func(e *projection.Envelope) { e.OldestTime = 1 })
+}
+
+// ContentDigest is stable for identical content and changes with it —
+// the publisher's seq-bump rule depends on this.
+func TestProjectionContentDigestSemantics(t *testing.T) {
+	s, owner := buildPublicSpace(t, 3)
+	now := uint64(time.Now().Unix())
+	lim := terminals.DefaultProjectionLimits()
+	_, d1, err := s.BuildPublicProjection(1, owner.Device.ID, now, lim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Same content, different seq/time → SAME digest (heartbeat rule).
+	_, d2, err := s.BuildPublicProjection(2, owner.Device.ID, now+600, lim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d1 != d2 {
+		t.Fatal("identical content must digest identically across heartbeats")
+	}
+	if _, err := human.Say(owner, s, "new note", human.SayOptions{}, now+601); err != nil {
+		t.Fatal(err)
+	}
+	_, d3, err := s.BuildPublicProjection(3, owner.Device.ID, now+602, lim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d3 == d1 {
+		t.Fatal("changed content must change the digest")
+	}
+}
+
+// Non-public spaces refuse to build projections; foreign envelopes and
+// wrong-space installs are refused.
+func TestProjectionRefusals(t *testing.T) {
+	priv, err := terminals.NewSpace("Sanctum", id.PrincipalID{1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := priv.BuildPublicProjection(1, id.DeviceID{1}, 100,
+		terminals.DefaultProjectionLimits()); err == nil {
+		t.Fatal("private space built a public projection")
+	}
+	s, owner := buildPublicSpace(t, 2)
+	wire, _, err := s.BuildPublicProjection(1, owner.Device.ID, 100,
+		terminals.DefaultProjectionLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, _ := projection.Decode(wire)
+	other := terminals.Replica(id.TerminalID{42})
+	if _, err := other.InstallPublicProjection(env); err == nil {
+		t.Fatal("projection installed into the wrong space")
+	}
+}

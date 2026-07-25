@@ -107,6 +107,20 @@ type Keystore struct {
 	// the rest of the keystore; never leaves the device except to the
 	// user-chosen provider on an explicit action.
 	Settings []byte
+	// PublicPublish is the durable per-space projection-publisher state
+	// (PA-0, I4): the single publisher device and its monotonic sequence.
+	// Restart must never reset ProjectionSeq — readers would reject the
+	// regression forever.
+	PublicPublish map[id.TerminalID]PublicPublishState
+}
+
+// PublicPublishState is the publisher-side durable projection counter.
+// ProjectionSeq increments only when the projection CONTENT digest changes;
+// heartbeats republish the same seq.
+type PublicPublishState struct {
+	PublisherDevice   id.DeviceID
+	ProjectionSeq     uint64
+	LastContentDigest [32]byte
 }
 
 // SpaceMeta is what the node must remember about a space besides its log.
@@ -121,7 +135,18 @@ type SpaceMeta struct {
 	// tip, persisted so revisions chain across restarts. Empty until customized.
 	AppearanceOverride []byte
 	AppearanceFrame    []byte
+	// Visibility is a DERIVED CACHE of the space's effective visibility
+	// (PA-0, I1): repaired from the verified manifest, never authoritative
+	// for encryption/runtime decisions. "" means private (or bootstrap for
+	// reader replicas that have not seen a manifest yet).
+	Visibility string
+	// Role marks this replica's local stance: "" (member/owner) or
+	// RoleReader (public-space read replica; never auto-publishes anything).
+	Role string
 }
+
+// RoleReader marks a public-space read replica in SpaceMeta.Role.
+const RoleReader = "reader"
 
 // NewKeystore captures a fresh identity's key material.
 func NewKeystore(p *identity.Principal, d *identity.Device) *Keystore {
@@ -129,6 +154,7 @@ func NewKeystore(p *identity.Principal, d *identity.Device) *Keystore {
 		PrincipalSeed: p.Seed(),
 		DeviceSeed:    d.Seed(),
 		DeviceX25519:  d.X25519Priv(),
+		PublicPublish: map[id.TerminalID]PublicPublishState{},
 		TerminalSeeds: map[id.TerminalID][]byte{},
 		Epochs:        map[id.TerminalID][]crypto.EpochKey{},
 		Spaces:        map[id.TerminalID]SpaceMeta{},
@@ -160,10 +186,11 @@ const (
 	ksKeyName      = 8
 	ksKeySelfMan   = 9
 	ksKeySettings  = 10
+	ksKeyPubPub    = 11 // PA-0 projection-publisher state (append-only, ADR-009)
 )
 
 func (k *Keystore) encode() []byte {
-	buf := codec.AppendMap(nil, 10)
+	buf := codec.AppendMap(nil, 11)
 	buf = codec.AppendUint(buf, ksKeyPrincipal)
 	buf = codec.AppendBytes(buf, k.PrincipalSeed)
 	buf = codec.AppendUint(buf, ksKeyDevice)
@@ -194,7 +221,7 @@ func (k *Keystore) encode() []byte {
 	buf = codec.AppendUint(buf, ksKeySpaces)
 	buf = codec.AppendArray(buf, len(k.Spaces))
 	for _, sm := range sortedSpaces(k.Spaces) {
-		buf = codec.AppendArray(buf, 7)
+		buf = codec.AppendArray(buf, 9)
 		buf = codec.AppendBytes(buf, sm.id[:])
 		buf = codec.AppendText(buf, sm.meta.Title)
 		buf = codec.AppendBool(buf, sm.meta.Owned)
@@ -207,6 +234,8 @@ func (k *Keystore) encode() []byte {
 		}
 		buf = codec.AppendBytes(buf, sm.meta.AppearanceOverride)
 		buf = codec.AppendBytes(buf, sm.meta.AppearanceFrame)
+		buf = codec.AppendText(buf, sm.meta.Visibility)
+		buf = codec.AppendText(buf, sm.meta.Role)
 	}
 	buf = codec.AppendUint(buf, ksKeyName)
 	buf = codec.AppendText(buf, k.DisplayName)
@@ -214,7 +243,32 @@ func (k *Keystore) encode() []byte {
 	buf = codec.AppendBytes(buf, k.SelfManifestFrame)
 	buf = codec.AppendUint(buf, ksKeySettings)
 	buf = codec.AppendBytes(buf, k.Settings)
+	buf = codec.AppendUint(buf, ksKeyPubPub)
+	buf = codec.AppendArray(buf, len(k.PublicPublish))
+	for _, pp := range sortedPubPublish(k.PublicPublish) {
+		buf = codec.AppendArray(buf, 4)
+		buf = codec.AppendBytes(buf, pp.id[:])
+		buf = codec.AppendBytes(buf, pp.st.PublisherDevice[:])
+		buf = codec.AppendUint(buf, pp.st.ProjectionSeq)
+		buf = codec.AppendBytes(buf, pp.st.LastContentDigest[:])
+	}
 	return buf
+}
+
+type pubPubEntry struct {
+	id id.TerminalID
+	st PublicPublishState
+}
+
+func sortedPubPublish(m map[id.TerminalID]PublicPublishState) []pubPubEntry {
+	out := make([]pubPubEntry, 0, len(m))
+	for tid, st := range m {
+		out = append(out, pubPubEntry{tid, st})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return string(out[i].id[:]) < string(out[j].id[:])
+	})
+	return out
 }
 
 type spaceEntry struct {
@@ -458,6 +512,16 @@ func decodeKeystore(data []byte) (*Keystore, error) {
 					meta.AppearanceOverride = append([]byte(nil), ov...)
 					meta.AppearanceFrame = append([]byte(nil), af...)
 				}
+				if acount >= 8 {
+					if meta.Visibility, er = d.ReadText(); er != nil {
+						return nil, er
+					}
+				}
+				if acount >= 9 {
+					if meta.Role, er = d.ReadText(); er != nil {
+						return nil, er
+					}
+				}
 				k.Spaces[tid] = meta
 			}
 		case ksKeyName:
@@ -472,6 +536,39 @@ func decodeKeystore(data []byte) (*Keystore, error) {
 			var b []byte
 			b, er = d.ReadBytes()
 			k.SelfManifestFrame = append([]byte(nil), b...)
+		case ksKeyPubPub:
+			var cnt int
+			if cnt, er = d.ReadArray(); er != nil {
+				return nil, er
+			}
+			k.PublicPublish = map[id.TerminalID]PublicPublishState{}
+			for range cnt {
+				if _, er = d.ReadArray(); er != nil {
+					return nil, er
+				}
+				var tidB, devB, digB []byte
+				if tidB, er = d.ReadBytes(); er != nil {
+					return nil, er
+				}
+				if devB, er = d.ReadBytes(); er != nil {
+					return nil, er
+				}
+				var st PublicPublishState
+				if st.ProjectionSeq, er = d.ReadUint(); er != nil {
+					return nil, er
+				}
+				if digB, er = d.ReadBytes(); er != nil {
+					return nil, er
+				}
+				if len(tidB) != id.Size || len(devB) != id.Size || len(digB) != 32 {
+					return nil, errors.New("storage: bad public-publish entry")
+				}
+				var tid id.TerminalID
+				copy(tid[:], tidB)
+				copy(st.PublisherDevice[:], devB)
+				copy(st.LastContentDigest[:], digB)
+				k.PublicPublish[tid] = st
+			}
 		default:
 			er = d.SkipItem()
 		}

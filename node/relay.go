@@ -33,6 +33,11 @@ const (
 // DefaultBundleBudget bounds a dead-drop bundle (must fit relay item limits).
 const DefaultBundleBudget = 8 << 20
 
+// maxRelayItem caps one relay item's payload. The relay wire carries each item
+// as a single CBOR byte string, bounded by codec.MaxItemLen (1 MiB); we stay
+// safely under it so large media answers split into several decodable items.
+const maxRelayItem = 768 << 10
+
 // ExportReport honestly describes what a bundle carries.
 type ExportReport struct {
 	CompleteAssets int
@@ -108,20 +113,36 @@ func (r *Runtime) collectBlobs(space id.TerminalID, policy AssetPolicy, budget i
 // stay on-demand — pushing whole assets every cycle is what hung large
 // spaces and blew the old 1 MiB packet cap).
 func (r *Runtime) PushToRelay(addr string, tid id.TerminalID) (int, uint64, error) {
-	return r.pushToRelay(addr, tid, AssetsAvailable)
+	n, _, deadline, err := r.pushToRelay(addr, tid, AssetsAvailable)
+	return n, deadline, err
 }
 
-func (r *Runtime) pushToRelay(addr string, tid id.TerminalID, policy AssetPolicy) (int, uint64, error) {
+// pushToRelay returns (framesPrepared, recipients, deadline, err). recipients
+// is how many peer inboxes actually received a copy — 0 means "nobody
+// addressable yet" (a solo space, or a fresh joiner before its first pull),
+// which is a clean no-op, not an error. The auto-sync loop keys its progress
+// on recipients so it retries rather than marking undelivered frames as sent.
+func (r *Runtime) pushToRelay(addr string, tid id.TerminalID, policy AssetPolicy) (int, int, uint64, error) {
 	r.mu.Lock()
 	st, ok := r.spaces[tid]
 	if !ok {
 		r.mu.Unlock()
-		return 0, 0, errors.New("node: unknown space")
+		return 0, 0, 0, errors.New("node: unknown space")
 	}
 	var frames [][]byte
 	var eventIDs []id.EventID
+	self := r.Device.ID
+	// Recipient devices: the union of who we can address. The controller
+	// side knows invited devices immediately (Members(), populated at invite
+	// time) — that reaches a peer who has never synced a frame yet. Every
+	// replica ALSO learns a peer's device from the frames it authored (the
+	// signed envelope carries Env.Device), which is how a joiner — whose
+	// Members() map is empty (it is controller-only, see terminals/private.go)
+	// — discovers the owner and can push back. Union of both, minus self.
+	devSet := map[id.DeviceID]struct{}{}
 	now := uint64(time.Now().Unix())
 	if err := st.space.Log.Replay(func(a eventlog.Applied) error {
+		devSet[a.Env.Device] = struct{}{} // author is a member, custody aside
 		// Custody filter (ADR-015): expired frames never spend relay
 		// storage or later airtime; NoCustody frames refuse
 		// store-and-forward by author declaration. The relay itself
@@ -134,22 +155,55 @@ func (r *Runtime) pushToRelay(addr string, tid id.TerminalID, policy AssetPolicy
 		return nil
 	}); err != nil {
 		r.mu.Unlock()
-		return 0, 0, err
+		return 0, 0, 0, err
+	}
+	for dev := range st.space.Members() {
+		devSet[dev] = struct{}{}
 	}
 	blobs, _ := r.collectBlobs(tid, policy, DefaultBundleBudget)
-	body := bundle.EncodeWithBlobs(tid, frames, blobs)
+	// Ride an outstanding media request (if any) on the same bundle: wants =
+	// blob hashes we are missing, wanter = our device so a holder knows which
+	// inbox to answer into. Empty when nothing is pending (a plain bundle).
+	wants := r.relayWantsLocked(tid)
+	var wanter []byte
+	if len(wants) > 0 {
+		wanter = self[:]
+	}
+	body := bundle.EncodeWithWants(tid, frames, blobs, wants, wanter)
+	// Per-recipient dead-drop: hand a copy to every OTHER member's own relay
+	// inbox. The shared per-terminal mailbox is single-reader (destructive
+	// Collect), so with many members polling one relay the first poller drains
+	// everyone's mail; per-recipient boxes let all members sync concurrently.
+	// Self is skipped — we already hold our own frames.
+	delete(devSet, self)
+	var recipients []id.DeviceID
+	for dev := range devSet {
+		recipients = append(recipients, dev)
+	}
 	r.mu.Unlock()
 
+	if len(recipients) == 0 {
+		// Nobody addressable yet (solo space, or a fresh joiner before its
+		// first pull). Frames were prepared but delivered to no one — a clean
+		// no-op. Reporting recipients==0 lets the auto-sync loop retry rather
+		// than mark these frames as handed off.
+		return len(frames), 0, 0, nil
+	}
 	client, err := relay.DialClient(addr)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
 	defer client.Close()
 	now = uint64(time.Now().Unix())
-	hint := relay.Hint(tid, relay.Bucket(now))
-	deadline, err := client.Put(hint, now+uint64(DefaultRelayTTL/time.Second), body)
-	if err != nil {
-		return 0, 0, err
+	bucket := relay.Bucket(now)
+	expires := now + uint64(DefaultRelayTTL/time.Second)
+	var deadline uint64
+	for _, dev := range recipients {
+		d, err := client.Put(relay.HintFor(tid, dev, bucket), expires, body)
+		if err != nil {
+			return 0, 0, 0, err
+		}
+		deadline = d
 	}
 
 	// Record the honest receipt level for every pushed event: the relay
@@ -159,7 +213,118 @@ func (r *Runtime) pushToRelay(addr string, tid id.TerminalID, policy AssetPolicy
 		_ = st.space.Trust.RecordTransportReceipt(eid, tid, claims.DeliveryAcceptedByRelay)
 	}
 	r.mu.Unlock()
-	return len(frames), deadline, nil
+	return len(frames), len(recipients), deadline, nil
+}
+
+// addRelayWants records blob hashes to request over the relay for a space
+// (media on-demand with no direct peer). The next auto-sync push carries them.
+func (r *Runtime) addRelayWants(tid id.TerminalID, hashes []id.Hash) {
+	if len(hashes) == 0 {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	set := r.relayWants[tid]
+	if set == nil {
+		set = map[id.Hash]struct{}{}
+		r.relayWants[tid] = set
+	}
+	for _, h := range hashes {
+		set[h] = struct{}{}
+	}
+}
+
+// clearRelayWants drops hashes from the want set (fetch completed or gave up),
+// so we stop asking for them.
+func (r *Runtime) clearRelayWants(tid id.TerminalID, hashes []id.Hash) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	set := r.relayWants[tid]
+	if set == nil {
+		return
+	}
+	for _, h := range hashes {
+		delete(set, h)
+	}
+	if len(set) == 0 {
+		delete(r.relayWants, tid)
+	}
+}
+
+// relayWantsLocked returns the pending want hashes for a space as wire bytes.
+// Caller holds r.mu.
+func (r *Runtime) relayWantsLocked(tid id.TerminalID) [][]byte {
+	set := r.relayWants[tid]
+	if len(set) == 0 {
+		return nil
+	}
+	out := make([][]byte, 0, len(set))
+	for h := range set {
+		out = append(out, h[:])
+	}
+	return out
+}
+
+// answerWants pushes the blobs we hold for a peer's requested hashes into that
+// peer's own relay inbox — the response half of relay media fetch. Blind: the
+// relay still sees only an opaque hint and ciphertext. Bounded by the bundle
+// budget; the requester re-asks for whatever did not fit.
+func (r *Runtime) answerWants(client *relay.Client, tid id.TerminalID, wanter []byte, wants [][]byte) {
+	if len(wanter) != id.Size || len(wants) == 0 {
+		return
+	}
+	var dev id.DeviceID
+	copy(dev[:], wanter)
+	if dev == r.Device.ID {
+		return // never answer our own request
+	}
+	now := uint64(time.Now().Unix())
+	hint := relay.HintFor(tid, dev, relay.Bucket(now))
+	expires := now + uint64(DefaultRelayTTL/time.Second)
+
+	// The relay carries each item as one CBOR byte string, capped by
+	// codec.MaxItemLen (1 MiB). So a media answer must be SPLIT into
+	// sub-cap items — a single 8 MiB bundle would fail to decode at the relay
+	// (and the failure would be silent). We ship up to DefaultBundleBudget of
+	// chunks total, batched into items each under maxRelayItem; the requester
+	// collects them all and re-asks for whatever did not fit.
+	var batch [][]byte
+	batchBytes, totalSent := 0, 0
+	flush := func() bool {
+		if len(batch) == 0 {
+			return true
+		}
+		body := bundle.EncodeWithBlobs(tid, nil, batch)
+		_, err := client.Put(hint, expires, body)
+		batch, batchBytes = nil, 0
+		return err == nil
+	}
+	for _, hb := range wants {
+		if totalSent >= DefaultBundleBudget {
+			break
+		}
+		if len(hb) != id.Size {
+			continue
+		}
+		var h id.Hash
+		copy(h[:], hb)
+		data, err := r.root.GetBlob(h)
+		if err != nil {
+			continue // we do not hold it; another member may
+		}
+		if len(data) > maxRelayItem {
+			continue // one blob alone exceeds the relay item cap; skip it
+		}
+		if batchBytes+len(data) > maxRelayItem {
+			if !flush() {
+				return // relay refused a batch; stop, the requester re-asks
+			}
+		}
+		batch = append(batch, data)
+		batchBytes += len(data)
+		totalSent += len(data)
+	}
+	flush()
 }
 
 // PullFromRelay collects bundles for every known space (current and
@@ -183,12 +348,13 @@ func (r *Runtime) PullFromRelay(addr string) (applied int, err error) {
 	defer client.Close()
 
 	now := uint64(time.Now().Unix())
+	self := r.Device.ID
 	var hints [][]byte
 	for _, tid := range tids {
 		b := relay.Bucket(now)
-		hints = append(hints, relay.Hint(tid, b))
+		hints = append(hints, relay.HintFor(tid, self, b))
 		if b > 0 {
-			hints = append(hints, relay.Hint(tid, b-1))
+			hints = append(hints, relay.HintFor(tid, self, b-1))
 		}
 	}
 	items, err := client.Collect(hints)
@@ -196,9 +362,23 @@ func (r *Runtime) PullFromRelay(addr string) (applied int, err error) {
 		return 0, err
 	}
 	for _, item := range items {
-		terminal, frames, blobs, err := bundle.DecodeFull(item)
+		parts, err := bundle.DecodeParts(item)
 		if err != nil {
 			continue // not a bundle we understand; ignore quietly
+		}
+		terminal, frames, blobs := parts.Terminal, parts.Frames, parts.Blobs
+		r.mu.Lock()
+		_, known := r.spaces[terminal]
+		r.mu.Unlock()
+		if !known {
+			continue // not our space; also nothing to answer with
+		}
+		// A relay media request rode along: answer with any wanted blobs we
+		// hold, pushed into the requester's inbox (the response half of
+		// on-demand media over the relay). Runs without r.mu — it does network
+		// I/O.
+		if len(parts.Wants) > 0 {
+			r.answerWants(client, terminal, parts.Wanter, parts.Wants)
 		}
 		r.mu.Lock()
 		st, ok := r.spaces[terminal]

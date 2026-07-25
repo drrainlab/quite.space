@@ -61,7 +61,7 @@ func buildSpaces(t *testing.T) (*syncNode, *syncNode, *terminals.Participant) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := human.Say(alice, spaceA, "hello over the LAN", 100); err != nil {
+	if _, err := human.Say(alice, spaceA, "hello over the LAN", human.SayOptions{}, 100); err != nil {
 		t.Fatal(err)
 	}
 	spaceB := terminals.Replica(spaceA.ID)
@@ -126,7 +126,7 @@ func TestReconnectResumes(t *testing.T) {
 
 	// Drop the link; more writes happen while disconnected.
 	cb.Close()
-	if _, err := human.Say(alice, a.space, "written while disconnected", 200); err != nil {
+	if _, err := human.Say(alice, a.space, "written while disconnected", human.SayOptions{}, 200); err != nil {
 		t.Fatal(err)
 	}
 

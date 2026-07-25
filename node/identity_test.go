@@ -24,7 +24,7 @@ func TestOnboardingAndRename(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := rt.Say(tid, "hi"); err != nil {
+	if _, err := rt.Say(tid, "hi", SayOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	rev1 := rt.Self.Manifest.Revision

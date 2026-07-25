@@ -313,14 +313,21 @@ type assetResp struct {
 }
 
 type entryResp struct {
-	ID         string `json:"id"`
-	Author     string `json:"author"`
+	ID     string `json:"id"`
+	Author string `json:"author"`
+	// AuthorFull is the full principal hex — needed to address this person
+	// back (a reply stages them as a mention). The short Author form stays
+	// for display and Protocol view.
+	AuthorFull string `json:"author_full"`
 	AuthorName string `json:"author_name"`
 	Mine       bool   `json:"mine"`
 	ProducedBy string `json:"produced_by"`
 	Clock      uint64 `json:"clock"`
-	Kind       string `json:"kind"`
-	Fallback   string `json:"fallback"`
+	// CreatedAt is the AUTHOR's wall clock from the signed envelope —
+	// advisory, it can lie. Display only; never trust it for local policy.
+	CreatedAt uint64 `json:"created_at,omitempty"`
+	Kind      string `json:"kind"`
+	Fallback  string `json:"fallback"`
 	// Resonance: the reaction aggregate (own/mine are viewer-relative,
 	// resolved at this layer only).
 	Resonance *resonanceResp `json:"resonance,omitempty"`
@@ -329,12 +336,22 @@ type entryResp struct {
 	Kept      bool `json:"kept,omitempty"`
 	KeepCount int  `json:"keep_count,omitempty"`
 
-	Text      string `json:"text,omitempty"`
-	Revised   bool   `json:"revised,omitempty"`
-	Caption   string `json:"caption,omitempty"`
-	Alt       string `json:"alt,omitempty"`
-	ThumbB64  string `json:"thumb_b64,omitempty"`
-	ThumbMIME string `json:"thumb_mime,omitempty"`
+	Text string `json:"text,omitempty"`
+	// ReplyTo is a genuine reply edge (message.text.v1 only — the revision
+	// schema reuses the same wire field for a different meaning).
+	ReplyTo string `json:"reply_to,omitempty"`
+	// Mentions is the author's signed claim of who is addressed (full hex),
+	// with names resolved here so the client renders without a lookup.
+	// MentionsMe is viewer-relative, resolved at this layer only — the same
+	// pattern as Mine and Kept.
+	Mentions     []string `json:"mentions,omitempty"`
+	MentionNames []string `json:"mention_names,omitempty"`
+	MentionsMe   bool     `json:"mentions_me,omitempty"`
+	Revised      bool     `json:"revised,omitempty"`
+	Caption      string   `json:"caption,omitempty"`
+	Alt          string   `json:"alt,omitempty"`
+	ThumbB64     string   `json:"thumb_b64,omitempty"`
+	ThumbMIME    string   `json:"thumb_mime,omitempty"`
 
 	Title      string `json:"title,omitempty"`
 	Artist     string `json:"artist,omitempty"`
@@ -391,9 +408,10 @@ func (a *APIServer) handleEntries(w http.ResponseWriter, r *http.Request) {
 func (a *APIServer) projectEntry(tid id.TerminalID, sp *terminals.Space,
 	e *reducers.Entry, me id.PrincipalID, names map[id.PrincipalID]string) entryResp {
 	resp := entryResp{
-		ID: e.ID.Hex(), Author: e.Author.String(), AuthorName: names[e.Author],
-		Mine: e.Author == me, ProducedBy: e.ProducedBy.String(),
-		Clock: e.Clock, Kind: string(e.Kind),
+		ID: e.ID.Hex(), Author: e.Author.String(), AuthorFull: e.Author.Hex(),
+		AuthorName: names[e.Author],
+		Mine:       e.Author == me, ProducedBy: e.ProducedBy.String(),
+		Clock: e.Clock, CreatedAt: e.CreatedAt, Kind: string(e.Kind),
 	}
 	if sp != nil {
 		resp.Resonance = a.projectResonance(sp, e.ID, me, names)
@@ -417,6 +435,16 @@ func (a *APIServer) projectEntry(tid id.TerminalID, sp *terminals.Space,
 		resp.Text = e.Content.Text.Text
 		resp.Revised = e.Content.Text.Revised
 		resp.Fallback = e.Content.Text.Text
+		if rt := e.Content.Text.ReplyTo; rt != nil {
+			resp.ReplyTo = rt.Hex()
+		}
+		for _, m := range e.Content.Text.Mentions {
+			resp.Mentions = append(resp.Mentions, m.Hex())
+			resp.MentionNames = append(resp.MentionNames, names[m])
+			if m == me {
+				resp.MentionsMe = true
+			}
+		}
 	case e.Content.Visual != nil:
 		v := e.Content.Visual
 		resp.Caption, resp.Alt, resp.Fallback = v.Caption, v.Alt, v.Fallback()

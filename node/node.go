@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -46,6 +47,9 @@ type Runtime struct {
 	joins     map[string]*joinAttempt
 	llmClient *llm.Client // nil → default; injectable for tests
 
+	// attention is the QuietRank state (lazily loaded, device-local).
+	attention *attentionState
+
 	lanNode *lan.Node
 	lanPort int
 	mesh    *meshtastic.Radio
@@ -69,6 +73,11 @@ type Runtime struct {
 	// relaySync is the background relay push/pull loop (nil until first
 	// configured). r.mu guards the pointer; the state has its own lock.
 	relaySync *relaySyncState
+
+	// relayWants holds blob hashes this node is trying to fetch over the relay
+	// (media on-demand when there is no direct peer). The auto-sync push rides
+	// these to peers as a request; a holder answers into our inbox. r.mu-guarded.
+	relayWants map[id.TerminalID]map[id.Hash]struct{}
 }
 
 // maxCarried bounds the delivery-route projection (a UI hint, not state).
@@ -116,6 +125,9 @@ type spaceState struct {
 	space *terminals.Space
 	eng   *kernelsync.Engine
 	conns []link
+	// rejected remembers ingress frames that failed admission so a
+	// re-pushed copy is dropped cheaply (PA-1.3). Lazily created.
+	rejected *rejectedRing
 }
 
 // Open unlocks the data root and reconstructs the node: identity from the
@@ -131,7 +143,8 @@ func Open(dataDir string, passphrase []byte, displayName string) (*Runtime, erro
 	}
 	r := &Runtime{root: root, spaces: map[id.TerminalID]*spaceState{},
 		assetIdx: newAssetIndex(), passes: newPassRegistry(),
-		joins: map[string]*joinAttempt{}, stop: make(chan struct{})}
+		joins: map[string]*joinAttempt{}, stop: make(chan struct{}),
+		relayWants: map[id.TerminalID]map[id.Hash]struct{}{}}
 
 	ks, err := root.LoadKeystore()
 	switch {
@@ -184,35 +197,67 @@ func Open(dataDir string, passphrase []byte, displayName string) (*Runtime, erro
 	// Reopen every known space: keys first, then the log, so the replay
 	// can decrypt (terminals.AttachLog contract). The block hook is set
 	// before replay so asset indexes rebuild from the log (plan §10).
+	//
+	// PA-0 (I1): the VERIFIED MANIFEST is the authority for the
+	// private/plaintext decision — SpaceMeta.Visibility is only a repaired
+	// cache and can never flip a space's cryptographic mode. A reader
+	// replica without a manifest yet stays in bootstrap: no crypto
+	// decision, no emits, until the first verified manifest arrives.
 	for tid, meta := range r.ks.Spaces {
 		s := terminals.Replica(tid)
 		s.OnBlock = r.onBlockEvent(tid)
-		s.EnablePrivate(r.Device)
-		s.RestoreEpochs(r.ks.Epochs[tid])
+		pol := terminals.SpacePolicy{} // default: private semantics
+		manifestKnown := false
+		if len(meta.ManifestFrame) > 0 && verifySpaceManifest(tid, meta.ManifestFrame) == nil {
+			s.SetManifestFrame(meta.ManifestFrame)
+			pol = s.Policy()
+			manifestKnown = true
+		}
+		reader := meta.Role == storage.RoleReader
+		s.ReadOnly = reader
+		if pol.Effective() == terminals.VisibilityPrivate && !reader {
+			// Effective-private (verified private manifest, or the legacy
+			// no-manifest member replica): today's encrypted runtime.
+			s.EnablePrivate(r.Device)
+			s.RestoreEpochs(r.ks.Epochs[tid])
+		}
 		if meta.Owned {
 			if err := s.RestoreController(r.ks.TerminalSeeds[tid], meta.ManifestFrame, meta.Members); err != nil {
 				return nil, err
 			}
+			pol = s.Policy()
+			manifestKnown = true
 		}
 		log, replayed, err := eventlog.Open(tid, root.EventsDir(tid), nil)
 		if err != nil {
 			return nil, fmt.Errorf("node: reopening space %s: %w", tid, err)
 		}
 		s.AttachLog(log, replayed)
-		r.Self.ResumeChain(s)
+		if !reader {
+			r.Self.ResumeChain(s)
+		}
 		r.attach(tid, s)
-		// Idempotent: publishes only if the registry lacks our revision
-		// (spaces created before manifests traveled, or a bumped manifest).
-		if _, _, err := r.Self.PublishManifest(s); err != nil {
-			return nil, fmt.Errorf("node: publishing manifest into %s: %w", tid, err)
+		if !reader {
+			// Idempotent: publishes only if the registry lacks our revision
+			// (spaces created before manifests traveled, or a bumped manifest).
+			if _, _, err := r.Self.PublishManifest(s); err != nil {
+				return nil, fmt.Errorf("node: publishing manifest into %s: %w", tid, err)
+			}
+		}
+		// Repair the visibility cache from the verified manifest.
+		if manifestKnown {
+			if v := string(pol.Effective()); meta.Visibility != v {
+				meta.Visibility = v
+				r.ks.Spaces[tid] = meta
+			}
 		}
 	}
 	if err := r.saveKeystore(); err != nil {
 		return nil, err
 	}
 	// Resume background relay sync if a relay was configured.
-	if relay := r.GetSettings().Relay; relay != "" {
-		r.applyRelaySync(relay)
+	if s := r.GetSettings(); s.Relay != "" {
+		r.applyRelaySync(s.Relay, relayInterval(s))
 	}
 	return r, nil
 }
@@ -298,6 +343,29 @@ func (r *Runtime) Close() {
 
 // ---- Space operations ----
 
+// verifySpaceManifest checks a space manifest frame against the space id:
+// decode, signature by the terminal key, and the key IS the id (ADR-001).
+func verifySpaceManifest(tid id.TerminalID, frame []byte) error {
+	m, err := manifest.Decode(frame)
+	if err != nil {
+		return err
+	}
+	if m.Terminal != tid {
+		return errors.New("node: manifest belongs to another space")
+	}
+	if m.Kind != manifest.KindSpace {
+		return errors.New("node: not a space manifest")
+	}
+	return manifest.VerifyFrame(frame, m)
+}
+
+// CreateOptions parameterizes space creation (PA-0). The zero value is a
+// private space — unchanged pre-PA-0 behavior.
+type CreateOptions struct {
+	Character terminals.Character
+	Policy    terminals.SpacePolicy
+}
+
 // CreateSpace mints a private space owned by this node (default character).
 func (r *Runtime) CreateSpace(title string) (id.TerminalID, error) {
 	return r.CreateSpaceWithCharacter(title, terminals.DefaultCharacter("campfire"))
@@ -305,9 +373,27 @@ func (r *Runtime) CreateSpace(title string) (id.TerminalID, error) {
 
 // CreateSpaceWithCharacter mints a private space with a declared character.
 func (r *Runtime) CreateSpaceWithCharacter(title string, c terminals.Character) (id.TerminalID, error) {
+	return r.CreateSpaceWithOptions(title, CreateOptions{Character: c})
+}
+
+// CreateSpaceWithOptions mints a space with a declared character and access
+// policy. Public/unlisted spaces skip the epoch machinery entirely: their
+// events are signed plaintext (encrypting content whose key is public is
+// theatre) — read access is the space id itself.
+func (r *Runtime) CreateSpaceWithOptions(title string, o CreateOptions) (id.TerminalID, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	s, err := terminals.NewSpaceWithCharacter(title, r.Principal.ID, c)
+	if o.Character.Archetype == "" {
+		o.Character = terminals.DefaultCharacter("campfire")
+	}
+	// A curated policy always includes the creating device as an attested
+	// writer — the owner must be able to publish from day one.
+	if o.Policy.Publish == terminals.PublishCurated {
+		o.Policy.Writers = append(o.Policy.Writers, terminals.WriterBinding{
+			Principal: r.Principal.ID, Device: r.Device.ID,
+		})
+	}
+	s, err := terminals.NewSpaceWithPolicy(title, r.Principal.ID, o.Character, o.Policy)
 	if err != nil {
 		return id.TerminalID{}, err
 	}
@@ -317,10 +403,14 @@ func (r *Runtime) CreateSpaceWithCharacter(title string, c terminals.Character) 
 		return id.TerminalID{}, err
 	}
 	s.Log = log
-	s.EnablePrivate(r.Device)
-	s.AddMember(r.Device.ID, r.Device.X25519Pub)
-	if _, err := r.Self.RotateEpoch(s); err != nil {
-		return id.TerminalID{}, err
+	s.RefreshPolicy()
+	private := o.Policy.Effective() == terminals.VisibilityPrivate
+	if private {
+		s.EnablePrivate(r.Device)
+		s.AddMember(r.Device.ID, r.Device.X25519Pub)
+		if _, err := r.Self.RotateEpoch(s); err != nil {
+			return id.TerminalID{}, err
+		}
 	}
 	seed, err := s.TerminalSeed()
 	if err != nil {
@@ -330,6 +420,7 @@ func (r *Runtime) CreateSpaceWithCharacter(title string, c terminals.Character) 
 	r.ks.Spaces[s.ID] = storage.SpaceMeta{
 		Title: title, Owned: true,
 		ManifestFrame: s.ManifestFrame, Members: s.Members(),
+		Visibility: string(o.Policy.Effective()),
 	}
 	r.attach(s.ID, s)
 	if _, _, err := r.Self.PublishManifest(s); err != nil {
@@ -391,7 +482,9 @@ func (r *Runtime) JoinInvite(inviteB64 string) (id.TerminalID, error) {
 	if m := manifestTitle(manifestFrame); m != "" {
 		title = m
 	}
-	r.ks.Spaces[spaceID] = storage.SpaceMeta{Title: title}
+	// Keep the manifest with the meta (like the pass path): character and
+	// policy must survive restarts on joined replicas too (I1).
+	r.ks.Spaces[spaceID] = storage.SpaceMeta{Title: title, ManifestFrame: manifestFrame}
 	r.attach(spaceID, s)
 	if _, _, err := r.Self.PublishManifest(s); err != nil {
 		return id.TerminalID{}, err
@@ -466,15 +559,50 @@ func (r *Runtime) Members(tid id.TerminalID) ([]terminals.MemberCard, error) {
 	return st.space.MemberCards(uint64(time.Now().Unix())), nil
 }
 
+// canWrite gives a FRIENDLY refusal before an emit is attempted. The
+// authoritative gates live below (terminals: ReadOnly emit gate + curated
+// log admission) — a handler that forgets this check still cannot write.
+func (r *Runtime) canWrite(st *spaceState) error {
+	if st.space.ReadOnly {
+		return errors.New("node: join this space to write")
+	}
+	pol := st.space.Policy()
+	if pol.Frozen {
+		return errors.New("node: this space is frozen — publication is paused")
+	}
+	if pol.Publish == terminals.PublishCurated {
+		for _, w := range pol.Writers {
+			if w.Principal == r.Principal.ID && w.Device == r.Device.ID {
+				return nil
+			}
+		}
+		return errors.New("node: only the owner and curators publish here")
+	}
+	return nil
+}
+
 // Say posts a text message into a space.
-func (r *Runtime) Say(tid id.TerminalID, text string) (id.EventID, error) {
+// SayOptions carries the optional edges of a message: a reply pointer and
+// the people it addresses. A struct rather than more positional parameters —
+// addressing grows, call sites should not.
+type SayOptions struct {
+	ReplyTo  *id.EventID
+	Mentions []id.PrincipalID
+}
+
+func (r *Runtime) Say(tid id.TerminalID, text string, opt SayOptions) (id.EventID, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	st, ok := r.spaces[tid]
 	if !ok {
 		return id.EventID{}, errors.New("node: unknown space")
 	}
-	a, err := human.Say(r.Self, st.space, text, uint64(time.Now().Unix()))
+	if err := r.canWrite(st); err != nil {
+		return id.EventID{}, err
+	}
+	a, err := human.Say(r.Self, st.space, text,
+		human.SayOptions{ReplyTo: opt.ReplyTo, Mentions: opt.Mentions},
+		uint64(time.Now().Unix()))
 	if err != nil {
 		return id.EventID{}, err
 	}
@@ -508,6 +636,9 @@ func (r *Runtime) EmitBlock(tid id.TerminalID, schema string, payload []byte) (i
 	st, ok := r.spaces[tid]
 	if !ok {
 		return id.EventID{}, errors.New("node: unknown space")
+	}
+	if err := r.canWrite(st); err != nil {
+		return id.EventID{}, err
 	}
 	a, err := r.Self.Emit(st.space, schema, payload,
 		r.Self.DefaultAuthorship(), uint64(time.Now().Unix()))
@@ -563,13 +694,28 @@ func (r *Runtime) Spaces() []SpaceInfo {
 	out := make([]SpaceInfo, 0, len(r.spaces))
 	for tid, st := range r.spaces {
 		meta := r.ks.Spaces[tid]
+		events := st.space.Log.Len()
+		if n := st.space.ProjectionFrames; n > events {
+			// Reader replicas hold projection frames, not a canonical log.
+			events = n
+		}
 		out = append(out, SpaceInfo{
 			ID: tid, Title: meta.Title, Owned: meta.Owned,
-			Events:        st.space.Log.Len(),
+			Events:        events,
 			Messages:      len(st.space.State.Messages()),
 			Undecryptable: st.space.Undecryptable,
 			Peers:         len(st.conns),
 		})
 	}
+	// Deterministic order: r.spaces is a map, so without this the list would
+	// reshuffle on every poll ("jumping"). Title first, id as a stable
+	// tiebreak — same order every refresh.
+	sort.Slice(out, func(i, j int) bool {
+		li, lj := strings.ToLower(out[i].Title), strings.ToLower(out[j].Title)
+		if li != lj {
+			return li < lj
+		}
+		return out[i].ID.Hex() < out[j].ID.Hex()
+	})
 	return out
 }

@@ -52,7 +52,7 @@ func TestPassLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A message posted BEFORE Bob joins must never become readable to him.
-	if _, err := alice.Say(tid, "secret said before Bob arrived"); err != nil {
+	if _, err := alice.Say(tid, "secret said before Bob arrived", SayOptions{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -95,7 +95,7 @@ func TestPassLifecycle(t *testing.T) {
 
 	// History starts at acceptance: Alice posts AFTER the join, pushes to the
 	// relay, Bob pulls and can read it (proves Bob holds the working epoch).
-	if _, err := alice.Say(tid, "welcome Bob"); err != nil {
+	if _, err := alice.Say(tid, "welcome Bob", SayOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := alice.PushToRelay(addr, tid); err != nil {
@@ -146,7 +146,7 @@ func TestPassHistoryPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := alice.Say(tid, "the first listen happened here"); err != nil {
+	if _, err := alice.Say(tid, "the first listen happened here", SayOptions{}); err != nil {
 		t.Fatal(err)
 	}
 

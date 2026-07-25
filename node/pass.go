@@ -19,8 +19,8 @@ import (
 	"time"
 
 	"github.com/drrainlab/quiet_places/kernel/crypto"
-	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/kernel/storage"
+	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/terminals"
 	"github.com/drrainlab/quiet_places/transports/relay"
 )

@@ -33,7 +33,7 @@ func TestTwoNodesSyncOverMeshtastic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := rtA.Say(tid, "meet at the ridge at dawn"); err != nil {
+	if _, err := rtA.Say(tid, "meet at the ridge at dawn", SayOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	invite, err := rtA.MintInvite(tid, rtB.Device.ID, rtB.Device.X25519Pub)
@@ -73,7 +73,7 @@ func TestTwoNodesSyncOverMeshtastic(t *testing.T) {
 	}
 
 	// Reply back over the same radio link.
-	if _, err := rtB.Say(tid, "copy, bringing the recorder"); err != nil {
+	if _, err := rtB.Say(tid, "copy, bringing the recorder", SayOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	for {

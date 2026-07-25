@@ -44,6 +44,16 @@ type Space struct {
 	Private       bool
 	Undecryptable int
 
+	// ReadOnly marks a public-space reader replica (PA-0): it may absorb
+	// and materialize, but local emits are refused at the low-level gate
+	// (I3) until the node flips it on join/curator activation.
+	ReadOnly bool
+
+	// PolicyStats counts frames refused by the space's publish policy —
+	// the honest counterpart of Undecryptable (I2: refused frames never
+	// enter the canonical log; this is the visible trace they existed).
+	PolicyStats PolicyStats
+
 	// OnBlock receives every DECRYPTED block.* event (asset indexing and
 	// other post-reduction hooks live above the terminals layer).
 	OnBlock func(env *signal.Envelope, eid id.EventID)
@@ -53,11 +63,18 @@ type Space struct {
 	// delivery ladder (ADR-015 §5); it must not re-enter the space.
 	OnAbsorb func(a eventlog.Applied)
 
+	// ProjectionFrames counts events applied via public projections (the
+	// reader replica's honest "how much I hold" — its canonical log is
+	// empty by design).
+	ProjectionFrames int
+
 	// priv is held only by the creating node (the controller's replica).
 	priv          ed25519.PrivateKey
 	priv2         *privateState
 	ManifestFrame []byte
 	maxClock      uint64
+	// projSeen dedups projection-applied events on reader replicas.
+	projSeen map[id.EventID]bool
 }
 
 // NewSpace creates a Space Terminal with the default (campfire) character.
@@ -68,7 +85,17 @@ func NewSpace(title string, controller id.PrincipalID) (*Space, error) {
 // NewSpaceWithCharacter creates a Space Terminal whose character is part of
 // its signed manifest: every replica reads the same declared feel.
 func NewSpaceWithCharacter(title string, controller id.PrincipalID, c Character) (*Space, error) {
+	return NewSpaceWithPolicy(title, controller, c, SpacePolicy{})
+}
+
+// NewSpaceWithPolicy additionally signs an access policy into the manifest
+// (PA-0). The zero policy emits no labels — private manifests stay
+// byte-identical to pre-PA-0 ones.
+func NewSpaceWithPolicy(title string, controller id.PrincipalID, c Character, pol SpacePolicy) (*Space, error) {
 	if err := c.Validate(); err != nil {
+		return nil, err
+	}
+	if err := pol.Validate(); err != nil {
 		return nil, err
 	}
 	pub, priv, err := ed25519.GenerateKey(identity.NewRand())
@@ -81,7 +108,7 @@ func NewSpaceWithCharacter(title string, controller id.PrincipalID, c Character)
 		Terminal:       tid,
 		Controller:     controller,
 		Kind:           manifest.KindSpace,
-		DeclaredLabels: c.Labels(title),
+		DeclaredLabels: append(c.Labels(title), pol.Labels()...),
 		IOMode:         manifest.IODuplex,
 		Capabilities: []string{capability.SignalPublish, capability.SignalReceive,
 			capability.PresencePublish, capability.TerminalDiscover},
@@ -95,6 +122,7 @@ func NewSpaceWithCharacter(title string, controller id.PrincipalID, c Character)
 	s := newReplica(tid)
 	s.priv = priv
 	s.ManifestFrame = frame
+	s.refreshPolicy()
 	return s, nil
 }
 
@@ -249,6 +277,23 @@ func (p *Participant) allowedAuthorship(a signal.Authorship) bool {
 func (p *Participant) Emit(s *Space, schema string, payload []byte,
 	produced signal.Authorship, createdAt uint64) (eventlog.Applied, error) {
 
+	// The single low-level write gate (PA-0 I3 + PA-1 freeze): reader
+	// replicas never emit; frozen spaces refuse EVERYONE — the owner
+	// included; curated spaces refuse non-writers. All checked BEFORE the
+	// chain sequence advances, so a refusal never desyncs the author
+	// chain. The log admission gate enforces the same policy one layer
+	// lower for frames arriving from outside.
+	if s.ReadOnly {
+		return eventlog.Applied{}, ErrReadOnlyReplica
+	}
+	if pol := s.Policy(); pol.IsPublic() {
+		if pol.Frozen {
+			return eventlog.Applied{}, ErrSpaceFrozen
+		}
+		if !pol.AllowsWriter(p.Principal.ID, p.Device.ID) {
+			return eventlog.Applied{}, ErrNotAuthorized
+		}
+	}
 	caps := capability.NewSet(p.Manifest.Capabilities...)
 	if !caps.Has(capability.SignalPublish) {
 		return eventlog.Applied{}, fmt.Errorf("%w: signal.publish", ErrUndeclaredOperation)

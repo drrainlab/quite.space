@@ -23,12 +23,14 @@ const (
 	version = 0
 )
 
-// Bundle key table v0 (append-only, ADR-009: old decoders skip key 4).
+// Bundle key table v0 (append-only, ADR-009: old decoders skip unknown keys).
 const (
 	keyVersion  = 1
 	keyTerminal = 2
 	keyFrames   = 3
 	keyBlobs    = 4 // encrypted asset blobs (manifests and chunks)
+	keyWants    = 5 // requested blob hashes (relay media fetch)
+	keyWanter   = 6 // requester device id — where to send the response
 )
 
 // Encode serializes frames for one terminal (same bytes as the file form —
@@ -41,8 +43,22 @@ func Encode(terminal id.TerminalID, frames [][]byte) []byte {
 // path for media. A blob is opaque here; possession proves nothing about
 // access (keys travel inside the epoch-encrypted block events).
 func EncodeWithBlobs(terminal id.TerminalID, frames [][]byte, blobs [][]byte) []byte {
+	return EncodeWithWants(terminal, frames, blobs, nil, nil)
+}
+
+// EncodeWithWants is the full form: frames, blobs, and an optional relay media
+// request. wants lists blob hashes the sender is missing; wanter is the
+// sender's device id, so a holder knows which inbox to push the response to.
+// Both empty = a plain frames/blobs bundle (byte-identical to EncodeWithBlobs).
+func EncodeWithWants(terminal id.TerminalID, frames, blobs, wants [][]byte, wanter []byte) []byte {
 	n := 3
 	if len(blobs) > 0 {
+		n++
+	}
+	if len(wants) > 0 {
+		n++
+	}
+	if len(wanter) > 0 {
 		n++
 	}
 	buf := []byte(magic)
@@ -62,6 +78,17 @@ func EncodeWithBlobs(terminal id.TerminalID, frames [][]byte, blobs [][]byte) []
 		for _, b := range blobs {
 			buf = codec.AppendBytes(buf, b)
 		}
+	}
+	if len(wants) > 0 {
+		buf = codec.AppendUint(buf, keyWants)
+		buf = codec.AppendArray(buf, len(wants))
+		for _, h := range wants {
+			buf = codec.AppendBytes(buf, h)
+		}
+	}
+	if len(wanter) > 0 {
+		buf = codec.AppendUint(buf, keyWanter)
+		buf = codec.AppendBytes(buf, wanter)
 	}
 	return buf
 }
@@ -90,26 +117,41 @@ func Decode(data []byte) (id.TerminalID, [][]byte, error) {
 	return tid, frames, err
 }
 
-// DecodeFull additionally returns carried asset blobs. Frames and blobs are
-// opaque here — validation happens in the event log and the asset layer,
-// not in the transport (ADR-007).
+// Parts is the fully decoded content of a bundle. Wants/Wanter are set only on
+// a relay media request (see EncodeWithWants); they are empty otherwise.
+type Parts struct {
+	Terminal id.TerminalID
+	Frames   [][]byte
+	Blobs    [][]byte
+	Wants    [][]byte
+	Wanter   []byte
+}
+
+// DecodeFull returns the terminal, frames, and carried asset blobs. Frames and
+// blobs are opaque here — validation happens in the event log and the asset
+// layer, not in the transport (ADR-007).
 func DecodeFull(data []byte) (id.TerminalID, [][]byte, [][]byte, error) {
-	var terminal id.TerminalID
+	p, err := DecodeParts(data)
+	return p.Terminal, p.Frames, p.Blobs, err
+}
+
+// DecodeParts returns everything a bundle carries, including a relay media
+// request if present.
+func DecodeParts(data []byte) (Parts, error) {
+	var p Parts
 	if len(data) < len(magic) || string(data[:len(magic)]) != magic {
-		return terminal, nil, nil, errors.New("bundle: not a terminal-bundle file")
+		return p, errors.New("bundle: not a terminal-bundle file")
 	}
 	d := codec.NewDecoder(data[len(magic):])
 	m, err := d.ReadMapHeader()
 	if err != nil {
-		return terminal, nil, nil, err
+		return p, err
 	}
-	var frames [][]byte
-	var blobs [][]byte
 	var seenTerminal bool
 	for {
 		k, ok, err := m.Next()
 		if err != nil {
-			return terminal, nil, nil, err
+			return p, err
 		}
 		if !ok {
 			break
@@ -118,56 +160,74 @@ func DecodeFull(data []byte) (id.TerminalID, [][]byte, [][]byte, error) {
 		case keyVersion:
 			v, e := d.ReadUint()
 			if e != nil {
-				return terminal, nil, nil, e
+				return p, e
 			}
 			if v != version {
-				return terminal, nil, nil, fmt.Errorf("bundle: unsupported version %d", v)
+				return p, fmt.Errorf("bundle: unsupported version %d", v)
 			}
 		case keyTerminal:
 			b, e := d.ReadBytes()
 			if e != nil {
-				return terminal, nil, nil, e
+				return p, e
 			}
 			if len(b) != id.Size {
-				return terminal, nil, nil, errors.New("bundle: bad terminal id")
+				return p, errors.New("bundle: bad terminal id")
 			}
-			copy(terminal[:], b)
+			copy(p.Terminal[:], b)
 			seenTerminal = true
 		case keyFrames:
 			n, e := d.ReadArray()
 			if e != nil {
-				return terminal, nil, nil, e
+				return p, e
 			}
 			for range n {
 				f, e := d.ReadBytes()
 				if e != nil {
-					return terminal, nil, nil, e
+					return p, e
 				}
-				frames = append(frames, append([]byte(nil), f...))
+				p.Frames = append(p.Frames, append([]byte(nil), f...))
 			}
 		case keyBlobs:
 			n, e := d.ReadArray()
 			if e != nil {
-				return terminal, nil, nil, e
+				return p, e
 			}
 			for range n {
 				b, e := d.ReadBytes()
 				if e != nil {
-					return terminal, nil, nil, e
+					return p, e
 				}
-				blobs = append(blobs, append([]byte(nil), b...))
+				p.Blobs = append(p.Blobs, append([]byte(nil), b...))
 			}
+		case keyWants:
+			n, e := d.ReadArray()
+			if e != nil {
+				return p, e
+			}
+			for range n {
+				h, e := d.ReadBytes()
+				if e != nil {
+					return p, e
+				}
+				p.Wants = append(p.Wants, append([]byte(nil), h...))
+			}
+		case keyWanter:
+			b, e := d.ReadBytes()
+			if e != nil {
+				return p, e
+			}
+			p.Wanter = append([]byte(nil), b...)
 		default:
 			if err := d.SkipItem(); err != nil {
-				return terminal, nil, nil, err
+				return p, err
 			}
 		}
 	}
 	if err := d.Done(); err != nil {
-		return terminal, nil, nil, err
+		return p, err
 	}
 	if !seenTerminal {
-		return terminal, nil, nil, errors.New("bundle: missing terminal id")
+		return p, errors.New("bundle: missing terminal id")
 	}
-	return terminal, frames, blobs, nil
+	return p, nil
 }

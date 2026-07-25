@@ -35,7 +35,7 @@ func TestRelayAutoSync(t *testing.T) {
 	if _, err := bob.JoinInvite(invite); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := alice.Say(tid, "reaches bob through the blind relay only"); err != nil {
+	if _, err := alice.Say(tid, "reaches bob through the blind relay only", SayOptions{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -47,6 +47,7 @@ func TestRelayAutoSync(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Bob receives Alice's message (owner -> joiner).
 	deadline := time.Now().Add(20 * time.Second)
 	for {
 		spB, _ := bob.Space(tid)
@@ -54,7 +55,27 @@ func TestRelayAutoSync(t *testing.T) {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("auto-sync did not converge (status: %+v / %+v)",
+			t.Fatalf("owner->joiner did not converge (status: %+v / %+v)",
+				alice.RelaySync(), bob.RelaySync())
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	// ...and Alice receives Bob's reply (joiner -> owner). The joiner's member
+	// map is empty (controller-only), so this only works if the pusher also
+	// addresses peers learned from received frames — regression guard for the
+	// asymmetric-delivery bug where only one direction flowed.
+	if _, err := bob.Say(tid, "and bob answers back the same way", SayOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	deadline = time.Now().Add(20 * time.Second)
+	for {
+		spA, _ := alice.Space(tid)
+		if len(spA.State.Messages()) >= 2 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("joiner->owner did not converge (status: %+v / %+v)",
 				alice.RelaySync(), bob.RelaySync())
 		}
 		time.Sleep(200 * time.Millisecond)

@@ -56,6 +56,17 @@ type Log struct {
 	quarant map[id.DeviceID][][]byte // frames set aside after a fork
 }
 
+// SetAdmit installs (or clears, with nil) the admission gate after
+// construction. PA-0 space policy derives the gate from the signed manifest,
+// which may arrive or change after the log is opened.
+func (l *Log) SetAdmit(f AdmitFunc) { l.admit = f }
+
+// Has reports whether the log already holds this event.
+func (l *Log) Has(eid id.EventID) bool {
+	_, ok := l.frames[eid]
+	return ok
+}
+
 // New creates an in-memory log.
 func New(terminal id.TerminalID, admit AdmitFunc) *Log {
 	return &Log{

@@ -306,25 +306,28 @@ func (a *APIServer) publicationJSON(tid id.TerminalID, docID [16]byte) (map[stri
 	if !ok {
 		return nil, false
 	}
-	comments := make([]map[string]any, 0, len(pub.Comments))
-	for _, c := range pub.Comments {
-		cm := map[string]any{
-			"comment_id": hex.EncodeToString(c.CommentID[:]),
-			"text":       c.Text,
-			"author":     c.Author.String(),
-			"clock":      c.Clock,
-		}
-		if c.ParentID != nil {
-			cm["parent_comment_id"] = hex.EncodeToString(c.ParentID[:])
-		}
-		comments = append(comments, cm)
-	}
 	me := a.rt.Principal.ID
 	names := map[id.PrincipalID]string{me: a.rt.DisplayName()}
 	for _, c := range sp.MemberCards(0) {
 		if c.Name != "" {
 			names[c.Principal] = c.Name
 		}
+	}
+	comments := make([]map[string]any, 0, len(pub.Comments))
+	for _, c := range pub.Comments {
+		cm := map[string]any{
+			"comment_id":  hex.EncodeToString(c.CommentID[:]),
+			"text":        c.Text,
+			"author":      c.Author.String(),
+			"author_name": names[c.Author],
+			"mine":        c.Author == me,
+			"clock":       c.Clock,
+			"created_at":  c.CreatedAt,
+		}
+		if c.ParentID != nil {
+			cm["parent_comment_id"] = hex.EncodeToString(c.ParentID[:])
+		}
+		comments = append(comments, cm)
 	}
 	target := reducers.PubReactionTarget(docID)
 	out := map[string]any{
@@ -361,6 +364,7 @@ func (a *APIServer) handleListPublications(w http.ResponseWriter, r *http.Reques
 			"summary":           p.Document.Summary,
 			"kind":              p.Document.Kind,
 			"cover":             p.Document.Cover,
+			"tags":              p.Document.Tags,
 			"author":            p.Author.String(),
 			"clock":             p.Clock,
 			"revision_event_id": p.RevisionEventID.Hex(),

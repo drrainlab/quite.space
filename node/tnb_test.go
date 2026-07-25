@@ -21,7 +21,7 @@ func TestCustodyReceiptPinning(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	eid, err := rt.Say(tid, "over the boundary")
+	eid, err := rt.Say(tid, "over the boundary", SayOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

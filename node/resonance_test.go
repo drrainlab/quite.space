@@ -22,7 +22,7 @@ func TestResonanceEmitGates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	eid, err := rt.Say(tid, "the demo")
+	eid, err := rt.Say(tid, "the demo", SayOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestResonanceTwoNodeSync(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	eid, err := alice.Say(tid, "first listen")
+	eid, err := alice.Say(tid, "first listen", SayOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

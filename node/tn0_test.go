@@ -30,7 +30,7 @@ func TestRelayPushCustodyFilter(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := rt.Say(tid, "custody-worthy note"); err != nil {
+	if _, err := rt.Say(tid, "custody-worthy note", SayOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := rt.SetPresence(tid, "mixing_a_track", 300); err != nil {
@@ -61,7 +61,7 @@ func TestDeliveryLadderHonestClimb(t *testing.T) {
 		t.Fatal(err)
 	}
 	// No transport yet: created_local only.
-	eid0, err := alice.Say(tid, "before transports")
+	eid0, err := alice.Say(tid, "before transports", SayOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestDeliveryLadderHonestClimb(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	eid, err := alice.Say(tid, "over the wire")
+	eid, err := alice.Say(tid, "over the wire", SayOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

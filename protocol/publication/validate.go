@@ -221,12 +221,21 @@ func checkAssetRef(s string, assetOK func(string) bool, what string) error {
 }
 
 func checkURL(s string) error {
+	if strings.ContainsAny(s, "\n\r\t ") || len(s) > 2048 {
+		return errors.New("publication: malformed URL")
+	}
+	// PA-1: "qs:<token>" is a Quiet Spaces share link — an opaque bearer
+	// token, not a host-based URL. It lets a catalog space-card reference
+	// another space in a plain link block.
+	if strings.HasPrefix(s, "qs:") {
+		if len(s) <= len("qs:") {
+			return errors.New("publication: empty space link")
+		}
+		return nil
+	}
 	u, err := url.Parse(s)
 	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
 		return errors.New("publication: link must be an http(s) URL")
-	}
-	if strings.ContainsAny(s, "\n\r\t ") || len(s) > 2048 {
-		return errors.New("publication: malformed URL")
 	}
 	return nil
 }

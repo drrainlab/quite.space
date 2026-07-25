@@ -42,7 +42,7 @@ func TestPrivateSpaceEndToEnd(t *testing.T) {
 	if _, err := alice.RotateEpoch(spaceA); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := human.Say(alice, spaceA, "secret plan: record at dawn", 100); err != nil {
+	if _, err := human.Say(alice, spaceA, "secret plan: record at dawn", human.SayOptions{}, 100); err != nil {
 		t.Fatal(err)
 	}
 	// Sanity: alice reads her own space.
@@ -87,7 +87,7 @@ func TestPrivateSpaceEndToEnd(t *testing.T) {
 	if _, err := alice.RotateEpoch(spaceA); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := human.Say(alice, spaceA, "bob, you should hear this", 200); err != nil {
+	if _, err := human.Say(alice, spaceA, "bob, you should hear this", human.SayOptions{}, 200); err != nil {
 		t.Fatal(err)
 	}
 	pipe(t, spaceA, spaceB)
@@ -96,7 +96,7 @@ func TestPrivateSpaceEndToEnd(t *testing.T) {
 	}
 
 	// Bob writes back; alice reads it.
-	if _, err := human.Say(bob, spaceB, "on my way", 300); err != nil {
+	if _, err := human.Say(bob, spaceB, "on my way", human.SayOptions{}, 300); err != nil {
 		t.Fatal(err)
 	}
 	pipe(t, spaceB, spaceA)
@@ -110,7 +110,7 @@ func TestPrivateSpaceEndToEnd(t *testing.T) {
 	if _, err := alice.RotateEpoch(spaceA); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := human.Say(alice, spaceA, "post-removal message", 400); err != nil {
+	if _, err := human.Say(alice, spaceA, "post-removal message", human.SayOptions{}, 400); err != nil {
 		t.Fatal(err)
 	}
 	pipe(t, spaceA, spaceB)
@@ -186,7 +186,7 @@ func TestNonMemberCannotWrite(t *testing.T) {
 	replica := terminals.Replica(spaceA.ID)
 	replica.EnablePrivate(outsider.Device)
 	pipe(t, spaceA, replica)
-	if _, err := human.Say(outsider, replica, "let me in", 100); err == nil {
+	if _, err := human.Say(outsider, replica, "let me in", human.SayOptions{}, 100); err == nil {
 		t.Fatal("non-member wrote into a private space")
 	}
 }

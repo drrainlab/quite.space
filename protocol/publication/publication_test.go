@@ -42,6 +42,37 @@ func TestDocumentRoundTrip(t *testing.T) {
 	}
 }
 
+// PA-1 space-card: a catalog card is a kind "space" document whose link
+// block carries the target space's share link. It round-trips and passes
+// authoring like any other document.
+func TestSpaceCardRoundTrip(t *testing.T) {
+	doc := &Document{
+		Kind: "space", Title: "Quiet Commons", Summary: "An open room for everyone.",
+		Visibility: "space", Tags: []string{"community", "open"},
+	}
+	doc.DocumentID[0] = 0xCA
+	doc.Blocks = []Block{
+		{ID: "l1", Type: "link", RawProps: EncodeTextProps(TextProps{
+			Text: "https://relay.example:7411", More: "Open this space",
+		})},
+		{ID: "t1", Type: "text", RawProps: EncodeTextProps(TextProps{Text: "Say hello."})},
+	}
+	enc := doc.Encode()
+	got, err := Decode(enc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Kind != "space" || len(got.Tags) != 2 || got.Blocks[0].Type != "link" {
+		t.Fatalf("space-card round-trip mismatch: %+v", got)
+	}
+	if !bytes.Equal(got.Encode(), enc) {
+		t.Fatal("space-card re-encode not canonical")
+	}
+	if err := Validate(got, nil); err != nil {
+		t.Fatalf("valid space-card rejected: %v", err)
+	}
+}
+
 // Forward compatibility: a document containing an UNKNOWN block type decodes
 // (opaque), survives re-encode byte-exactly, but is rejected at authoring.
 func TestUnknownBlockOpaqueSurvival(t *testing.T) {

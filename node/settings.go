@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/drrainlab/quiet_places/attention"
 	"net/http"
 	"strings"
 	"time"
@@ -24,6 +25,26 @@ type Settings struct {
 	// disables background relay sync. Set it and the node pushes changed
 	// spaces + pulls on a timer — no manual push/pull needed.
 	Relay string `json:"relay"`
+	// RelaySyncSeconds is the background push/pull cadence; 0 = default 2s.
+	RelaySyncSeconds int `json:"relay_sync_seconds"`
+	// Attention is the QuietRank policy. It lives in this device-local blob
+	// and is never emitted, bundled, or relayed.
+	Attention *attention.Policy `json:"attention,omitempty"`
+}
+
+// relayInterval clamps the configured cadence to a sane range (default 2s).
+func relayInterval(s Settings) time.Duration {
+	n := s.RelaySyncSeconds
+	if n <= 0 {
+		n = 2
+	}
+	if n < 1 {
+		n = 1
+	}
+	if n > 3600 {
+		n = 3600
+	}
+	return time.Duration(n) * time.Second
 }
 
 // GetSettings returns the decoded settings (zero-value if unset).
@@ -55,13 +76,14 @@ func (r *Runtime) SetSettings(s Settings) error {
 	}
 	r.ks.Settings = b
 	err = r.saveKeystore()
-	relayChanged := s.Relay != cur.Relay
+	// Restart the loop when the address OR the cadence changed.
+	relayChanged := s.Relay != cur.Relay || s.RelaySyncSeconds != cur.RelaySyncSeconds
 	r.mu.Unlock() // release before applyRelaySync (it takes r.mu itself)
 	if err != nil {
 		return err
 	}
 	if relayChanged {
-		r.applyRelaySync(s.Relay)
+		r.applyRelaySync(s.Relay, relayInterval(s))
 	}
 	return nil
 }
@@ -96,7 +118,7 @@ func (r *Runtime) TestLLM(ctx context.Context) error {
 func settingsJSON(s Settings) map[string]any {
 	return map[string]any{
 		"theme": s.Theme, "preset": s.Preset, "render_mode": s.RenderMode,
-		"relay": s.Relay,
+		"relay": s.Relay, "relay_sync_seconds": int(relayInterval(s) / time.Second),
 		"llm": map[string]any{
 			"provider": s.LLM.Provider, "model": s.LLM.Model,
 			"base_url": s.LLM.BaseURL, "has_key": s.LLM.APIKey != "",
@@ -114,6 +136,7 @@ func (a *APIServer) handleSetSettings(w http.ResponseWriter, r *http.Request) {
 		Preset     string `json:"preset"`
 		RenderMode string `json:"render_mode"`
 		Relay      string `json:"relay"`
+		RelaySync  int    `json:"relay_sync_seconds"`
 		LLM        struct {
 			Provider string `json:"provider"`
 			Model    string `json:"model"`
@@ -126,7 +149,7 @@ func (a *APIServer) handleSetSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s := Settings{Theme: body.Theme, Preset: body.Preset, RenderMode: body.RenderMode,
-		Relay: strings.TrimSpace(body.Relay)}
+		Relay: strings.TrimSpace(body.Relay), RelaySyncSeconds: body.RelaySync}
 	s.LLM.Provider = body.LLM.Provider
 	s.LLM.Model = body.LLM.Model
 	s.LLM.BaseURL = body.LLM.BaseURL

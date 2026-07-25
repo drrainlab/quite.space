@@ -31,7 +31,12 @@ const (
 )
 
 // Document kinds and visibility intents (bounded vocabularies).
-var allowedKinds = map[string]bool{"article": true, "note": true, "release": true, "log": true}
+// allowedKinds: "space" is a catalog space-card (PA-1) — a document whose
+// link block carries a public space share link; any public broadcast space
+// containing such posts acts as a catalog.
+var allowedKinds = map[string]bool{
+	"article": true, "note": true, "release": true, "log": true, "space": true,
+}
 var allowedVisibility = map[string]bool{"space": true, "public-intent": true}
 var allowedDiscussion = map[string]bool{"": true, "thread": true, "off": true}
 var allowedLayout = map[string]bool{"": true, "editorial": true, "compact": true}

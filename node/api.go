@@ -100,6 +100,19 @@ func (a *APIServer) Handler() http.Handler {
 	mux.HandleFunc("GET /api/spaces/{id}/resonance/{target}/actors", a.auth(a.handleResonanceActors))
 	mux.HandleFunc("POST /api/spaces/{id}/presence", a.auth(a.handlePresence))
 	mux.HandleFunc("POST /api/invites/accept", a.auth(a.handleJoin))
+	mux.HandleFunc("POST /api/public/open", a.auth(a.handlePublicOpen))
+	mux.HandleFunc("GET /api/spaces/{id}/link", a.auth(a.handlePublicLink))
+	mux.HandleFunc("POST /api/spaces/{id}/join", a.auth(a.handlePublicJoin))
+	mux.HandleFunc("POST /api/spaces/{id}/policy", a.auth(a.handleRevisePolicy))
+	// QuietRank (AT-0): device-local attention layer.
+	mux.HandleFunc("GET /api/signals", a.auth(a.handleSignals))
+	mux.HandleFunc("POST /api/signals/{id}/seen", a.auth(a.handleSignalSeen))
+	mux.HandleFunc("POST /api/signals/{id}/feedback", a.auth(a.handleSignalFeedback))
+	mux.HandleFunc("POST /api/attention/notice", a.auth(a.handleAttentionNotice))
+	mux.HandleFunc("GET /api/attention/policy", a.auth(a.handleGetAttentionPolicy))
+	mux.HandleFunc("POST /api/attention/policy", a.auth(a.handleSetAttentionPolicy))
+	mux.HandleFunc("POST /api/attention/forget", a.auth(a.handleForgetAttention))
+	mux.HandleFunc("POST /api/attention/viewing", a.auth(a.handleViewing))
 	mux.HandleFunc("POST /api/spaces/{id}/passes", a.auth(a.handleMintPass))
 	mux.HandleFunc("GET /api/spaces/{id}/passes", a.auth(a.handleListPasses))
 	mux.HandleFunc("DELETE /api/spaces/{id}/passes/{pass}", a.auth(a.handleRevokePass))
@@ -285,6 +298,14 @@ type spaceResp struct {
 	Undecryptable int           `json:"undecryptable"`
 	Peers         int           `json:"peers"`
 	Character     characterResp `json:"character"`
+	// PA-0 access surface.
+	Visibility      string `json:"visibility,omitempty"` // "" private | unlisted | public
+	Join            string `json:"join,omitempty"`       // "" | "open"
+	Publish         string `json:"publish,omitempty"`    // "" all | "curated"
+	Role            string `json:"role,omitempty"`       // "" member/owner | "reader"
+	CanWrite        bool   `json:"can_write"`
+	Frozen          bool   `json:"frozen,omitempty"`
+	IgnoredByPolicy uint64 `json:"ignored_by_policy,omitempty"`
 }
 
 func (a *APIServer) handleSpaces(w http.ResponseWriter, r *http.Request) {
@@ -299,6 +320,19 @@ func (a *APIServer) handleSpaces(w http.ResponseWriter, r *http.Request) {
 		if sp, ok := a.rt.Space(s.ID); ok {
 			_, c := sp.Character()
 			resp.Character = characterOf(c)
+			pol := sp.Policy()
+			if pol.IsPublic() {
+				resp.Visibility = string(pol.Visibility)
+				resp.Join = pol.Join
+				resp.Publish = pol.Publish
+				resp.Frozen = pol.Frozen
+			}
+			resp.IgnoredByPolicy = sp.PolicyStats.IgnoredTotal
+			a.rt.mu.Lock()
+			resp.Role = a.rt.ks.Spaces[s.ID].Role
+			st := a.rt.spaces[s.ID]
+			resp.CanWrite = st != nil && a.rt.canWrite(st) == nil
+			a.rt.mu.Unlock()
 		}
 		out = append(out, resp)
 	}
@@ -323,6 +357,10 @@ func (a *APIServer) handleCreateSpace(w http.ResponseWriter, r *http.Request) {
 		Memory    string   `json:"memory"`
 		Rituals   []string `json:"rituals"`
 		Presence  []string `json:"presence"` // extra custom states
+		// PA-0 access policy (absent = private, unchanged behavior).
+		Visibility string `json:"visibility"` // "" | "unlisted" | "public"
+		Join       string `json:"join"`       // "" | "open"
+		Publish    string `json:"publish"`    // "" (all) | "curated"
 	}](r)
 	if err != nil || strings.TrimSpace(body.Title) == "" {
 		httpErr(w, http.StatusBadRequest, errors.New("title required"))
@@ -352,7 +390,13 @@ func (a *APIServer) handleCreateSpace(w http.ResponseWriter, r *http.Request) {
 			c.Presence = append(c.Presence, p)
 		}
 	}
-	tid, err := a.rt.CreateSpaceWithCharacter(strings.TrimSpace(body.Title), c)
+	pol := terminals.SpacePolicy{
+		Visibility: terminals.Visibility(body.Visibility),
+		Join:       body.Join,
+		Publish:    body.Publish,
+	}
+	tid, err := a.rt.CreateSpaceWithOptions(strings.TrimSpace(body.Title),
+		CreateOptions{Character: c, Policy: pol})
 	if err != nil {
 		httpErr(w, http.StatusBadRequest, err)
 		return
@@ -400,13 +444,32 @@ func (a *APIServer) handleSay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body, err := readBody[struct {
-		Text string `json:"text"`
+		Text     string   `json:"text"`
+		ReplyTo  string   `json:"reply_to"`
+		Mentions []string `json:"mentions"`
 	}](r)
 	if err != nil || body.Text == "" {
 		httpErr(w, http.StatusBadRequest, errors.New("text required"))
 		return
 	}
-	eid, err := a.rt.Say(tid, body.Text)
+	var opt SayOptions
+	if body.ReplyTo != "" {
+		eid, err := parseEventID(body.ReplyTo)
+		if err != nil {
+			httpErr(w, http.StatusBadRequest, errors.New("bad reply_to"))
+			return
+		}
+		opt.ReplyTo = &eid
+	}
+	for _, m := range body.Mentions {
+		p, err := id.ParsePrincipalID(strings.TrimSpace(m))
+		if err != nil {
+			httpErr(w, http.StatusBadRequest, errors.New("bad mention id"))
+			return
+		}
+		opt.Mentions = append(opt.Mentions, p)
+	}
+	eid, err := a.rt.Say(tid, body.Text, opt)
 	if err != nil {
 		httpErr(w, http.StatusForbidden, err)
 		return
@@ -676,8 +739,17 @@ func (a *APIServer) handleJoin(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusBadRequest, errors.New("invite required"))
 		return
 	}
-	tid, err := a.rt.JoinInvite(strings.TrimSpace(body.Invite))
+	// One paste box, three artifact kinds: a device invite, a Space Pass
+	// (handled by the join-request flow), or a PUBLIC SPACE LINK — the
+	// share container distinguishes them, so try the public route when the
+	// invite route refuses.
+	link := strings.TrimSpace(body.Invite)
+	tid, err := a.rt.JoinInvite(link)
 	if err != nil {
+		if ptid, perr := a.rt.OpenPublicLink(link); perr == nil {
+			writeJSON(w, map[string]string{"id": ptid.Hex(), "mode": "public"})
+			return
+		}
 		httpErr(w, http.StatusForbidden, err)
 		return
 	}

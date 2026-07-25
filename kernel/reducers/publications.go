@@ -44,6 +44,7 @@ type PublicationComment struct {
 	Text       string
 	Author     id.PrincipalID
 	Clock      uint64
+	CreatedAt  uint64 // author wall-clock (advisory) — display order
 	EventID    id.EventID
 	DocumentID [16]byte
 }
@@ -158,7 +159,7 @@ func (s *State) applyPublicationComment(env *signal.Envelope, eid id.EventID) {
 	}
 	rec.comments[p.CommentID] = &PublicationComment{
 		CommentID: p.CommentID, ParentID: p.ParentID, Text: p.Text,
-		Author: env.Principal, Clock: env.LogicalClock, EventID: eid,
+		Author: env.Principal, Clock: env.LogicalClock, CreatedAt: env.CreatedAt, EventID: eid,
 		DocumentID: p.DocumentID,
 	}
 }
@@ -193,11 +194,19 @@ func (s *State) projectPublications(archived bool) []Publication {
 		for _, c := range rec.comments {
 			pub.Comments = append(pub.Comments, *c)
 		}
+		// Display order is human wall-clock (CreatedAt): logical-clock order
+		// puts a later comment before an earlier one when authors' own log
+		// lengths differ. Logical clock then EventID are deterministic
+		// tiebreaks (and cover comments authored in the same second).
 		sort.Slice(pub.Comments, func(i, j int) bool {
-			if pub.Comments[i].Clock != pub.Comments[j].Clock {
-				return pub.Comments[i].Clock < pub.Comments[j].Clock
+			a, b := pub.Comments[i], pub.Comments[j]
+			if a.CreatedAt != b.CreatedAt {
+				return a.CreatedAt < b.CreatedAt
 			}
-			return string(pub.Comments[i].EventID[:]) < string(pub.Comments[j].EventID[:])
+			if a.Clock != b.Clock {
+				return a.Clock < b.Clock
+			}
+			return string(a.EventID[:]) < string(b.EventID[:])
 		})
 		out = append(out, pub)
 	}
