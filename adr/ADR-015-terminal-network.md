@@ -79,10 +79,13 @@ framing for it. Loop prevention does not come from hop counts (below).
 
 `quiet-bridge` is a standalone daemon that:
 
-- holds NO space/terminal identity, NO epoch keys, NEVER reads payloads
-  — enforced by TYPES (`OpaqueEnvelope{SignedPublicHeader,
-  EncryptedBytes}`; no decrypt capability exists in its API) plus an
-  import-boundary test (no identity/epoch/terminals imports);
+- holds NO space/terminal identity, NO epoch keys, NEVER reads payloads —
+  expressed as a TYPE (`routing.RoutedOpaqueEnvelope{Route, Ciphertext}`;
+  the bridge reads only `Route`) and *enforced* by an import-boundary test
+  (no identity/epoch/terminals imports). The distinction matters: the type
+  makes the line legible, the test is what actually holds it. Until RB-0B
+  the type did not exist at all and blindness rested entirely on the test
+  plus discipline;
 - does not know the product concept "Space": queues, quotas, bundles and
   subscriptions are **per-destination-hint** (the opaque 32-byte
   destination id / relay hint already visible on the wire);
@@ -126,6 +129,48 @@ a second one costs duplicate airtime, not a loop.
 A destination with no internet mailbox is **refused at admission** rather
 than taken into custody — holding frames that can never be delivered would
 be a promise the bridge cannot keep.
+
+**Amendment (RB-0B — a promise that binds).** The receipt format, the
+custodian key and the node-side pin check all shipped in TN-B, and nothing
+ever sent one: `AcceptUplink` had no callers outside its own test and
+`EncodeCustodyMessage` had none anywhere. A node handing frames to a gateway
+heard silence and could not tell carried from lost, so the ladder was stuck
+at `handed_to_transport` no matter what happened.
+
+The ACK now goes out on the carrier, and three rules make it worth
+believing:
+
+- **After fsync, never before.** Custody is claimed only once `Enqueue` has
+  returned, which fsyncs. Not after the first fragment, not after a
+  Meshtastic ACK, not after a write to memory.
+- **Idempotent.** A repeat of an already-accepted frame is answered again
+  with the SAME acceptance time. A fresh timestamp would be a new promise
+  for an old frame; silence would make a single lost ACK unrepairable.
+- **Ahead of the data queue.** ACKs are sent before the queue drains, so a
+  backed-up gateway can still tell a sender it has the message.
+
+**A signed ACK outranks the eviction policy.** The queue may drop the oldest
+lowest-lane record to make room — but not one whose custody was
+acknowledged, because that sender was told it could stop retrying. Capacity
+is therefore checked BEFORE the promise is made (`EnqueueGuaranteed`), and
+when the only way to fit a new frame is to break an existing promise the new
+frame is refused (`ErrNoRoom`): responsibility stays with the sender, who
+retries. When custody genuinely ends — expiry, or a frame that can never
+cross this carrier — the gateway sends a signed **withdrawal**
+(`CustodyReceipt.Lapsed`), an explicit flag rather than a date in the past,
+so "expired" and "never mind" are never told apart by arithmetic. A
+withdrawal does not un-record the earlier receipt: the delivery ladder is
+closed and has no rung for "carried, then not", and a receipt that was true
+when issued stays true. What changes is what the reader is shown.
+
+**Three size limits, because there were three questions.** `RadioDecodeCap`
+(8 KiB) bounds what a parser will look at — a safety limit against hostile
+input. `BetaOutboundCap` (~1536 B) bounds what this bridge will put on the
+air in one message; at 2000 bytes a minute an 8 KiB message is four minutes
+of one node holding the channel. `MaxRadioFragments` (12) bounds how many
+packets a message may become, since losing one fragment loses the message.
+The outbound cap is measured before the compact profile runs, which only
+ever shrinks. All three are calibrated against a real modem preset in RB-3.
 
 **Amendment (RB-0A — the bridge speaks).** A node hands over frames only
 when asked: its sync engine answers a summary, it does not volunteer. A

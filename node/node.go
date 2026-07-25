@@ -69,6 +69,9 @@ type Runtime struct {
 	// custodians: pinned bridge custodian keys per link domain (ADR-015
 	// §7, TOFU forbidden). r.mu-guarded.
 	custodians map[string][]byte
+	// custodyLapses holds gateways' withdrawals of custody claims —
+	// device-local diagnostics, never part of any log or projection.
+	custodyLapses map[id.EventID]CustodyLapse
 
 	// relaySync is the background relay push/pull loop (nil until first
 	// configured). r.mu guards the pointer; the state has its own lock.

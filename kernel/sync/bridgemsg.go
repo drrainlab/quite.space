@@ -103,3 +103,14 @@ func EncodeCustodyMessage(terminal id.TerminalID, receipt []byte) []byte {
 	buf = codec.AppendBytes(buf, receipt)
 	return buf
 }
+
+// ExtractCustodyReceipt pulls the raw receipt bytes out of a custody
+// message. The verification — signature, and above all whether this
+// custodian is PINNED for the link it arrived on — belongs to the node.
+func ExtractCustodyReceipt(raw []byte) ([]byte, bool) {
+	msg, err := decodeMessage(raw)
+	if err != nil || msg.msgType != msgCustody || len(msg.receipt) == 0 {
+		return nil, false
+	}
+	return msg.receipt, true
+}

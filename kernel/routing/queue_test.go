@@ -1,6 +1,7 @@
 package routing
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -130,10 +131,10 @@ func TestQueueTTLSweepAndScope(t *testing.T) {
 	if _, err := q.Enqueue(testMeta(2, signal.PriorityMessage, 0), []byte("no-expiry"), "d", now); err != nil {
 		t.Fatal(err)
 	}
-	if n := q.Sweep(now.Add(30 * time.Minute)); n != 1 {
+	if n, _ := q.Sweep(now.Add(30 * time.Minute)); n != 1 {
 		t.Fatalf("author-expiry sweep: %d", n)
 	}
-	if n := q.Sweep(now.Add(2 * time.Hour)); n != 1 {
+	if n, _ := q.Sweep(now.Add(2 * time.Hour)); n != 1 {
 		t.Fatalf("operator-TTL sweep: %d", n)
 	}
 	if q.Len() != 0 {
@@ -348,4 +349,137 @@ func TestBackoffSkipsRatherThanBlocks(t *testing.T) {
 		t.Fatalf("record never became eligible again: %d of 4", got)
 	}
 	_ = ids
+}
+
+// A promise, once signed, outranks the eviction policy. The queue may drop
+// the oldest lowest-lane record to make room — but not one whose custody
+// was already acknowledged to its sender, because that sender was told it
+// could stop retrying. When the only way to fit a new frame is to break
+// that promise, the new frame is refused instead.
+func TestGuaranteedCustodySurvivesPressure(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Unix(1_784_000_000, 0)
+	frame := make([]byte, 256)
+	caps := QueueCaps{MaxTotalBytes: 600, MaxPerDestBytes: 1 << 20, OperatorTTL: time.Hour}
+	q, err := OpenQueue(dir, caps)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Two acknowledged records fill the store.
+	promised := make([]uint64, 0, 2)
+	for d := byte(1); d <= 2; d++ {
+		rid, err := q.EnqueueGuaranteed(testMeta(d, signal.PriorityMessage, 0),
+			frame, "dom-a", now)
+		if err != nil {
+			t.Fatalf("guaranteed enqueue %d: %v", d, err)
+		}
+		promised = append(promised, rid)
+	}
+
+	// A third frame would have to displace one of them. It is refused, and
+	// the refusal is specific enough for an operator to act on.
+	_, err = q.Enqueue(testMeta(3, signal.PriorityMessage, 0), frame, "dom-a", now)
+	if !errors.Is(err, ErrNoRoom) {
+		t.Fatalf("a promised record was evictable: %v", err)
+	}
+	for _, rid := range promised {
+		if _, ok := q.live[rid]; !ok {
+			t.Fatal("an acknowledged record was dropped to make room")
+		}
+	}
+
+	// Guarantees are durable: a restart must not turn them back into
+	// ordinary evictable records.
+	q.Close()
+	q2, err := OpenQueue(dir, caps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer q2.Close()
+	if _, err := q2.Enqueue(testMeta(3, signal.PriorityMessage, 0), frame, "dom-a", now); !errors.Is(err, ErrNoRoom) {
+		t.Fatalf("guarantee lost across restart: %v", err)
+	}
+
+	// Expiry is the one way a promise ends, and it is REPORTED: the sender
+	// has to learn that custody is over rather than discover it by silence.
+	dropped, lapsed := q2.Sweep(now.Add(2 * time.Hour))
+	if dropped != 2 || len(lapsed) != 2 {
+		t.Fatalf("expiry of promised custody unreported: dropped %d, lapsed %d",
+			dropped, len(lapsed))
+	}
+}
+
+// An ordinary record is still evictable — the protection is for promises,
+// not a way to make the queue unbounded.
+func TestUnpromisedCustodyStillEvicts(t *testing.T) {
+	now := time.Unix(1_784_000_000, 0)
+	frame := make([]byte, 256)
+	q, err := OpenQueue(t.TempDir(), QueueCaps{
+		MaxTotalBytes: 600, MaxPerDestBytes: 1 << 20, OperatorTTL: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer q.Close()
+	for d := byte(1); d <= 4; d++ {
+		if _, err := q.Enqueue(testMeta(d, signal.PriorityMessage, 0),
+			frame, "dom-a", now.Add(time.Duration(d)*time.Second)); err != nil {
+			t.Fatalf("enqueue %d: %v", d, err)
+		}
+	}
+	if q.Len() > 2 {
+		t.Fatalf("cap not enforced without guarantees: %d records", q.Len())
+	}
+}
+
+// Soak: a bridge that retries the same stuck record for a very long time
+// must not grow its store without limit. The old design kept "when did I
+// last send this" in a map that nothing ever pruned; moving the schedule
+// into the record fixed the leak in memory and could have recreated it on
+// disk, since every deferral appends. Superseded deferrals count as dead
+// weight, so compaction eventually reclaims them.
+func TestRequeueSoakStaysBounded(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Unix(1_784_000_000, 0)
+	q, err := OpenQueue(dir, DefaultQueueCaps())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer q.Close()
+
+	rid, err := q.Enqueue(testMeta(1, signal.PriorityMessage, 0),
+		make([]byte, 512), "dom-a", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seg := filepath.Join(dir, "custody.seg")
+
+	// ~45s of backoff per attempt: months of a genuinely stuck record.
+	const attempts = 200_000
+	for i := range attempts {
+		q.Requeue(rid, now.Add(time.Duration(i)*45*time.Second))
+	}
+	st, err := os.Stat(seg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Without reclamation this would be tens of megabytes of superseded
+	// scheduling. The bound is generous — the point is that it EXISTS.
+	t.Logf("segment after %d retries: %d bytes", attempts, st.Size())
+	if st.Size() > 4<<20 {
+		t.Fatalf("custody segment grew to %d bytes over %d retries: "+
+			"a long-lived gateway would fill its disk with scheduling",
+			st.Size(), attempts)
+	}
+	// The record itself is intact and still carries its latest schedule.
+	if q.Len() != 1 {
+		t.Fatalf("soak lost the record: %d live", q.Len())
+	}
+	if len(q.NextBatch("relay:x", "relay-x", nil, now, 10)) != 0 {
+		t.Fatal("a record deep in backoff came back early")
+	}
+	final := now.Add(time.Duration(attempts) * 45 * time.Second)
+	if len(q.NextBatch("relay:x", "relay-x", nil, final, 10)) != 1 {
+		t.Fatal("the record never became eligible again after the soak")
+	}
 }

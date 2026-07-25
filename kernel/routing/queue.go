@@ -43,6 +43,13 @@ type CustodyRecord struct {
 	// a no is to stop the whole pass. One waiting record then blocked every
 	// other destination behind it.
 	NextEligibleAt int64
+
+	// Guaranteed marks a record whose custody has been ACKNOWLEDGED to its
+	// sender. The sender was told "I hold this" and may have stopped
+	// retrying, so this record can no longer be quietly evicted to make
+	// room for a newer one. It leaves only by delivery or by expiry — and
+	// expiry is announced, not silent.
+	Guaranteed bool
 }
 
 // QueueCaps bound the store (Pi-readiness).
@@ -99,7 +106,14 @@ const (
 	qKeyEnqueued  = 9
 	qKeyAttempts  = 10
 	qKeyEligible  = 11
+	qKeyGuarantee = 12
 )
+
+// ErrNoRoom is returned when custody cannot be taken without evicting a
+// record whose custody was already acknowledged. Refusing here is the
+// honest answer: the sender keeps responsibility and will retry, which is
+// strictly better than accepting a frame and dropping someone else's.
+var ErrNoRoom = errors.New("routing: custody store full of guaranteed records")
 
 // OpenQueue opens (or creates) the queue at dir, replaying the segment.
 func OpenQueue(dir string, caps QueueCaps) (*Queue, error) {
@@ -160,7 +174,7 @@ func (q *Queue) applyRecord(body []byte) {
 	if err != nil {
 		return
 	}
-	var kind, rid, prio, expires, enq, attempts, eligible uint64
+	var kind, rid, prio, expires, enq, attempts, eligible, guarantee uint64
 	rec := &CustodyRecord{}
 	for {
 		k, ok, er := m.Next()
@@ -200,6 +214,8 @@ func (q *Queue) applyRecord(body []byte) {
 			attempts, er = d.ReadUint()
 		case qKeyEligible:
 			eligible, er = d.ReadUint()
+		case qKeyGuarantee:
+			guarantee, er = d.ReadUint()
 		default:
 			er = d.SkipItem()
 		}
@@ -218,6 +234,7 @@ func (q *Queue) applyRecord(body []byte) {
 		rec.EnqueuedAt = int64(enq)
 		rec.Attempts = uint32(attempts)
 		rec.NextEligibleAt = int64(eligible)
+		rec.Guaranteed = guarantee != 0
 		q.live[rid] = rec
 		q.total += int64(len(rec.Frame))
 		q.perDst[rec.Destination] += int64(len(rec.Frame))
@@ -251,7 +268,7 @@ func (q *Queue) appendRecord(body []byte, sync bool) error {
 }
 
 func encodePut(rec *CustodyRecord) []byte {
-	buf := codec.AppendMap(nil, 11)
+	buf := codec.AppendMap(nil, 12)
 	buf = codec.AppendUint(buf, qKeyKind)
 	buf = codec.AppendUint(buf, recPut)
 	buf = codec.AppendUint(buf, qKeyID)
@@ -274,7 +291,16 @@ func encodePut(rec *CustodyRecord) []byte {
 	buf = codec.AppendUint(buf, uint64(rec.Attempts))
 	buf = codec.AppendUint(buf, qKeyEligible)
 	buf = codec.AppendUint(buf, uint64(max(rec.NextEligibleAt, 0)))
+	buf = codec.AppendUint(buf, qKeyGuarantee)
+	buf = codec.AppendUint(buf, b2u(rec.Guaranteed))
 	return buf
+}
+
+func b2u(b bool) uint64 {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 func encodeDefer(rid uint64, attempts uint32, eligible int64) []byte {
@@ -302,6 +328,24 @@ func encodeTomb(rid uint64) []byte {
 // Enqueue takes custody of a frame: scope/expiry checks, caps (evicting
 // the oldest lowest-lane records when over), durable append + fsync.
 func (q *Queue) Enqueue(meta FrameMeta, frame []byte, domain LoopDomainID, now time.Time) (uint64, error) {
+	return q.enqueue(meta, frame, domain, now, false)
+}
+
+// EnqueueGuaranteed takes custody of a frame the caller intends to
+// ACKNOWLEDGE. Room is checked BEFORE the promise is made: the record is
+// written already marked, in one fsynced append, so there is no window in
+// which an acknowledged frame is evictable. If space can only be found by
+// dropping another guaranteed record, this returns ErrNoRoom and NOTHING is
+// accepted — the sender keeps responsibility and retries, which is the one
+// honest outcome. A bridge that accepted the frame and quietly dropped
+// someone else's would have turned a signed promise into a lie.
+func (q *Queue) EnqueueGuaranteed(meta FrameMeta, frame []byte, domain LoopDomainID, now time.Time) (uint64, error) {
+	return q.enqueue(meta, frame, domain, now, true)
+}
+
+func (q *Queue) enqueue(meta FrameMeta, frame []byte, domain LoopDomainID,
+	now time.Time, guaranteed bool) (uint64, error) {
+
 	if meta.Scope == signal.NoCustody {
 		return 0, ErrNoCustody
 	}
@@ -324,6 +368,7 @@ func (q *Queue) Enqueue(meta FrameMeta, frame []byte, domain LoopDomainID, now t
 		Destination: meta.Destination, Priority: meta.Priority,
 		ExpiresAt: meta.ExpiresAt, IngressLink: meta.IngressLink,
 		IngressDomain: domain, EnqueuedAt: now.Unix(),
+		Guaranteed: guaranteed,
 	}
 	q.nextID++
 	if err := q.appendRecord(encodePut(rec), true); err != nil {
@@ -343,6 +388,9 @@ func (q *Queue) evictUntilLocked(want int64) error {
 	}
 	recs := make([]*CustodyRecord, 0, len(q.live))
 	for _, r := range q.live {
+		if r.Guaranteed {
+			continue // acknowledged: not ours to drop any more
+		}
 		recs = append(recs, r)
 	}
 	sort.Slice(recs, func(i, j int) bool {
@@ -358,7 +406,7 @@ func (q *Queue) evictUntilLocked(want int64) error {
 		q.tombLocked(r.ID)
 	}
 	if q.total+want > q.caps.MaxTotalBytes {
-		return errors.New("routing: custody store full")
+		return ErrNoRoom
 	}
 	return nil
 }
@@ -374,6 +422,10 @@ func (q *Queue) tombLocked(rid uint64) {
 	q.dead += int64(len(rec.Frame))
 	delete(q.live, rid)
 }
+
+// compactThreshold is how much superseded weight the segment tolerates
+// before it is rewritten.
+const compactThreshold = 1 << 20
 
 // agingStep promotes a waiting record one lane per interval so low lanes
 // eventually drain even under sustained high-priority load.
@@ -452,7 +504,7 @@ func (q *Queue) NextBatch(egressLink LinkID, egressDomain LoopDomainID,
 func (q *Queue) Ack(rid uint64) {
 	q.mu.Lock()
 	q.tombLocked(rid)
-	needCompact := q.dead > 1<<20 && q.dead > q.total
+	needCompact := q.dead > compactThreshold && q.dead > q.total
 	q.mu.Unlock()
 	if needCompact {
 		_ = q.Compact()
@@ -463,9 +515,9 @@ func (q *Queue) Ack(rid uint64) {
 // notBefore. A zero notBefore leaves it immediately eligible.
 func (q *Queue) Requeue(rid uint64, notBefore time.Time) {
 	q.mu.Lock()
-	defer q.mu.Unlock()
 	rec, ok := q.live[rid]
 	if !ok {
+		q.mu.Unlock()
 		return
 	}
 	rec.Attempts++
@@ -475,28 +527,46 @@ func (q *Queue) Requeue(rid uint64, notBefore time.Time) {
 	// Durable, but not fsynced: losing the last few deferrals in a crash
 	// costs a duplicate broadcast, never a lost frame — and paying for an
 	// fsync on every attempt would tax the common path for nothing.
-	_ = q.appendRecord(encodeDefer(rid, rec.Attempts, rec.NextEligibleAt), false)
+	body := encodeDefer(rid, rec.Attempts, rec.NextEligibleAt)
+	_ = q.appendRecord(body, false)
+	// Every deferral supersedes the one before it, so those bytes are dead
+	// weight the moment they are written. Counting them is what makes
+	// compaction eventually fire: a gateway retrying one stuck record every
+	// 45 seconds for a month would otherwise grow its segment without limit
+	// — the same unbounded growth the old last-sent map had, moved to disk.
+	q.dead += int64(len(body))
+	needCompact := q.dead > compactThreshold && q.dead > q.total
+	q.mu.Unlock()
+	if needCompact {
+		_ = q.Compact()
+	}
 }
 
 // Sweep tombstones records past custody expiry (min of operator TTL and
-// the author's ExpiresAt). Returns how many were dropped.
-func (q *Queue) Sweep(now time.Time) int {
+// the author's ExpiresAt). Returns how many were dropped, and copies of any
+// GUARANTEED records among them: their sender was told the frame was held,
+// so the end of that custody has to be announced rather than discovered.
+func (q *Queue) Sweep(now time.Time) (dropped int, lapsed []*CustodyRecord) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	nowU := uint64(now.Unix())
-	dropped := 0
 	for rid, rec := range q.live {
 		expired := rec.ExpiresAt != 0 && nowU >= rec.ExpiresAt
 		if q.caps.OperatorTTL > 0 &&
 			now.Sub(time.Unix(rec.EnqueuedAt, 0)) > q.caps.OperatorTTL {
 			expired = true
 		}
-		if expired {
-			q.tombLocked(rid)
-			dropped++
+		if !expired {
+			continue
 		}
+		if rec.Guaranteed {
+			cp := *rec
+			lapsed = append(lapsed, &cp)
+		}
+		q.tombLocked(rid)
+		dropped++
 	}
-	return dropped
+	return dropped, lapsed
 }
 
 // Compact rewrites the segment with live records only.

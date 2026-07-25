@@ -25,10 +25,18 @@ type CustodyReceipt struct {
 	Instance   string // bridge instance label
 	PublicKey  []byte // 32B ed25519 custodian key
 	Signature  []byte // 64B over the encoding with the signature absent
+
+	// Lapsed WITHDRAWS a custody claim: the bridge said it held these
+	// frames and can no longer keep them to the promised time. It is an
+	// explicit flag rather than an expiry date in the past, because
+	// "expired" and "never mind" must not be told apart by arithmetic —
+	// a node that got the subtraction wrong would either mourn a message
+	// still in custody or trust one already gone.
+	Lapsed bool
 }
 
 func (r *CustodyReceipt) encode(withSig bool) []byte {
-	n := 6
+	n := 7
 	if withSig {
 		n++
 	}
@@ -52,7 +60,18 @@ func (r *CustodyReceipt) encode(withSig bool) []byte {
 		buf = codec.AppendUint(buf, 7)
 		buf = codec.AppendBytes(buf, r.Signature)
 	}
+	// Key 8 last: the deterministic subset wants ascending keys, and the
+	// signed encoding simply omits 7.
+	buf = codec.AppendUint(buf, 8)
+	buf = codec.AppendUint(buf, boolByte(r.Lapsed))
 	return buf
+}
+
+func boolByte(b bool) uint64 {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // Sign finalizes the receipt with the custodian key.
@@ -114,6 +133,10 @@ func DecodeReceipt(raw []byte) (*CustodyReceipt, error) {
 			var b []byte
 			b, er = d.ReadBytes()
 			r.Signature = append([]byte(nil), b...)
+		case 8:
+			var v uint64
+			v, er = d.ReadUint()
+			r.Lapsed = v != 0
 		default:
 			er = d.SkipItem()
 		}

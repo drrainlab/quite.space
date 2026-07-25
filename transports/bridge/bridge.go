@@ -10,6 +10,7 @@ package bridge
 
 import (
 	"crypto/ed25519"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -105,6 +106,11 @@ type Bridge struct {
 	carried map[id.TerminalID]map[id.DeviceID]*chainCursor
 	// wake tracks the announcement schedule per destination.
 	wake map[id.TerminalID]*wakeState
+
+	// accepted remembers recently acknowledged frames so a repeat gets the
+	// same answer; pendingAcks are receipts waiting for airtime.
+	accepted    map[id.EventID]time.Time
+	pendingAcks []pendingAck
 }
 
 // Stats are diagnostics (printed by the daemon, asserted by tests).
@@ -114,8 +120,13 @@ type Stats struct {
 	Deduped, Refused  int
 	CustodyAcks       int
 	// Wakes counts summaries announced on the carrier; NoMailbox counts
-	// frames refused because no operator mailbox could receive them.
-	Wakes, NoMailbox int
+	// frames refused because no operator mailbox could receive them;
+	// NoRoom counts frames refused because taking them would have meant
+	// evicting an already-acknowledged record; CustodyLapsed counts
+	// acknowledged frames whose custody expired and was withdrawn;
+	// Unairable counts frames released because they could never cross this
+	// carrier at all.
+	Wakes, NoMailbox, NoRoom, CustodyLapsed, Unairable int
 }
 
 // New opens the bridge: durable queue, seen-cache snapshot, custodian key.
@@ -156,6 +167,7 @@ func New(cfg Config) (*Bridge, error) {
 		learnBkt:  map[id.TerminalID]*routing.TokenBucket{},
 		carried:   map[id.TerminalID]map[id.DeviceID]*chainCursor{},
 		wake:      map[id.TerminalID]*wakeState{},
+		accepted:  map[id.EventID]time.Time{},
 	}
 	if cfg.AirtimePerMin <= 0 {
 		b.airtime = routing.DefaultAirtime(time.Now())
@@ -277,8 +289,24 @@ func (b *Bridge) PumpRadio(now time.Time) int {
 		// The node answered our announcement: the question is no longer
 		// outstanding, so the next one may go out on schedule.
 		b.answeredWake(term)
+		var held []id.EventID
 		for _, f := range frames {
-			b.takeCustody(f, b.cfg.RadioLink, b.cfg.RadioDomain, now)
+			eid := id.EventIDOf(f)
+			switch {
+			case b.takeCustodyGuaranteed(f, b.cfg.RadioLink, b.cfg.RadioDomain, now):
+				b.rememberAccepted(eid, now)
+				held = append(held, eid)
+			case b.wasAccepted(eid):
+				// A repeat of something already accepted — most likely the
+				// sender never heard the first ACK. Re-acknowledge with the
+				// SAME acceptance time: an idempotent answer, not a new
+				// promise. Without this a lost ACK could never be repaired
+				// and the node would retransmit until it gave up.
+				held = append(held, eid)
+			}
+		}
+		if len(held) > 0 {
+			b.queueAck(term, held, now)
 		}
 		took += len(frames)
 	}
@@ -294,8 +322,24 @@ func (b *Bridge) bumpRefused(n int) {
 // takeCustody applies meta/seen/policy and enqueues durably.
 func (b *Bridge) takeCustody(frame []byte, link routing.LinkID,
 	domain routing.LoopDomainID, now time.Time) bool {
+	return b.custody(frame, link, domain, now, false)
+}
 
-	meta, err := routing.MetaOf(frame, link)
+// takeCustodyGuaranteed is takeCustody for a frame the bridge is about to
+// ACKNOWLEDGE. Room is reserved before the promise exists; if the store can
+// only fit it by dropping another acknowledged record, custody is refused
+// and no ACK is sent, so the sender keeps responsibility.
+func (b *Bridge) takeCustodyGuaranteed(frame []byte, link routing.LinkID,
+	domain routing.LoopDomainID, now time.Time) bool {
+	return b.custody(frame, link, domain, now, true)
+}
+
+func (b *Bridge) custody(frame []byte, link routing.LinkID,
+	domain routing.LoopDomainID, now time.Time, guarantee bool) bool {
+
+	// The one place the bridge looks at a frame at all. Everything past
+	// this line works from Route; Ciphertext is only ever handed on.
+	env, err := routing.RouteOf(frame, link, domain)
 	if err != nil {
 		return false
 	}
@@ -305,8 +349,19 @@ func (b *Bridge) takeCustody(frame []byte, link routing.LinkID,
 		b.mu.Unlock()
 		return false
 	}
-	if _, err := b.queue.Enqueue(meta, frame, domain, now); err != nil {
+	meta := env.Meta()
+	if guarantee {
+		_, err = b.queue.EnqueueGuaranteed(meta, env.Ciphertext, domain, now)
+	} else {
+		_, err = b.queue.Enqueue(meta, env.Ciphertext, domain, now)
+	}
+	if err != nil {
 		b.bumpRefused(1)
+		if errors.Is(err, routing.ErrNoRoom) {
+			b.mu.Lock()
+			b.stats.NoRoom++
+			b.mu.Unlock()
+		}
 		return false
 	}
 	b.routes.Observe(meta.Destination, link, now)
@@ -511,6 +566,15 @@ func (b *Bridge) PushRadio(now time.Time) int {
 			continue
 		}
 		msg := kernelsync.EncodeFramesMessage(rec.Destination, [][]byte{rec.Frame})
+		// The decode cap said this frame was safe to PARSE. Whether it is
+		// reasonable to BROADCAST is a different question: at 2000 bytes a
+		// minute an 8 KiB message is four minutes of one node holding the
+		// channel. Measured before the compact profile runs, which only
+		// ever shrinks — so under the cap here is under it on the wire.
+		if len(msg) > routing.BetaOutboundCap {
+			b.releaseUnairable(rec, now)
+			continue
+		}
 		if !b.airtime.Take(len(msg), now) {
 			break // budget exhausted this pass; the rest keep their turn
 		}
@@ -524,6 +588,12 @@ func (b *Bridge) PushRadio(now time.Time) int {
 			b.cfg.Radio.Capabilities().MaxPayload)
 		if err != nil {
 			b.queue.Requeue(rec.ID, now.Add(resendGap))
+			continue
+		}
+		// Losing one fragment loses the whole message, so a message spread
+		// over too many packets is one that statistically never lands.
+		if len(frags) > routing.MaxRadioFragments {
+			b.releaseUnairable(rec, now)
 			continue
 		}
 		sendErr := false
@@ -553,7 +623,9 @@ func (b *Bridge) PushRadio(now time.Time) int {
 	return sent
 }
 
-// Sweep expires custody and prunes learn probation.
+// Sweep expires custody and prunes learn probation. Acknowledged records
+// that expired are turned into signed withdrawals: a sender that was told
+// "I hold this" has to be told when that stops being true.
 func (b *Bridge) Sweep(now time.Time) int {
 	b.mu.Lock()
 	for d, at := range b.learned {
@@ -563,7 +635,11 @@ func (b *Bridge) Sweep(now time.Time) int {
 		}
 	}
 	b.mu.Unlock()
-	return b.queue.Sweep(now)
+	dropped, lapsed := b.queue.Sweep(now)
+	if len(lapsed) > 0 {
+		b.noteLapsed(lapsed, now)
+	}
+	return dropped
 }
 
 // QueueLen exposes custody depth for diagnostics.

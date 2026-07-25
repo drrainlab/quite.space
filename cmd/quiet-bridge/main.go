@@ -121,9 +121,11 @@ func main() {
 		case <-radioT.C:
 			now := time.Now()
 			b.PumpRadio(now)
-			// Announce before draining: a node hands over frames only when
-			// something asks, and a backed-up data queue must never be the
-			// reason the bridge went silent.
+			// Control before data, twice over: a sender must hear "I have
+			// it" even when the queue is backed up, and a node hands over
+			// frames only when something asks. A full data queue must never
+			// be the reason the bridge went silent.
+			b.PushAcks(now)
 			b.WakeRadio(now)
 			b.PushRadio(now)
 		case <-relayT.C:

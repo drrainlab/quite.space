@@ -10,8 +10,31 @@ import (
 	"time"
 )
 
-// RadioFrameCap is the hard per-frame size limit for radio custody.
-const RadioFrameCap = 8 << 10
+// Three different limits, because they answer three different questions.
+// They used to be one number, and a single 8 KiB cap read as "this is fine
+// on radio" when at 2000 bytes/minute it is four minutes of one node
+// holding the channel.
+const (
+	// RadioDecodeCap bounds what a parser will even look at. This is a
+	// safety limit against hostile input, not an opinion about airtime.
+	RadioDecodeCap = 8 << 10
+
+	// RadioFrameCap is the old name for the decode cap, kept so existing
+	// call sites keep meaning what they meant.
+	RadioFrameCap = RadioDecodeCap
+
+	// BetaOutboundCap bounds what this bridge will actually PUT ON THE AIR
+	// in one message. Measured before the compact profile runs: compact
+	// only ever shrinks, so a message under the cap here is under it on the
+	// wire too. Calibrated against a real modem preset in RB-3.
+	BetaOutboundCap = 1536
+
+	// MaxRadioFragments bounds how many packets one message may become.
+	// Losing any single fragment loses the whole message, so a message
+	// spread over dozens of packets is one that statistically never
+	// arrives on a lossy link.
+	MaxRadioFragments = 12
+)
 
 // radioAdmittedPrefixes are the schema families a radio carrier accepts
 // (ADR-015 §9). Everything else waits for a fast path.
@@ -24,7 +47,7 @@ var radioAdmittedPrefixes = []string{
 
 // RadioAdmits decides whether a frame may occupy radio custody/airtime.
 func RadioAdmits(schema string, size int) bool {
-	if size > RadioFrameCap {
+	if size > RadioDecodeCap {
 		return false
 	}
 	for _, p := range radioAdmittedPrefixes {
