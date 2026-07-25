@@ -35,6 +35,14 @@ type CustodyRecord struct {
 	IngressDomain LoopDomainID
 	EnqueuedAt    int64
 	Attempts      uint32
+
+	// NextEligibleAt is when this record may be sent again (unix seconds,
+	// 0 = now). Backoff lives IN THE RECORD rather than in a side table of
+	// "when did I last send this", because a side table can only answer
+	// "is the record I just picked ready?" — and the only thing to do with
+	// a no is to stop the whole pass. One waiting record then blocked every
+	// other destination behind it.
+	NextEligibleAt int64
 }
 
 // QueueCaps bound the store (Pi-readiness).
@@ -75,6 +83,10 @@ type Queue struct {
 const (
 	recPut  = 1
 	recTomb = 2
+	// recDefer updates the retry schedule of a record already in the
+	// segment. A full recPut would work but would copy the frame again on
+	// every attempt; this is a few bytes.
+	recDefer = 3
 	// record wire keys (append-only)
 	qKeyKind      = 1
 	qKeyID        = 2
@@ -86,6 +98,7 @@ const (
 	qKeyDomain    = 8
 	qKeyEnqueued  = 9
 	qKeyAttempts  = 10
+	qKeyEligible  = 11
 )
 
 // OpenQueue opens (or creates) the queue at dir, replaying the segment.
@@ -147,7 +160,7 @@ func (q *Queue) applyRecord(body []byte) {
 	if err != nil {
 		return
 	}
-	var kind, rid, prio, expires, enq, attempts uint64
+	var kind, rid, prio, expires, enq, attempts, eligible uint64
 	rec := &CustodyRecord{}
 	for {
 		k, ok, er := m.Next()
@@ -185,6 +198,8 @@ func (q *Queue) applyRecord(body []byte) {
 			enq, er = d.ReadUint()
 		case qKeyAttempts:
 			attempts, er = d.ReadUint()
+		case qKeyEligible:
+			eligible, er = d.ReadUint()
 		default:
 			er = d.SkipItem()
 		}
@@ -202,9 +217,15 @@ func (q *Queue) applyRecord(body []byte) {
 		rec.ExpiresAt = expires
 		rec.EnqueuedAt = int64(enq)
 		rec.Attempts = uint32(attempts)
+		rec.NextEligibleAt = int64(eligible)
 		q.live[rid] = rec
 		q.total += int64(len(rec.Frame))
 		q.perDst[rec.Destination] += int64(len(rec.Frame))
+	case recDefer:
+		if rec, ok := q.live[rid]; ok {
+			rec.Attempts = uint32(attempts)
+			rec.NextEligibleAt = int64(eligible)
+		}
 	case recTomb:
 		if old, ok := q.live[rid]; ok {
 			q.total -= int64(len(old.Frame))
@@ -230,7 +251,7 @@ func (q *Queue) appendRecord(body []byte, sync bool) error {
 }
 
 func encodePut(rec *CustodyRecord) []byte {
-	buf := codec.AppendMap(nil, 10)
+	buf := codec.AppendMap(nil, 11)
 	buf = codec.AppendUint(buf, qKeyKind)
 	buf = codec.AppendUint(buf, recPut)
 	buf = codec.AppendUint(buf, qKeyID)
@@ -251,6 +272,21 @@ func encodePut(rec *CustodyRecord) []byte {
 	buf = codec.AppendUint(buf, uint64(rec.EnqueuedAt))
 	buf = codec.AppendUint(buf, qKeyAttempts)
 	buf = codec.AppendUint(buf, uint64(rec.Attempts))
+	buf = codec.AppendUint(buf, qKeyEligible)
+	buf = codec.AppendUint(buf, uint64(max(rec.NextEligibleAt, 0)))
+	return buf
+}
+
+func encodeDefer(rid uint64, attempts uint32, eligible int64) []byte {
+	buf := codec.AppendMap(nil, 4)
+	buf = codec.AppendUint(buf, qKeyKind)
+	buf = codec.AppendUint(buf, recDefer)
+	buf = codec.AppendUint(buf, qKeyID)
+	buf = codec.AppendUint(buf, rid)
+	buf = codec.AppendUint(buf, qKeyAttempts)
+	buf = codec.AppendUint(buf, uint64(attempts))
+	buf = codec.AppendUint(buf, qKeyEligible)
+	buf = codec.AppendUint(buf, uint64(max(eligible, 0)))
 	return buf
 }
 
@@ -349,14 +385,38 @@ const agingStep = 2 * time.Minute
 func (q *Queue) Next(egressLink LinkID, egressDomain LoopDomainID,
 	allow func(dest id.TerminalID) bool, now time.Time) (*CustodyRecord, bool) {
 
+	batch := q.NextBatch(egressLink, egressDomain, allow, now, 1)
+	if len(batch) == 0 {
+		return nil, false
+	}
+	return batch[0], true
+}
+
+// NextBatch returns up to max eligible records for an egress, in lane +
+// aging order, WITHOUT mutating the queue. A record in backoff is skipped,
+// not treated as the end of the queue: the whole point is that one waiting
+// destination must not stall every other one behind it.
+func (q *Queue) NextBatch(egressLink LinkID, egressDomain LoopDomainID,
+	allow func(dest id.TerminalID) bool, now time.Time, max int) []*CustodyRecord {
+
+	if max <= 0 {
+		return nil
+	}
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	nowU := uint64(now.Unix())
-	var best *CustodyRecord
-	var bestLane float64
+	nowSec := now.Unix()
+	type scored struct {
+		rec  *CustodyRecord
+		lane float64
+	}
+	var eligible []scored
 	for _, r := range q.live {
 		if r.ExpiresAt != 0 && nowU >= r.ExpiresAt {
 			continue // swept later
+		}
+		if r.NextEligibleAt > nowSec {
+			continue // in backoff; the next record still gets its turn
 		}
 		if SuppressForward(r.IngressLink, egressLink, r.IngressDomain, egressDomain) {
 			continue
@@ -365,17 +425,27 @@ func (q *Queue) Next(egressLink LinkID, egressDomain LoopDomainID,
 			continue
 		}
 		lane := float64(r.Priority) -
-			float64(now.Unix()-r.EnqueuedAt)/agingStep.Seconds()
-		if best == nil || lane < bestLane ||
-			(lane == bestLane && r.EnqueuedAt < best.EnqueuedAt) {
-			best, bestLane = r, lane
+			float64(nowSec-r.EnqueuedAt)/agingStep.Seconds()
+		eligible = append(eligible, scored{r, lane})
+	}
+	sort.SliceStable(eligible, func(i, j int) bool {
+		if eligible[i].lane != eligible[j].lane {
+			return eligible[i].lane < eligible[j].lane
 		}
+		if eligible[i].rec.EnqueuedAt != eligible[j].rec.EnqueuedAt {
+			return eligible[i].rec.EnqueuedAt < eligible[j].rec.EnqueuedAt
+		}
+		return eligible[i].rec.ID < eligible[j].rec.ID
+	})
+	if len(eligible) > max {
+		eligible = eligible[:max]
 	}
-	if best == nil {
-		return nil, false
+	out := make([]*CustodyRecord, 0, len(eligible))
+	for _, e := range eligible {
+		cp := *e.rec
+		out = append(out, &cp)
 	}
-	cp := *best
-	return &cp, true
+	return out
 }
 
 // Ack marks a record delivered (tombstone) and compacts opportunistically.
@@ -389,13 +459,23 @@ func (q *Queue) Ack(rid uint64) {
 	}
 }
 
-// Requeue bumps the attempt counter after a failed send.
-func (q *Queue) Requeue(rid uint64) {
+// Requeue bumps the attempt counter and holds the record back until
+// notBefore. A zero notBefore leaves it immediately eligible.
+func (q *Queue) Requeue(rid uint64, notBefore time.Time) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	if rec, ok := q.live[rid]; ok {
-		rec.Attempts++
+	rec, ok := q.live[rid]
+	if !ok {
+		return
 	}
+	rec.Attempts++
+	if !notBefore.IsZero() {
+		rec.NextEligibleAt = notBefore.Unix()
+	}
+	// Durable, but not fsynced: losing the last few deferrals in a crash
+	// costs a duplicate broadcast, never a lost frame — and paying for an
+	// fsync on every attempt would tax the common path for nothing.
+	_ = q.appendRecord(encodeDefer(rid, rec.Attempts, rec.NextEligibleAt), false)
 }
 
 // Sweep tombstones records past custody expiry (min of operator TTL and

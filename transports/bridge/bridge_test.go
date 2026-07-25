@@ -43,8 +43,28 @@ func mkFrame(t *testing.T, term id.TerminalID, seed byte, seq uint64,
 	return f
 }
 
+// deviceOf derives the device id mkFrame signs with for a seed, so a test
+// can address the same mailbox a node would.
+func deviceOf(seed byte) id.DeviceID {
+	priv := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{seed}, ed25519.SeedSize))
+	var dev id.DeviceID
+	copy(dev[:], priv.Public().(ed25519.PublicKey))
+	return dev
+}
+
+// serving builds the operator capability for one destination: one mailbox
+// on the carrier, one on the internet.
+func serving(dest id.TerminalID, radioSeed, internetSeed byte) Subscription {
+	return Subscription{
+		NetworkID:       "test-mesh",
+		Terminal:        dest,
+		RadioDevices:    []id.DeviceID{deviceOf(radioSeed)},
+		InternetDevices: []id.DeviceID{deviceOf(internetSeed)},
+	}
+}
+
 func testBridge(t *testing.T, radio *loopback.End, relayAddr string,
-	subs []id.TerminalID, learn bool) *Bridge {
+	subs []Subscription, learn bool) *Bridge {
 	t.Helper()
 	b, err := New(Config{
 		DataDir: t.TempDir(), Instance: "test-bridge",
@@ -73,7 +93,8 @@ func TestTwoSegmentLoop(t *testing.T) {
 	var dest id.TerminalID
 	dest[0] = 0xD1
 	pair := loopback.NewPair(loopback.Faults{Seed: 3})
-	b := testBridge(t, pair.B, relayAddr, []id.TerminalID{dest}, false)
+	// 0x31 is the author on the carrier, 0x32 the one on the internet.
+	b := testBridge(t, pair.B, relayAddr, []Subscription{serving(dest, 0x31, 0x32)}, false)
 	now := time.Now()
 
 	// Radio → relay: a radio node broadcasts a frames message (the wire is
@@ -98,7 +119,10 @@ func TestTwoSegmentLoop(t *testing.T) {
 	}
 	nowU := uint64(now.Unix())
 	body := encodeBundle(t, dest, f2)
-	if _, err := client.Put(relay.Hint(dest, relay.Bucket(nowU)), nowU+3600, body); err != nil {
+	// The internet node writes into the RADIO node's own per-recipient inbox,
+	// exactly as it would if that node were online. The bridge reads it there.
+	inbox := relay.HintFor(dest, deviceOf(0x31), relay.Bucket(nowU))
+	if _, err := client.Put(inbox, nowU+3600, body); err != nil {
 		t.Fatal(err)
 	}
 	client.Close()
@@ -163,8 +187,8 @@ func TestTwoBridgesBoundedStorm(t *testing.T) {
 	// One shared "carrier": both bridges poll the same hub side.
 	hubA := loopback.NewPair(loopback.Faults{Seed: 7})
 	hubB := loopback.NewPair(loopback.Faults{Seed: 8})
-	b1 := testBridge(t, hubA.B, relayAddr, []id.TerminalID{dest}, false)
-	b2 := testBridge(t, hubB.B, relayAddr, []id.TerminalID{dest}, false)
+	b1 := testBridge(t, hubA.B, relayAddr, []Subscription{serving(dest, 0x41, 0x42)}, false)
+	b2 := testBridge(t, hubB.B, relayAddr, []Subscription{serving(dest, 0x41, 0x42)}, false)
 	now := time.Now()
 
 	f := mkFrame(t, dest, 0x41, 1, nil, "storm probe")
@@ -172,26 +196,49 @@ func TestTwoBridgesBoundedStorm(t *testing.T) {
 	// The same broadcast reaches both bridges (two gateways, one segment).
 	sendWrapped(t, hubA.A, msg)
 	sendWrapped(t, hubB.A, msg)
-	b1.PumpRadio(now)
-	b2.PumpRadio(now)
-	b1.PushRelay(now)
-	b2.PushRelay(now)
 
-	// Both pull the relay: each may see the other's copy ONCE; dedup stops
-	// the echo, split-horizon stops relay→relay bounce.
-	for i := 0; i < 3; i++ {
+	// An internet node also drops one bundle into the radio node's inbox.
+	// Under D1 that mailbox is read with a NON-destructive Fetch, so both
+	// bridges see it, and each of them sees it again on every single pass.
+	// Nothing but the seen-cache stops that from becoming permanent airtime.
+	down := mkFrame(t, dest, 0x42, 1, nil, "storm reply")
+	client, err := relay.DialClient(relayAddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nowU := uint64(now.Unix())
+	if _, err := client.Put(relay.HintFor(dest, deviceOf(0x41), relay.Bucket(nowU)),
+		nowU+3600, encodeBundle(t, dest, down)); err != nil {
+		t.Fatal(err)
+	}
+	client.Close()
+
+	for i := 0; i < 4; i++ {
+		b1.PumpRadio(now)
+		b2.PumpRadio(now)
 		b1.PullRelay(now)
 		b2.PullRelay(now)
 		b1.PushRelay(now)
 		b2.PushRelay(now)
+		b1.PushRadio(now)
+		b2.PushRadio(now)
 	}
 	s1, s2 := b1.Stats(), b2.Stats()
-	total := s1.RelayOut + s2.RelayOut
-	if total > 4 { // 2 initial + at most one echo each, never unbounded
-		t.Fatalf("storm not bounded: relayOut total %d", total)
+
+	// Uplink: one frame off the air, one copy into the internet mailbox per
+	// gateway. Two active gateways cost a duplicate — the node collapses it
+	// by EventID — but the count must not grow with the number of passes.
+	if total := s1.RelayOut + s2.RelayOut; total > 2 {
+		t.Fatalf("uplink storm not bounded: relayOut total %d over 4 passes", total)
+	}
+	// Downlink: the same non-destructive item was re-read on every pass and
+	// must have been taken into custody exactly once per gateway.
+	if total := s1.RadioOut + s2.RadioOut; total > 2 {
+		t.Fatalf("downlink storm not bounded: radioOut total %d over 4 passes", total)
 	}
 	if s1.Deduped+s2.Deduped == 0 {
-		t.Fatal("dedup never engaged in the two-bridge loop")
+		t.Fatal("dedup never engaged: a non-destructive Fetch re-reads the " +
+			"same item every pass, so nothing else can stop it re-airing")
 	}
 }
 
@@ -207,7 +254,7 @@ func TestCustodyAckDurabilityAndSpoof(t *testing.T) {
 		DataDir: dir, Instance: "crash-bridge",
 		Radio: pair.B, RadioLink: "mesh:test", RadioDomain: "mesh-dom",
 		RelayAddr: "127.0.0.1:1", RelayDomain: "relay:none",
-		Subscriptions: []id.TerminalID{dest},
+		Subscriptions: []Subscription{serving(dest, 0x51, 0x52)},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -277,7 +324,7 @@ func TestBridgeRefusesNoCustodyAndOversize(t *testing.T) {
 	var dest id.TerminalID
 	dest[0] = 0xD4
 	pair := loopback.NewPair(loopback.Faults{Seed: 9})
-	b := testBridge(t, pair.B, "127.0.0.1:1", []id.TerminalID{dest}, false)
+	b := testBridge(t, pair.B, "127.0.0.1:1", []Subscription{serving(dest, 0x61, 0x62)}, false)
 	now := time.Now()
 
 	// A NoCustody frame (presence-like): MaxForwards=1 in the signed map.

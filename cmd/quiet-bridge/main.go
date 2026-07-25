@@ -97,6 +97,11 @@ func main() {
 	fmt.Println(b)
 	fmt.Printf("custodian public key (pin on nodes): %x\n", b.CustodianPub())
 	fmt.Println("blind by construction: no identity, no space keys, headers only")
+	if flags["learn"] != "" {
+		fmt.Println("note: --learn admits unknown destinations onto probation, " +
+			"but a destination with no operator-provisioned internet mailbox " +
+			"has nowhere to be delivered and is refused rather than held")
+	}
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
@@ -116,6 +121,10 @@ func main() {
 		case <-radioT.C:
 			now := time.Now()
 			b.PumpRadio(now)
+			// Announce before draining: a node hands over frames only when
+			// something asks, and a backed-up data queue must never be the
+			// reason the bridge went silent.
+			b.WakeRadio(now)
 			b.PushRadio(now)
 		case <-relayT.C:
 			now := time.Now()
@@ -134,7 +143,16 @@ func main() {
 	}
 }
 
-func loadSubscriptions(path string) ([]id.TerminalID, error) {
+// loadSubscriptions reads the operator's routing capabilities. One line per
+// destination:
+//
+//	<network-id> <terminal-hex> radio=<dev-hex>[,<dev-hex>…] internet=<dev-hex>[,…]
+//
+// Every id is opaque to this daemon. What the operator is declaring is not
+// who these people are but WHERE each mailbox can be reached from — which
+// side of the boundary — because that is the one thing a blind gateway
+// cannot work out for itself.
+func loadSubscriptions(path string) ([]bridge.Subscription, error) {
 	if path == "" {
 		return nil, nil
 	}
@@ -142,19 +160,74 @@ func loadSubscriptions(path string) ([]id.TerminalID, error) {
 	if err != nil {
 		return nil, err
 	}
-	var out []id.TerminalID
-	for _, line := range strings.Split(string(data), "\n") {
+	var out []bridge.Subscription
+	for n, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		b, err := hex.DecodeString(line)
-		if err != nil || len(b) != id.Size {
-			return nil, fmt.Errorf("bad destination hint %q", line)
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			return nil, fmt.Errorf("line %d: want "+
+				"`<network-id> <terminal-hex> radio=… internet=…`", n+1)
 		}
-		var t id.TerminalID
-		copy(t[:], b)
-		out = append(out, t)
+		term, err := parseTerminal(fields[1])
+		if err != nil {
+			return nil, fmt.Errorf("line %d: %w", n+1, err)
+		}
+		sub := bridge.Subscription{NetworkID: fields[0], Terminal: term}
+		for _, f := range fields[2:] {
+			key, list, ok := strings.Cut(f, "=")
+			if !ok {
+				return nil, fmt.Errorf("line %d: expected key=value, got %q", n+1, f)
+			}
+			devs, err := parseDevices(list)
+			if err != nil {
+				return nil, fmt.Errorf("line %d: %w", n+1, err)
+			}
+			switch key {
+			case "radio":
+				sub.RadioDevices = append(sub.RadioDevices, devs...)
+			case "internet":
+				sub.InternetDevices = append(sub.InternetDevices, devs...)
+			default:
+				return nil, fmt.Errorf("line %d: unknown field %q "+
+					"(expected radio= or internet=)", n+1, key)
+			}
+		}
+		if len(sub.InternetDevices) == 0 && len(sub.RadioDevices) == 0 {
+			return nil, fmt.Errorf("line %d: a subscription with no mailbox "+
+				"carries nothing in either direction", n+1)
+		}
+		out = append(out, sub)
+	}
+	return out, nil
+}
+
+func parseTerminal(s string) (id.TerminalID, error) {
+	var t id.TerminalID
+	b, err := hex.DecodeString(s)
+	if err != nil || len(b) != id.Size {
+		return t, fmt.Errorf("bad terminal id %q", s)
+	}
+	copy(t[:], b)
+	return t, nil
+}
+
+func parseDevices(list string) ([]id.DeviceID, error) {
+	var out []id.DeviceID
+	for _, s := range strings.Split(list, ",") {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		b, err := hex.DecodeString(s)
+		if err != nil || len(b) != id.Size {
+			return nil, fmt.Errorf("bad device id %q", s)
+		}
+		var d id.DeviceID
+		copy(d[:], b)
+		out = append(out, d)
 	}
 	return out, nil
 }

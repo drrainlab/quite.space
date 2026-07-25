@@ -91,6 +91,52 @@ framing for it. Loop prevention does not come from hop counts (below).
   `{frame_id, custody_store_id, accepted_at, expires_at,
   bridge_instance}` and ACKs only AFTER durable append + fsync.
 
+**Amendment (RB-0A, D1 — mailbox rendezvous).** Being space-ignorant is not
+enough to close the loop: a per-destination hint says WHAT a frame belongs
+to, never WHERE its recipients can be reached from. The bridge and the nodes
+therefore never met in the same relay mailbox, and the boundary was open in
+both directions while every component looked correct in isolation.
+
+A subscription is now an **operator-provisioned routing capability**:
+`{network_id, terminal, radio_devices[], internet_devices[]}`. The ids stay
+opaque bytes to the bridge — what the operator adds is the one fact a blind
+element cannot derive, which side of the boundary each mailbox is reachable
+from. With it:
+
+- **uplink** (radio → internet) writes into the ordinary per-recipient inbox
+  `HintFor(terminal, internet_device, bucket)`. Nothing changes for the
+  internet-side node: it collects its own mail and cannot tell the copy came
+  off a radio;
+- **downlink** (internet → radio) reads `HintFor(terminal, radio_device,
+  bucket)` with a NON-destructive `Fetch`. The mailbox belongs to a node
+  that is unreachable, not absent — draining it would mean a node that
+  later found internet discovered its own mail already eaten.
+
+A shared per-terminal mailbox was rejected: it would have weakened the
+per-device addressing the relay already has and made "who drained this"
+ambiguous. Consequences accepted honestly: radio delivery is
+**at-least-once** (a crash between broadcast and the durable seen-record
+repeats; the reverse order would lose), while APPLICATION of an event is
+effectively exactly-once through the stable `EventID`. `LoopDomain` names
+the SEGMENT (`meshtastic-quiet@<network_id>`) and `LinkID` the individual
+adapter, so two gateways on one carrier still recognise a shared forwarding
+domain. Exactly one active downlink gateway per `network_id` in the beta;
+a second one costs duplicate airtime, not a loop.
+
+A destination with no internet mailbox is **refused at admission** rather
+than taken into custody — holding frames that can never be delivered would
+be a promise the bridge cannot keep.
+
+**Amendment (RB-0A — the bridge speaks).** A node hands over frames only
+when asked: its sync engine answers a summary, it does not volunteer. A
+bridge that only listened therefore left every radio-only node mute. The
+bridge now announces a summary of **what it has actually carried** (a
+ledger of author device + sequence, both cleartext header fields), rate
+limited per destination, jittered by custodian key, one outstanding
+question at a time, and **never as a reply to a summary** — otherwise two
+elements volley until the batteries are flat. This is a transport message
+on an existing type, not a new event schema (§8 holds).
+
 ### 7. Custody receipts are authenticated by pinned custodian keys
 
 A node records `claims.DeliveryAcceptedByRelay` (existing transport

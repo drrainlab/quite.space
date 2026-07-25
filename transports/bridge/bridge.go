@@ -22,6 +22,33 @@ import (
 	"github.com/drrainlab/quiet_places/transports/relay"
 )
 
+// Subscription is one operator-provisioned routing capability (RB-0A, D1).
+//
+// The bridge never derives WHO these ids belong to and never asks: they are
+// opaque bytes handed to it by the operator, exactly like the destination
+// hint it already reads off the wire. What the operator does tell it is
+// which SIDE of the boundary each mailbox lives on, because that is a fact
+// about topology, not about people:
+//
+//	RadioDevices    — mailboxes whose owner is reachable only over the
+//	                  carrier. The bridge FETCHES these (non-destructively:
+//	                  the owner may come online and must still find its mail)
+//	                  and puts what it finds on the air.
+//	InternetDevices — mailboxes whose owner is reachable only over the
+//	                  relay. The bridge PUTS into these what it took off the
+//	                  air, using the very same per-recipient hint any node
+//	                  would use. Nothing changes on the internet side.
+//
+// A shared per-terminal mailbox would have been simpler and wrong: it would
+// have weakened the per-device addressing the relay already has, and made
+// "who drained this" ambiguous.
+type Subscription struct {
+	NetworkID       string // radio segment label; scopes the loop domain
+	Terminal        id.TerminalID
+	RadioDevices    []id.DeviceID
+	InternetDevices []id.DeviceID
+}
+
 // Config wires one bridge instance.
 type Config struct {
 	DataDir  string
@@ -36,8 +63,12 @@ type Config struct {
 	RelayAddr   string
 	RelayDomain routing.LoopDomainID
 
-	// Subscriptions: destination hints this bridge serves (operator file).
-	Subscriptions []id.TerminalID
+	// Subscriptions: the destinations this bridge serves (operator file).
+	Subscriptions []Subscription
+
+	// WakeEvery bounds how often the bridge may announce itself on the
+	// carrier for one destination (default wakeCooldown).
+	WakeEvery time.Duration
 
 	// Learn: admission-controlled auto-subscribe (OFF by default; gates
 	// radio→relay uplink ONLY, never relay→radio).
@@ -61,20 +92,30 @@ type Bridge struct {
 	airtime   *routing.TokenBucket
 
 	mu         sync.Mutex
-	subs       map[id.TerminalID]bool
+	subs       map[id.TerminalID]Subscription
 	learned    map[id.TerminalID]time.Time
 	learnBkt   map[id.TerminalID]*routing.TokenBucket
-	lastSent   map[uint64]time.Time
 	nextStream uint64
 	stats      Stats
+
+	// carried is the carriage ledger: per destination, per author chain,
+	// how far this bridge has taken frames into custody. It is built from
+	// cleartext headers only and is the honest content of the summary the
+	// bridge announces on the carrier.
+	carried map[id.TerminalID]map[id.DeviceID]*chainCursor
+	// wake tracks the announcement schedule per destination.
+	wake map[id.TerminalID]*wakeState
 }
 
 // Stats are diagnostics (printed by the daemon, asserted by tests).
 type Stats struct {
-	RadioIn, RadioOut   int
-	RelayIn, RelayOut   int
-	Deduped, Refused    int
-	CustodyAcks         int
+	RadioIn, RadioOut int
+	RelayIn, RelayOut int
+	Deduped, Refused  int
+	CustodyAcks       int
+	// Wakes counts summaries announced on the carrier; NoMailbox counts
+	// frames refused because no operator mailbox could receive them.
+	Wakes, NoMailbox int
 }
 
 // New opens the bridge: durable queue, seen-cache snapshot, custodian key.
@@ -99,6 +140,9 @@ func New(cfg Config) (*Bridge, error) {
 	if err != nil {
 		return nil, err
 	}
+	if cfg.WakeEvery <= 0 {
+		cfg.WakeEvery = wakeCooldown
+	}
 	b := &Bridge{
 		cfg:       cfg,
 		queue:     q,
@@ -107,24 +151,29 @@ func New(cfg Config) (*Bridge, error) {
 		custodian: key,
 		reasm:     kernelsync.NewReassembler(),
 		airtime:   routing.NewTokenBucket(cfg.AirtimePerMin, 2048, time.Now()),
-		subs:      map[id.TerminalID]bool{},
+		subs:      map[id.TerminalID]Subscription{},
 		learned:   map[id.TerminalID]time.Time{},
 		learnBkt:  map[id.TerminalID]*routing.TokenBucket{},
-		lastSent:  map[uint64]time.Time{},
+		carried:   map[id.TerminalID]map[id.DeviceID]*chainCursor{},
+		wake:      map[id.TerminalID]*wakeState{},
 	}
 	if cfg.AirtimePerMin <= 0 {
 		b.airtime = routing.DefaultAirtime(time.Now())
 	}
 	for _, s := range cfg.Subscriptions {
-		b.subs[s] = true
+		b.subs[s.Terminal] = s
+	}
+	if err := b.loadCarriage(); err != nil {
+		return nil, err
 	}
 	_ = b.seen.Load(cfg.DataDir+"/seen.snap", time.Now())
 	return b, nil
 }
 
-// Close snapshots the seen-cache and releases the queue.
+// Close snapshots the seen-cache and carriage ledger, releases the queue.
 func (b *Bridge) Close() error {
 	_ = b.seen.Save(b.cfg.DataDir + "/seen.snap")
+	_ = b.saveCarriage()
 	return b.queue.Close()
 }
 
@@ -144,10 +193,19 @@ func (b *Bridge) Stats() Stats {
 // with learn-mode admission control (rev 2.1, correction 5): a valid
 // signature is NOT permission — unknown sources enter probation with tiny
 // token buckets, bounded count, and never widen relay→radio.
+// It also enforces the RB-0A deliverability rule: custody is a promise, and
+// a destination with no operator-provisioned internet mailbox is one this
+// bridge cannot keep. Taking such frames would mean holding them until they
+// expired and telling nobody. They are refused at the door instead, and
+// counted separately so the operator sees the reason.
 func (b *Bridge) subscribed(dest id.TerminalID, now time.Time) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.subs[dest] {
+	if sub, ok := b.subs[dest]; ok {
+		if len(sub.InternetDevices) == 0 {
+			b.stats.NoMailbox++
+			return false
+		}
 		return true
 	}
 	if !b.cfg.Learn {
@@ -174,7 +232,16 @@ func (b *Bridge) subscribed(dest id.TerminalID, now time.Time) bool {
 func (b *Bridge) downlinkAllowed(dest id.TerminalID) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.subs[dest]
+	_, ok := b.subs[dest]
+	return ok
+}
+
+// subscription returns the operator capability for a destination.
+func (b *Bridge) subscription(dest id.TerminalID) (Subscription, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	s, ok := b.subs[dest]
+	return s, ok
 }
 
 // PumpRadio drains the radio endpoint once: reassemble → extract frames →
@@ -192,7 +259,13 @@ func (b *Bridge) PumpRadio(now time.Time) int {
 		}
 		term, frames, ok := kernelsync.ExtractFramesMessage(raw)
 		if !ok {
-			continue // summaries/blobs are node↔node business
+			// Not frames. A summary still tells the bridge something it
+			// needs: a node is alive on this carrier and worth announcing
+			// to. It is never answered directly — see WakeRadio.
+			if st, ok := kernelsync.ExtractSummaryTerminal(raw); ok {
+				b.noteRadioPeer(st, now)
+			}
+			continue // blobs and receipts remain node↔node business
 		}
 		b.mu.Lock()
 		b.stats.RadioIn += len(frames)
@@ -201,6 +274,9 @@ func (b *Bridge) PumpRadio(now time.Time) int {
 			b.bumpRefused(len(frames))
 			continue
 		}
+		// The node answered our announcement: the question is no longer
+		// outstanding, so the next one may go out on schedule.
+		b.answeredWake(term)
 		for _, f := range frames {
 			b.takeCustody(f, b.cfg.RadioLink, b.cfg.RadioDomain, now)
 		}
@@ -234,6 +310,7 @@ func (b *Bridge) takeCustody(frame []byte, link routing.LinkID,
 		return false
 	}
 	b.routes.Observe(meta.Destination, link, now)
+	b.noteCarried(meta)
 	return true
 }
 
@@ -269,28 +346,17 @@ func (b *Bridge) AcceptUplink(term id.TerminalID, frames [][]byte,
 // per-destination-hint into bundles, Put under the rotating hint, Ack on
 // success. Returns pushed frame count.
 func (b *Bridge) PushRelay(now time.Time) (int, error) {
-	// Collect sendable records per destination.
-	perDest := map[id.TerminalID][]*routing.CustodyRecord{}
-	seenIDs := map[uint64]bool{}
-	for {
-		rec, ok := b.queue.Next(routing.LinkID("relay:"+b.cfg.RelayAddr),
-			b.cfg.RelayDomain, nil, now)
-		if !ok || seenIDs[rec.ID] {
-			break
-		}
-		seenIDs[rec.ID] = true
-		perDest[rec.Destination] = append(perDest[rec.Destination], rec)
-		if len(seenIDs) >= 256 {
-			break
-		}
-		// Temporarily mark to avoid re-selection within this pass.
-		b.mu.Lock()
-		b.lastSent[rec.ID] = now
-		b.mu.Unlock()
-		b.queue.Requeue(rec.ID)
-	}
-	if len(perDest) == 0 {
+	// One batch of distinct eligible records, grouped per destination. No
+	// requeue dance: NextBatch does not mutate, so a pass can look at the
+	// whole queue instead of poking one record at a time.
+	batch := b.queue.NextBatch(routing.LinkID("relay:"+b.cfg.RelayAddr),
+		b.cfg.RelayDomain, nil, now, relayBatch)
+	if len(batch) == 0 {
 		return 0, nil
+	}
+	perDest := map[id.TerminalID][]*routing.CustodyRecord{}
+	for _, rec := range batch {
+		perDest[rec.Destination] = append(perDest[rec.Destination], rec)
 	}
 	client, err := relay.DialClient(b.cfg.RelayAddr)
 	if err != nil {
@@ -300,13 +366,36 @@ func (b *Bridge) PushRelay(now time.Time) (int, error) {
 	pushed := 0
 	nowU := uint64(now.Unix())
 	for dest, recs := range perDest {
+		sub, ok := b.subscription(dest)
+		if !ok || len(sub.InternetDevices) == 0 {
+			// Nowhere to deliver. Admission should have caught this; if a
+			// subscription was withdrawn mid-flight, release custody rather
+			// than hold frames that can never move.
+			for _, r := range recs {
+				b.queue.Ack(r.ID)
+			}
+			b.mu.Lock()
+			b.stats.NoMailbox += len(recs)
+			b.mu.Unlock()
+			continue
+		}
 		frames := make([][]byte, 0, len(recs))
 		for _, r := range recs {
 			frames = append(frames, r.Frame)
 		}
 		body := bundle.Encode(dest, frames)
-		hint := relay.Hint(dest, relay.Bucket(nowU))
-		if _, err := client.Put(hint, nowU+uint64(b.cfg.RelayTTL/time.Second), body); err != nil {
+		// D1 uplink: the SAME per-recipient inbox any node would write to.
+		// Alice collects with her ordinary Collect and cannot tell that this
+		// copy came off a radio — which is the point.
+		delivered := 0
+		for _, dev := range sub.InternetDevices {
+			hint := relay.HintFor(dest, dev, relay.Bucket(nowU))
+			if _, err := client.Put(hint, nowU+uint64(b.cfg.RelayTTL/time.Second), body); err != nil {
+				continue
+			}
+			delivered++
+		}
+		if delivered == 0 {
 			continue // records stay in custody for the next pass
 		}
 		for _, r := range recs {
@@ -326,12 +415,14 @@ func (b *Bridge) PushRelay(now time.Time) (int, error) {
 // covered ~12h of bridge downtime) and takes custody of their frames.
 func (b *Bridge) PullRelay(now time.Time) (int, error) {
 	b.mu.Lock()
-	dests := make([]id.TerminalID, 0, len(b.subs))
-	for d := range b.subs {
-		dests = append(dests, d)
+	subs := make([]Subscription, 0, len(b.subs))
+	for _, s := range b.subs {
+		if len(s.RadioDevices) > 0 {
+			subs = append(subs, s)
+		}
 	}
 	b.mu.Unlock()
-	if len(dests) == 0 {
+	if len(subs) == 0 {
 		return 0, nil
 	}
 	client, err := relay.DialClient(b.cfg.RelayAddr)
@@ -346,16 +437,22 @@ func (b *Bridge) PullRelay(now time.Time) (int, error) {
 		buckets = b.cfg.MaxBuckets
 	}
 	var hints [][]byte
-	for _, d := range dests {
-		cur := relay.Bucket(nowU)
-		for i := 0; i < buckets; i++ {
-			if cur < uint64(i) {
-				break
+	for _, s := range subs {
+		for _, dev := range s.RadioDevices {
+			cur := relay.Bucket(nowU)
+			for i := 0; i < buckets; i++ {
+				if cur < uint64(i) {
+					break
+				}
+				hints = append(hints, relay.HintFor(s.Terminal, dev, cur-uint64(i)))
 			}
-			hints = append(hints, relay.Hint(d, cur-uint64(i)))
 		}
 	}
-	items, err := client.Collect(hints)
+	// D1 downlink: FETCH, never Collect. The mailbox belongs to a node that
+	// is merely unreachable right now, not absent — if the bridge drained it,
+	// a Bob who later found internet would discover his own mail already
+	// eaten. Duplicates are the price, and the seen-cache pays it.
+	items, err := client.Fetch(hints)
 	if err != nil {
 		return 0, err
 	}
@@ -389,22 +486,25 @@ const resendGap = 45 * time.Second
 // (AckNone: no receiver feedback — repetition plus node↔node sync heal).
 const maxRadioAttempts = 3
 
+// radioBatch and relayBatch bound one drain pass.
+const (
+	radioBatch = 8
+	relayBatch = 256
+)
+
 // PushRadio schedules custody toward the radio carrier under the airtime
 // bucket and delivery classes. Returns frames broadcast this pass.
+//
+// Records already broadcast are held back by NextEligibleAt, so a pass sees
+// only what is genuinely ready and works through it. The earlier version
+// asked the queue for its single best record, found it was in its resend
+// gap, and stopped the entire pass — which is how a bridge with four frames
+// waiting for four different people delivered one frame every 45 seconds.
 func (b *Bridge) PushRadio(now time.Time) int {
+	batch := b.queue.NextBatch(b.cfg.RadioLink, b.cfg.RadioDomain,
+		b.downlinkAllowed, now, radioBatch)
 	sent := 0
-	for i := 0; i < 8; i++ {
-		rec, ok := b.queue.Next(b.cfg.RadioLink, b.cfg.RadioDomain,
-			b.downlinkAllowed, now)
-		if !ok {
-			break
-		}
-		b.mu.Lock()
-		last := b.lastSent[rec.ID]
-		b.mu.Unlock()
-		if now.Sub(last) < resendGap {
-			break // youngest eligible already sent recently; wait
-		}
+	for _, rec := range batch {
 		meta, err := routing.MetaOf(rec.Frame, rec.IngressLink)
 		if err != nil || !routing.RadioAdmits(meta.Schema, meta.Size) {
 			b.queue.Ack(rec.ID) // never airtime-worthy — release custody
@@ -412,7 +512,7 @@ func (b *Bridge) PushRadio(now time.Time) int {
 		}
 		msg := kernelsync.EncodeFramesMessage(rec.Destination, [][]byte{rec.Frame})
 		if !b.airtime.Take(len(msg), now) {
-			break // budget exhausted this pass
+			break // budget exhausted this pass; the rest keep their turn
 		}
 		// The wire grammar is ALWAYS fragment-wrapped (single fragment for
 		// small messages) — identical to what node engines emit.
@@ -423,8 +523,8 @@ func (b *Bridge) PushRadio(now time.Time) int {
 		frags, err := kernelsync.FragmentStream(stream, msg,
 			b.cfg.Radio.Capabilities().MaxPayload)
 		if err != nil {
-			b.queue.Requeue(rec.ID)
-			break
+			b.queue.Requeue(rec.ID, now.Add(resendGap))
+			continue
 		}
 		sendErr := false
 		for _, fp := range frags {
@@ -434,18 +534,19 @@ func (b *Bridge) PushRadio(now time.Time) int {
 			}
 		}
 		if sendErr {
-			b.queue.Requeue(rec.ID)
+			// The carrier is down, not this record's fault: hold it back and
+			// stop the pass rather than burning attempts on a dead link.
+			b.queue.Requeue(rec.ID, now.Add(resendGap))
 			break
 		}
 		b.mu.Lock()
-		b.lastSent[rec.ID] = now
 		b.stats.RadioOut++
 		b.mu.Unlock()
 		b.routes.Observe(rec.Destination, b.cfg.RadioLink, now)
 		if rec.Attempts+1 >= maxRadioAttempts {
 			b.queue.Ack(rec.ID)
 		} else {
-			b.queue.Requeue(rec.ID)
+			b.queue.Requeue(rec.ID, now.Add(resendGap))
 		}
 		sent++
 	}

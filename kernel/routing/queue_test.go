@@ -278,3 +278,74 @@ func TestRegistryAndPolicy(t *testing.T) {
 	}
 	RegisterScheme("test-x", nil) // panics (deferred check)
 }
+
+// The head-of-line failure, pinned. A record held back by backoff must be
+// SKIPPED, not treated as the end of the queue: before NextEligibleAt, a
+// bridge asked for its single best record, found it was in its resend gap,
+// and stopped the entire pass — so four frames waiting for four different
+// people went out one every 45 seconds while the queue sat full.
+func TestBackoffSkipsRatherThanBlocks(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Unix(1_784_000_000, 0)
+	q, err := OpenQueue(dir, DefaultQueueCaps())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer q.Close()
+
+	// Four destinations, same lane, enqueued oldest-first.
+	var ids []uint64
+	for d := byte(1); d <= 4; d++ {
+		rid, err := q.Enqueue(testMeta(d, signal.PriorityMessage, 0),
+			[]byte("frame"), "dom-a", now.Add(time.Duration(d)*time.Second))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, rid)
+	}
+
+	// Send the oldest and hold it back for 45s, as a radio push would.
+	first, ok := q.Next("relay:x", "relay-x", nil, now)
+	if !ok {
+		t.Fatal("nothing eligible")
+	}
+	q.Requeue(first.ID, now.Add(45*time.Second))
+
+	// The very next pick must be a DIFFERENT record, not a refusal.
+	second, ok := q.Next("relay:x", "relay-x", nil, now)
+	if !ok {
+		t.Fatal("a record in backoff blocked the whole queue")
+	}
+	if second.ID == first.ID {
+		t.Fatal("a record in backoff was handed out again")
+	}
+
+	// And a batch drain sees every record that is genuinely ready.
+	batch := q.NextBatch("relay:x", "relay-x", nil, now, 10)
+	if len(batch) != 3 {
+		t.Fatalf("batch saw %d of 3 eligible records", len(batch))
+	}
+	for _, rec := range batch {
+		if rec.ID == first.ID {
+			t.Fatal("batch included a record still in backoff")
+		}
+	}
+
+	// Backoff is durable: a bridge that restarts must not immediately
+	// re-air everything it just sent.
+	q.Close()
+	q2, err := OpenQueue(dir, DefaultQueueCaps())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer q2.Close()
+	if got := len(q2.NextBatch("relay:x", "relay-x", nil, now, 10)); got != 3 {
+		t.Fatalf("backoff lost across restart: %d eligible, want 3", got)
+	}
+	// Once the gap passes, it comes back on its own.
+	later := now.Add(46 * time.Second)
+	if got := len(q2.NextBatch("relay:x", "relay-x", nil, later, 10)); got != 4 {
+		t.Fatalf("record never became eligible again: %d of 4", got)
+	}
+	_ = ids
+}

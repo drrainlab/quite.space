@@ -1,0 +1,28 @@
+# quiet-bridge subscriptions — operator-provisioned routing capabilities.
+#
+# One line per destination:
+#
+#   <network-id> <terminal-hex> radio=<device-hex>[,…] internet=<device-hex>[,…]
+#
+# Every id is 32 bytes of hex and stays opaque to the daemon. What you are
+# declaring is not who these people are — it is which side of the boundary
+# each mailbox can be reached from, the one thing a blind gateway cannot
+# work out for itself:
+#
+#   radio=     mailboxes whose owner is reachable only over the carrier.
+#              The bridge FETCHES these (without draining them: the owner
+#              may find internet later and must still get its mail) and
+#              puts what it finds on the air.
+#   internet=  mailboxes whose owner is reachable only over the relay.
+#              The bridge PUTS into these what it took off the air, using
+#              the same per-recipient hint any node would use.
+#
+# A destination with no internet= mailbox is refused rather than held:
+# taking custody of frames that can never be delivered would be a promise
+# the bridge cannot keep. Both lists accept several devices.
+#
+# network_id also names the segment's loop domain, so every gateway on one
+# carrier must use the SAME value — that is how they recognise a shared
+# forwarding domain and stop each other's echoes.
+
+# beta-mesh-01 <terminal-hex> radio=<bob-device-hex> internet=<alice-device-hex>

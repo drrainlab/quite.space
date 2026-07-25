@@ -20,6 +20,13 @@ type FrameMeta struct {
 	Scope          signal.ForwardingScope
 	Size           int
 	IngressLink    LinkID
+
+	// Author and Sequence position the frame in its author's chain. Both are
+	// cleartext envelope header fields — the same two a sync summary is made
+	// of. A forwarding element needs them to answer "how far have I already
+	// carried this chain" without ever holding a log (RB-0A wake-up).
+	Author   id.DeviceID
+	Sequence uint64
 }
 
 // MetaOf decodes the header of a frame into FrameMeta. The payload is never
@@ -39,6 +46,8 @@ func MetaOf(frame []byte, ingress LinkID) (FrameMeta, error) {
 		Scope:       env.ForwardingScope(),
 		Size:        len(frame),
 		IngressLink: ingress,
+		Author:      env.Device,
+		Sequence:    env.Sequence,
 	}
 	if env.SourceTerminal != nil {
 		m.SourceTerminal = *env.SourceTerminal
