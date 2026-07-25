@@ -50,6 +50,14 @@ type CustodyRecord struct {
 	// room for a newer one. It leaves only by delivery or by expiry — and
 	// expiry is announced, not silent.
 	Guaranteed bool
+
+	// Attempt is the SENDER's responsibility token, copied from the frames
+	// message that carried this frame and written in the same fsynced
+	// append as the frame itself. It has to be durable here rather than in
+	// memory: a withdrawal may be issued hours later, possibly after a
+	// restart, and it must name the hand-off it belongs to or the sender
+	// cannot tell it apart from a receipt for a newer attempt.
+	Attempt []byte
 }
 
 // QueueCaps bound the store (Pi-readiness).
@@ -112,6 +120,7 @@ const (
 	qKeyAttempts  = 10
 	qKeyEligible  = 11
 	qKeyGuarantee = 12
+	qKeyAttempt   = 13
 )
 
 // ErrNoRoom is returned when custody cannot be taken without evicting a
@@ -222,6 +231,10 @@ func (q *Queue) applyRecord(body []byte) {
 			eligible, er = d.ReadUint()
 		case qKeyGuarantee:
 			guarantee, er = d.ReadUint()
+		case qKeyAttempt:
+			var b []byte
+			b, er = d.ReadBytes()
+			rec.Attempt = append([]byte(nil), b...)
 		default:
 			er = d.SkipItem()
 		}
@@ -300,6 +313,10 @@ func encodePut(rec *CustodyRecord) []byte {
 	buf = codec.AppendUint(buf, uint64(max(rec.NextEligibleAt, 0)))
 	buf = codec.AppendUint(buf, qKeyGuarantee)
 	buf = codec.AppendUint(buf, b2u(rec.Guaranteed))
+	if len(rec.Attempt) > 0 {
+		buf = codec.AppendUint(buf, qKeyAttempt)
+		buf = codec.AppendBytes(buf, rec.Attempt)
+	}
 	return buf
 }
 
@@ -335,7 +352,7 @@ func encodeTomb(rid uint64) []byte {
 // Enqueue takes custody of a frame: scope/expiry checks, caps (evicting
 // the oldest lowest-lane records when over), durable append + fsync.
 func (q *Queue) Enqueue(meta FrameMeta, frame []byte, domain LoopDomainID, now time.Time) (uint64, error) {
-	return q.enqueue(meta, frame, domain, now, false)
+	return q.enqueue(meta, frame, domain, now, false, nil)
 }
 
 // EnqueueGuaranteed takes custody of a frame the caller intends to
@@ -346,12 +363,16 @@ func (q *Queue) Enqueue(meta FrameMeta, frame []byte, domain LoopDomainID, now t
 // accepted — the sender keeps responsibility and retries, which is the one
 // honest outcome. A bridge that accepted the frame and quietly dropped
 // someone else's would have turned a signed promise into a lie.
-func (q *Queue) EnqueueGuaranteed(meta FrameMeta, frame []byte, domain LoopDomainID, now time.Time) (uint64, error) {
-	return q.enqueue(meta, frame, domain, now, true)
+// attempt is the sender's responsibility token; it is written in the same
+// fsynced append as the frame, so a withdrawal issued later — possibly
+// after a restart — can still name the hand-off it belongs to.
+func (q *Queue) EnqueueGuaranteed(meta FrameMeta, frame []byte, domain LoopDomainID,
+	now time.Time, attempt []byte) (uint64, error) {
+	return q.enqueue(meta, frame, domain, now, true, attempt)
 }
 
 func (q *Queue) enqueue(meta FrameMeta, frame []byte, domain LoopDomainID,
-	now time.Time, guaranteed bool) (uint64, error) {
+	now time.Time, guaranteed bool, attempt []byte) (uint64, error) {
 
 	if meta.Scope == signal.NoCustody {
 		return 0, ErrNoCustody
@@ -376,6 +397,7 @@ func (q *Queue) enqueue(meta FrameMeta, frame []byte, domain LoopDomainID,
 		ExpiresAt: meta.ExpiresAt, IngressLink: meta.IngressLink,
 		IngressDomain: domain, EnqueuedAt: now.Unix(),
 		Guaranteed: guaranteed,
+		Attempt:    append([]byte(nil), attempt...),
 	}
 	q.nextID++
 	if err := q.appendRecord(encodePut(rec), true); err != nil {

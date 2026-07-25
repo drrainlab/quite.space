@@ -41,9 +41,23 @@ const (
 type ackKind uint8
 
 const (
-	ackHeld   ackKind = 0
-	ackLapsed ackKind = 1
+	ackHeld    ackKind = 0
+	ackLapsed  ackKind = 1
+	ackExpired ackKind = 2
 )
+
+// receiptKindOf maps the internal kind onto the signed one. They are
+// separate types so the wire enum can gain values without every internal
+// switch silently accepting them.
+func receiptKindOf(k ackKind) ReceiptKind {
+	switch k {
+	case ackLapsed:
+		return ReceiptLapsed
+	case ackExpired:
+		return ReceiptExpired
+	}
+	return ReceiptAccepted
+}
 
 // pendingAck is one acknowledgement waiting for airtime.
 type pendingAck struct {
@@ -56,6 +70,14 @@ type pendingAck struct {
 	// moment of withdrawal: the two mechanisms are layered, and reporting
 	// "now" would collapse them into one.
 	expires uint64
+	// attempt echoes the SENDER's responsibility token, read off the frames
+	// message and stored with the custody record. Every receipt about this
+	// custody carries it, including a withdrawal issued much later, because
+	// only that token tells the sender which of its hand-offs is being
+	// answered.
+	attempt []byte
+	// lease names the custody record inside this gateway.
+	lease string
 	// nextTry / tries drive repetition of a withdrawal.
 	nextTry time.Time
 	tries   int
@@ -128,7 +150,8 @@ func (b *Bridge) wasAccepted(eid id.EventID) bool {
 // the obligation is restored from disk AND the sender retransmits, and
 // putting the identical receipt on the air twice in one pass would spend
 // airtime to say the same thing.
-func (b *Bridge) queueAck(term id.TerminalID, frames []id.EventID, now time.Time) {
+func (b *Bridge) queueAck(term id.TerminalID, frames []id.EventID,
+	attempt []byte, lease string, now time.Time) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	queued := map[id.EventID]bool{}
@@ -155,6 +178,7 @@ func (b *Bridge) queueAck(term id.TerminalID, frames []id.EventID, now time.Time
 	b.pendingAcks = append(b.pendingAcks, pendingAck{
 		terminal: term, frames: fresh, kind: ackHeld, at: now,
 		expires: uint64(now.Add(b.cfg.QueueCaps.OperatorTTL).Unix()),
+		attempt: append([]byte(nil), attempt...), lease: lease,
 	})
 }
 
@@ -163,15 +187,16 @@ func (b *Bridge) queueAck(term id.TerminalID, frames []id.EventID, now time.Time
 // Sending nothing would be worse than sending bad news — the sender would
 // go on believing a gateway still had its message.
 func (b *Bridge) queueLapse(term id.TerminalID, frames []id.EventID,
-	expires uint64, now time.Time) {
+	attempt []byte, lease string, expires uint64, kind ackKind, now time.Time) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if len(b.pendingAcks) >= pendingAckCap {
 		b.pendingAcks = b.pendingAcks[1:]
 	}
 	b.pendingAcks = append(b.pendingAcks, pendingAck{
-		terminal: term, frames: frames, kind: ackLapsed, at: now,
+		terminal: term, frames: frames, kind: kind, at: now,
 		expires: expires,
+		attempt: append([]byte(nil), attempt...), lease: lease,
 	})
 }
 
@@ -209,12 +234,11 @@ func (b *Bridge) PushAcks(now time.Time) int {
 		b.mu.Unlock()
 		sent++
 
-		// A withdrawal is repeated: it is the one message whose loss leaves
-		// a sender believing something false. It stops at the attempt limit
-		// or at the custody horizon, whichever comes first — past that the
-		// expiry the claim itself carried already tells the sender the
-		// promise is over, so repeating adds nothing but airtime.
-		if p.kind == ackLapsed {
+		// Every message that ENDS custody is repeated — withdrawn early or
+		// run to its horizon, both leave a sender believing something false
+		// if they are lost. Testing for ackLapsed alone silenced the expiry
+		// case, which is the overwhelmingly common one.
+		if p.kind != ackHeld {
 			p.tries++
 			p.nextTry = now.Add(lapseRetry)
 			if p.tries < lapseMaxTries {
@@ -257,7 +281,14 @@ func (b *Bridge) signReceipt(p pendingAck) []byte {
 		AcceptedAt: uint64(acceptedAt.Unix()),
 		ExpiresAt:  p.expires,
 		Instance:   b.cfg.Instance,
-		Lapsed:     p.kind == ackLapsed,
+		Kind:       receiptKindOf(p.kind),
+		Attempt:    p.attempt,
+		Lease:      p.lease,
+		// Where the frames came in. A node pins custodians per link domain,
+		// so a receipt that did not say which boundary it speaks about
+		// could not be checked against the right pin.
+		IngressLink: string(b.cfg.RadioLink),
+		LoopDomain:  string(b.cfg.RadioDomain),
 	}
 	return r.Sign(b.custodian)
 }
@@ -288,7 +319,8 @@ func (b *Bridge) sendOnRadio(msg []byte) error {
 // the sender hears about the withdrawal.
 func (b *Bridge) releaseUnairable(rec *routing.CustodyRecord, now time.Time) {
 	if rec.Guaranteed {
-		b.noteLapsed([]*routing.CustodyRecord{rec}, now)
+		// Given up early, not run out of time.
+		b.noteLapsed([]*routing.CustodyRecord{rec}, ackLapsed, now)
 	}
 	b.queue.Ack(rec.ID)
 	b.mu.Lock()
@@ -296,18 +328,33 @@ func (b *Bridge) releaseUnairable(rec *routing.CustodyRecord, now time.Time) {
 	b.mu.Unlock()
 }
 
-// noteLapsed turns swept guaranteed records into withdrawals.
-func (b *Bridge) noteLapsed(lapsed []*routing.CustodyRecord, now time.Time) {
+// noteLapsed turns ended custody into signed messages the sender can act
+// on. kind distinguishes the two ways custody ends: ackExpired when the
+// promised horizon simply arrived, ackLapsed when the gateway gave up
+// early. A sender treats both as "mine again", but they are different
+// stories to tell a person and different inputs to a retry policy.
+//
+// Grouping is by (destination, ATTEMPT), never by destination alone. Two
+// records for one terminal can belong to different hand-offs, and a
+// withdrawal that named the wrong attempt would be ignored by the sender —
+// correctly, and silently, which is the worst way to lose a message.
+func (b *Bridge) noteLapsed(lapsed []*routing.CustodyRecord, kind ackKind, now time.Time) {
+	type key struct {
+		term    id.TerminalID
+		attempt string
+	}
 	type group struct {
 		ids     []id.EventID
+		attempt []byte
 		expires uint64
 	}
-	byTerm := map[id.TerminalID]*group{}
+	groups := map[key]*group{}
 	for _, rec := range lapsed {
-		g := byTerm[rec.Destination]
+		k := key{rec.Destination, string(rec.Attempt)}
+		g := groups[k]
 		if g == nil {
-			g = &group{}
-			byTerm[rec.Destination] = g
+			g = &group{attempt: rec.Attempt}
+			groups[k] = g
 		}
 		g.ids = append(g.ids, id.EventIDOf(rec.Frame))
 		// Report the horizon that was actually promised. A record with no
@@ -321,13 +368,23 @@ func (b *Bridge) noteLapsed(lapsed []*routing.CustodyRecord, now time.Time) {
 			g.expires = exp
 		}
 	}
-	for term, g := range byTerm {
-		b.queueLapse(term, g.ids, g.expires, now)
+	for k, g := range groups {
+		b.queueLapse(k.term, g.ids, g.attempt, leaseOf(g.ids), g.expires, kind, now)
 		b.mu.Lock()
 		b.stats.CustodyLapsed += len(g.ids)
 		b.mu.Unlock()
 	}
-	if len(byTerm) > 0 {
+	if len(groups) > 0 {
 		_ = b.saveAcks()
 	}
+}
+
+// leaseOf names the custody this receipt is about, so repeats are
+// recognisable as repeats and a diagnostic can point at one row in one
+// store. It refines the attempt token; it never substitutes for it.
+func leaseOf(ids []id.EventID) string {
+	if len(ids) == 0 {
+		return ""
+	}
+	return ids[0].Hex()[:16]
 }

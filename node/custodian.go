@@ -48,7 +48,7 @@ func (r *Runtime) handleCustodyReceipt(tid id.TerminalID, raw []byte) {
 	if !ok || !bytes.Equal(pin, rec.PublicKey) {
 		return // unpinned key: local observation only, never a claim
 	}
-	if rec.Lapsed {
+	if rec.Kind.Lapsed() {
 		// The gateway is WITHDRAWING a claim it made earlier: it held these
 		// frames and could not keep them to the promised time. The delivery
 		// ladder is closed and has no rung for "was carried, then wasn't",

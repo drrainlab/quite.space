@@ -250,7 +250,7 @@ func (b *Bridge) PumpRadio(now time.Time) int {
 				continue
 			}
 		}
-		term, frames, ok := kernelsync.ExtractFramesMessage(raw)
+		term, frames, attempt, ok := kernelsync.ExtractFramesWithAttempt(raw)
 		if !ok {
 			// Not frames. A summary still tells the bridge something it
 			// needs: a node is alive on this carrier and worth announcing
@@ -280,7 +280,7 @@ func (b *Bridge) PumpRadio(now time.Time) int {
 		for _, f := range frames {
 			eid := id.EventIDOf(f)
 			switch {
-			case b.takeCustodyGuaranteed(f, b.cfg.RadioLink, b.cfg.RadioDomain, now):
+			case b.takeCustodyGuaranteed(f, b.cfg.RadioLink, b.cfg.RadioDomain, now, attempt):
 				b.rememberAccepted(eid, now)
 				held = append(held, eid)
 			case b.wasAccepted(eid):
@@ -293,7 +293,7 @@ func (b *Bridge) PumpRadio(now time.Time) int {
 			}
 		}
 		if len(held) > 0 {
-			b.queueAck(term, held, now)
+			b.queueAck(term, held, attempt, leaseOf(held), now)
 			// Durable before the pass ends: an obligation the bridge forgot
 			// across a restart is indistinguishable from one it never had.
 			_ = b.saveAcks()
@@ -312,7 +312,7 @@ func (b *Bridge) bumpRefused(n int) {
 // takeCustody applies meta/seen/policy and enqueues durably.
 func (b *Bridge) takeCustody(frame []byte, link routing.LinkID,
 	domain routing.LoopDomainID, now time.Time) bool {
-	return b.custody(frame, link, domain, now, false)
+	return b.custody(frame, link, domain, now, false, nil)
 }
 
 // takeCustodyGuaranteed is takeCustody for a frame the bridge is about to
@@ -320,12 +320,12 @@ func (b *Bridge) takeCustody(frame []byte, link routing.LinkID,
 // only fit it by dropping another acknowledged record, custody is refused
 // and no ACK is sent, so the sender keeps responsibility.
 func (b *Bridge) takeCustodyGuaranteed(frame []byte, link routing.LinkID,
-	domain routing.LoopDomainID, now time.Time) bool {
-	return b.custody(frame, link, domain, now, true)
+	domain routing.LoopDomainID, now time.Time, attempt []byte) bool {
+	return b.custody(frame, link, domain, now, true, attempt)
 }
 
 func (b *Bridge) custody(frame []byte, link routing.LinkID,
-	domain routing.LoopDomainID, now time.Time, guarantee bool) bool {
+	domain routing.LoopDomainID, now time.Time, guarantee bool, attempt []byte) bool {
 
 	// The one place the bridge looks at a frame at all. Everything past
 	// this line works from Route; Ciphertext is only ever handed on.
@@ -353,7 +353,7 @@ func (b *Bridge) custody(frame []byte, link routing.LinkID,
 	}
 	meta := env.Meta()
 	if guarantee {
-		_, err = b.queue.EnqueueGuaranteed(meta, env.Ciphertext, domain, now)
+		_, err = b.queue.EnqueueGuaranteed(meta, env.Ciphertext, domain, now, attempt)
 	} else {
 		_, err = b.queue.Enqueue(meta, env.Ciphertext, domain, now)
 	}
@@ -631,7 +631,8 @@ func (b *Bridge) PushRadio(now time.Time) int {
 func (b *Bridge) Sweep(now time.Time) int {
 	dropped, lapsed := b.queue.Sweep(now)
 	if len(lapsed) > 0 {
-		b.noteLapsed(lapsed, now)
+		// Ran to the promised horizon rather than being abandoned early.
+		b.noteLapsed(lapsed, ackExpired, now)
 	}
 	return dropped
 }

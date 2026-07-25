@@ -16,7 +16,34 @@ import (
 	"github.com/drrainlab/quiet_places/protocol/id"
 )
 
+// ReceiptKind says what a receipt asserts. Encoded as the old lapsed flag's
+// key and values, so 0 and 1 mean on the wire exactly what they meant
+// before; `expired` is new.
+type ReceiptKind uint8
+
+const (
+	// ReceiptAccepted: the frames are held to the stated horizon.
+	ReceiptAccepted ReceiptKind = 0
+	// ReceiptLapsed: the claim is WITHDRAWN early — the gateway can no
+	// longer keep the frames to the time it promised.
+	ReceiptLapsed ReceiptKind = 1
+	// ReceiptExpired: custody ran to its horizon and ended there.
+	ReceiptExpired ReceiptKind = 2
+)
+
+// Lapsed reports whether a kind ends custody. Both a withdrawal and an
+// expiry do; they are distinguished so a reader can tell "the gateway gave
+// up early" from "the promise ran out", which are different stories to tell
+// a person and different inputs to a retry policy.
+func (k ReceiptKind) Lapsed() bool { return k != ReceiptAccepted }
+
 // CustodyReceipt is the signed custody claim.
+//
+// It binds a hand-off, not merely an event. Without Attempt a receipt says
+// "I hold event E" — true of every attempt ever made to deliver E, so a
+// receipt from an abandoned attempt would be indistinguishable from one
+// answering the current attempt. With it, a receipt answers exactly one
+// hand-off and the sender can ignore the rest.
 type CustodyReceipt struct {
 	FrameIDs   []id.EventID
 	StoreID    string // custody store instance
@@ -26,18 +53,45 @@ type CustodyReceipt struct {
 	PublicKey  []byte // 32B ed25519 custodian key
 	Signature  []byte // 64B over the encoding with the signature absent
 
-	// Lapsed WITHDRAWS a custody claim: the bridge said it held these
-	// frames and can no longer keep them to the promised time. It is an
-	// explicit flag rather than an expiry date in the past, because
-	// "expired" and "never mind" must not be told apart by arithmetic —
-	// a node that got the subtraction wrong would either mourn a message
-	// still in custody or trust one already gone.
-	Lapsed bool
+	Kind ReceiptKind
+
+	// Attempt echoes the SENDER's responsibility token, taken from the
+	// frames message that delivered these frames and stored with the
+	// custody record before this receipt was signed. A receipt without one
+	// cannot release responsibility — see node.handleCustodyReceipt.
+	Attempt []byte
+
+	// Lease names the custody record inside this gateway, so repeats of the
+	// same claim are recognisable as repeats and diagnostics can point at
+	// one row in one store. It refines Attempt; it never replaces it,
+	// because only the sender knows which attempt is current.
+	Lease string
+
+	// IngressLink and LoopDomain record WHERE the gateway took the frames.
+	// A node pins custodians per link domain, so a receipt that does not
+	// say which boundary it is speaking about cannot be checked against
+	// the right pin.
+	IngressLink string
+	LoopDomain  string
 }
 
 func (r *CustodyReceipt) encode(withSig bool) []byte {
+	// Keys 1..8 always present; 9..12 only when set, so a receipt from
+	// before RB-1 and one issued now differ by presence, not by shape.
 	n := 7
 	if withSig {
+		n++
+	}
+	if len(r.Attempt) > 0 {
+		n++
+	}
+	if r.Lease != "" {
+		n++
+	}
+	if r.IngressLink != "" {
+		n++
+	}
+	if r.LoopDomain != "" {
 		n++
 	}
 	buf := codec.AppendMap(nil, n)
@@ -60,18 +114,27 @@ func (r *CustodyReceipt) encode(withSig bool) []byte {
 		buf = codec.AppendUint(buf, 7)
 		buf = codec.AppendBytes(buf, r.Signature)
 	}
-	// Key 8 last: the deterministic subset wants ascending keys, and the
-	// signed encoding simply omits 7.
+	// Keys 8..12 come last: the deterministic subset wants ascending keys,
+	// and the signed encoding simply omits 7.
 	buf = codec.AppendUint(buf, 8)
-	buf = codec.AppendUint(buf, boolByte(r.Lapsed))
-	return buf
-}
-
-func boolByte(b bool) uint64 {
-	if b {
-		return 1
+	buf = codec.AppendUint(buf, uint64(r.Kind))
+	if len(r.Attempt) > 0 {
+		buf = codec.AppendUint(buf, 9)
+		buf = codec.AppendBytes(buf, r.Attempt)
 	}
-	return 0
+	if r.Lease != "" {
+		buf = codec.AppendUint(buf, 10)
+		buf = codec.AppendText(buf, r.Lease)
+	}
+	if r.IngressLink != "" {
+		buf = codec.AppendUint(buf, 11)
+		buf = codec.AppendText(buf, r.IngressLink)
+	}
+	if r.LoopDomain != "" {
+		buf = codec.AppendUint(buf, 12)
+		buf = codec.AppendText(buf, r.LoopDomain)
+	}
+	return buf
 }
 
 // Sign finalizes the receipt with the custodian key.
@@ -136,7 +199,17 @@ func DecodeReceipt(raw []byte) (*CustodyReceipt, error) {
 		case 8:
 			var v uint64
 			v, er = d.ReadUint()
-			r.Lapsed = v != 0
+			r.Kind = ReceiptKind(v)
+		case 9:
+			var b []byte
+			b, er = d.ReadBytes()
+			r.Attempt = append([]byte(nil), b...)
+		case 10:
+			r.Lease, er = d.ReadText()
+		case 11:
+			r.IngressLink, er = d.ReadText()
+		case 12:
+			r.LoopDomain, er = d.ReadText()
 		default:
 			er = d.SkipItem()
 		}

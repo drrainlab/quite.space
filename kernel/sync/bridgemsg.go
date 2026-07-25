@@ -30,7 +30,26 @@ const keyReceipt = 7
 // EncodeFramesMessage builds a frames message for a terminal — the bridge
 // re-emission path (identical wire to an engine's own msgFrames).
 func EncodeFramesMessage(terminal id.TerminalID, frames [][]byte) []byte {
-	buf := codec.AppendMap(nil, 3)
+	return encodeFramesWithAttempt(terminal, frames, nil)
+}
+
+// EncodeFramesMessageWithAttempt stamps the sender's responsibility token on
+// the message. A gateway must persist that token with the custody it takes
+// and echo it in every receipt about that custody, so the sender can tell
+// which of its own hand-offs a receipt is answering.
+func EncodeFramesMessageWithAttempt(terminal id.TerminalID, frames [][]byte,
+	attempt []byte) []byte {
+	return encodeFramesWithAttempt(terminal, frames, attempt)
+}
+
+func encodeFramesWithAttempt(terminal id.TerminalID, frames [][]byte,
+	attempt []byte) []byte {
+
+	n := 3
+	if len(attempt) > 0 {
+		n++
+	}
+	buf := codec.AppendMap(nil, n)
 	buf = codec.AppendUint(buf, keyType)
 	buf = codec.AppendUint(buf, msgFrames)
 	buf = codec.AppendUint(buf, keyTerminal)
@@ -40,17 +59,30 @@ func EncodeFramesMessage(terminal id.TerminalID, frames [][]byte) []byte {
 	for _, f := range frames {
 		buf = codec.AppendBytes(buf, f)
 	}
+	if len(attempt) > 0 {
+		buf = codec.AppendUint(buf, keyAttempt)
+		buf = codec.AppendBytes(buf, attempt)
+	}
 	return buf
 }
 
 // ExtractFramesMessage parses a frames message; ok=false for any other
 // message type (summaries, blobs, receipts — the bridge ignores them).
 func ExtractFramesMessage(raw []byte) (id.TerminalID, [][]byte, bool) {
+	term, frames, _, ok := ExtractFramesWithAttempt(raw)
+	return term, frames, ok
+}
+
+// ExtractFramesWithAttempt also returns the sender's responsibility token,
+// nil when the sender stamped none. A gateway that takes custody must store
+// the token with the record BEFORE acknowledging, so a withdrawal issued
+// hours later still names the hand-off it belongs to.
+func ExtractFramesWithAttempt(raw []byte) (id.TerminalID, [][]byte, []byte, bool) {
 	msg, err := decodeMessage(raw)
 	if err != nil || msg.msgType != msgFrames {
-		return id.TerminalID{}, nil, false
+		return id.TerminalID{}, nil, nil, false
 	}
-	return msg.term, msg.frames, true
+	return msg.term, msg.frames, msg.attempt, true
 }
 
 // EncodeSummaryMessage builds a summary message on behalf of an element

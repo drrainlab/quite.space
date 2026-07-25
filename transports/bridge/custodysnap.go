@@ -32,6 +32,8 @@ const (
 	ackKeyExpires  = 5
 	ackKeyNextTry  = 6
 	ackKeyTries    = 7
+	ackKeyAttempt  = 8
+	ackKeyLease    = 9
 
 	accKeyEvent = 1
 	accKeyAt    = 2
@@ -51,7 +53,7 @@ func (b *Bridge) saveAcks() error {
 
 	buf := codec.AppendArray(nil, len(pending))
 	for _, p := range pending {
-		buf = codec.AppendMap(buf, 7)
+		buf = codec.AppendMap(buf, 9)
 		buf = codec.AppendUint(buf, ackKeyTerminal)
 		buf = codec.AppendBytes(buf, p.terminal[:])
 		buf = codec.AppendUint(buf, ackKeyFrames)
@@ -73,6 +75,13 @@ func (b *Bridge) saveAcks() error {
 		buf = codec.AppendUint(buf, uint64(max(next, 0)))
 		buf = codec.AppendUint(buf, ackKeyTries)
 		buf = codec.AppendUint(buf, uint64(p.tries))
+		// The attempt token must survive a restart with the obligation: a
+		// withdrawal that came back without it would name no hand-off and
+		// the sender would rightly ignore it.
+		buf = codec.AppendUint(buf, ackKeyAttempt)
+		buf = codec.AppendBytes(buf, p.attempt)
+		buf = codec.AppendUint(buf, ackKeyLease)
+		buf = codec.AppendText(buf, p.lease)
 	}
 
 	// The acceptance memory follows as a second array in the same file.
@@ -169,6 +178,17 @@ func (b *Bridge) loadAcks() {
 					return
 				}
 				p.tries = int(v)
+			case ackKeyAttempt:
+				raw, err := d.ReadBytes()
+				if err != nil {
+					return
+				}
+				p.attempt = append([]byte(nil), raw...)
+			case ackKeyLease:
+				p.lease, err = d.ReadText()
+				if err != nil {
+					return
+				}
 			default:
 				if err := d.SkipItem(); err != nil {
 					return

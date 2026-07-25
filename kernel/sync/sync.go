@@ -32,6 +32,12 @@ const (
 	keyFrames   = 4
 	keyHashes   = 5
 	keyBlobs    = 6
+	// keyAttempt carries the SENDER's responsibility token (RB-1).
+	// Append-only: a decoder that does not know it skips it. It rides on
+	// frames messages so a gateway can echo it in every receipt about the
+	// custody it grants — see node.AttemptID for why the token has to come
+	// from the sender rather than from a gateway or from anyone's clock.
+	keyAttempt = 8
 )
 
 // Blob exchange limits (plan: resource limits).
@@ -82,6 +88,14 @@ type Engine struct {
 	// never more than transport-level custody: ADR-007).
 	OnSent func(eventIDs []id.EventID)
 
+	// AttemptToken is the sender's current responsibility token for this
+	// space. When set it is stamped on every frames message the engine
+	// emits — unchanged across fragmentation and across re-sends within one
+	// attempt, because it identifies a HAND-OFF, not a packet. The node
+	// rotates it only when responsibility comes back (custody withdrawn or
+	// expired), and makes it durable BEFORE the first send that carries it.
+	AttemptToken []byte
+
 	// OnCustodyReceipt receives raw custodian-signed receipt bytes from a
 	// bridge on this link. The NODE verifies against its pinned custodian
 	// keys — the engine only routes (an unpinned receipt records nothing).
@@ -125,17 +139,7 @@ func (e *Engine) encodeSummary() []byte {
 }
 
 func (e *Engine) encodeFrames(frames [][]byte) []byte {
-	buf := codec.AppendMap(nil, 3)
-	buf = codec.AppendUint(buf, keyType)
-	buf = codec.AppendUint(buf, msgFrames)
-	buf = codec.AppendUint(buf, keyTerminal)
-	buf = codec.AppendBytes(buf, e.Log.Terminal[:])
-	buf = codec.AppendUint(buf, keyFrames)
-	buf = codec.AppendArray(buf, len(frames))
-	for _, f := range frames {
-		buf = codec.AppendBytes(buf, f)
-	}
-	return buf
+	return encodeFramesWithAttempt(e.Log.Terminal, frames, e.AttemptToken)
 }
 
 func (e *Engine) encodeBlobReq(hashes []id.Hash) []byte {
@@ -180,6 +184,7 @@ type message struct {
 	hashes  []id.Hash
 	blobs   [][]byte
 	receipt []byte
+	attempt []byte
 }
 
 func decodeMessage(data []byte) (*message, error) {
@@ -289,6 +294,12 @@ func decodeMessage(data []byte) (*message, error) {
 			b, err = d.ReadBytes()
 			if err == nil {
 				msg.receipt = append([]byte(nil), b...)
+			}
+		case keyAttempt:
+			var b []byte
+			b, err = d.ReadBytes()
+			if err == nil {
+				msg.attempt = append([]byte(nil), b...)
 			}
 		default:
 			err = d.SkipItem()

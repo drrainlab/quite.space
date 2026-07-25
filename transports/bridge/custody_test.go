@@ -64,7 +64,7 @@ func TestCustodyAckReachesTheSender(t *testing.T) {
 	if len(got[0].FrameIDs) != 1 || got[0].FrameIDs[0] != id.EventIDOf(f) {
 		t.Fatalf("receipt covers the wrong frames: %+v", got[0].FrameIDs)
 	}
-	if got[0].Lapsed {
+	if got[0].Kind.Lapsed() {
 		t.Fatal("a fresh custody claim must not be marked lapsed")
 	}
 	if !bytes.Equal(got[0].PublicKey, b.CustodianPub()) {
@@ -175,7 +175,7 @@ func TestExpiredCustodyIsWithdrawnNotForgotten(t *testing.T) {
 	}
 	b.PumpRadio(now)
 	b.PushAcks(now)
-	if got := readReceipts(t, pair.A); len(got) != 1 || got[0].Lapsed {
+	if got := readReceipts(t, pair.A); len(got) != 1 || got[0].Kind.Lapsed() {
 		t.Fatalf("no custody claim to withdraw later: %+v", got)
 	}
 
@@ -191,7 +191,7 @@ func TestExpiredCustodyIsWithdrawnNotForgotten(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("withdrawal not sent: %d receipts", len(got))
 	}
-	if !got[0].Lapsed {
+	if !got[0].Kind.Lapsed() {
 		t.Fatal("the withdrawal is indistinguishable from a custody claim")
 	}
 	if got[0].FrameIDs[0] != id.EventIDOf(f) {
@@ -490,7 +490,7 @@ func TestCrashAfterAckResendsIdempotently(t *testing.T) {
 	// it twice learns nothing new and records nothing twice.
 	if again[0].AcceptedAt != first[0].AcceptedAt ||
 		again[0].ExpiresAt != first[0].ExpiresAt ||
-		again[0].Lapsed != first[0].Lapsed ||
+		again[0].Kind != first[0].Kind ||
 		len(again[0].FrameIDs) != 1 || again[0].FrameIDs[0] != first[0].FrameIDs[0] {
 		t.Fatalf("the repeat is a different claim:\n first %+v\n again %+v",
 			first[0], again[0])
@@ -539,7 +539,7 @@ func TestWithdrawalRepeatsAndCarriesTheOriginalHorizon(t *testing.T) {
 	b.Sweep(later)
 	b.PushAcks(later)
 	first := readReceipts(t, pair.A)
-	if len(first) != 1 || !first[0].Lapsed {
+	if len(first) != 1 || !first[0].Kind.Lapsed() {
 		t.Fatalf("withdrawal not sent: %+v", first)
 	}
 	if first[0].ExpiresAt != horizon {
@@ -554,7 +554,7 @@ func TestWithdrawalRepeatsAndCarriesTheOriginalHorizon(t *testing.T) {
 		t.Fatalf("withdrawal never repeated: %d", sent)
 	}
 	repeat := readReceipts(t, pair.A)
-	if len(repeat) != 1 || !repeat[0].Lapsed {
+	if len(repeat) != 1 || !repeat[0].Kind.Lapsed() {
 		t.Fatalf("repeat is not a withdrawal: %+v", repeat)
 	}
 

@@ -370,7 +370,7 @@ func TestGuaranteedCustodySurvivesPressure(t *testing.T) {
 	promised := make([]uint64, 0, 2)
 	for d := byte(1); d <= 2; d++ {
 		rid, err := q.EnqueueGuaranteed(testMeta(d, signal.PriorityMessage, 0),
-			frame, "dom-a", now)
+			frame, "dom-a", now, []byte("attempt-token"))
 		if err != nil {
 			t.Fatalf("guaranteed enqueue %d: %v", d, err)
 		}

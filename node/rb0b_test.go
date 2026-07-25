@@ -186,7 +186,7 @@ func TestCustodyWithdrawalIsNotRecordedAsCustody(t *testing.T) {
 		AcceptedAt: uint64(now.Unix()),
 		ExpiresAt:  uint64(now.Add(time.Minute).Unix()),
 		Instance:   "gw0",
-		Lapsed:     true,
+		Kind:       bridge.ReceiptLapsed,
 	}).Sign(priv)
 	deliver(withdrawal)
 	lapse, ok := rt.CustodyLapsed(eid)
