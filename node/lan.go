@@ -185,6 +185,17 @@ func (r *Runtime) adoptLinkFiltered(c link, pump, summaryEvery time.Duration,
 			}
 			r.mu.Lock()
 			r.curLink = label // OnSent closures read this under the same lock
+			// Stamp the responsibility token BEFORE anything can go out.
+			// openAttempt fsyncs it, so a crash between minting and sending
+			// cannot leave us minting a second token for the same epoch —
+			// an acknowledgement already in flight would then name a
+			// hand-off we no longer recognise.
+			now := time.Now()
+			for tid, st := range byTerm {
+				if tok, ok := r.openAttempt(tid, now); ok {
+					st.eng.AttemptToken = tok[:]
+				}
+			}
 			if time.Since(lastSummary) > summaryEvery {
 				for _, st := range states {
 					_ = st.eng.SendSummary(c)

@@ -48,6 +48,19 @@ func (r *Runtime) handleCustodyReceipt(tid id.TerminalID, raw []byte) {
 	if !ok || !bytes.Equal(pin, rec.PublicKey) {
 		return // unpinned key: local observation only, never a claim
 	}
+	// The ledger is the authority on whether this receipt is about the
+	// hand-off currently running. Signature and pin say the receipt is
+	// AUTHENTIC; only the attempt token says it is CURRENT, and treating
+	// the first as the second is how a stale acknowledgement completes an
+	// attempt it never saw.
+	now := time.Now()
+	for _, eid := range rec.FrameIDs {
+		switch r.applyReceiptToLedger(eid, rec, now) {
+		case ReceiptAudited, ReceiptUnbound, ReceiptConflicted:
+			// Recorded, but it moves nothing: skip the ladder too.
+			continue
+		}
+	}
 	if rec.Kind.Lapsed() {
 		// The gateway is WITHDRAWING a claim it made earlier: it held these
 		// frames and could not keep them to the promised time. The delivery

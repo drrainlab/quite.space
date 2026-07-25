@@ -72,6 +72,13 @@ type Runtime struct {
 	// custodyLapses holds gateways' withdrawals of custody claims —
 	// device-local diagnostics, never part of any log or projection.
 	custodyLapses map[id.EventID]CustodyLapse
+	// ledger tracks outstanding RESPONSIBILITY for events this device
+	// authored: who has taken them on, and what has been proven. Never
+	// emitted, bundled or relayed.
+	ledger *Ledger
+	// receiptAudits keeps verified receipts that named a hand-off no longer
+	// current, so a stale acknowledgement is debuggable rather than silent.
+	receiptAudits map[id.EventID][]ReceiptAudit
 
 	// relaySync is the background relay push/pull loop (nil until first
 	// configured). r.mu guards the pointer; the state has its own lock.
@@ -148,6 +155,15 @@ func Open(dataDir string, passphrase []byte, displayName string) (*Runtime, erro
 		assetIdx: newAssetIndex(), passes: newPassRegistry(),
 		joins: map[string]*joinAttempt{}, stop: make(chan struct{}),
 		relayWants: map[id.TerminalID]map[id.Hash]struct{}{}}
+
+	// The delivery ledger lives beside the store, not inside the encrypted
+	// keystore: it is written on every hand-off and must survive a crash on
+	// its own terms.
+	lg, err := OpenLedger(dataDir+"/delivery", 0)
+	if err != nil {
+		return nil, err
+	}
+	r.ledger = lg
 
 	ks, err := root.LoadKeystore()
 	switch {
@@ -296,6 +312,10 @@ func (r *Runtime) attach(tid id.TerminalID, s *terminals.Space) {
 			if r.lanNode != nil || r.mesh != nil {
 				_ = s.Trust.RecordLocal(a.ID, tid, claims.DeliveryQueued)
 			}
+			// Responsibility starts here, for events WE authored. Idempotent
+			// on the event id, so replaying the log after a restart cannot
+			// multiply it or reset an attempt still in flight.
+			r.trackOutbound(a.ID, tid, time.Now())
 		}
 	}
 	// handed_to_transport: fired by the sync engine when a frames batch is
@@ -306,6 +326,10 @@ func (r *Runtime) attach(tid id.TerminalID, s *terminals.Space) {
 			_ = s.Trust.RecordLocal(eid, tid, claims.DeliveryHandedToTransport)
 			r.trackCarried(eid, r.curLink)
 		}
+		// Bytes in an adapter are not custody. The ledger records that the
+		// hand-off left the machine and stops there; only a signed receipt
+		// moves it further.
+		r.markHandedToTransport(ids, r.curLink, time.Now())
 	}
 	// Bridge custody ACKs: honored only under a pinned custodian key for
 	// the ingress link (custodian.go).
@@ -341,6 +365,9 @@ func (r *Runtime) Close() {
 	defer r.mu.Unlock()
 	for _, st := range r.spaces {
 		st.space.Log.Close()
+	}
+	if r.ledger != nil {
+		_ = r.ledger.Close()
 	}
 }
 
