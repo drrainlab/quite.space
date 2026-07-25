@@ -276,16 +276,47 @@ func (r *Runtime) Delivery(eid id.EventID) (DeliveryView, bool) {
 func (r *Runtime) eligibleTransports(in DeliveryIntent) []TransportKind {
 	c := r.connectivity()
 	var out []TransportKind
-	for _, k := range []TransportKind{TransportLAN, TransportRelay, TransportRadio} {
-		if !c.allows(k, in.Space) {
-			continue
+	for _, k := range transportPreference {
+		if c.allows(k, in.Space) && in.EligibleOn(k) {
+			out = append(out, k)
 		}
-		if !in.EligibleOn(k) {
-			continue
-		}
-		out = append(out, k)
 	}
 	return out
+}
+
+// routeForSpaceLocked picks the route a SPACE should be sending over right
+// now, or reports that it has nothing to send.
+//
+// Route selection gates SENDING only. A space with nothing outstanding
+// still pumps every policy-permitted link, because refusing to listen on a
+// route we are simply not choosing to send over would make a node deaf on
+// its own mesh whenever the internet happened to be preferred.
+func (r *Runtime) routeForSpaceLocked(c Connectivity, tid id.TerminalID,
+	now time.Time) (TransportKind, bool) {
+
+	if r.ledger == nil {
+		return TransportAny, false
+	}
+	var oldest *DeliveryIntent
+	for _, in := range r.ledger.Due(now, 0) {
+		if in.Space != tid {
+			continue
+		}
+		if oldest == nil || in.UpdatedAt < oldest.UpdatedAt {
+			cp := in
+			oldest = &cp
+		}
+	}
+	if oldest == nil {
+		return TransportAny, false // nothing to send
+	}
+	avail := map[TransportKind]bool{}
+	for k, n := range r.liveLinks {
+		if n > 0 {
+			avail[k] = true
+		}
+	}
+	return r.selectAmongLocked(c, *oldest, now, avail)
 }
 
 // transportOfLink maps a pump label onto a transport kind.
@@ -393,12 +424,42 @@ func (r *Runtime) healthOf(k TransportKind, now time.Time) (up bool, stable bool
 //
 // ok=false means the message waits — which is a state, not a failure.
 func (r *Runtime) SelectTransport(in DeliveryIntent, now time.Time) (TransportKind, bool) {
-	eligible := r.eligibleTransports(in)
+	c := r.connectivity()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.selectTransportLocked(c, in, now)
+}
+
+// selectTransportLocked is SelectTransport for a caller that already holds
+// r.mu and has already read the policy — the pump, which must not re-enter
+// the lock while choosing where to send.
+func (r *Runtime) selectTransportLocked(c Connectivity, in DeliveryIntent,
+	now time.Time) (TransportKind, bool) {
+	return r.selectAmongLocked(c, in, now, nil)
+}
+
+// selectAmongLocked restricts the choice to routes that actually EXIST.
+//
+// avail=nil means "do not filter" — the projection answers a policy
+// question and may name a route the person could enable. The pump must
+// pass the links it really has: choosing a preferred transport with no
+// link attached is not a preference, it is silence. A radio-only node
+// would sit still waiting for an internet link nobody ever adopted.
+func (r *Runtime) selectAmongLocked(c Connectivity, in DeliveryIntent,
+	now time.Time, avail map[TransportKind]bool) (TransportKind, bool) {
+
+	var eligible []TransportKind
+	for _, k := range transportPreference {
+		if avail != nil && !avail[k] {
+			continue
+		}
+		if c.allows(k, in.Space) && in.EligibleOn(k) {
+			eligible = append(eligible, k)
+		}
+	}
 	if len(eligible) == 0 {
 		return TransportAny, false
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
 
 	allowed := map[TransportKind]bool{}
 	for _, k := range eligible {

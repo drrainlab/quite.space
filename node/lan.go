@@ -163,9 +163,22 @@ func (r *Runtime) adoptLinkFiltered(c link, pump, summaryEvery time.Duration,
 	}
 	r.mu.Unlock()
 
+	linkKind := transportOfLink(label)
+	r.mu.Lock()
+	if r.liveLinks == nil {
+		r.liveLinks = map[TransportKind]int{}
+	}
+	r.liveLinks[linkKind]++
+	r.mu.Unlock()
+
 	r.wg.Add(1)
 	go func() {
 		defer r.wg.Done()
+		defer func() {
+			r.mu.Lock()
+			r.liveLinks[linkKind]--
+			r.mu.Unlock()
+		}()
 		t := time.NewTicker(pump)
 		defer t.Stop()
 		// ONE reassembler for the link, not one per space. Fragments from
@@ -183,22 +196,53 @@ func (r *Runtime) adoptLinkFiltered(c link, pump, summaryEvery time.Duration,
 				r.dropConn(c)
 				return
 			}
+			// Read the policy BEFORE taking the lock: connectivity() reads
+			// settings, which takes r.mu itself.
+			conn := r.connectivity()
+			kind := transportOfLink(label)
+			now := time.Now()
+
 			r.mu.Lock()
 			r.curLink = label // OnSent closures read this under the same lock
-			// Stamp the responsibility token BEFORE anything can go out.
-			// openAttempt fsyncs it, so a crash between minting and sending
-			// cannot leave us minting a second token for the same epoch —
-			// an acknowledgement already in flight would then name a
-			// hand-off we no longer recognise.
-			now := time.Now()
+			// Two different questions, answered separately.
+			//
+			// POLICY decides whether this link may carry a space at all. A
+			// forbidden transport carries nothing in either direction — not
+			// a frame, not a summary, not the shape of what we would ask
+			// for.
+			//
+			// ROUTE decides where a space that has something outstanding
+			// should send it. That gate applies to SENDING only: a space
+			// with nothing to send keeps listening on every permitted link,
+			// because going deaf on the mesh whenever the internet happens
+			// to be preferred would be a strange way to run a radio node.
+			sending := map[id.TerminalID]bool{}
+			active := make([]*spaceState, 0, len(states))
 			for tid, st := range byTerm {
+				if !conn.allows(kind, tid) {
+					continue
+				}
+				route, has := r.routeForSpaceLocked(conn, tid, now)
+				if has && route != kind {
+					continue // something to send, but not by this road
+				}
+				active = append(active, st)
+				sending[tid] = has
+				// Stamp the responsibility token BEFORE anything can go
+				// out. openAttempt fsyncs it, so a crash between minting
+				// and sending cannot leave us minting a second token for
+				// the same epoch — an acknowledgement already in flight
+				// would then name a hand-off we no longer recognise.
 				if tok, ok := r.openAttempt(tid, now); ok {
 					st.eng.AttemptToken = tok[:]
 				}
 			}
+			var sendErr error
 			if time.Since(lastSummary) > summaryEvery {
-				for _, st := range states {
-					_ = st.eng.SendSummary(c)
+				for _, st := range active {
+					if err := st.eng.SendSummary(c); err != nil && sendErr == nil {
+						sendErr = err
+					}
 				}
 				lastSummary = time.Now()
 			}
@@ -220,12 +264,28 @@ func (r *Runtime) adoptLinkFiltered(c link, pump, summaryEvery time.Duration,
 				if !ok {
 					continue
 				}
+				// A forbidden transport is not read either: accepting frames
+				// on it would still mean this device is talking there.
+				if !conn.allows(kind, term) {
+					continue
+				}
 				if st := byTerm[term]; st != nil {
-					_, _, _ = st.eng.Handle(c, raw)
+					if _, _, err := st.eng.Handle(c, raw); err != nil && sendErr == nil {
+						sendErr = err
+					}
 				}
 			}
 			r.curLink = ""
 			r.mu.Unlock()
+
+			// Health is recorded from what ACTUALLY happened on the wire,
+			// not from what policy hoped for — and only when we tried to
+			// send. A pass where this space had nothing outstanding says
+			// nothing about whether the route works, and counting it as a
+			// success would keep a dead link looking healthy forever.
+			if len(sending) > 0 {
+				r.noteTransportResult(kind, sendErr, now)
+			}
 		}
 	}()
 }

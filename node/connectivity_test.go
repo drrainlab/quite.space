@@ -2,11 +2,14 @@ package node
 
 import (
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/drrainlab/quiet_places/kernel/routing"
 	"github.com/drrainlab/quiet_places/protocol/id"
+	"github.com/drrainlab/quiet_places/transports"
+	"github.com/drrainlab/quiet_places/transports/loopback"
 	"github.com/drrainlab/quiet_places/transports/relay"
 )
 
@@ -521,5 +524,148 @@ func TestDeliveryProjectionSaysWhyNothingIsMoving(t *testing.T) {
 	}
 	if v.State != "in_custody" || v.Lease != "L1" {
 		t.Fatalf("the projection lost the custody detail: %+v", v)
+	}
+}
+
+// countingLink records what actually crossed a link, so a test can assert
+// on behaviour rather than on intent.
+type countingLink struct {
+	transports.Endpoint
+	sent atomic.Int64
+}
+
+func (c *countingLink) Send(p []byte) error { c.sent.Add(1); return c.Endpoint.Send(p) }
+func (*countingLink) Closed() (bool, error) { return false, nil }
+
+// failingLink fails every send while armed — a link that is up as far as
+// the OS is concerned and useless as far as messages are concerned.
+type failingLink struct {
+	transports.Endpoint
+	fail atomic.Bool
+	sent atomic.Int64
+}
+
+func (f *failingLink) Send(p []byte) error {
+	if f.fail.Load() {
+		return errors.New("link down")
+	}
+	f.sent.Add(1)
+	return f.Endpoint.Send(p)
+}
+func (*failingLink) Closed() (bool, error) { return false, nil }
+
+// Meshtastic only, enforced by the PUMP and not merely computed: an adopted
+// internet link carries nothing at all, in either direction.
+func TestPumpHonoursMeshtasticOnly(t *testing.T) {
+	alice := openRuntime(t, t.TempDir(), "alice")
+	defer alice.Close()
+	bob := openRuntime(t, t.TempDir(), "bob")
+	defer bob.Close()
+
+	tid, err := alice.CreateSpace("Radio Room")
+	if err != nil {
+		t.Fatal(err)
+	}
+	invite, err := alice.MintInvite(tid, bob.Device.ID, bob.Device.X25519Pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bob.JoinInvite(invite); err != nil {
+		t.Fatal(err)
+	}
+	setMode(t, alice, ModeMeshtasticOnly)
+	if _, err := alice.Say(tid, "radio only, please", SayOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Both links are adopted. Only one is permitted.
+	mesh := loopback.NewPair(loopback.Faults{Seed: 71})
+	net := loopback.NewPair(loopback.Faults{Seed: 72})
+	meshLink := &countingLink{Endpoint: mesh.A}
+	netLink := &countingLink{Endpoint: net.A}
+	alice.adoptLink(meshLink, 20*time.Millisecond, 60*time.Millisecond, "radio")
+	alice.adoptLink(netLink, 20*time.Millisecond, 60*time.Millisecond, "lan")
+	bob.adoptLink(testLink{mesh.B}, 20*time.Millisecond, 60*time.Millisecond, "radio")
+
+	applied := appliedCh(t, bob, tid)
+	select {
+	case <-applied:
+	case <-time.After(20 * time.Second):
+		t.Fatalf("the permitted route never delivered (mesh sent %d, net sent %d)",
+			meshLink.sent.Load(), netLink.sent.Load())
+	}
+	if meshLink.sent.Load() == 0 {
+		t.Fatal("nothing crossed the radio")
+	}
+	if n := netLink.sent.Load(); n != 0 {
+		t.Fatalf("Meshtastic only put %d packets on an internet link", n)
+	}
+}
+
+// Auto, driven by real send results: the internet link starts failing, the
+// pump moves to the mesh on its own, and only returns once the internet has
+// been healthy for longer than the promotion window.
+func TestPumpFailsOverAndReturnsUnderAuto(t *testing.T) {
+	alice := openRuntime(t, t.TempDir(), "alice")
+	defer alice.Close()
+	bob := openRuntime(t, t.TempDir(), "bob")
+	defer bob.Close()
+
+	tid, err := alice.CreateSpace("Failover")
+	if err != nil {
+		t.Fatal(err)
+	}
+	invite, err := alice.MintInvite(tid, bob.Device.ID, bob.Device.X25519Pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bob.JoinInvite(invite); err != nil {
+		t.Fatal(err)
+	}
+	setMode(t, alice, ModeAuto)
+
+	mesh := loopback.NewPair(loopback.Faults{Seed: 73})
+	net := loopback.NewPair(loopback.Faults{Seed: 74})
+	meshLink := &countingLink{Endpoint: mesh.A}
+	netLink := &failingLink{Endpoint: net.A}
+	// The internet is broken from the start; Auto prefers it and must
+	// discover that for itself from real send results.
+	netLink.fail.Store(true)
+
+	alice.adoptLink(netLink, 20*time.Millisecond, 40*time.Millisecond, "lan")
+	alice.adoptLink(meshLink, 20*time.Millisecond, 40*time.Millisecond, "radio")
+	bob.adoptLink(testLink{mesh.B}, 20*time.Millisecond, 40*time.Millisecond, "radio")
+
+	if _, err := alice.Say(tid, "find a way", SayOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	applied := appliedCh(t, bob, tid)
+	select {
+	case <-applied:
+	case <-time.After(25 * time.Second):
+		t.Fatalf("Auto never failed over to the working route "+
+			"(mesh sent %d, net attempts failing)", meshLink.sent.Load())
+	}
+	if meshLink.sent.Load() == 0 {
+		t.Fatal("the message arrived without anything crossing the mesh")
+	}
+
+	// The internet recovers. Auto must not swing back instantly — a
+	// flapping link would otherwise drag every message across it.
+	netLink.fail.Store(false)
+	alice.mu.Lock()
+	up, stable := alice.healthOf(TransportLAN, time.Now())
+	alice.mu.Unlock()
+	if up && stable {
+		t.Fatal("a link that has been failing was already considered stable")
+	}
+
+	// Once it has held past the promotion window, selection returns to it.
+	alice.noteTransportResult(TransportLAN, nil, time.Now())
+	later := time.Now().Add(transportHysteresis + time.Second)
+	in := DeliveryIntent{Space: tid, Size: 128, Transport: "radio"}
+	got, ok := alice.SelectTransport(in, later)
+	if !ok || got != TransportLAN {
+		t.Fatalf("a stable recovered link was never promoted back: %v %v", got, ok)
 	}
 }

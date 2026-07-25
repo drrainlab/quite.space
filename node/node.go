@@ -81,6 +81,9 @@ type Runtime struct {
 	receiptAudits map[id.EventID][]ReceiptAudit
 	// transportFlap damps Auto-mode transport switching.
 	transportFlap map[TransportKind]transportState
+	// liveLinks counts adopted links per transport, so route selection can
+	// only choose a road that exists.
+	liveLinks map[TransportKind]int
 
 	// relaySync is the background relay push/pull loop (nil until first
 	// configured). r.mu guards the pointer; the state has its own lock.
