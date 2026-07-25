@@ -64,6 +64,13 @@ func (r *Runtime) GetSettings() Settings {
 // SetSettings persists settings. An empty LLM.APIKey means "keep the stored
 // key" (the UI sends the key only when the user changes it).
 func (r *Runtime) SetSettings(s Settings) error {
+	// Refuse an unreadable connectivity policy at the door. A mode this
+	// build does not understand must never reach storage: once there it is
+	// indistinguishable from a corrupted file, and the only safe reading of
+	// it is "send nothing", which looks to the person like an outage.
+	if err := s.Connectivity.Validate(); err != nil {
+		return err
+	}
 	r.mu.Lock()
 	var cur Settings
 	if len(r.ks.Settings) > 0 {
@@ -71,6 +78,13 @@ func (r *Runtime) SetSettings(s Settings) error {
 	}
 	if s.LLM.APIKey == "" {
 		s.LLM.APIKey = cur.LLM.APIKey
+	}
+	// An omitted connectivity policy means "leave it alone", exactly like an
+	// omitted API key. A settings write from a screen that does not show the
+	// transport choice must not silently widen it back to the default —
+	// which is what saving a zero value here would do.
+	if s.Connectivity.Mode == "" && s.Connectivity.PerSpace == nil {
+		s.Connectivity = cur.Connectivity
 	}
 	b, err := json.Marshal(s)
 	if err != nil {
@@ -122,6 +136,7 @@ func settingsJSON(s Settings) map[string]any {
 	return map[string]any{
 		"theme": s.Theme, "preset": s.Preset, "render_mode": s.RenderMode,
 		"relay": s.Relay, "relay_sync_seconds": int(relayInterval(s) / time.Second),
+		"connectivity": map[string]any{"mode": string(s.Connectivity.Mode)},
 		"llm": map[string]any{
 			"provider": s.LLM.Provider, "model": s.LLM.Model,
 			"base_url": s.LLM.BaseURL, "has_key": s.LLM.APIKey != "",
@@ -140,7 +155,10 @@ func (a *APIServer) handleSetSettings(w http.ResponseWriter, r *http.Request) {
 		RenderMode string `json:"render_mode"`
 		Relay      string `json:"relay"`
 		RelaySync  int    `json:"relay_sync_seconds"`
-		LLM        struct {
+		Conn       struct {
+			Mode string `json:"mode"`
+		} `json:"connectivity"`
+		LLM struct {
 			Provider string `json:"provider"`
 			Model    string `json:"model"`
 			BaseURL  string `json:"base_url"`
@@ -157,7 +175,13 @@ func (a *APIServer) handleSetSettings(w http.ResponseWriter, r *http.Request) {
 	s.LLM.Model = body.LLM.Model
 	s.LLM.BaseURL = body.LLM.BaseURL
 	s.LLM.APIKey = body.LLM.APIKey
+	s.Connectivity.Mode = ConnectivityMode(body.Conn.Mode)
 	if err := a.rt.SetSettings(s); err != nil {
+		// An unreadable mode is the caller's mistake, not a server fault.
+		if _, bad := err.(ErrBadConnectivityMode); bad {
+			httpErr(w, http.StatusBadRequest, err)
+			return
+		}
 		httpErr(w, http.StatusInternalServerError, err)
 		return
 	}

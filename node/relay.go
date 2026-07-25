@@ -346,11 +346,21 @@ func (r *Runtime) PullFromRelay(addr string) (applied int, err error) {
 		return 0, err
 	}
 	r.mu.Lock()
-	tids := make([]id.TerminalID, 0, len(r.spaces))
+	all := make([]id.TerminalID, 0, len(r.spaces))
 	for tid := range r.spaces {
-		tids = append(tids, tid)
+		all = append(all, tid)
 	}
 	r.mu.Unlock()
+	// The connection may exist because ANOTHER space permits the relay.
+	// That does not make this one's traffic fair game: a space set to
+	// Meshtastic only must have no mailbox polled and no hint derived, or
+	// its activity would be visible on the relay anyway.
+	tids := make([]id.TerminalID, 0, len(all))
+	for _, tid := range all {
+		if r.TransportAllowed(TransportRelay, tid) {
+			tids = append(tids, tid)
+		}
+	}
 	if len(tids) == 0 {
 		return 0, nil
 	}

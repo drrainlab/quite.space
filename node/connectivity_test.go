@@ -6,6 +6,7 @@ import (
 
 	"github.com/drrainlab/quiet_places/kernel/routing"
 	"github.com/drrainlab/quiet_places/protocol/id"
+	"github.com/drrainlab/quiet_places/transports/relay"
 )
 
 // setMode installs a connectivity policy.
@@ -225,5 +226,143 @@ func TestRelayGateRefusesBeforeDialling(t *testing.T) {
 	// ...and still tracks the message.
 	if rt.ledger.Len() == 0 {
 		t.Fatal("offline dropped responsibility instead of holding it")
+	}
+}
+
+// An unknown mode must never WIDEN what is permitted. A typo like
+// "meshtastic_onyl" resolving to Auto would quietly open an internet relay
+// for someone who was explicitly trying not to have one — and they would
+// find out from the relay operator rather than from their own client.
+func TestUnknownModeIsRefusedAndNeverWidens(t *testing.T) {
+	rt := openRuntime(t, t.TempDir(), "bob")
+	defer rt.Close()
+	tid, err := rt.CreateSpace("Careful")
+	if err != nil {
+		t.Fatal(err)
+	}
+	setMode(t, rt, ModeMeshtasticOnly)
+
+	// Storing a typo is refused outright, and the good policy stands.
+	s := rt.GetSettings()
+	s.Connectivity = Connectivity{Mode: ConnectivityMode("meshtastic_onyl")}
+	err = rt.SetSettings(s)
+	if err == nil {
+		t.Fatal("a mode this build cannot read was accepted into storage")
+	}
+	if _, bad := err.(ErrBadConnectivityMode); !bad {
+		t.Fatalf("the refusal was not a validation error: %v", err)
+	}
+	if got := rt.Connectivity(); got.Mode != ModeMeshtasticOnly || got.Unreadable {
+		t.Fatalf("a refused write disturbed the stored policy: %+v", got)
+	}
+	if rt.TransportAllowed(TransportRelay, tid) {
+		t.Fatal("the relay became permitted after a refused write")
+	}
+
+	// And if such a value reaches the struct anyway — a corrupted file, a
+	// downgrade — resolving it must hold rather than widen.
+	corrupt := Connectivity{Mode: ConnectivityMode("something-newer")}
+	if corrupt.allows(TransportRelay, tid) || corrupt.allows(TransportRadio, tid) ||
+		corrupt.allows(TransportLAN, tid) {
+		t.Fatal("an unreadable stored mode permitted a transport")
+	}
+	// Unset is different: a fresh install means Auto.
+	fresh := Connectivity{}
+	if !fresh.allows(TransportRelay, tid) || !fresh.allows(TransportRadio, tid) {
+		t.Fatal("a fresh install did not default to Auto")
+	}
+}
+
+// The relay connection may exist because one space permits it. That must
+// not make another space's traffic fair game: the global gate governs the
+// CONNECTION, the per-space gate governs routing and which mailboxes are
+// polled at all.
+func TestPerSpaceIsolationOnASharedRelay(t *testing.T) {
+	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+	addr := "127.0.0.1:" + itoa(port)
+
+	alice := openRuntime(t, t.TempDir(), "alice")
+	defer alice.Close()
+	bob := openRuntime(t, t.TempDir(), "bob")
+	defer bob.Close()
+
+	open, err := alice.CreateSpace("Open Room")
+	if err != nil {
+		t.Fatal(err)
+	}
+	quiet, err := alice.CreateSpace("Quiet Room")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tid := range []id.TerminalID{open, quiet} {
+		invite, err := alice.MintInvite(tid, bob.Device.ID, bob.Device.X25519Pub)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := bob.JoinInvite(invite); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// One runtime, two policies: the open room uses the internet, the quiet
+	// one is radio-only.
+	s := alice.GetSettings()
+	s.Connectivity = Connectivity{
+		Mode:     ModeAuto,
+		PerSpace: map[string]ConnectivityMode{quiet.Hex(): ModeMeshtasticOnly},
+	}
+	if err := alice.SetSettings(s); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := alice.Say(open, "this one may travel", SayOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := alice.Say(quiet, "this one may not", SayOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The relay is permitted overall, because the open room allows it.
+	if !alice.anySpaceAllows(TransportRelay) {
+		t.Fatal("the relay connection was refused even though a space allows it")
+	}
+	if _, _, err := alice.PushToRelay(addr, open); err != nil {
+		t.Fatalf("the permitted space could not use the relay: %v", err)
+	}
+	// The quiet room is refused on the SAME open connection.
+	if _, _, err := alice.PushToRelay(addr, quiet); err == nil {
+		t.Fatal("a Meshtastic-only space was pushed to the relay")
+	} else if _, blocked := err.(ErrTransportBlocked); !blocked {
+		t.Fatalf("the refusal was not a policy refusal: %v", err)
+	}
+
+	// Bob pulls everything the relay will give him. He must receive the
+	// open room's message and nothing from the quiet one — not because the
+	// relay filtered it, but because it was never put there.
+	if _, err := bob.PullFromRelay(addr); err != nil {
+		t.Fatal(err)
+	}
+	if msgCount(bob, open) == 0 {
+		t.Fatal("the permitted space did not converge over the relay")
+	}
+	if n := msgCount(bob, quiet); n != 0 {
+		t.Fatalf("a Meshtastic-only space leaked %d messages onto the relay", n)
+	}
+
+	// And Alice does not POLL the quiet room's mailbox either: a space set
+	// to radio-only should leave no trace of its activity on the relay,
+	// including the shape of what it asks for.
+	if _, err := alice.PullFromRelay(addr); err != nil {
+		t.Fatal(err)
+	}
+	if !alice.TransportAllowed(TransportRelay, open) {
+		t.Fatal("the open room lost relay access")
+	}
+	if alice.TransportAllowed(TransportRelay, quiet) {
+		t.Fatal("the quiet room gained relay access")
 	}
 }

@@ -33,15 +33,42 @@ const (
 	ModeOffline ConnectivityMode = "offline"
 )
 
-// Valid reports whether a mode is one this build understands. An unknown
-// mode falls back to Auto rather than silently disabling every transport —
-// a typo in a config file must not look like a network outage.
+// Valid reports whether a mode is one this build understands.
 func (m ConnectivityMode) Valid() bool {
 	switch m {
 	case ModeAuto, ModeInternetOnly, ModeMeshtasticOnly, ModeOffline:
 		return true
 	}
 	return false
+}
+
+// ErrBadConnectivityMode refuses a mode this build does not understand,
+// at the moment someone tries to store it.
+type ErrBadConnectivityMode struct{ Mode ConnectivityMode }
+
+func (e ErrBadConnectivityMode) Error() string {
+	return "node: unknown connectivity mode " + string(e.Mode) +
+		" (want auto, internet, meshtastic or offline)"
+}
+
+// Validate rejects an unreadable policy rather than interpreting it.
+//
+// An UNSET mode is a fresh install and means Auto. An unknown mode is
+// something else entirely: a typo, a downgrade, a corrupted file. Falling
+// back to Auto there would WIDEN what is permitted — "meshtastic_onyl"
+// would quietly open an internet relay for someone who was explicitly
+// trying not to have one. Refusing to store it keeps the typo out; refusing
+// to act on it (see modeFor) keeps a corrupted file from doing the same.
+func (c Connectivity) Validate() error {
+	if c.Mode != "" && !c.Mode.Valid() {
+		return ErrBadConnectivityMode{Mode: c.Mode}
+	}
+	for _, m := range c.PerSpace {
+		if m != "" && !m.Valid() {
+			return ErrBadConnectivityMode{Mode: m}
+		}
+	}
+	return nil
 }
 
 // Connectivity is the persisted policy. PerSpace is in the data model from
@@ -54,14 +81,49 @@ type Connectivity struct {
 }
 
 // modeFor resolves the effective mode for a space.
+//
+// Unset means Auto — the fresh-install default. UNREADABLE means hold: a
+// value this build cannot interpret is never resolved to something more
+// permissive than what it might have meant. Holding is visible (see
+// ConnectivityStatus) and recoverable by re-choosing; widening would be
+// neither, and would be discovered by the relay operator rather than by
+// the person who set it.
 func (c Connectivity) modeFor(tid id.TerminalID) ConnectivityMode {
-	if m, ok := c.PerSpace[tid.Hex()]; ok && m.Valid() {
-		return m
+	if m, ok := c.PerSpace[tid.Hex()]; ok {
+		if m.Valid() {
+			return m
+		}
+		return ModeOffline
 	}
-	if c.Mode.Valid() {
+	switch {
+	case c.Mode == "":
+		return ModeAuto
+	case c.Mode.Valid():
 		return c.Mode
 	}
-	return ModeAuto
+	return ModeOffline
+}
+
+// ConnectivityStatus is what the UI needs to explain the current state,
+// including the case where the stored policy cannot be read.
+type ConnectivityStatus struct {
+	Mode ConnectivityMode `json:"mode"`
+	// Unreadable is set when the stored policy names a mode this build does
+	// not understand. Nothing is being sent, and it is NOT a network
+	// problem — the person has to re-choose.
+	Unreadable bool   `json:"unreadable,omitempty"`
+	Stored     string `json:"stored,omitempty"`
+}
+
+// Connectivity reports the effective policy and whether it is readable.
+func (r *Runtime) Connectivity() ConnectivityStatus {
+	c := r.connectivity()
+	st := ConnectivityStatus{Mode: c.modeFor(id.TerminalID{})}
+	if c.Mode != "" && !c.Mode.Valid() {
+		st.Unreadable = true
+		st.Stored = string(c.Mode)
+	}
+	return st
 }
 
 // allows reports whether a transport may be used for a space.
