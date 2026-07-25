@@ -114,3 +114,18 @@ func ExtractCustodyReceipt(raw []byte) ([]byte, bool) {
 	}
 	return msg.receipt, true
 }
+
+// ExtractSummaryChains parses a summary into the chains it announces. Used
+// by tests that need to see exactly what a summary discloses on a shared
+// carrier, and by anything that must compare two summaries field by field.
+func ExtractSummaryChains(raw []byte) (id.TerminalID, []ChainAdvert, bool) {
+	msg, err := decodeMessage(raw)
+	if err != nil || msg.msgType != msgSummary || msg.sum == nil {
+		return id.TerminalID{}, nil, false
+	}
+	out := make([]ChainAdvert, 0, len(msg.sum.chains))
+	for dev, until := range msg.sum.chains {
+		out = append(out, ChainAdvert{Device: dev, ContiguousUntil: until})
+	}
+	return msg.term, out, true
+}

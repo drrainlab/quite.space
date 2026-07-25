@@ -44,7 +44,7 @@ func TestCustodyAckReachesTheSender(t *testing.T) {
 	var dest id.TerminalID
 	dest[0] = 0xA1
 	pair := loopback.NewPair(loopback.Faults{Seed: 11})
-	b := testBridge(t, pair.B, "127.0.0.1:1", []Subscription{serving(dest, 0x71, 0x72)}, false)
+	b := testBridge(t, pair.B, "127.0.0.1:1", []Subscription{serving(dest, 0x71, 0x72)})
 	now := time.Now()
 
 	f := mkFrame(t, dest, 0x71, 1, nil, "did you get this")
@@ -208,7 +208,7 @@ func TestUnairableFrameIsReleased(t *testing.T) {
 	var dest id.TerminalID
 	dest[0] = 0xA4
 	pair := loopback.NewPair(loopback.Faults{Seed: 14})
-	b := testBridge(t, pair.B, "127.0.0.1:1", []Subscription{serving(dest, 0x77, 0x78)}, false)
+	b := testBridge(t, pair.B, "127.0.0.1:1", []Subscription{serving(dest, 0x77, 0x78)})
 	now := time.Now()
 
 	// Under the decode cap — a parser would happily read it — but far over
@@ -253,7 +253,7 @@ func TestOneBadDestinationDoesNotStallTheRest(t *testing.T) {
 	b := testBridge(t, pair.B, relayAddr, []Subscription{
 		serving(good, 0x79, 0x7A),
 		{NetworkID: "test-mesh", Terminal: bad, RadioDevices: []id.DeviceID{deviceOf(0x7B)}},
-	}, false)
+	})
 	now := time.Now()
 
 	for _, tid := range []id.TerminalID{bad, good} {
@@ -355,4 +355,216 @@ func prevOf(t *testing.T, term id.TerminalID, seed byte, seq uint64) *id.EventID
 		prev = &e
 	}
 	return prev
+}
+
+// reopen simulates a power cut: no Close, just drop the handle and open the
+// same data directory again. Anything the bridge only knew in memory is
+// gone, exactly as it would be on a Pi that lost power.
+func reopen(t *testing.T, b *Bridge, radio *loopback.End) *Bridge {
+	t.Helper()
+	cfg := b.cfg
+	cfg.Radio = radio
+	b.queue.Close()
+	nb, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { nb.Close() })
+	return nb
+}
+
+// Crash window one: the frame is fsynced into custody and the power goes
+// out BEFORE the ACK is sent. The sender, having heard nothing, retransmits.
+// The restarted bridge must answer for the custody it already has, with the
+// acceptance time it already recorded — not take the frame again, and not
+// invent a fresh promise for an old frame.
+func TestCrashBeforeAckAnswersWithOriginalAcceptance(t *testing.T) {
+	dir := t.TempDir()
+	var dest id.TerminalID
+	dest[0] = 0xE1
+	pair := loopback.NewPair(loopback.Faults{Seed: 21})
+	b, err := New(Config{
+		DataDir: dir, Instance: "crash-1",
+		Radio: pair.B, RadioLink: "mesh:test", RadioDomain: "mesh-dom",
+		RelayAddr: "127.0.0.1:1", RelayDomain: "relay:none",
+		Subscriptions: []Subscription{serving(dest, 0x81, 0x82)},
+		AirtimePerMin: 1e9,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+
+	f := mkFrame(t, dest, 0x81, 1, nil, "taken but never confirmed")
+	if err := sendWrapped(t, pair.A, kernelsync.EncodeFramesMessage(dest, [][]byte{f})); err != nil {
+		t.Fatal(err)
+	}
+	if got := b.PumpRadio(now); got != 1 {
+		t.Fatalf("radio intake: %d", got)
+	}
+	rec, held := b.queue.Held(id.EventIDOf(f))
+	if !held {
+		t.Fatal("frame not in custody before the crash")
+	}
+	acceptedAt := rec.EnqueuedAt
+	// Power cut here: PushAcks never ran.
+	pair.A.Poll()
+	b2 := reopen(t, b, pair.B)
+
+	// The sender heard nothing and retransmits.
+	later := now.Add(3 * time.Minute)
+	if err := sendWrapped(t, pair.A, kernelsync.EncodeFramesMessage(dest, [][]byte{f})); err != nil {
+		t.Fatal(err)
+	}
+	b2.PumpRadio(later)
+	if sent := b2.PushAcks(later); sent != 1 {
+		t.Fatalf("a restarted bridge did not answer for custody it holds: %d", sent)
+	}
+	got := readReceipts(t, pair.A)
+	if len(got) != 1 {
+		t.Fatalf("receipts after restart: %d", len(got))
+	}
+	if got[0].AcceptedAt != uint64(acceptedAt) {
+		t.Fatalf("restart invented a new acceptance time: %d, custody says %d",
+			got[0].AcceptedAt, acceptedAt)
+	}
+	if b2.QueueLen() != 1 {
+		t.Fatalf("the retransmission created a second custody record: %d", b2.QueueLen())
+	}
+}
+
+// Crash window two: the ACK goes out and the power fails before the send is
+// recorded. On restart the bridge sends it again — this is at-least-once by
+// choice. Recording the send first would turn a crash into a promise the
+// sender never hears, which is the failure that cannot be repaired; a
+// duplicate receipt is one the node collapses on its own.
+func TestCrashAfterAckResendsIdempotently(t *testing.T) {
+	dir := t.TempDir()
+	var dest id.TerminalID
+	dest[0] = 0xE2
+	pair := loopback.NewPair(loopback.Faults{Seed: 22})
+	b, err := New(Config{
+		DataDir: dir, Instance: "crash-2",
+		Radio: pair.B, RadioLink: "mesh:test", RadioDomain: "mesh-dom",
+		RelayAddr: "127.0.0.1:1", RelayDomain: "relay:none",
+		Subscriptions: []Subscription{serving(dest, 0x83, 0x84)},
+		AirtimePerMin: 1e9,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+
+	f := mkFrame(t, dest, 0x83, 1, nil, "confirmed into a blackout")
+	if err := sendWrapped(t, pair.A, kernelsync.EncodeFramesMessage(dest, [][]byte{f})); err != nil {
+		t.Fatal(err)
+	}
+	b.PumpRadio(now)
+	// PumpRadio persisted the obligation; the crash lands before the send is
+	// recorded, so restore the on-disk state to that moment.
+	snapshot, err := os.ReadFile(b.acksPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sent := b.PushAcks(now); sent != 1 {
+		t.Fatalf("first ack: %d", sent)
+	}
+	first := readReceipts(t, pair.A)
+	if len(first) != 1 {
+		t.Fatalf("first receipt count: %d", len(first))
+	}
+	if err := os.WriteFile(b.acksPath(), snapshot, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	b2 := reopen(t, b, pair.B)
+
+	// The obligation survived, so it goes out again.
+	if sent := b2.PushAcks(now.Add(time.Minute)); sent != 1 {
+		t.Fatalf("an unrecorded ack was not repeated after restart: %d", sent)
+	}
+	again := readReceipts(t, pair.A)
+	if len(again) != 1 {
+		t.Fatalf("repeat receipt count: %d", len(again))
+	}
+	// Same claim, byte for byte in the fields that matter: a node applying
+	// it twice learns nothing new and records nothing twice.
+	if again[0].AcceptedAt != first[0].AcceptedAt ||
+		again[0].ExpiresAt != first[0].ExpiresAt ||
+		again[0].Lapsed != first[0].Lapsed ||
+		len(again[0].FrameIDs) != 1 || again[0].FrameIDs[0] != first[0].FrameIDs[0] {
+		t.Fatalf("the repeat is a different claim:\n first %+v\n again %+v",
+			first[0], again[0])
+	}
+}
+
+// A withdrawal is repeated until it is believed or until the horizon it
+// reports has passed — and it always reports the horizon the ORIGINAL claim
+// promised. The two mechanisms are layered: the withdrawal makes a sender
+// retry sooner, the expiry guarantees responsibility cannot hang forever
+// even if every withdrawal is lost on the air.
+func TestWithdrawalRepeatsAndCarriesTheOriginalHorizon(t *testing.T) {
+	var dest id.TerminalID
+	dest[0] = 0xE3
+	pair := loopback.NewPair(loopback.Faults{Seed: 23})
+	b, err := New(Config{
+		DataDir: t.TempDir(), Instance: "lapsing",
+		Radio: pair.B, RadioLink: "mesh:test", RadioDomain: "mesh-dom",
+		RelayAddr: "127.0.0.1:1", RelayDomain: "relay:none",
+		Subscriptions: []Subscription{serving(dest, 0x85, 0x86)},
+		AirtimePerMin: 1e9,
+		QueueCaps: routing.QueueCaps{
+			MaxTotalBytes: 1 << 20, MaxPerDestBytes: 1 << 20, OperatorTTL: time.Hour},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { b.Close() })
+	now := time.Now()
+
+	// An author expiry two hours out; the operator TTL would end custody
+	// sooner, which is exactly the early withdrawal being tested.
+	f := mkFrame(t, dest, 0x85, 1, nil, "hold this a while")
+	if err := sendWrapped(t, pair.A, kernelsync.EncodeFramesMessage(dest, [][]byte{f})); err != nil {
+		t.Fatal(err)
+	}
+	b.PumpRadio(now)
+	b.PushAcks(now)
+	claim := readReceipts(t, pair.A)
+	if len(claim) != 1 {
+		t.Fatalf("no claim to withdraw: %d", len(claim))
+	}
+	horizon := claim[0].ExpiresAt
+
+	later := now.Add(2 * time.Hour)
+	b.Sweep(later)
+	b.PushAcks(later)
+	first := readReceipts(t, pair.A)
+	if len(first) != 1 || !first[0].Lapsed {
+		t.Fatalf("withdrawal not sent: %+v", first)
+	}
+	if first[0].ExpiresAt != horizon {
+		t.Fatalf("the withdrawal reports %d, the claim promised %d: "+
+			"a sender cannot tell how long responsibility was covered",
+			first[0].ExpiresAt, horizon)
+	}
+
+	// Lost on the air. It comes back on the retry schedule, unprompted.
+	pair.A.Poll()
+	if sent := b.PushAcks(later.Add(lapseRetry + time.Second)); sent != 1 {
+		t.Fatalf("withdrawal never repeated: %d", sent)
+	}
+	repeat := readReceipts(t, pair.A)
+	if len(repeat) != 1 || !repeat[0].Lapsed {
+		t.Fatalf("repeat is not a withdrawal: %+v", repeat)
+	}
+
+	// It does not repeat forever. Past the attempt limit the expiry the
+	// receipt carries is what tells the sender the promise is over.
+	for i := range lapseMaxTries + 2 {
+		b.PushAcks(later.Add(time.Duration(i+2) * (lapseRetry + time.Second)))
+	}
+	pair.A.Poll()
+	if sent := b.PushAcks(later.Add(24 * time.Hour)); sent != 0 {
+		t.Fatalf("withdrawal is still on the air long after the horizon: %d", sent)
+	}
 }

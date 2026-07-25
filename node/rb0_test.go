@@ -268,10 +268,10 @@ func TestRadioSegmentStaysQuiet(t *testing.T) {
 		}
 		defer radio.Close()
 		br, err := bridge.New(bridge.Config{
-			DataDir:     t.TempDir(),
-			Instance:    "gw" + itoa(i),
-			Radio:       radio,
-			RadioLink:   routing.LinkID("mesh:gw" + itoa(i)),
+			DataDir:   t.TempDir(),
+			Instance:  "gw" + itoa(i),
+			Radio:     radio,
+			RadioLink: routing.LinkID("mesh:gw" + itoa(i)),
 			// One SEGMENT, two links: the loop domain is shared so both
 			// gateways recognise the same forwarding domain, while the link
 			// ids stay distinct. Getting this backwards would break

@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	kernelsync "github.com/drrainlab/quiet_places/kernel/sync"
 	"github.com/drrainlab/quiet_places/kernel/routing"
+	kernelsync "github.com/drrainlab/quiet_places/kernel/sync"
 	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/protocol/schemas"
 	"github.com/drrainlab/quiet_places/protocol/signal"
@@ -64,13 +64,13 @@ func serving(dest id.TerminalID, radioSeed, internetSeed byte) Subscription {
 }
 
 func testBridge(t *testing.T, radio *loopback.End, relayAddr string,
-	subs []Subscription, learn bool) *Bridge {
+	subs []Subscription) *Bridge {
 	t.Helper()
 	b, err := New(Config{
 		DataDir: t.TempDir(), Instance: "test-bridge",
 		Radio: radio, RadioLink: "mesh:test", RadioDomain: "mesh-dom",
 		RelayAddr: relayAddr, RelayDomain: routing.LoopDomainID("relay:" + relayAddr),
-		Subscriptions: subs, Learn: learn,
+		Subscriptions: subs,
 		AirtimePerMin: 1e9, // tests don't wait on airtime
 	})
 	if err != nil {
@@ -94,7 +94,7 @@ func TestTwoSegmentLoop(t *testing.T) {
 	dest[0] = 0xD1
 	pair := loopback.NewPair(loopback.Faults{Seed: 3})
 	// 0x31 is the author on the carrier, 0x32 the one on the internet.
-	b := testBridge(t, pair.B, relayAddr, []Subscription{serving(dest, 0x31, 0x32)}, false)
+	b := testBridge(t, pair.B, relayAddr, []Subscription{serving(dest, 0x31, 0x32)})
 	now := time.Now()
 
 	// Radio → relay: a radio node broadcasts a frames message (the wire is
@@ -187,8 +187,8 @@ func TestTwoBridgesBoundedStorm(t *testing.T) {
 	// One shared "carrier": both bridges poll the same hub side.
 	hubA := loopback.NewPair(loopback.Faults{Seed: 7})
 	hubB := loopback.NewPair(loopback.Faults{Seed: 8})
-	b1 := testBridge(t, hubA.B, relayAddr, []Subscription{serving(dest, 0x41, 0x42)}, false)
-	b2 := testBridge(t, hubB.B, relayAddr, []Subscription{serving(dest, 0x41, 0x42)}, false)
+	b1 := testBridge(t, hubA.B, relayAddr, []Subscription{serving(dest, 0x41, 0x42)})
+	b2 := testBridge(t, hubB.B, relayAddr, []Subscription{serving(dest, 0x41, 0x42)})
 	now := time.Now()
 
 	f := mkFrame(t, dest, 0x41, 1, nil, "storm probe")
@@ -294,37 +294,12 @@ func TestCustodyAckDurabilityAndSpoof(t *testing.T) {
 	}
 }
 
-// Learn-mode admission: an identity flood cannot widen custody — the
-// probation cap holds and relay→radio never opens for learned hints.
-func TestLearnModeAdmissionControl(t *testing.T) {
-	pair := loopback.NewPair(loopback.Faults{Seed: 6})
-	b := testBridge(t, pair.B, "127.0.0.1:1", nil, true)
-	now := time.Now()
-	admitted := 0
-	for i := 0; i < 1000; i++ {
-		var dest id.TerminalID
-		dest[0], dest[1] = byte(i>>8), byte(i)
-		if b.subscribed(dest, now) {
-			admitted++
-		}
-	}
-	if admitted > b.cfg.LearnCap {
-		t.Fatalf("learn cap breached: %d admitted", admitted)
-	}
-	// Learned hints NEVER open the downlink.
-	var learnedDest id.TerminalID
-	learnedDest[0], learnedDest[1] = 0, 1
-	if b.downlinkAllowed(learnedDest) {
-		t.Fatal("learned hint must not open relay→radio")
-	}
-}
-
 // NoCustody and oversized frames never occupy custody or airtime.
 func TestBridgeRefusesNoCustodyAndOversize(t *testing.T) {
 	var dest id.TerminalID
 	dest[0] = 0xD4
 	pair := loopback.NewPair(loopback.Faults{Seed: 9})
-	b := testBridge(t, pair.B, "127.0.0.1:1", []Subscription{serving(dest, 0x61, 0x62)}, false)
+	b := testBridge(t, pair.B, "127.0.0.1:1", []Subscription{serving(dest, 0x61, 0x62)})
 	now := time.Now()
 
 	// A NoCustody frame (presence-like): MaxForwards=1 in the signed map.

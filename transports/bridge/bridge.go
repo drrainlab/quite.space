@@ -15,8 +15,8 @@ import (
 	"sync"
 	"time"
 
-	kernelsync "github.com/drrainlab/quiet_places/kernel/sync"
 	"github.com/drrainlab/quiet_places/kernel/routing"
+	kernelsync "github.com/drrainlab/quiet_places/kernel/sync"
 	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/transports"
 	"github.com/drrainlab/quiet_places/transports/bundle"
@@ -71,11 +71,6 @@ type Config struct {
 	// carrier for one destination (default wakeCooldown).
 	WakeEvery time.Duration
 
-	// Learn: admission-controlled auto-subscribe (OFF by default; gates
-	// radio→relay uplink ONLY, never relay→radio).
-	Learn         bool
-	LearnCap      int
-	LearnPerMin   int // per-source token rate
 	AirtimePerMin float64
 	QueueCaps     routing.QueueCaps
 	RelayTTL      time.Duration // retention horizon to poll across buckets
@@ -94,8 +89,6 @@ type Bridge struct {
 
 	mu         sync.Mutex
 	subs       map[id.TerminalID]Subscription
-	learned    map[id.TerminalID]time.Time
-	learnBkt   map[id.TerminalID]*routing.TokenBucket
 	nextStream uint64
 	stats      Stats
 
@@ -140,9 +133,6 @@ func New(cfg Config) (*Bridge, error) {
 	if cfg.MaxBuckets <= 0 {
 		cfg.MaxBuckets = 9 // ceil(48h/6h)+1
 	}
-	if cfg.LearnCap <= 0 {
-		cfg.LearnCap = 64
-	}
 	q, err := routing.OpenQueue(cfg.DataDir+"/queue", cfg.QueueCaps)
 	if err != nil {
 		return nil, err
@@ -163,8 +153,6 @@ func New(cfg Config) (*Bridge, error) {
 		reasm:     kernelsync.NewReassembler(),
 		airtime:   routing.NewTokenBucket(cfg.AirtimePerMin, 2048, time.Now()),
 		subs:      map[id.TerminalID]Subscription{},
-		learned:   map[id.TerminalID]time.Time{},
-		learnBkt:  map[id.TerminalID]*routing.TokenBucket{},
 		carried:   map[id.TerminalID]map[id.DeviceID]*chainCursor{},
 		wake:      map[id.TerminalID]*wakeState{},
 		accepted:  map[id.EventID]time.Time{},
@@ -179,6 +167,7 @@ func New(cfg Config) (*Bridge, error) {
 		return nil, err
 	}
 	_ = b.seen.Load(cfg.DataDir+"/seen.snap", time.Now())
+	b.loadAcks()
 	return b, nil
 }
 
@@ -186,6 +175,7 @@ func New(cfg Config) (*Bridge, error) {
 func (b *Bridge) Close() error {
 	_ = b.seen.Save(b.cfg.DataDir + "/seen.snap")
 	_ = b.saveCarriage()
+	_ = b.saveAcks()
 	return b.queue.Close()
 }
 
@@ -201,41 +191,32 @@ func (b *Bridge) Stats() Stats {
 	return b.stats
 }
 
-// subscribed answers "does this bridge serve dest for radio→relay uplink"
-// with learn-mode admission control (rev 2.1, correction 5): a valid
-// signature is NOT permission — unknown sources enter probation with tiny
-// token buckets, bounded count, and never widen relay→radio.
-// It also enforces the RB-0A deliverability rule: custody is a promise, and
-// a destination with no operator-provisioned internet mailbox is one this
-// bridge cannot keep. Taking such frames would mean holding them until they
-// expired and telling nobody. They are refused at the door instead, and
-// counted separately so the operator sees the reason.
+// subscribed answers "does this bridge serve dest for radio→relay uplink".
+//
+// Custody is a promise, and a destination with no operator-provisioned
+// internet mailbox is one this bridge cannot keep: taking those frames
+// would mean holding them until they expired and telling nobody. They are
+// refused at the door instead, and counted separately so the operator sees
+// the reason.
+//
+// There is deliberately no auto-subscribe. TN-B had a probation mode that
+// admitted unknown destinations on a token bucket, and RB-0A's mailbox
+// contract made it undeliverable by construction — routing to the internet
+// needs a capability the operator supplies, which no amount of listening
+// can produce. A mode that "discovers" routes it can never carry is worse
+// than no mode at all, because an operator would reasonably believe it
+// worked. Discovery returns as its own provisioning workflow or not at all.
 func (b *Bridge) subscribed(dest id.TerminalID, now time.Time) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if sub, ok := b.subs[dest]; ok {
-		if len(sub.InternetDevices) == 0 {
-			b.stats.NoMailbox++
-			return false
-		}
-		return true
-	}
-	if !b.cfg.Learn {
+	sub, ok := b.subs[dest]
+	if !ok {
 		return false
 	}
-	if _, ok := b.learned[dest]; ok {
-		bkt := b.learnBkt[dest]
-		return bkt == nil || bkt.Take(1, now)
-	}
-	if len(b.learned) >= b.cfg.LearnCap {
+	if len(sub.InternetDevices) == 0 {
+		b.stats.NoMailbox++
 		return false
 	}
-	rate := float64(b.cfg.LearnPerMin)
-	if rate <= 0 {
-		rate = 4 // probation: a few frames a minute until the operator approves
-	}
-	b.learned[dest] = now
-	b.learnBkt[dest] = routing.NewTokenBucket(rate, rate, now)
 	return true
 }
 
@@ -287,8 +268,14 @@ func (b *Bridge) PumpRadio(now time.Time) int {
 			continue
 		}
 		// The node answered our announcement: the question is no longer
-		// outstanding, so the next one may go out on schedule.
+		// outstanding, so the next one may go out on schedule. Frames are
+		// also proof of life — stronger proof than a summary, since the
+		// node is actively handing work over — so they refresh the peer
+		// clock too. Counting only summaries meant a node that had already
+		// been woken, and was busy answering, could age out of the schedule
+		// while it was mid-conversation.
 		b.answeredWake(term)
+		b.noteRadioPeer(term, now)
 		var held []id.EventID
 		for _, f := range frames {
 			eid := id.EventIDOf(f)
@@ -307,6 +294,9 @@ func (b *Bridge) PumpRadio(now time.Time) int {
 		}
 		if len(held) > 0 {
 			b.queueAck(term, held, now)
+			// Durable before the pass ends: an obligation the bridge forgot
+			// across a restart is indistinguishable from one it never had.
+			_ = b.saveAcks()
 		}
 		took += len(frames)
 	}
@@ -341,6 +331,18 @@ func (b *Bridge) custody(frame []byte, link routing.LinkID,
 	// this line works from Route; Ciphertext is only ever handed on.
 	env, err := routing.RouteOf(frame, link, domain)
 	if err != nil {
+		return false
+	}
+	// Custody itself is the authoritative "have I got this already". The
+	// seen-cache is a fast bounded filter and is only written on a clean
+	// shutdown, so after a power cut it comes back empty — and a sender
+	// retransmitting into that gap would have been given a SECOND custody
+	// record for the same frame. The queue's index was fsynced with the
+	// record, so it answers correctly across a crash.
+	if _, held := b.queue.Held(env.Route.EventID); held {
+		b.mu.Lock()
+		b.stats.Deduped++
+		b.mu.Unlock()
 		return false
 	}
 	if b.seen.Seen(routing.KeyOf(frame), now) {
@@ -623,18 +625,10 @@ func (b *Bridge) PushRadio(now time.Time) int {
 	return sent
 }
 
-// Sweep expires custody and prunes learn probation. Acknowledged records
-// that expired are turned into signed withdrawals: a sender that was told
-// "I hold this" has to be told when that stops being true.
+// Sweep expires custody. Acknowledged records that expired are turned into
+// signed withdrawals: a sender that was told "I hold this" has to be told
+// when that stops being true.
 func (b *Bridge) Sweep(now time.Time) int {
-	b.mu.Lock()
-	for d, at := range b.learned {
-		if now.Sub(at) > 24*time.Hour {
-			delete(b.learned, d)
-			delete(b.learnBkt, d)
-		}
-	}
-	b.mu.Unlock()
 	dropped, lapsed := b.queue.Sweep(now)
 	if len(lapsed) > 0 {
 		b.noteLapsed(lapsed, now)

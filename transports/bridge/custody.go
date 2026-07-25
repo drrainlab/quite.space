@@ -20,8 +20,8 @@ package bridge
 import (
 	"time"
 
-	kernelsync "github.com/drrainlab/quiet_places/kernel/sync"
 	"github.com/drrainlab/quiet_places/kernel/routing"
+	kernelsync "github.com/drrainlab/quiet_places/kernel/sync"
 	"github.com/drrainlab/quiet_places/protocol/id"
 )
 
@@ -41,8 +41,8 @@ const (
 type ackKind uint8
 
 const (
-	ackHeld    ackKind = 0
-	ackLapsed  ackKind = 1
+	ackHeld   ackKind = 0
+	ackLapsed ackKind = 1
 )
 
 // pendingAck is one acknowledgement waiting for airtime.
@@ -51,6 +51,48 @@ type pendingAck struct {
 	frames   []id.EventID
 	kind     ackKind
 	at       time.Time
+	// expires is the custody horizon this receipt reports. For a
+	// withdrawal it is the expiry the ORIGINAL claim promised, not the
+	// moment of withdrawal: the two mechanisms are layered, and reporting
+	// "now" would collapse them into one.
+	expires uint64
+	// nextTry / tries drive repetition of a withdrawal.
+	nextTry time.Time
+	tries   int
+}
+
+// lapseRetry is how long a withdrawal waits before it is repeated, and
+// lapseMaxTries how often. There is no acknowledgement of an
+// acknowledgement — inventing one would be a whole new protocol
+// conversation — so repetition is bounded by attempts alone.
+//
+// It is deliberately NOT bounded by the custody horizon. Almost every
+// withdrawal is raised when custody expires, so a rule of "repeat only
+// while the horizon is still ahead" would silence the message in exactly
+// the case it exists for. And the horizon is the weaker signal of the two:
+// evaluating ExpiresAt means trusting a clock, and the sender here is a
+// node that has been off-grid on a radio segment, which is precisely the
+// device whose clock cannot be trusted (the same reason RB-2 measures
+// beacon freshness with a monotonic counter). The withdrawal is the
+// clock-independent half; the expiry is the backstop for when it is lost.
+const (
+	lapseRetry    = 5 * time.Minute
+	lapseMaxTries = 4
+)
+
+// acceptedAt answers "when did I take custody of this frame". The queue is
+// asked first: EnqueuedAt was written and fsynced with the record itself,
+// so it is the one answer that survives a crash between taking custody and
+// acknowledging it. The in-memory map is only a fallback for frames already
+// forwarded and released, and is persisted with the pending receipts.
+func (b *Bridge) acceptedAt(eid id.EventID) (time.Time, bool) {
+	if rec, ok := b.queue.Held(eid); ok {
+		return time.Unix(rec.EnqueuedAt, 0), true
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	at, ok := b.accepted[eid]
+	return at, ok
 }
 
 // rememberAccepted records that custody of a frame was taken at a moment,
@@ -77,21 +119,42 @@ func (b *Bridge) rememberAccepted(eid id.EventID, now time.Time) {
 // wasAccepted reports whether this frame was already taken into custody
 // recently enough to answer for.
 func (b *Bridge) wasAccepted(eid id.EventID) bool {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	_, ok := b.accepted[eid]
+	_, ok := b.acceptedAt(eid)
 	return ok
 }
 
 // queueAck schedules a custody acknowledgement for the next control pass.
+// Frames already waiting to be acknowledged are dropped: after a restart
+// the obligation is restored from disk AND the sender retransmits, and
+// putting the identical receipt on the air twice in one pass would spend
+// airtime to say the same thing.
 func (b *Bridge) queueAck(term id.TerminalID, frames []id.EventID, now time.Time) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	queued := map[id.EventID]bool{}
+	for _, p := range b.pendingAcks {
+		if p.kind != ackHeld || p.terminal != term {
+			continue
+		}
+		for _, f := range p.frames {
+			queued[f] = true
+		}
+	}
+	fresh := frames[:0:0]
+	for _, f := range frames {
+		if !queued[f] {
+			fresh = append(fresh, f)
+		}
+	}
+	if len(fresh) == 0 {
+		return
+	}
 	if len(b.pendingAcks) >= pendingAckCap {
 		b.pendingAcks = b.pendingAcks[1:]
 	}
 	b.pendingAcks = append(b.pendingAcks, pendingAck{
-		terminal: term, frames: frames, kind: ackHeld, at: now,
+		terminal: term, frames: fresh, kind: ackHeld, at: now,
+		expires: uint64(now.Add(b.cfg.QueueCaps.OperatorTTL).Unix()),
 	})
 }
 
@@ -99,7 +162,8 @@ func (b *Bridge) queueAck(term id.TerminalID, frames []id.EventID, now time.Time
 // it held these frames and can no longer keep them to the promised time.
 // Sending nothing would be worse than sending bad news — the sender would
 // go on believing a gateway still had its message.
-func (b *Bridge) queueLapse(term id.TerminalID, frames []id.EventID, now time.Time) {
+func (b *Bridge) queueLapse(term id.TerminalID, frames []id.EventID,
+	expires uint64, now time.Time) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if len(b.pendingAcks) >= pendingAckCap {
@@ -107,6 +171,7 @@ func (b *Bridge) queueLapse(term id.TerminalID, frames []id.EventID, now time.Ti
 	}
 	b.pendingAcks = append(b.pendingAcks, pendingAck{
 		terminal: term, frames: frames, kind: ackLapsed, at: now,
+		expires: expires,
 	})
 }
 
@@ -123,30 +188,48 @@ func (b *Bridge) PushAcks(now time.Time) int {
 	b.mu.Unlock()
 
 	sent := 0
-	var deferred []pendingAck
+	var keep []pendingAck
 	for i, p := range pending {
+		if !p.nextTry.IsZero() && now.Before(p.nextTry) {
+			keep = append(keep, p)
+			continue
+		}
 		receipt := b.signReceipt(p)
 		msg := kernelsync.EncodeCustodyMessage(p.terminal, receipt)
 		if !b.airtime.Take(len(msg), now) {
-			deferred = append(deferred, pending[i:]...)
+			keep = append(keep, pending[i:]...)
 			break
 		}
 		if err := b.sendOnRadio(msg); err != nil {
-			deferred = append(deferred, pending[i:]...)
+			keep = append(keep, pending[i:]...)
 			break
 		}
 		b.mu.Lock()
 		b.stats.CustodyAcks++
 		b.mu.Unlock()
 		sent++
-	}
-	if len(deferred) > 0 {
-		b.mu.Lock()
-		b.pendingAcks = append(deferred, b.pendingAcks...)
-		if len(b.pendingAcks) > pendingAckCap {
-			b.pendingAcks = b.pendingAcks[len(b.pendingAcks)-pendingAckCap:]
+
+		// A withdrawal is repeated: it is the one message whose loss leaves
+		// a sender believing something false. It stops at the attempt limit
+		// or at the custody horizon, whichever comes first — past that the
+		// expiry the claim itself carried already tells the sender the
+		// promise is over, so repeating adds nothing but airtime.
+		if p.kind == ackLapsed {
+			p.tries++
+			p.nextTry = now.Add(lapseRetry)
+			if p.tries < lapseMaxTries {
+				keep = append(keep, p)
+			}
 		}
-		b.mu.Unlock()
+	}
+	b.mu.Lock()
+	b.pendingAcks = append(keep, b.pendingAcks...)
+	if len(b.pendingAcks) > pendingAckCap {
+		b.pendingAcks = b.pendingAcks[len(b.pendingAcks)-pendingAckCap:]
+	}
+	b.mu.Unlock()
+	if sent > 0 {
+		_ = b.saveAcks()
 	}
 	return sent
 }
@@ -155,27 +238,26 @@ func (b *Bridge) PushAcks(now time.Time) int {
 // AcceptedAt comes from the remembered acceptance, so a repeat is byte-wise
 // the same claim rather than a fresh promise with a later clock.
 func (b *Bridge) signReceipt(p pendingAck) []byte {
-	b.mu.Lock()
 	acceptedAt := p.at
 	for _, eid := range p.frames {
-		if at, ok := b.accepted[eid]; ok && at.Before(acceptedAt) {
+		if at, ok := b.acceptedAt(eid); ok && at.Before(acceptedAt) {
 			acceptedAt = at
 		}
 	}
-	b.mu.Unlock()
+	// ExpiresAt is carried on EVERY receipt, withdrawal included, and always
+	// reports the horizon the ORIGINAL claim promised. The two mechanisms
+	// are layered on purpose: the withdrawal makes a sender retry SOONER,
+	// while the expiry guarantees responsibility cannot hang forever even if
+	// every withdrawal is lost. Encoding a withdrawal as "expiry in the
+	// past" would collapse the layers and make "expired" and "withdrawn
+	// early" indistinguishable — which is what the explicit flag is for.
 	r := &CustodyReceipt{
 		FrameIDs:   p.frames,
 		StoreID:    b.cfg.DataDir,
 		AcceptedAt: uint64(acceptedAt.Unix()),
+		ExpiresAt:  p.expires,
 		Instance:   b.cfg.Instance,
-	}
-	if p.kind == ackLapsed {
-		// A withdrawal: expiry in the past says plainly that custody is
-		// over. A node must not read this as "held until then".
-		r.Lapsed = true
-		r.ExpiresAt = uint64(p.at.Unix())
-	} else {
-		r.ExpiresAt = uint64(acceptedAt.Add(b.cfg.QueueCaps.OperatorTTL).Unix())
+		Lapsed:     p.kind == ackLapsed,
 	}
 	return r.Sign(b.custodian)
 }
@@ -216,14 +298,36 @@ func (b *Bridge) releaseUnairable(rec *routing.CustodyRecord, now time.Time) {
 
 // noteLapsed turns swept guaranteed records into withdrawals.
 func (b *Bridge) noteLapsed(lapsed []*routing.CustodyRecord, now time.Time) {
-	byTerm := map[id.TerminalID][]id.EventID{}
-	for _, rec := range lapsed {
-		byTerm[rec.Destination] = append(byTerm[rec.Destination], id.EventIDOf(rec.Frame))
+	type group struct {
+		ids     []id.EventID
+		expires uint64
 	}
-	for term, ids := range byTerm {
-		b.queueLapse(term, ids, now)
+	byTerm := map[id.TerminalID]*group{}
+	for _, rec := range lapsed {
+		g := byTerm[rec.Destination]
+		if g == nil {
+			g = &group{}
+			byTerm[rec.Destination] = g
+		}
+		g.ids = append(g.ids, id.EventIDOf(rec.Frame))
+		// Report the horizon that was actually promised. A record with no
+		// author expiry was held under the operator TTL from the moment it
+		// was enqueued.
+		exp := rec.ExpiresAt
+		if exp == 0 {
+			exp = uint64(time.Unix(rec.EnqueuedAt, 0).Add(b.cfg.QueueCaps.OperatorTTL).Unix())
+		}
+		if exp > g.expires {
+			g.expires = exp
+		}
+	}
+	for term, g := range byTerm {
+		b.queueLapse(term, g.ids, g.expires, now)
 		b.mu.Lock()
-		b.stats.CustodyLapsed += len(ids)
+		b.stats.CustodyLapsed += len(g.ids)
 		b.mu.Unlock()
+	}
+	if len(byTerm) > 0 {
+		_ = b.saveAcks()
 	}
 }

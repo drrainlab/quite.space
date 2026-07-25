@@ -149,17 +149,46 @@ believing:
 - **Ahead of the data queue.** ACKs are sent before the queue drains, so a
   backed-up gateway can still tell a sender it has the message.
 
+**Durable deferrals and the honest guarantee.** Retry scheduling lives in
+the custody record and is written to disk, so an ordinary restart does not
+replay what was just sent. That is not exactly-once and must not be
+described as such: a crash *after* the bytes leave the radio but *before*
+the deferral is durable will repeat the send, and so will a crash between a
+sent ACK and its record. Both are deliberate — recording first would turn a
+crash into a message nobody ever hears. **Radio delivery is at-least-once;
+application is effectively exactly-once through the stable `EventID`.**
+
 **A signed ACK outranks the eviction policy.** The queue may drop the oldest
 lowest-lane record to make room — but not one whose custody was
 acknowledged, because that sender was told it could stop retrying. Capacity
 is therefore checked BEFORE the promise is made (`EnqueueGuaranteed`), and
 when the only way to fit a new frame is to break an existing promise the new
 frame is refused (`ErrNoRoom`): responsibility stays with the sender, who
-retries. When custody genuinely ends — expiry, or a frame that can never
-cross this carrier — the gateway sends a signed **withdrawal**
-(`CustodyReceipt.Lapsed`), an explicit flag rather than a date in the past,
-so "expired" and "never mind" are never told apart by arithmetic. A
-withdrawal does not un-record the earlier receipt: the delivery ladder is
+retries.
+
+When custody genuinely ends — expiry, or a frame that can never cross this
+carrier — the gateway sends a signed **withdrawal**
+(`CustodyReceipt.Lapsed`). It is an explicit flag, because **"expired" and
+"custody withdrawn early" must not be conflated by encoding both as a date
+in the past.** Every receipt, withdrawal included, still carries
+`ExpiresAt`, and it always reports the horizon the ORIGINAL claim promised.
+The two are layered on purpose:
+
+```
+Lapsed     → makes the sender retry SOONER
+ExpiresAt  → guarantees responsibility cannot hang forever if it is lost
+```
+
+A withdrawal is durable and repeated on a bounded schedule: it is the one
+message whose loss leaves a sender believing something false. It is
+deliberately NOT bounded by the horizon — nearly every withdrawal is raised
+*at* expiry, so "repeat only while the horizon is ahead" would silence it
+in exactly the case it exists for. It is also the clock-independent half of
+the pair: evaluating `ExpiresAt` means trusting a clock, and the sender is
+an off-grid radio node — the very device whose clock RB-2 already refuses
+to trust for beacon freshness.
+
+A withdrawal does not un-record the earlier receipt: the delivery ladder is
 closed and has no rung for "carried, then not", and a receipt that was true
 when issued stays true. What changes is what the reader is shown.
 
@@ -171,6 +200,35 @@ of one node holding the channel. `MaxRadioFragments` (12) bounds how many
 packets a message may become, since losing one fragment loses the message.
 The outbound cap is measured before the compact profile runs, which only
 ever shrinks. All three are calibrated against a real modem preset in RB-3.
+
+**Known limitation (RB-0B): sync summaries disclose an activity graph.**
+Checked while hardening the wake-up, and recorded here rather than left as
+folklore. A summary — from a node or from a bridge, the wire is identical —
+carries the raw 32-byte terminal id and the raw device public key of every
+author chain it announces. Content stays encrypted, but a listener on the
+segment learns which space is active, which devices author in it, and how
+fast each chain grows.
+
+Three things about this are worth stating precisely:
+
+- It is **not new** and not the bridge's doing. Node summaries have carried
+  raw ids on the air since M1.7. The bridge's ledger announcement uses the
+  same fields, and a test pins that it announces no MORE than a node would:
+  exactly the terminal it was provisioned for, exactly the authors it
+  actually carried.
+- The bridge does make the exposure **more regular** — it announces on a
+  schedule where previously only nodes did.
+- **TN-2B does not cover it.** The id-table interns ids found inside signed
+  frames; `scanIDs` returns nothing for a summary, so summaries take the
+  stateless path and the ids go out raw even under the table profile. This
+  was assumed to be the mitigation and is not.
+
+Fixing it means changing the summary message itself — keyed or table-scoped
+hints in place of raw ids — for every peer on the carrier. That is a
+protocol decision for a later gate, not something a gateway can do alone: a
+summary a node cannot parse wakes nobody. For the beta the mitigation stays
+operational, as in the threat model above — a private channel with its own
+PSK, defence in depth, and no claim that the radio segment is unobservable.
 
 **Amendment (RB-0A — the bridge speaks).** A node hands over frames only
 when asked: its sync engine answers a summary, it does not volunteer. A

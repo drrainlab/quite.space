@@ -81,10 +81,15 @@ type Queue struct {
 	f      *os.File
 	nextID uint64
 	live   map[uint64]*CustodyRecord
-	dead   int64 // bytes of tombstoned records in the segment
-	total  int64 // bytes of live frames
-	perDst map[id.TerminalID]int64
-	caps   QueueCaps
+	// byEvent indexes live records by frame EventID. Custody already knows
+	// WHEN it accepted a frame — EnqueuedAt, written in the same fsynced
+	// append — so anything that needs to answer "did I take this, and when"
+	// should ask here rather than keep a second copy that can disagree.
+	byEvent map[id.EventID]uint64
+	dead    int64 // bytes of tombstoned records in the segment
+	total   int64 // bytes of live frames
+	perDst  map[id.TerminalID]int64
+	caps    QueueCaps
 }
 
 const (
@@ -121,7 +126,8 @@ func OpenQueue(dir string, caps QueueCaps) (*Queue, error) {
 		return nil, err
 	}
 	q := &Queue{dir: dir, live: map[uint64]*CustodyRecord{},
-		perDst: map[id.TerminalID]int64{}, caps: caps}
+		byEvent: map[id.EventID]uint64{},
+		perDst:  map[id.TerminalID]int64{}, caps: caps}
 	path := filepath.Join(dir, "custody.seg")
 	if err := q.replay(path); err != nil {
 		return nil, err
@@ -236,6 +242,7 @@ func (q *Queue) applyRecord(body []byte) {
 		rec.NextEligibleAt = int64(eligible)
 		rec.Guaranteed = guarantee != 0
 		q.live[rid] = rec
+		q.byEvent[id.EventIDOf(rec.Frame)] = rid
 		q.total += int64(len(rec.Frame))
 		q.perDst[rec.Destination] += int64(len(rec.Frame))
 	case recDefer:
@@ -375,9 +382,29 @@ func (q *Queue) enqueue(meta FrameMeta, frame []byte, domain LoopDomainID,
 		return 0, err
 	}
 	q.live[rec.ID] = rec
+	q.byEvent[id.EventIDOf(rec.Frame)] = rec.ID
 	q.total += int64(len(rec.Frame))
 	q.perDst[rec.Destination] += int64(len(rec.Frame))
 	return rec.ID, nil
+}
+
+// Held returns a copy of the live record holding this frame, if any. The
+// EnqueuedAt it carries is the durable acceptance time: it was written and
+// fsynced with the record itself, so it survives a crash between taking
+// custody and acknowledging it.
+func (q *Queue) Held(eid id.EventID) (*CustodyRecord, bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	rid, ok := q.byEvent[eid]
+	if !ok {
+		return nil, false
+	}
+	rec, ok := q.live[rid]
+	if !ok {
+		return nil, false
+	}
+	cp := *rec
+	return &cp, true
 }
 
 // evictUntilLocked frees room for want bytes: oldest records in the LOWEST
@@ -417,6 +444,7 @@ func (q *Queue) tombLocked(rid uint64) {
 		return
 	}
 	_ = q.appendRecord(encodeTomb(rid), false)
+	delete(q.byEvent, id.EventIDOf(rec.Frame))
 	q.total -= int64(len(rec.Frame))
 	q.perDst[rec.Destination] -= int64(len(rec.Frame))
 	q.dead += int64(len(rec.Frame))

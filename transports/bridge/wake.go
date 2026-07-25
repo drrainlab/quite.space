@@ -60,10 +60,10 @@ type chainCursor struct {
 
 // wakeState is the announcement schedule for one destination.
 type wakeState struct {
-	lastPeer   time.Time // last time a node was heard for this destination
-	lastWake   time.Time // last announcement
-	outstanding bool     // an announcement is awaiting an answer
-	seq        uint64    // announcement counter, feeds the jitter
+	lastPeer    time.Time // last time a node was heard for this destination
+	lastWake    time.Time // last announcement
+	outstanding bool      // an announcement is awaiting an answer
+	seq         uint64    // announcement counter, feeds the jitter
 }
 
 // noteRadioPeer records that a node spoke for dest on the carrier.

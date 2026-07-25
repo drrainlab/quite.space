@@ -79,9 +79,16 @@ bucket holds under load.
 ## TN-B — quiet-bridge daemon
 
 - `cmd/quiet-bridge` (terminal-relay shape): `--radio serial:|tcp:`,
-  `--relay`, `--listen`, `--data`, `--subscriptions FILE`, `--learn`,
+  `--relay`, `--listen`, `--data`, `--subscriptions FILE`,
   `--airtime`, `--ttl`, `--compact`.
-- Blind by TYPES (`OpaqueEnvelope`) + import-boundary test.
+  **`--learn` was withdrawn in RB-0B** and now exits non-zero: RB-0A's
+  mailbox contract means routing to the internet requires an
+  operator-provisioned capability, which no amount of listening can
+  produce. A mode that discovers routes it can never carry is worse than no
+  mode, because an operator would reasonably believe it worked. Discovery
+  returns as its own provisioning workflow or not at all.
+- Blind by type (`routing.RoutedOpaqueEnvelope`) + import-boundary test;
+  the test is what enforces it, the type is what makes it legible.
 - `CustodyRecord{OpaqueEnvelope, IngressLink, IngressDomain, EnqueuedAt,
   Attempts}` — ingress origin durable (split-horizon survives restart).
 - Relay poll covers ALL hint buckets within retention:

@@ -32,8 +32,22 @@ func main() {
 	relayAddr := flags["relay"]
 	if radioTarget == "" || relayAddr == "" {
 		fmt.Fprintln(os.Stderr, `usage: quiet-bridge --radio tcp:HOST[:PORT]|serial:/dev/PATH --relay HOST:PORT
-       [--data DIR] [--subscriptions FILE] [--learn] [--compact]
+       [--data DIR] [--subscriptions FILE] [--compact]
        [--airtime BYTES_PER_MIN] [--ttl HOURS]`)
+		os.Exit(2)
+	}
+	// Learn-mode discovered destinations it could never deliver: routing to
+	// the internet needs an operator-provisioned mailbox, and a learned hint
+	// has none. Left enabled it would be worse than absent — an operator
+	// would reasonably read "learned a route" as "can carry this", and the
+	// frames would be refused at the door instead. Refuse the flag itself.
+	if flags["learn"] != "" {
+		fmt.Fprintln(os.Stderr,
+			"--learn is incompatible with provisioned relay routing in RB beta:\n"+
+				"a learned destination has no internet mailbox, so nothing taken\n"+
+				"for it could ever be delivered. Provision the destination in the\n"+
+				"subscriptions file instead. Discovery returns as its own\n"+
+				"provisioning workflow, not as a silent no-op.")
 		os.Exit(2)
 	}
 
@@ -85,7 +99,6 @@ func main() {
 		RelayAddr:     relayAddr,
 		RelayDomain:   routing.LoopDomainID("relay:" + relayAddr),
 		Subscriptions: subs,
-		Learn:         flags["learn"] != "",
 		AirtimePerMin: airtime,
 		QueueCaps:     caps,
 	})
@@ -97,11 +110,6 @@ func main() {
 	fmt.Println(b)
 	fmt.Printf("custodian public key (pin on nodes): %x\n", b.CustodianPub())
 	fmt.Println("blind by construction: no identity, no space keys, headers only")
-	if flags["learn"] != "" {
-		fmt.Println("note: --learn admits unknown destinations onto probation, " +
-			"but a destination with no operator-provisioned internet mailbox " +
-			"has nowhere to be delivered and is refused rather than held")
-	}
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
