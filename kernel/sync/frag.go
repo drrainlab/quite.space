@@ -5,6 +5,8 @@
 package sync
 
 import (
+	"crypto/rand"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"sync/atomic"
@@ -124,13 +126,45 @@ func (r *Reassembler) Feed(pkt []byte) ([]byte, error) {
 	return msg, nil
 }
 
-// streamSeq allocates fragment stream ids. It is PROCESS-global on purpose.
-// Stream ids identify a reassembly in progress on a link, and a link can
-// carry several terminals — each with its own engine. Per-engine counters
-// all start at zero, so two engines sharing a link would hand a receiver
-// two different messages under the same stream id, and on any MTU large
-// enough to fragment, the receiver would splice them together.
+// streamSeq allocates fragment stream ids: a random starting point drawn
+// once per process, then monotonic.
+//
+// A stream id names a reassembly in progress on a link, and TWO things
+// share links. Inside a process, several terminals sync over one wire, each
+// with its own engine — per-engine counters all started at zero, so two
+// engines would hand a receiver two different messages under one id.
+// ACROSS processes it is worse: a broadcast radio segment delivers every
+// node's fragments to every other node's reassembler, and nothing
+// coordinates numbering between machines. Counters starting at zero
+// everywhere made collision the DEFAULT for the first messages after boot,
+// on exactly the medium where messages are large enough to fragment.
+//
+// A random base makes both cases vanishingly unlikely without a wire
+// change: collision needs two processes' [base, base+sent) ranges to
+// overlap in a 2^64 space.
+//
+// What this does NOT do is stop a deliberate attack: anyone on the segment
+// can transmit a chosen stream id and corrupt a reassembly in progress.
+// Source-scoping the key would not fix that either, because a Meshtastic
+// source address is unauthenticated. The damage is bounded by what
+// reassembly feeds: a spliced buffer fails to decode, or decodes to an
+// envelope whose signature does not verify. Corruption is a denial vector,
+// never a forgery one.
 var streamSeq atomic.Uint64
 
-// NextStreamID returns a fragment stream id unique within this process.
+// processStreamBase is the base drawn at startup, kept so a test can assert
+// it is not a constant.
+var processStreamBase uint64
+
+func init() {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		panic("sync: no entropy for fragment stream ids: " + err.Error())
+	}
+	processStreamBase = binary.BigEndian.Uint64(b[:])
+	streamSeq.Store(processStreamBase)
+}
+
+// NextStreamID returns a fragment stream id that will not collide with
+// another process's, nor with another engine's in this one.
 func NextStreamID() uint64 { return streamSeq.Add(1) }

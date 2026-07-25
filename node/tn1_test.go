@@ -7,6 +7,7 @@ import (
 
 	"github.com/drrainlab/quiet_places/kernel/eventlog"
 	"github.com/drrainlab/quiet_places/kernel/routing"
+	kernelsync "github.com/drrainlab/quiet_places/kernel/sync"
 	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/transports"
 	"github.com/drrainlab/quiet_places/transports/loopback"
@@ -203,6 +204,125 @@ func TestOneLinkCarriesEveryJoinedSpace(t *testing.T) {
 		sp, _ := bob.Space(tid)
 		if len(sp.State.Messages()) == 0 {
 			t.Fatalf("room %d applied an event but shows no message", i)
+		}
+	}
+}
+
+// A packet for a terminal this link does not serve must be a no-op, not a
+// blockage. The demux drops it; the valid packets behind it in the same
+// batch still reach their engines.
+func TestUnknownTerminalDoesNotBlockTheBatch(t *testing.T) {
+	alice := openRuntime(t, t.TempDir(), "alice")
+	defer alice.Close()
+	bob := openRuntime(t, t.TempDir(), "bob")
+	defer bob.Close()
+
+	tid, err := alice.CreateSpace("Served")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := alice.Say(tid, "after the noise", SayOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	invite, err := alice.MintInvite(tid, bob.Device.ID, bob.Device.X25519Pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bob.JoinInvite(invite); err != nil {
+		t.Fatal(err)
+	}
+	applied := appliedCh(t, bob, tid)
+
+	pair := loopback.NewPair(loopback.Faults{Seed: 11})
+	// A stranger's summary lands on the wire first, every round: a terminal
+	// neither side serves, which is the ordinary case on a shared segment.
+	var stranger id.TerminalID
+	stranger[0] = 0xFE
+	noise := kernelsync.EncodeSummaryMessage(stranger, nil)
+	frags, err := kernelsync.FragmentStream(kernelsync.NextStreamID(), noise, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range frags {
+		if err := pair.A.Send(f); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	alice.adoptLink(testLink{pair.A}, 30*time.Millisecond, 200*time.Millisecond, "test")
+	bob.adoptLink(testLink{pair.B}, 30*time.Millisecond, 200*time.Millisecond, "test")
+
+	select {
+	case <-applied:
+	case <-time.After(30 * time.Second):
+		t.Fatal("a packet for an unserved terminal stopped the batch behind it")
+	}
+	if msgCount(bob, tid) == 0 {
+		t.Fatal("applied an event but no message surfaced")
+	}
+}
+
+// Four spaces, one link, and an MTU small enough that every message is
+// fragmented — so all four streams are in flight at once and interleaved on
+// the wire. Reassembly must keep them apart and all four must converge.
+func TestInterleavedFragmentedSpacesAllConverge(t *testing.T) {
+	alice := openRuntime(t, t.TempDir(), "alice")
+	defer alice.Close()
+	bob := openRuntime(t, t.TempDir(), "bob")
+	defer bob.Close()
+
+	const spaces = 4
+	// Long enough that one message cannot fit in a single fragment.
+	body := ""
+	for range 40 {
+		body += "the same long sentence repeated to force fragmentation. "
+	}
+
+	tids := make([]id.TerminalID, 0, spaces)
+	for i := range spaces {
+		tid, err := alice.CreateSpace("Room " + itoa(i))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := alice.Say(tid, "room "+itoa(i)+": "+body, SayOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		invite, err := alice.MintInvite(tid, bob.Device.ID, bob.Device.X25519Pub)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := bob.JoinInvite(invite); err != nil {
+			t.Fatal(err)
+		}
+		tids = append(tids, tid)
+	}
+	waits := make([]<-chan id.EventID, spaces)
+	for i, tid := range tids {
+		waits[i] = appliedCh(t, bob, tid)
+	}
+
+	// A real MTU with reordering: fragments from four streams arrive mixed.
+	pair := loopback.NewPair(loopback.Faults{Seed: 13, MTU: 220, Reorder: true})
+	alice.adoptLink(testLink{pair.A}, 20*time.Millisecond, 150*time.Millisecond, "test")
+	bob.adoptLink(testLink{pair.B}, 20*time.Millisecond, 150*time.Millisecond, "test")
+
+	deadline := time.After(40 * time.Second)
+	for i, ch := range waits {
+		select {
+		case <-ch:
+		case <-deadline:
+			var have []string
+			for j, tid := range tids {
+				have = append(have, "room"+itoa(j)+"="+itoa(msgCount(bob, tid)))
+			}
+			t.Fatalf("room %d never converged with four fragmented streams "+
+				"interleaved; bob has %v", i, have)
+		}
+	}
+	for i, tid := range tids {
+		if n := msgCount(bob, tid); n != 1 {
+			t.Fatalf("room %d has %d messages, want exactly 1 — fragments from "+
+				"different streams were spliced or duplicated", i, n)
 		}
 	}
 }
