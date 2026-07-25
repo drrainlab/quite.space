@@ -19,3 +19,7 @@ vendor/
 # Local scratch
 *.log
 tmp/
+
+# Local build output
+/terminal
+/quiet-bridge
