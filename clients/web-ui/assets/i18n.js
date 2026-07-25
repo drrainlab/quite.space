@@ -35,6 +35,10 @@ const I18N = {
     'conv.write': 'write into the space…',
     'conv.send': 'send',
     'conv.save_card': 'Save as card',
+    'conv.reply': 'reply',
+    'conv.reply_hint': 'answer this message and address its author',
+    'conv.replying_to': ({ name }) => `replying to ${name}`,
+    'conv.cancel_reply': 'cancel reply',
     'conv.edited': 'edited',
     'entry.unsupported': 'unsupported content',
 
@@ -96,7 +100,7 @@ const I18N = {
     'pass.revoke': 'Revoke',
     'pass.revoked': 'This pass has been revoked. People already inside stay — revoking only stops new entries.',
     'pass.tech_invite': 'Invite a device directly (technical)',
-    'pass.need_relay': 'Set a rendezvous relay first — that\'s where the entry request waits.',
+    'pass.need_relay': 'Set a relay in Settings first — that\'s where the entry request waits.',
 
     // join by pass (async state machine)
     'join.title': 'Enter with a pass',

@@ -173,7 +173,7 @@ function prefersDark() {
   return !window.matchMedia || window.matchMedia('(prefers-color-scheme: dark)').matches;
 }
 function applyAppearance() {
-  const theme = localStorage.getItem('qp.theme') || 'auto';
+  const theme = localStorage.getItem('qp.theme') || 'dark';
   const effective = theme === 'auto' ? (prefersDark() ? 'dark' : 'light') : theme;
   const preset = localStorage.getItem('qp.preset') || 'quiet-glass';
   const r = document.documentElement;
@@ -246,9 +246,26 @@ async function openSettings() {
     pickProvider(llmSettings.provider || 'anthropic', true);
     document.getElementById('llmMsg').textContent = '';
     document.getElementById('relaySetAddr').value = s.relay || '';
+    document.getElementById('relaySetInterval').value = s.relay_sync_seconds || 2;
     document.getElementById('relaySetMsg').textContent = '';
+    document.getElementById('relayInfo').textContent = '';
+    document.getElementById('catalogLink').value = localStorage.getItem('qp.catalog') || '';
+    document.getElementById('catalogMsg').textContent = '';
+    renderRelayPublicPanel();
   } catch (e) { /* settings unavailable */ }
+  showSettingsCat(settingsCat);
   dlgSettings.showModal();
+}
+
+// Settings categories (Appearance / Relay / AI): show one panel at a time and
+// remember the last one opened for the session.
+let settingsCat = 'appearance';
+function showSettingsCat(cat) {
+  settingsCat = cat;
+  document.querySelectorAll('#dlgSettings .settings-cat').forEach(el =>
+    el.classList.toggle('active', el.dataset.cat === cat));
+  document.querySelectorAll('#setTabs button').forEach(b =>
+    b.classList.toggle('sel', b.dataset.cat === cat));
 }
 
 // saveRelay persists the relay address; the node (re)starts background sync.
@@ -266,17 +283,25 @@ async function saveRelay() {
 // them (the settings POST is a full replace; the key stays blank = keep).
 function currentSettingsBody() {
   return {
-    theme: localStorage.getItem('qp.theme') || 'auto',
+    theme: localStorage.getItem('qp.theme') || 'dark',
     preset: localStorage.getItem('qp.preset') || 'quiet-glass',
     render_mode: localStorage.getItem('qp.rendermode') || 'auto',
+    relay_sync_seconds: relayIntervalField(),
     llm: {
       provider: llmSettings.provider || '', model: llmSettings.model || '',
       base_url: llmSettings.base_url || '', api_key: '',
     },
   };
 }
+// relayIntervalField reads the sync-cadence input, clamped [1,3600]; blank
+// or invalid falls back to the 2s default (the node clamps too).
+function relayIntervalField() {
+  const n = parseInt(document.getElementById('relaySetInterval').value, 10);
+  if (!Number.isFinite(n) || n < 1) return 2;
+  return Math.min(n, 3600);
+}
 function syncSettingsUI() {
-  const theme = localStorage.getItem('qp.theme') || 'auto';
+  const theme = localStorage.getItem('qp.theme') || 'dark';
   const preset = localStorage.getItem('qp.preset') || 'quiet-glass';
   document.querySelectorAll('#setTheme button').forEach(b =>
     b.classList.toggle('sel', b.dataset.v === theme));
@@ -353,7 +378,7 @@ async function persistPrefs() {
   // Mirror shell prefs into the keystore alongside the LLM config.
   try {
     await api('/api/settings', { method: 'POST', body: JSON.stringify({
-      theme: localStorage.getItem('qp.theme') || 'auto',
+      theme: localStorage.getItem('qp.theme') || 'dark',
       preset: localStorage.getItem('qp.preset') || 'quiet-glass',
       render_mode: localStorage.getItem('qp.rendermode') || 'auto',
       llm: { provider: llmSettings.provider, model: llmSettings.model,
@@ -368,10 +393,11 @@ async function saveLLM() {
   const key = document.getElementById('llmKey').value;
   try {
     await api('/api/settings', { method: 'POST', body: JSON.stringify({
-      theme: localStorage.getItem('qp.theme') || 'auto',
+      theme: localStorage.getItem('qp.theme') || 'dark',
       preset: localStorage.getItem('qp.preset') || 'quiet-glass',
       render_mode: localStorage.getItem('qp.rendermode') || 'auto',
       relay: (document.getElementById('relaySetAddr').value || '').trim(),
+      relay_sync_seconds: relayIntervalField(),
       llm: { provider: llmSettings.provider, model: llmSettings.model,
         base_url: llmSettings.base_url, api_key: key || undefined },
     }) });
@@ -391,7 +417,7 @@ async function testLLM() {
 applyAppearance();
 if (window.matchMedia) {
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
-    if ((localStorage.getItem('qp.theme') || 'auto') === 'auto') applyAppearance();
+    if ((localStorage.getItem('qp.theme') || 'dark') === 'auto') applyAppearance();
   });
 }
 
@@ -495,6 +521,245 @@ async function refresh() {
 
 function currentSpace() { return spacesCache.find(s => s.id === current); }
 
+// PA-0: the public-access surface of the open space — badge, share link,
+// and the honest composer state for readers.
+function renderPublicSurface(sp) {
+  const badge = document.getElementById('visBadge');
+  const share = document.getElementById('shareLinkBtn');
+  const composer = document.getElementById('composer');
+  const readerBar = document.getElementById('readerBar');
+  const joinBtn = document.getElementById('joinWriteBtn');
+  const note = document.getElementById('readOnlyNote');
+  if (!sp || !sp.visibility) {
+    badge.style.display = 'none';
+    share.style.display = 'none';
+    composer.style.display = '';
+    readerBar.style.display = 'none';
+    return;
+  }
+  const pub = sp.visibility === 'public';
+  let label;
+  if (sp.publish === 'curated') {
+    label = (pub ? 'PUBLIC' : 'UNLISTED') + ' · READ ONLY';
+  } else if (sp.can_write) {
+    label = (pub ? 'PUBLIC' : 'UNLISTED') + ' · OPEN';
+  } else {
+    label = (pub ? 'PUBLIC' : 'UNLISTED') + ' · JOIN TO WRITE';
+  }
+  if (!pub) label = 'UNLISTED · ANYONE WITH LINK';
+  if (sp.frozen) label = 'FROZEN · ' + (pub ? 'PUBLIC' : 'UNLISTED');
+  badge.textContent = label;
+  badge.title = sp.frozen
+    ? 'Publication is paused by the owner. Everything already published stays readable.'
+    : 'Anyone who obtains this link can read the space. Access cannot currently be revoked.';
+  badge.style.display = '';
+  // The badge doubles as the owner's Access sheet entry point (PA-1).
+  badge.style.cursor = sp.owned ? 'pointer' : '';
+  badge.onclick = sp.owned ? () => openAccess(sp) : null;
+  share.style.display = '';
+  if (sp.frozen) {
+    // Frozen overrides everything below: read-only for all, honestly.
+    composer.style.display = 'none';
+    readerBar.style.display = '';
+    joinBtn.style.display = 'none';
+    note.style.display = '';
+    note.textContent = 'frozen by the owner — publication is paused';
+    return;
+  }
+  if (sp.can_write) {
+    composer.style.display = '';
+    readerBar.style.display = 'none';
+    return;
+  }
+  composer.style.display = 'none';
+  readerBar.style.display = '';
+  const joinable = sp.join === 'open' && sp.role === 'reader';
+  joinBtn.style.display = joinable ? '' : 'none';
+  note.style.display = joinable ? 'none' : '';
+  note.textContent = sp.publish === 'curated'
+    ? 'broadcast — read only (owner and curators post)'
+    : 'read only';
+}
+
+async function copyPublicLink() {
+  if (!current) return;
+  // Once per device, spell out that a public link is irrevocable before the
+  // first copy — after that the badge tooltip carries the same warning.
+  if (!localStorage.getItem('qp.linkWarned')) {
+    const ok = confirm(
+      'This link is irrevocable. Anyone who obtains it can read this space forever — you cannot take it back. Copy it?');
+    if (!ok) return;
+    localStorage.setItem('qp.linkWarned', '1');
+  }
+  try {
+    const r = await api(`/api/spaces/${current}/link`);
+    await navigator.clipboard.writeText(r.link);
+    const b = document.getElementById('shareLinkBtn');
+    b.textContent = 'Copied · irrevocable';
+    setTimeout(() => { b.textContent = 'Share link'; }, 1800);
+  } catch (e) { alert(e.message); }
+}
+
+async function joinCurrentPublic() {
+  if (!current) return;
+  try {
+    await api(`/api/spaces/${current}/join`, { method: 'POST' });
+    await refresh();
+  } catch (e) { alert(e.message); }
+}
+
+// ---- PA-1: Discover (federated catalog) ----
+
+// defaultCatalog is the official catalog's share link, baked into the
+// client. A catalog is just a public broadcast space whose posts are
+// space-cards; anyone can run their own and point the client at it.
+const defaultCatalog = ''; // set when the official catalog space exists
+
+function catalogLink() {
+  return (localStorage.getItem('qp.catalog') || defaultCatalog).trim();
+}
+
+// renderRelayPublicPanel shows per-public-space checkpoint/ingress health
+// (PA-1.3 monitoring): publisher seq + last-publish age, reader accepted
+// seq, frozen state, and how many frames policy has ignored.
+async function renderRelayPublicPanel() {
+  const box = document.getElementById('relayPublicPanel');
+  if (!box) return;
+  box.innerHTML = '';
+  try {
+    const rs = await api('/api/relay/status');
+    const rows = rs.public || [];
+    if (!rows.length) return;
+    const h = document.createElement('p');
+    h.className = 'hint'; h.textContent = 'Public spaces';
+    box.appendChild(h);
+    for (const s of rows) {
+      const row = document.createElement('div');
+      row.className = 'relay-public-row';
+      const parts = [`${s.role}`, `seq ${s.seq || 0}`];
+      if (s.role === 'publisher' && s.seconds_since_publish != null)
+        parts.push(`published ${s.seconds_since_publish}s ago`);
+      if (s.frozen) parts.push('FROZEN');
+      if (s.ignored_total) parts.push(`${s.ignored_total} ignored`);
+      row.innerHTML = `<span class="rp-title">${esc(s.title || s.space_id.slice(0, 8))}</span>` +
+        `<span class="rp-meta">${esc(parts.join(' · '))}</span>`;
+      box.appendChild(row);
+    }
+  } catch (e) { /* relay status optional */ }
+}
+
+function saveCatalog() {
+  const v = document.getElementById('catalogLink').value.trim();
+  if (v) localStorage.setItem('qp.catalog', v);
+  else localStorage.removeItem('qp.catalog');
+  document.getElementById('catalogMsg').textContent = v ? 'saved' : 'using the official catalog';
+}
+
+async function openDiscover() {
+  const link = catalogLink();
+  if (!link) {
+    alert('No catalog configured yet. Paste a catalog link in Settings → Relay → Catalog.');
+    return;
+  }
+  try {
+    const r = await api('/api/public/open', { method: 'POST', body: JSON.stringify({ link }) });
+    current = r.id;
+    await refresh();
+    if (typeof switchView === 'function') switchView('posts');
+  } catch (e) { alert(e.message); }
+}
+
+// spaceCardLink extracts a space-card's target: the first link block's URL.
+function spaceCardLink(doc) {
+  for (const b of doc.blocks || []) {
+    if (b.type === 'link' && b.props?.text) return b.props.text;
+  }
+  return '';
+}
+
+// openSpaceCard opens the space referenced by a space-card document: the
+// share link travels in the card's first link block under the "qs:" scheme.
+async function openSpaceCard(link) {
+  let share = (link || '').trim();
+  if (share.startsWith('qs:')) share = share.slice(3);
+  try {
+    const r = await api('/api/public/open', { method: 'POST', body: JSON.stringify({ link: share }) });
+    current = r.id;
+    dlgJoin.close?.();
+    await refresh();
+  } catch (e) { alert(e.message); }
+}
+
+// ---- PA-1: owner Access sheet (policy revisions + freeze) ----
+
+let accessSpace = null;
+function openAccess(sp) {
+  accessSpace = sp.id;
+  document.querySelectorAll('#accVis button').forEach(b =>
+    b.classList.toggle('sel', b.dataset.v === sp.visibility));
+  const mode = sp.publish === 'curated' ? 'curated' : 'all';
+  document.querySelectorAll('#accMode button').forEach(b =>
+    b.classList.toggle('sel', b.dataset.v === mode));
+  document.getElementById('accFreezeBtn').textContent =
+    sp.frozen ? 'Unfreeze publication' : 'Freeze publication';
+  document.getElementById('accMsg').textContent = '';
+  document.getElementById('accCurPrin').value = '';
+  document.getElementById('accCurDev').value = '';
+  renderCurators(sp);
+  dlgAccess.showModal();
+}
+
+function renderCurators(sp) {
+  // The curator list is parsed client-side from nothing yet — v1 shows a
+  // hint; removals go through the exact pair below.
+  const box = document.getElementById('accCurators');
+  box.innerHTML = '';
+  const row = document.createElement('div');
+  row.className = 'list-row';
+  row.innerHTML = `<span class="lr-label"><span class="lr-sub">Paste the exact principal + device pair to remove a curator; adding uses the fields below.</span></span>`;
+  const rm = document.createElement('button');
+  rm.className = 'btn-plain';
+  rm.textContent = 'Remove pair';
+  rm.onclick = () => reviseAccess({ remove_curator: curatorFields() });
+  row.appendChild(rm);
+  box.appendChild(row);
+}
+
+function curatorFields() {
+  return {
+    principal: document.getElementById('accCurPrin').value.trim(),
+    device: document.getElementById('accCurDev').value.trim(),
+  };
+}
+
+async function reviseAccess(delta) {
+  if (!accessSpace) return;
+  const msg = document.getElementById('accMsg');
+  try {
+    await api(`/api/spaces/${accessSpace}/policy`, {
+      method: 'POST', body: JSON.stringify(delta) });
+    msg.textContent = 'revised — readers pick it up with the next projection';
+    await refresh();
+    const sp = spacesCache.find(s => s.id === accessSpace);
+    if (sp) openAccess(sp); // re-sync the sheet controls
+  } catch (e) { msg.textContent = e.message; }
+}
+
+function setAccessVis(v) { reviseAccess({ visibility: v }); }
+function setAccessMode(m) {
+  if (m === 'curated' && !confirm(
+    'Switch to broadcast? Only you and curators will be able to post. Existing posts remain.')) return;
+  reviseAccess({ publish: m });
+}
+function addCurator() { reviseAccess({ add_curator: curatorFields() }); }
+function toggleFreeze() {
+  const sp = spacesCache.find(s => s.id === accessSpace);
+  const next = !(sp && sp.frozen);
+  if (next && !confirm(
+    'Freeze publication? EVERYONE stops posting — including you — until you unfreeze. Readers keep what is already published.')) return;
+  reviseAccess({ frozen: next });
+}
+
 // Conversation header actions (PUI-1).
 function openPassCurrent() { const s = currentSpace(); if (s) openPass(s); }
 function toggleMembers() {
@@ -506,11 +771,12 @@ async function refreshSpace() {
   const char = sp?.character;
   applyTheme(char);
   loadSpaceAppearance(current);
-  // Conversation header: title + invite (owned) + info toggle.
+  // Conversation header: title + invite (owned private) + info toggle.
   document.getElementById('convTitle').textContent = sp ? (sp.title || t('conv.member')) : '';
-  document.getElementById('inviteBtn').style.display = sp?.owned ? '' : 'none';
+  document.getElementById('inviteBtn').style.display = (sp?.owned && !sp?.visibility) ? '' : 'none';
   document.getElementById('customizeBtn').style.display = sp?.owned ? '' : 'none';
   document.getElementById('resPalBtn').style.display = sp?.owned ? '' : 'none';
+  renderPublicSurface(sp);
 
   // persona line: the declared character, plus its exact meaning.
   const persona = document.getElementById('persona');
@@ -538,6 +804,14 @@ async function refreshSpace() {
     seenSpace = current; seenEntries = new Set(); hereMembers = new Set();
     feedSig = []; feedContentSig = [];
     RES.refresh(current);
+    if (typeof mentionsReset === 'function') {
+      mentionsReset();
+      mentionsLoadMembers(current);
+    }
+    // Tell the node which room is open: QuietRank stays quiet about the one
+    // you are already reading.
+    api('/api/attention/viewing', { method: 'POST', body: JSON.stringify({ space: current }) })
+      .catch(() => {});
     if (typeof pubView !== 'undefined' && pubView !== 'chat') switchView('chat');
   }
   // Incremental feed render, three paths: (1) nothing changed → nothing
@@ -546,25 +820,44 @@ async function refreshSpace() {
   // rows in place and hand the deltas to effects. Anything else rebuilds.
   const contentSig = entries.map(e => e.id + ':' + (e.revised ? 1 : 0) + ':' +
     (e.kept ? 'k' : '') + (e.keep_count || 0));
+  // Asset fetch state is part of what a row shows (poster → progress →
+  // playable); without it here, a fetch completing never re-renders and you
+  // only see the media after a full page reload.
+  const aSig = entries.map(e => e.asset ? (e.asset.state + '/' + (e.asset.missing || 0) + '/' + (e.asset.total || 0)) : '');
   const rSig = entries.map(e => resSig(e.resonance));
-  const sig = contentSig.map((c, i) => c + '|' + rSig[i]);
+  const sig = contentSig.map((c, i) => c + '|' + aSig[i] + '|' + rSig[i]);
   const unchanged = sig.length === feedSig.length && sig.every((s, i) => s === feedSig[i]);
   const appendOnly = sig.length > feedSig.length && feedSig.every((s, i) => s === sig[i]);
-  const resOnly = !unchanged && !appendOnly &&
+  // Same rows/order — only asset progress and/or resonance moved. Patch just
+  // the changed rows in place so unrelated playing media is never torn down.
+  const structSame = !unchanged && !appendOnly &&
     contentSig.length === feedContentSig.length &&
     contentSig.every((c, i) => c === feedContentSig[i]);
   const firstPaint = seenEntries.size === 0;
-  if (resOnly) {
+  if (structSame) {
     for (let i = 0; i < entries.length; i++) {
       if (sig[i] === feedSig[i]) continue;
       const e = entries[i];
       const node = log.querySelector(`[data-eid="${e.id}"]`);
       if (!node) { feedSig = []; feedContentSig = []; refreshSpace(); return; }
-      const fresh = renderResonanceRow(e.resonance, e.id);
-      const old = node.querySelector('.res-row');
-      if (old) old.replaceWith(fresh); else node.querySelector('.bubble')?.appendChild(fresh);
-      // Arrival effects key off the revision change (RP-2A hook).
-      if (typeof RESFX !== 'undefined') RESFX.onAggregateChange(node, e.resonance);
+      const prevA = (feedSig[i] || '').split('|')[1] || '';
+      if (aSig[i] !== prevA) {
+        // Asset fetch state changed (progress/complete): re-render this row so
+        // its card and progress update live. Safe — a fetching asset has no
+        // playing <video> to tear down.
+        const grouped = i > 0 && entries[i - 1].author === e.author &&
+          entries[i - 1].produced_by === e.produced_by;
+        const tmp = document.createElement('div');
+        renderEntry(tmp, e, false, grouped);
+        const fresh = tmp.firstElementChild;
+        if (fresh) node.replaceWith(fresh);
+      } else {
+        // Resonance-only change: patch just the res row, never the media.
+        const fresh = renderResonanceRow(e.resonance, e.id);
+        const old = node.querySelector('.res-row');
+        if (old) old.replaceWith(fresh); else node.querySelector('.bubble')?.appendChild(fresh);
+        if (typeof RESFX !== 'undefined') RESFX.onAggregateChange(node, e.resonance);
+      }
     }
     feedSig = sig; feedContentSig = contentSig;
   } else if (!unchanged) {
@@ -702,13 +995,75 @@ function presenceSummary(members) {
 
 // ---- actions ----
 
+// replyTarget holds what the composer is answering, if anything. A reply is
+// a real structural edge (reply_to on the signed message), not a quote
+// pasted into the text.
+let replyTarget = null; // { id, author, name }
+
+// startReply aims the composer at a message and stages its author as a
+// mention, so answering someone always reaches them.
+function startReply(e) {
+  replyTarget = {
+    id: e.id,
+    author: e.author_full || e.author,
+    name: e.author_name || t('conv.member'),
+  };
+  if (typeof mentionsStage === 'function' && replyTarget.author) {
+    mentionsStage(replyTarget.author, replyTarget.name);
+  }
+  renderReplyBar();
+  document.getElementById('text')?.focus();
+}
+
+function cancelReply() {
+  // Cancelling a reply also stops addressing that person: the mention came
+  // from the act of replying, so it leaves with it.
+  if (replyTarget && typeof mentionsUnstage === 'function') {
+    mentionsUnstage(replyTarget.author);
+  }
+  replyTarget = null;
+  renderReplyBar();
+}
+
+function renderReplyBar() {
+  const bar = document.getElementById('replyBar');
+  if (!bar) return;
+  if (!replyTarget) {
+    bar.style.display = 'none';
+    bar.innerHTML = '';
+    return;
+  }
+  bar.style.display = '';
+  bar.innerHTML = '';
+  const label = document.createElement('span');
+  label.className = 'reply-to';
+  label.textContent = '↩ ' + t('conv.replying_to', { name: replyTarget.name });
+  bar.appendChild(label);
+  const x = document.createElement('button');
+  x.type = 'button';
+  x.className = 'reply-cancel';
+  x.textContent = '✕';
+  x.title = t('conv.cancel_reply');
+  x.onclick = cancelReply;
+  bar.appendChild(x);
+}
+
 async function say(e) {
   e.preventDefault();
   const inp = document.getElementById('text');
   if (!inp.value.trim() || !current) return false;
+  // Mentions travel as a signed structural field, not as text markup.
+  const mentions = typeof mentionsPayload === 'function' ? mentionsPayload(inp.value) : [];
+  const body = { text: inp.value, mentions };
+  if (replyTarget) body.reply_to = replyTarget.id;
   try {
-    await api(`/api/spaces/${current}/messages`, { method: 'POST', body: JSON.stringify({ text: inp.value }) });
+    await api(`/api/spaces/${current}/messages`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
     inp.value = '';
+    cancelReply();
+    if (typeof mentionsReset === 'function') mentionsReset();
     await refreshSpace();
   } catch (err) { alert(err.message); }
   return false;
@@ -920,14 +1275,12 @@ function openPass(s) {
   document.getElementById('passFrom').textContent = t('pass.invite_from', { who: me });
   document.getElementById('passHint').textContent = t('pass.card_hint');
   document.getElementById('passVerifyHint').textContent = t('pass.verify_hint');
-  document.getElementById('passRelayLabel').textContent = t('pass.relay');
   document.getElementById('passCreateBtn').textContent = t('pass.create');
   document.getElementById('passCopyBtn').textContent = t('pass.copy');
   document.getElementById('passRevokeBtn').textContent = t('pass.revoke');
   document.getElementById('passTechInvite').textContent = t('pass.tech_invite');
   // A pass glyph seeded by the space id — recognisable, not sensitive.
   document.getElementById('passGlyph').innerHTML = glyphSVG(s.id, 'pass', 48);
-  document.getElementById('passRelay').value = localStorage.getItem('qp.relay') || '';
   document.getElementById('passReady').style.display = 'none';
   document.getElementById('passConfig').style.display = 'block';
   document.getElementById('passCreateBtn').style.display = '';
@@ -945,9 +1298,10 @@ function passMsg(text, warn) {
 }
 
 async function mintPass() {
-  const relay = document.getElementById('passRelay').value.trim();
+  // The rendezvous relay is the one configured in Settings — no separate field.
+  let relay = '';
+  try { relay = ((await api('/api/settings')).relay || '').trim(); } catch (_) {}
   if (!relay) { passMsg(t('pass.need_relay'), true); return; }
-  localStorage.setItem('qp.relay', relay);
   const maxUses = parseInt(document.getElementById('passUses').value, 10);
   const ttlHours = parseInt(document.getElementById('passTtl').value, 10);
   document.getElementById('passCreateBtn').disabled = true;
@@ -962,7 +1316,7 @@ async function mintPass() {
       ? t('pass.terms_one', { hours: ttlHours })
       : t('pass.terms_many', { uses: maxUses, hours: ttlHours });
     document.getElementById('passQr').innerHTML = r.qr_png_base64
-      ? `<img alt="pass QR" src="data:image/png;base64,${r.qr_png_base64}" style="max-width:220px">` : '';
+      ? `<img alt="pass QR" src="data:image/png;base64,${r.qr_png_base64}">` : '';
     document.getElementById('passLink').textContent = r.link;
     document.getElementById('passReady').style.display = 'block';
     document.getElementById('passConfig').style.display = 'none';
@@ -1028,9 +1382,10 @@ async function meshConnect() {
 // ---- relay ----
 
 async function relayPush() {
-  const addr = document.getElementById('relayAddr').value.trim();
-  if (!addr || !current) return;
+  const addr = document.getElementById('relaySetAddr').value.trim();
   const info = document.getElementById('relayInfo');
+  if (!addr) { info.textContent = 'set a relay address first.'; return; }
+  if (!current) { info.textContent = 'open a space first.'; return; }
   try {
     const r = await api('/api/relay/push', { method: 'POST',
       body: JSON.stringify({ addr, space: current }) });
@@ -1041,9 +1396,9 @@ async function relayPush() {
 }
 
 async function relayPull() {
-  const addr = document.getElementById('relayAddr').value.trim();
-  if (!addr) return;
+  const addr = document.getElementById('relaySetAddr').value.trim();
   const info = document.getElementById('relayInfo');
+  if (!addr) { info.textContent = 'set a relay address first.'; return; }
   try {
     const r = await api('/api/relay/pull', { method: 'POST', body: JSON.stringify({ addr }) });
     info.textContent = r.events_applied > 0
@@ -1147,6 +1502,30 @@ function limitRituals(box) {
   if (checked.length > 3) { box.checked = false; alert('up to three rituals — they define life here; choose'); }
 }
 
+// PA-0 visibility choice on the final wizard step.
+let wizVis = 'private';
+let wizMode = 'community';
+function pickWizVis(v) {
+  wizVis = v;
+  document.querySelectorAll('#wVisibility button').forEach(b =>
+    b.classList.toggle('sel', b.dataset.v === v));
+  const pub = v === 'public';
+  document.getElementById('wPublicMode').style.display = pub ? '' : 'none';
+  document.getElementById('wVisHint').style.display = pub ? '' : 'none';
+}
+function pickWizMode(m) {
+  wizMode = m;
+  document.querySelectorAll('#wPublicMode button').forEach(b =>
+    b.classList.toggle('sel', b.dataset.v === m));
+}
+// wizPolicy maps the choice onto the API policy fields.
+function wizPolicy() {
+  if (wizVis !== 'public') return {};
+  return wizMode === 'broadcast'
+    ? { visibility: 'public', publish: 'curated' }
+    : { visibility: 'public', join: 'open' };
+}
+
 function wizStep(n) {
   for (let i = 1; i <= 4; i++)
     document.getElementById('wiz' + i).classList.toggle('on', i === n);
@@ -1167,6 +1546,7 @@ async function wizCreate() {
       motion: document.getElementById('wMotion').value,
       central: document.getElementById('wCentral').value,
       memory, rituals, presence,
+      ...wizPolicy(),
     })});
     current = r.id; dlgWiz.close(); refresh();
     if (wizTemplate === 'release') {
@@ -1244,11 +1624,34 @@ function renderEntry(log, e, fresh, grouped) {
 
   const acts = document.createElement('span');
   acts.className = 'mk';
+  // Reply: a real structural edge on the signed message, and it addresses
+  // the author so the answer actually reaches them.
+  if (!own) {
+    const rp = document.createElement('span');
+    rp.className = 'reply-act';
+    rp.textContent = '↩ ' + t('conv.reply');
+    rp.title = t('conv.reply_hint');
+    rp.onclick = () => startReply(e);
+    acts.appendChild(rp);
+  }
   const mk = document.createElement('span');
   mk.textContent = t('conv.save_card');
   mk.onclick = () => makeCardFrom(e);
   acts.appendChild(mk);
   // Keep in space (LR-1): kept state comes from the API, never guessed.
+  // "QuietRank should have caught this" — the recall side of feedback.
+  // Without it the layer could only ever learn to go quiet.
+  if (!own && typeof qrNotice === 'function') {
+    const nt = document.createElement('span');
+    nt.className = 'notice-act';
+    nt.textContent = '◎ should have noticed';
+    nt.title = 'teach QuietRank that messages like this matter to you';
+    nt.onclick = async () => {
+      await qrNotice(e.id);
+      nt.textContent = '◎ noted';
+    };
+    acts.appendChild(nt);
+  }
   const kp = document.createElement('span');
   kp.className = 'keep-act' + (e.kept ? ' kept' : '');
   kp.textContent = e.kept ? `✦ kept${e.keep_count > 1 ? ' · ' + e.keep_count : ''}`
@@ -1276,6 +1679,7 @@ function assetNote(e) {
     n.onclick = () => window.open(`/api/spaces/${current}/assets/${a.id}?token=${token}`, '_blank');
   } else if (a.state === 'fetching') {
     n.textContent = `fetching… ${a.total - a.missing}/${a.total}`;
+    n.appendChild(makeWaterfall());
   } else {
     n.textContent = `⬇ fetch original · ${fmtBytes(a.size)} · not local yet`;
     n.onclick = async () => {
@@ -1287,12 +1691,81 @@ function assetNote(e) {
   return n;
 }
 
+// ---- media on-demand: fetch an asset's bytes when it scrolls into view ----
+// A joiner holds the manifest but not the bytes; nothing renders a cover or an
+// article image until they arrive. So when such an element enters the viewport
+// we kick the same relay fetch the "fetch original" button uses, then re-point
+// the element once the bytes land. Idempotent — safe to observe every media el.
+const _mediaObserver = ('IntersectionObserver' in window)
+  ? new IntersectionObserver((entries) => {
+      for (const ent of entries) {
+        if (!ent.isIntersecting) continue;
+        _mediaObserver.unobserve(ent.target);
+        const m = ent.target._autoMedia;
+        if (m) autoFetchAsset(m.assetId, m.onReady);
+      }
+    }, { rootMargin: '300px' })
+  : null;
+
+function observeMedia(el, assetId, onReady) {
+  if (!assetId) return;
+  el._autoMedia = { assetId, onReady };
+  if (_mediaObserver) _mediaObserver.observe(el);
+  else autoFetchAsset(assetId, onReady); // no observer support: fetch eagerly
+}
+
+// autoFetchAsset drives the relay fetch to completion, polling the idempotent
+// /fetch endpoint (RequestAsset dedups in-flight). Bails if the user navigates.
+async function autoFetchAsset(assetId, onReady) {
+  const sp = current;
+  try {
+    for (let i = 0; i < 90; i++) {
+      const r = await api(`/api/spaces/${sp}/assets/${assetId}/fetch`, { method: 'POST' });
+      if (r.state === 'complete') { onReady && onReady(); return; }
+      if (r.state === 'failed') return;
+      await new Promise((res) => setTimeout(res, 1200));
+      if (current !== sp) return; // moved to another space; stop
+    }
+  } catch (e) { /* asset unknown here, or transient — leave the placeholder */ }
+}
+
+// autoMediaSrc / autoMediaBg point an <img>/<audio> or a background element at
+// an asset, optimistically now (works if already local) and again with a
+// cache-buster once an on-view fetch completes (forces the browser to reload
+// the previously-missing bytes).
+function assetURL(assetId) {
+  return `/api/spaces/${current}/assets/${assetId}?token=${token}`;
+}
+function autoMediaSrc(el, assetId) {
+  const base = assetURL(assetId);
+  el.src = base;
+  observeMedia(el, assetId, () => { el.src = base + '&v=' + Date.now(); });
+}
+function autoMediaBg(el, assetId) {
+  const base = assetURL(assetId);
+  el.style.backgroundImage = `url("${base}")`;
+  observeMedia(el, assetId, () => { el.style.backgroundImage = `url("${base}&v=${Date.now()}")`; });
+}
+
+// makeWaterfall: a tiny ASCII "waterfall" with a flowing gradient, to sit next
+// to a fetch-progress readout. Pure CSS animation (no timer), so it is safe to
+// recreate on every re-render without leaking intervals.
+function makeWaterfall() {
+  const el = document.createElement('span');
+  el.className = 'wfall';
+  el.setAttribute('aria-hidden', 'true');
+  el.textContent = '╽┃╿║┃╽║┃╿';
+  return el;
+}
+
 // The message feed dispatches through the same registry seam as the
 // composition contract (§34): a kind→renderer map with a semantic fallback to
 // the honest "unsupported" node. Behaviour is unchanged from the old switch;
 // the indirection is the point.
 const FEED_RENDERERS = {
-  text: (e) => textNode('txt', e.text),
+  // Mentions come resolved from the node (signed field); mentionText only
+  // decorates the names, it never re-parses the message for addressing.
+  text: (e) => (typeof mentionText === 'function' ? mentionText(e) : textNode('txt', e.text)),
   visual: (e) => renderVisual(e),
   video: (e) => renderVideo(e),
   voice: (e) => renderVoiceAudio(e),
@@ -1327,7 +1800,14 @@ function renderVideo(e) {
       holder.appendChild(d);
     }
     holder.onclick = () => {
-      if (!complete) return; // the note below offers the fetch
+      if (!complete) {
+        // Tapped play before the bytes are local: kick the relay fetch (media
+        // on-demand) and show it's working — the card mounts the player once
+        // the original lands.
+        if (e.asset && e.asset.id) autoFetchAsset(e.asset.id, () => refreshSpace());
+        play.textContent = '⏳';
+        return;
+      }
       const v = document.createElement('video');
       v.controls = true; v.autoplay = true; v.playsInline = true;
       v.src = src;
@@ -1378,18 +1858,143 @@ function renderVoiceAudio(e) {
   const title = e.kind === 'audio'
     ? (e.title || 'audio') + (e.bpm ? ` · ${e.bpm} BPM` : '')
     : `voice · ${fmtDur(e.duration_ms)}`;
-  wrap.appendChild(textNode('txt', (e.kind === 'audio' ? '♫ ' : '🎙 ') + title));
-  if (e.waveform_b64) wrap.appendChild(renderWave(e.waveform_b64));
+  const head = textNode('txt', (e.kind === 'audio' ? '♫ ' : '🎙 ') + title);
+  head.classList.add('aplayer-title');
+  wrap.appendChild(head);
   if (e.transcript) wrap.appendChild(textNode('meta', '“' + e.transcript + '”'));
   if (e.asset?.state === 'complete') {
-    const au = document.createElement('audio');
-    au.controls = true;
-    au.src = `/api/spaces/${current}/assets/${e.asset.id}?token=${token}`;
-    wrap.appendChild(au);
+    wrap.appendChild(makeAudioPlayer(
+      `/api/spaces/${current}/assets/${e.asset.id}?token=${token}`,
+      e.waveform_b64, e.duration_ms));
   } else {
+    if (e.waveform_b64) wrap.appendChild(renderWave(e.waveform_b64)); // static preview
     wrap.appendChild(assetNote(e));
   }
   return wrap;
+}
+
+// One audio plays at a time across the whole feed — starting a new player
+// pauses whichever was going.
+let nowPlayingAudio = null;
+
+// SVG glyphs, currentColor so the accent theme flows through.
+const PLAY_ICON = '<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M8 5v14l11-7z" fill="currentColor"/></svg>';
+const PAUSE_ICON = '<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z" fill="currentColor"/></svg>';
+
+// waveBytes normalizes a waveform into an array of 0-255 amplitudes. Accepts
+// a base64 string (feed entries), an array (live recording), or null.
+function waveBytes(wave) {
+  if (!wave) return null;
+  if (Array.isArray(wave)) return wave.length ? wave : null;
+  const s = atob(wave);
+  const out = new Array(s.length);
+  for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
+  return out.length ? out : null;
+}
+
+// makeAudioPlayer builds the house audio player: a play toggle, the waveform
+// itself as the scrubber (bars light up to the playhead, click/drag to seek;
+// a plain fill line when no waveform exists), and a mono time readout — all
+// in the Quiet Terminal Glass palette.
+function makeAudioPlayer(src, wave, durationMs) {
+  const audio = new Audio();
+  audio.preload = 'metadata';
+  audio.src = src;
+
+  const player = document.createElement('div');
+  player.className = 'aplayer';
+
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'aplay';
+  btn.setAttribute('aria-label', 'play');
+  btn.innerHTML = PLAY_ICON;
+  player.appendChild(btn);
+
+  // Scrubber: waveform bars if we have them, else a slim fill line.
+  const scrub = document.createElement('div');
+  scrub.className = 'ascrub';
+  scrub.setAttribute('role', 'slider');
+  scrub.setAttribute('aria-label', 'seek');
+  scrub.tabIndex = 0;
+  let bars = null, fill = null;
+  const amps = waveBytes(wave);
+  if (amps) {
+    scrub.classList.add('wavebars');
+    bars = [];
+    for (let i = 0; i < amps.length; i++) {
+      const bar = document.createElement('i');
+      bar.style.height = Math.max(2, (amps[i] / 255) * 30) + 'px';
+      scrub.appendChild(bar);
+      bars.push(bar);
+    }
+  } else {
+    scrub.classList.add('barline');
+    fill = document.createElement('span');
+    fill.className = 'afill';
+    scrub.appendChild(fill);
+  }
+  player.appendChild(scrub);
+
+  const time = document.createElement('span');
+  time.className = 'atime';
+  const total = () => audio.duration && isFinite(audio.duration)
+    ? audio.duration * 1000 : (durationMs || 0);
+  time.textContent = fmtDur(total());
+  player.appendChild(time);
+
+  function paint() {
+    const dur = total() / 1000;
+    const frac = dur > 0 ? Math.min(1, audio.currentTime / dur) : 0;
+    if (bars) {
+      const upto = Math.round(frac * bars.length);
+      for (let i = 0; i < bars.length; i++) {
+        bars[i].classList.toggle('on', i < upto);
+        // The leading bar is the playhead — it glows and pulses while live.
+        bars[i].classList.toggle('head', i === upto - 1);
+      }
+    } else if (fill) {
+      fill.style.width = (frac * 100) + '%';
+    }
+    const cur = audio.currentTime ? audio.currentTime * 1000 : 0;
+    time.textContent = (audio.currentTime ? fmtDur(cur) + ' / ' : '') + fmtDur(total());
+  }
+
+  btn.onclick = () => {
+    if (audio.paused) {
+      if (nowPlayingAudio && nowPlayingAudio !== audio) nowPlayingAudio.pause();
+      nowPlayingAudio = audio;
+      audio.play().catch(() => {});
+    } else {
+      audio.pause();
+    }
+  };
+  audio.onplay = () => { btn.innerHTML = PAUSE_ICON; btn.setAttribute('aria-label', 'pause'); player.classList.add('playing'); };
+  audio.onpause = () => { btn.innerHTML = PLAY_ICON; btn.setAttribute('aria-label', 'play'); player.classList.remove('playing'); };
+  audio.onended = () => { btn.innerHTML = PLAY_ICON; player.classList.remove('playing'); paint(); };
+  audio.ontimeupdate = paint;
+  audio.onloadedmetadata = paint;
+
+  function seekTo(clientX) {
+    const r = scrub.getBoundingClientRect();
+    const frac = Math.max(0, Math.min(1, (clientX - r.left) / r.width));
+    const dur = total() / 1000;
+    if (dur > 0) { audio.currentTime = frac * dur; paint(); }
+  }
+  let dragging = false;
+  scrub.addEventListener('pointerdown', (ev) => {
+    dragging = true; scrub.setPointerCapture(ev.pointerId); seekTo(ev.clientX);
+  });
+  scrub.addEventListener('pointermove', (ev) => { if (dragging) seekTo(ev.clientX); });
+  scrub.addEventListener('pointerup', () => { dragging = false; });
+  scrub.addEventListener('keydown', (ev) => {
+    const dur = total() / 1000; if (!dur) return;
+    if (ev.key === 'ArrowRight') { audio.currentTime = Math.min(dur, audio.currentTime + 5); paint(); }
+    else if (ev.key === 'ArrowLeft') { audio.currentTime = Math.max(0, audio.currentTime - 5); paint(); }
+    else if (ev.key === ' ' || ev.key === 'Enter') { ev.preventDefault(); btn.click(); }
+  });
+
+  return player;
 }
 
 function renderFile(e) {
@@ -1455,8 +2060,49 @@ document.addEventListener('click', () => {
 
 function attachPick(mode) {
   attachMode = mode;
-  fileInput.accept = mode === 'photo' ? 'image/*' : mode === 'video' ? 'video/*' : '';
+  fileInput.accept = mode === 'photo' ? 'image/*' : mode === 'video' ? 'video/*'
+    : mode === 'audio' ? 'audio/*' : '';
   fileInput.click();
+}
+
+// Drag a file anywhere over the window to attach it: routed to the right kind
+// by MIME (image → photo, video → video, audio → audio, else document), then
+// the normal attach dialog opens for alt/caption + send.
+function dragHasFiles(e) {
+  return e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files');
+}
+function initDropZone() {
+  if (window._dropInit) return;
+  window._dropInit = true;
+  const ov = document.createElement('div');
+  ov.id = 'dropOverlay';
+  ov.innerHTML = '<div class="dh">⬇ Drop to send into this space</div>';
+  document.body.appendChild(ov);
+  let depth = 0;
+  const show = (on) => ov.classList.toggle('on', on);
+  window.addEventListener('dragenter', (e) => {
+    if (!dragHasFiles(e) || !current) return;
+    e.preventDefault(); depth++; show(true);
+  });
+  window.addEventListener('dragover', (e) => {
+    if (!dragHasFiles(e) || !current) return;
+    e.preventDefault(); e.dataTransfer.dropEffect = 'copy';
+  });
+  window.addEventListener('dragleave', (e) => {
+    if (!dragHasFiles(e)) return;
+    depth = Math.max(0, depth - 1); if (!depth) show(false);
+  });
+  window.addEventListener('drop', (e) => {
+    if (!dragHasFiles(e)) return;
+    e.preventDefault(); depth = 0; show(false);
+    const file = e.dataTransfer.files && e.dataTransfer.files[0];
+    if (!file) return;
+    if (!current) { alert('open a space first'); return; }
+    attachMode = file.type.startsWith('image/') ? 'photo'
+      : file.type.startsWith('video/') ? 'video'
+      : file.type.startsWith('audio/') ? 'audio' : 'doc';
+    onFilePicked(file);
+  });
 }
 
 // captureVideoPoster grabs a frame + duration/dimensions from a local file.
@@ -1468,21 +2114,20 @@ function captureVideoPoster(file) {
     const fail = () => { URL.revokeObjectURL(url); resolve(null); };
     v.onerror = fail;
     v.onloadedmetadata = () => { v.currentTime = Math.min(0.5, (v.duration || 1) / 2); };
-    v.onseeked = () => {
+    v.onseeked = async () => {
       try {
         const cv = document.createElement('canvas');
         const scale = Math.min(1, 480 / (v.videoWidth || 480));
         cv.width = Math.max(1, Math.round(v.videoWidth * scale));
         cv.height = Math.max(1, Math.round(v.videoHeight * scale));
         cv.getContext('2d').drawImage(v, 0, 0, cv.width, cv.height);
-        cv.toBlob((blob) => {
-          URL.revokeObjectURL(url);
-          resolve({
-            blob, dataURL: cv.toDataURL('image/webp', .8),
-            duration_ms: Math.round((v.duration || 0) * 1000),
-            width: v.videoWidth, height: v.videoHeight,
-          });
-        }, 'image/webp', .8);
+        const { blob, dataURL } = await encodeThumbUnder(cv, 36 << 10);
+        URL.revokeObjectURL(url);
+        resolve({
+          blob, dataURL,
+          duration_ms: Math.round((v.duration || 0) * 1000),
+          width: v.videoWidth, height: v.videoHeight,
+        });
       } catch (e) { fail(); }
     };
     v.src = url;
@@ -1496,16 +2141,37 @@ async function onFilePicked(file) {
   pendingVideoMeta = null;
   const isImage = attachMode === 'photo' || (attachMode === 'doc' && file.type.startsWith('image/'));
   const isVideo = attachMode === 'video' || (attachMode === 'doc' && file.type.startsWith('video/'));
-  pendingKind = isImage ? 'visual' : isVideo ? 'video' : 'file';
-  const withMedia = isImage || isVideo;
+  const isAudio = attachMode === 'audio' || (attachMode === 'doc' && file.type.startsWith('audio/'));
+  pendingKind = isImage ? 'visual' : isVideo ? 'video' : isAudio ? 'audio' : 'file';
   document.getElementById('attachTitle').textContent =
-    isImage ? 'Send a photo' : isVideo ? 'Send a video' : 'Send a document';
-  document.getElementById('attachAlt').style.display = withMedia ? '' : 'none';
-  document.getElementById('attachCaption').style.display = withMedia ? '' : 'none';
+    isImage ? 'Send a photo' : isVideo ? 'Send a video'
+      : isAudio ? 'Send audio' : 'Send a document';
+  // alt is required only for the visual kinds (it is how they reach text
+  // terminals); caption is offered for any media.
+  document.getElementById('attachAlt').style.display = (isImage || isVideo) ? '' : 'none';
+  document.getElementById('attachCaption').style.display = (isImage || isVideo || isAudio) ? '' : 'none';
   const prev = document.getElementById('attachPreview');
   prev.innerHTML = '';
   document.getElementById('attachWarn').textContent = '';
-  if (isImage) {
+  // The shared caption field doubles as the TITLE for audio (which has no
+  // caption); pre-fill it with the filename stem and relabel it.
+  const capField = document.getElementById('attachCaption');
+  if (isAudio) {
+    capField.value = file.name.replace(/\.[^/.]+$/, '');
+    capField.placeholder = 'title';
+  } else {
+    capField.value = '';
+    capField.placeholder = 'caption (optional)';
+  }
+  if (isAudio) {
+    pendingVideoMeta = { duration_ms: (typeof audioDurationMs === 'function' ? await audioDurationMs(file) : 0) };
+    prev.appendChild(makeAudioPlayer(URL.createObjectURL(file), null, pendingVideoMeta.duration_ms));
+    const meta = document.createElement('div');
+    meta.className = 'hint';
+    meta.textContent = `${file.name} · ${fmtBytes(file.size)}` +
+      (pendingVideoMeta.duration_ms ? ` · ${fmtDur(pendingVideoMeta.duration_ms)}` : '');
+    prev.appendChild(meta);
+  } else if (isImage) {
     const { blob, dataURL } = await makeThumb(file);
     pendingPreview = blob;
     const img = document.createElement('img'); img.src = dataURL;
@@ -1536,16 +2202,42 @@ async function onFilePicked(file) {
 }
 
 // Downscale + re-encode through a canvas: strips metadata, bounds size.
+function blobToDataURL(blob) {
+  return new Promise((res) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.readAsDataURL(blob); });
+}
+
+// encodeThumbUnder re-encodes a canvas to webp under maxBytes: it lowers
+// quality, then downscales, until it fits. The inline preview is a hard cap
+// (schemas.MaxInlinePreview = 40 KiB) that a detailed frame at fixed quality
+// can blow past ("preview too large") — this guarantees it never does.
+async function encodeThumbUnder(canvas, maxBytes) {
+  const toBlob = (c, q) => new Promise((r) => c.toBlob(r, 'image/webp', q));
+  let c = canvas;
+  for (let round = 0; round < 4; round++) {
+    for (const q of [0.8, 0.6, 0.45, 0.3, 0.2]) {
+      const blob = await toBlob(c, q);
+      if (blob && blob.size <= maxBytes) return { blob, dataURL: await blobToDataURL(blob) };
+    }
+    const nc = document.createElement('canvas');
+    nc.width = Math.max(1, Math.round(c.width * 0.7));
+    nc.height = Math.max(1, Math.round(c.height * 0.7));
+    nc.getContext('2d').drawImage(c, 0, 0, nc.width, nc.height);
+    c = nc;
+  }
+  const blob = await toBlob(c, 0.2);
+  return { blob, dataURL: await blobToDataURL(blob) };
+}
+
 function makeThumb(file) {
   return new Promise((resolve) => {
     const img = new Image();
-    img.onload = () => {
+    img.onload = async () => {
       const max = 480;
       let { width: w, height: h } = img;
       if (w > max || h > max) { const s = max / Math.max(w, h); w = Math.round(w*s); h = Math.round(h*s); }
       const c = document.createElement('canvas'); c.width = w; c.height = h;
       c.getContext('2d').drawImage(img, 0, 0, w, h);
-      c.toBlob(b => resolve({ blob: b, dataURL: c.toDataURL('image/webp', 0.7) }), 'image/webp', 0.7);
+      resolve(await encodeThumbUnder(c, 36 << 10)); // stay under the 40 KiB cap
     };
     img.src = URL.createObjectURL(file);
   });
@@ -1566,6 +2258,13 @@ async function sendAttachment() {
       meta.width = pendingVideoMeta.width;
       meta.height = pendingVideoMeta.height;
     }
+  } else if (pendingKind === 'audio') {
+    // Audio blocks carry a TITLE (there is no caption field); default it to
+    // the filename stem so it is never empty.
+    const stem = pendingFile.name.replace(/\.[^/.]+$/, '');
+    meta.title = document.getElementById('attachCaption').value.trim() || stem;
+    meta.filename = pendingFile.name;
+    if (pendingVideoMeta && pendingVideoMeta.duration_ms) meta.duration_ms = pendingVideoMeta.duration_ms;
   } else {
     meta.filename = pendingFile.name;
   }
@@ -1625,8 +2324,12 @@ async function toggleVoice() {
   mediaRecorder.onstop = () => {
     stream.getTracks().forEach(t => t.stop());
     voiceBlob = new Blob(voiceChunks, { type: voiceMIME });
-    document.getElementById('voicePreview').src = URL.createObjectURL(voiceBlob);
-    drawVoiceWave();
+    // Review the take with the house player — the recorded waveform is its
+    // scrubber, same as it will look in the feed.
+    const host = document.getElementById('voicePlayerHost');
+    host.innerHTML = '';
+    host.appendChild(makeAudioPlayer(URL.createObjectURL(voiceBlob),
+      compactWave(), Date.now() - voiceStart));
     dlgVoiceReview.showModal();
   };
   mediaRecorder.start(); sample();
@@ -1643,15 +2346,6 @@ function compactWave() {
     out.push(m);
   }
   return out;
-}
-
-function drawVoiceWave() {
-  const c = document.getElementById('voiceWave'), ctx = c.getContext('2d');
-  ctx.clearRect(0, 0, c.width, c.height);
-  const acc = getComputedStyle(document.documentElement).getPropertyValue('--acc').trim();
-  ctx.fillStyle = acc;
-  const w = compactWave();
-  w.forEach((v, i) => { const h = Math.max(2, (v/255)*c.height); ctx.fillRect(i*5, c.height-h, 3, h); });
 }
 
 async function sendVoice() {
@@ -1827,3 +2521,10 @@ checkOnboarding();
 checkPassDeepLink();
 refresh();
 setInterval(refresh, 2000);
+// QuietRank rides a slower tick of its own: attention is not a live feed,
+// and scanning every two seconds would burn CPU for nothing.
+if (typeof qrRefreshBadge === 'function') {
+  qrRefreshBadge();
+  setInterval(qrRefreshBadge, 8000);
+}
+initDropZone();

@@ -168,6 +168,7 @@ function renderListeningRoom(box, inst) {
     trackEnded: false, // session position ran past the track
     hostAway: false,
     lastMembersAt: 0,
+    fetchingAsset: null, // asset id we've kicked an auto-fetch for (once)
   };
 
   const title = document.createElement('div');
@@ -211,7 +212,10 @@ function renderListeningRoom(box, inst) {
     if (!s.command) return 'session idle · host starts it';
     const track = s.track || {};
     if (track.asset_state && track.asset_state !== 'complete') {
-      return 'track unavailable — fetch?';
+      if (track.asset_state === 'fetching' && track.asset_total) {
+        return `fetching track… ${(track.asset_total - track.asset_missing)}/${track.asset_total}`;
+      }
+      return 'fetching track…'; // auto-fetch is kicking in over the relay
     }
     if (st.hostAway && !s.i_am_host) return 'host away · playing the last command';
     if (st.trackEnded && s.command.action === 'play') return 'track ended · host can restart';
@@ -285,14 +289,14 @@ function renderListeningRoom(box, inst) {
       controls.appendChild(rs);
     }
     if ((s.track || {}).asset_state && s.track.asset_state !== 'complete') {
-      const f = document.createElement('button');
-      f.className = 'btn-plain';
-      f.textContent = '⬇ fetch track';
-      f.onclick = async () => {
-        f.textContent = 'requesting…';
-        try { await api(`/api/spaces/${current}/assets/${s.track.asset}/fetch`, { method: 'POST' }); } catch (e) {}
-      };
-      controls.appendChild(f);
+      // Media on-demand: pull the track over the relay automatically while the
+      // room is on screen — no manual tap. Guarded to fire once per track;
+      // autoFetchAsset polls to completion, then we refresh to attach the src.
+      if (s.track.asset && st.fetchingAsset !== s.track.asset) {
+        st.fetchingAsset = s.track.asset;
+        autoFetchAsset(s.track.asset, () => refreshSession());
+      }
+      controls.appendChild(makeWaterfall()); // flowing progress flourish
     }
     const unc = SYNC_CLOCK.uncertaintyMs();
     meta.textContent = s.command

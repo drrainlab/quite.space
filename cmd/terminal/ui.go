@@ -102,8 +102,8 @@ func runUI(args []string, withUI bool) error {
 	url := "http://" + addr + "/?token=" + api.Token()
 	fmt.Println("local API:", url)
 
-	if withUI && flags["no-browser"] == "" && runtime.GOOS == "darwin" {
-		_ = exec.Command("open", url).Start()
+	if withUI && flags["no-browser"] == "" {
+		openBrowser(url)
 	}
 
 	sig := make(chan os.Signal, 1)
@@ -111,4 +111,21 @@ func runUI(args []string, withUI bool) error {
 	<-sig
 	fmt.Println("\nshutting down")
 	return nil
+}
+
+// openBrowser launches the default browser at url on the host OS. Best-effort:
+// a headless box or a missing opener is a no-op — the tokened URL is printed
+// above either way.
+func openBrowser(url string) {
+	var cmd string
+	var args []string
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = "open"
+	case "windows":
+		cmd, args = "rundll32", []string{"url.dll,FileProtocolHandler"}
+	default: // linux, *bsd
+		cmd = "xdg-open"
+	}
+	_ = exec.Command(cmd, append(args, url)...).Start()
 }

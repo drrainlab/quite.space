@@ -50,8 +50,7 @@ async function refreshPosts() {
       if (p.cover) {
         const cov = document.createElement('div');
         cov.className = 'pub-card-cover';
-        cov.style.backgroundImage =
-          `url(/api/spaces/${current}/assets/${p.cover}?token=${token})`;
+        autoMediaBg(cov, p.cover); // fetch bytes on view (media on-demand)
         card.appendChild(cov);
       }
       const t = document.createElement('div');
@@ -66,6 +65,17 @@ async function refreshPosts() {
       m.className = 'pub-meta';
       m.textContent = `${p.kind} · ${p.comment_count} ${p.comment_count === 1 ? 'comment' : 'comments'}`;
       card.appendChild(m);
+      // PA-1 space-cards: categories render as chips on the card.
+      if (p.kind === 'space' && p.tags?.length) {
+        const chips = document.createElement('div');
+        chips.className = 'card-tags';
+        for (const tg of p.tags) {
+          const c = document.createElement('span');
+          c.className = 'tag-chip'; c.textContent = tg;
+          chips.appendChild(c);
+        }
+        card.appendChild(chips);
+      }
       card.onclick = () => openPub(p.document_id);
       card.onkeydown = (e) => { if (e.key === 'Enter') openPub(p.document_id); };
       feed.appendChild(card);
@@ -106,7 +116,7 @@ function renderArticle(p) {
     const cov = document.createElement('img');
     cov.className = 'pub-hero';
     cov.alt = '';
-    cov.src = `/api/spaces/${current}/assets/${doc.cover}?token=${token}`;
+    autoMediaSrc(cov, doc.cover); // fetch bytes on view (media on-demand)
     box.appendChild(cov);
   }
   const h = document.createElement('h2');
@@ -121,46 +131,128 @@ function renderArticle(p) {
     s.className = 'pub-summary'; s.textContent = doc.summary;
     box.appendChild(s);
   }
-  for (const b of doc.blocks || []) box.appendChild(renderPubBlock(b));
+  // PA-1 space-card: a prominent "Open space" action from the first link
+  // block's target (the qs share link).
+  if (doc.kind === 'space') {
+    const link = spaceCardLink(doc);
+    if (link) {
+      const open = document.createElement('button');
+      open.className = 'btn-filled'; open.textContent = 'Open space';
+      open.onclick = () => openSpaceCard(link);
+      box.appendChild(open);
+    }
+  }
+  for (const b of doc.blocks || []) {
+    // Space-cards surface their target via the prominent button above;
+    // skip the raw link block so it isn't offered twice.
+    if (doc.kind === 'space' && b.type === 'link' && (b.props?.text || '').startsWith('qs:')) continue;
+    box.appendChild(renderPubBlock(b));
+  }
 
   // Resonance on the STABLE target (survives revisions).
   box.appendChild(renderResonanceRow(p.resonance, p.reaction_target,
     () => openPub(openDocID)));
 
-  // Comments (thread-shaped model; flat render in v1).
+  // Comments (thread-shaped model; flat render in v1). The list lives in its
+  // own container so it can update LIVE without tearing down the listening
+  // room or the comment box the reader is typing in.
   const ch = document.createElement('h3');
-  ch.textContent = 'Comments';
+  ch.className = 'pub-comments-h'; ch.textContent = 'Comments';
   box.appendChild(ch);
-  for (const c of p.comments || []) {
-    const row = document.createElement('div');
-    row.className = 'pub-comment';
-    const who = document.createElement('span');
-    who.className = 'pub-comment-author';
-    who.textContent = PROTOCOL ? c.author : t('conv.member');
-    row.appendChild(who);
-    const txt = document.createElement('span');
-    txt.textContent = ' ' + c.text;
-    row.appendChild(txt);
-    box.appendChild(row);
-  }
-  const crow = document.createElement('div');
-  crow.className = 'row';
+  const clist = document.createElement('div');
+  clist.className = 'pub-comments'; clist.id = 'pubComments';
+  renderCommentList(clist, p.comments || []);
+  commentSig = commentsSignature(p.comments); // seed so polling only reacts to change
+  box.appendChild(clist);
+
+  const form = document.createElement('form');
+  form.className = 'pub-comment-form';
   const inp = document.createElement('input');
-  inp.placeholder = 'write a comment…';
-  crow.appendChild(inp);
+  inp.className = 'pub-comment-input';
+  inp.placeholder = 'Write a comment…';
+  form.appendChild(inp);
   const send = document.createElement('button');
+  send.type = 'submit';
   send.className = 'btn-tinted'; send.textContent = 'Send';
-  send.onclick = async () => {
-    if (!inp.value.trim()) return;
-    await api(`/api/spaces/${current}/publications/${openDocID}/comments`,
-      { method: 'POST', body: JSON.stringify({ text: inp.value.trim() }) });
-    openPub(openDocID);
+  form.appendChild(send);
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const text = inp.value.trim();
+    if (!text) return;
+    inp.value = ''; send.disabled = true;
+    try {
+      await api(`/api/spaces/${current}/publications/${openDocID}/comments`,
+        { method: 'POST', body: JSON.stringify({ text }) });
+      await refreshArticleComments();
+    } catch (err) { inp.value = text; }
+    send.disabled = false; inp.focus();
   };
-  crow.appendChild(send);
-  box.appendChild(crow);
+  box.appendChild(form);
 
   document.getElementById('pubFeed').style.display = 'none';
   box.style.display = '';
+  startCommentPoll(); // receive others' comments live while this article is open
+}
+
+// renderCommentList paints the flat comment thread into a container.
+function renderCommentList(container, comments) {
+  container.innerHTML = '';
+  if (!comments || !comments.length) {
+    const empty = document.createElement('div');
+    empty.className = 'pub-comment-empty';
+    empty.textContent = 'No comments yet — be the first.';
+    container.appendChild(empty);
+    return;
+  }
+  // Newest first: the list is stored oldest→newest (deterministic), we render
+  // it reversed so the latest comment sits at the top.
+  for (const c of [...comments].reverse()) {
+    const row = document.createElement('div');
+    row.className = 'pub-comment' + (c.mine ? ' mine' : '');
+    const av = document.createElement('span');
+    av.className = 'pub-comment-av glyph g18';
+    if (typeof glyphSVG === 'function') av.innerHTML = glyphSVG(c.author || 'x', 'human', 18);
+    row.appendChild(av);
+    const body = document.createElement('div');
+    body.className = 'pub-comment-body';
+    const who = document.createElement('span');
+    who.className = 'pub-comment-author';
+    // Real display name when we have it; the protocol view shows the raw
+    // principal; otherwise a neutral fallback.
+    who.textContent = c.mine ? t('conv.you')
+      : PROTOCOL ? (c.author || '')
+      : (c.author_name || t('conv.member'));
+    body.appendChild(who);
+    const txt = document.createElement('div');
+    txt.className = 'pub-comment-text'; txt.textContent = c.text;
+    body.appendChild(txt);
+    row.appendChild(body);
+    container.appendChild(row);
+  }
+}
+
+let commentSig = '';
+let commentTimer = null;
+function commentsSignature(comments) {
+  return (comments || []).map(c => (c.author || '') + '' + c.text).join('');
+}
+async function refreshArticleComments() {
+  if (!openDocID) return;
+  try {
+    const p = await api(`/api/spaces/${current}/publications/${openDocID}`);
+    const sig = commentsSignature(p.comments);
+    const c = document.getElementById('pubComments');
+    if (c && sig !== commentSig) { commentSig = sig; renderCommentList(c, p.comments || []); }
+  } catch (e) { /* transient — keep the current view */ }
+}
+function stopCommentPoll() { if (commentTimer) { clearInterval(commentTimer); commentTimer = null; } }
+function startCommentPoll() {
+  stopCommentPoll();
+  commentTimer = setInterval(() => {
+    const box = document.getElementById('pubArticle');
+    if (!box || box.style.display === 'none' || !openDocID) { stopCommentPoll(); return; }
+    refreshArticleComments();
+  }, 3500);
 }
 
 // renderPubBlock builds DOM for one block; unknown types degrade honestly.
@@ -196,6 +288,14 @@ function renderPubBlock(b) {
       pre.textContent = p.text || ''; el.appendChild(pre); break;
     }
     case 'link': {
+      // PA-1: a "qs:" bearer link opens a space in-app, not a dead href.
+      if ((p.text || '').startsWith('qs:')) {
+        const b = document.createElement('button');
+        b.className = 'btn-plain';
+        b.textContent = p.more || 'Open space';
+        b.onclick = () => openSpaceCard(p.text);
+        el.appendChild(b); break;
+      }
       const a = document.createElement('a');
       a.href = p.text || '#'; a.target = '_blank'; a.rel = 'noopener noreferrer';
       a.textContent = p.more || p.text || 'link'; el.appendChild(a); break;
@@ -264,14 +364,13 @@ function pubAssetNode(kind, p) {
   if (kind === 'audio' && p.asset) {
     const au = document.createElement('audio');
     au.controls = true;
-    au.src = `/api/spaces/${current}/assets/${p.asset}?token=${token}`;
+    autoMediaSrc(au, p.asset); // fetch bytes on view (media on-demand)
     wrap.appendChild(au);
   } else if (kind === 'image' && p.asset) {
     const img = document.createElement('img');
     img.alt = p.text || '';
-    const src = `/api/spaces/${current}/assets/${p.asset}?token=${token}`;
-    img.src = src;
-    img.onclick = () => window.open(src, '_blank'); // zoom: original full-size
+    autoMediaSrc(img, p.asset); // fetch bytes on view (media on-demand)
+    img.onclick = () => window.open(assetURL(p.asset), '_blank'); // zoom: full-size
     wrap.appendChild(img);
   } else {
     const a = document.createElement('a');
@@ -321,6 +420,24 @@ function renderComposerChips() {
       }, 30);
     };
     box.appendChild(chip);
+  }
+}
+
+// onKindChange: picking "space card" seeds the space-link template so the
+// author only has to paste the share link. A catalog is any public
+// broadcast space whose posts are these cards — no separate marker.
+function onKindChange() {
+  const kind = document.getElementById('compKind').value;
+  composerDoc.kind = kind;
+  if (kind === 'space' && !(composerDoc.blocks || []).some(b => b.type === 'link')) {
+    composerDoc.blocks = composerDoc.blocks || [];
+    composerDoc.blocks.push({
+      id: 'b' + randHex16().slice(0, 8), type: 'link',
+      props: { text: '', more: 'Open this space' },
+    });
+    renderComposerBlocks();
+    const msg = document.getElementById('compMsg');
+    if (msg) msg.textContent = 'Paste the space’s share link into the link block below.';
   }
 }
 
@@ -603,6 +720,18 @@ function collectComposerDoc() {
   composerDoc.title = document.getElementById('compTitle').value.trim();
   composerDoc.summary = document.getElementById('compSummary').value.trim();
   composerDoc.kind = document.getElementById('compKind').value;
+  // PA-1 space-card: normalize the pasted share link into the "qs:" scheme
+  // so it validates as a bearer link (not an http URL) and openSpaceCard
+  // can round-trip it back to /api/public/open.
+  if (composerDoc.kind === 'space') {
+    for (const b of composerDoc.blocks || []) {
+      if (b.type === 'link' && b.props?.text) {
+        const raw = b.props.text.trim();
+        b.props.text = raw && !raw.startsWith('qs:') && !/^https?:/.test(raw)
+          ? 'qs:' + raw : raw;
+      }
+    }
+  }
   return composerDoc;
 }
 

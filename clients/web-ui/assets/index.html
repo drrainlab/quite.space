@@ -13,7 +13,6 @@
     role="button" aria-label="Connection details"><span class="dot"></span><span id="connText">Not connected</span></span>
   <span style="flex:1"></span>
   <span id="mesh" class="dim mono" onclick="dlgMesh.showModal()" style="cursor:pointer" title="Meshtastic radio" tabindex="0"></span>
-  <span id="relayBtn" class="dim mono" onclick="dlgRelay.showModal()" style="cursor:pointer" title="blind relay" tabindex="0">relay</span>
   <span id="protoToggle" class="dim mono" onclick="toggleProtocol()" style="cursor:pointer" tabindex="0" role="button"
     title="Protocol view — the technical layer"></span>
   <button class="icon-btn" onclick="openSettings()" title="Settings" aria-label="Settings">⚙</button>
@@ -24,6 +23,8 @@
     <div class="row">
       <button onclick="openWizard()">+ space</button>
       <button onclick="openJoinDialog()">join</button>
+      <button onclick="openDiscover()">discover</button>
+      <button id="signalsBtn" onclick="openSignals()">signals</button>
       <button onclick="showIdentity()">me</button>
     </div>
     <div id="spaces"></div>
@@ -37,6 +38,8 @@
         <button data-v="shelf" onclick="switchView('shelf')">Shelf</button>
       </div>
       <span style="flex:1"></span>
+      <span id="visBadge" class="vis-badge" style="display:none"></span>
+      <button id="shareLinkBtn" class="btn-plain" style="display:none" onclick="copyPublicLink()">Share link</button>
       <button id="newPostBtn" class="btn-tinted" onclick="openComposer(null,'')">✍ New post</button>
       <button id="customizeBtn" class="icon-btn" style="display:none" onclick="openCustomize()" title="Customize" aria-label="Customize space">🎨</button>
       <button id="resPalBtn" class="icon-btn" style="display:none" onclick="openResPaletteEditor()" title="Reaction palette" aria-label="Reaction palette">✧</button>
@@ -52,23 +55,46 @@
     </div>
     <div id="shelf" style="display:none"></div>
     <div id="log"></div>
+    <div id="replyBar" style="display:none"></div>
     <form id="composer" onsubmit="return say(event)">
       <div id="attachWrap">
         <button type="button" class="ic" onclick="toggleAttachMenu(event)" title="attach" aria-label="Attach">📎</button>
         <div id="attachMenu" class="attach-menu" style="display:none">
           <button type="button" onclick="attachPick('photo')">🖼 Photo</button>
           <button type="button" onclick="attachPick('video')">🎬 Video</button>
+          <button type="button" onclick="attachPick('audio')">🎵 Audio</button>
           <button type="button" onclick="attachPick('doc')">📄 Document</button>
         </div>
       </div>
       <button type="button" class="ic" id="voiceBtn" onclick="toggleVoice()" title="record voice" aria-label="Record voice message">🎙</button>
-      <input id="text" placeholder="write into the space…" autocomplete="off">
+      <input id="text" placeholder="write into the space…" autocomplete="off"
+             oninput="mentionsOnInput(event); mentionsRenderChips()"
+             onkeydown="if (mentionsOnKeydown(event)) return false;"
+             onblur="mentionsClosePicker()">
       <select id="presence" onchange="setPresence(this.value)" title="presence (TTL 5 min)">
         <option value="">presence…</option>
       </select>
       <button type="submit" style="border:0">send</button>
     </form>
+    <div id="readerBar" style="display:none">
+      <button id="joinWriteBtn" class="btn-tinted" style="display:none" onclick="joinCurrentPublic()">Join to write</button>
+      <span id="readOnlyNote" class="hint" style="display:none"></span>
+    </div>
     <input type="file" id="fileInput" style="display:none" onchange="onFilePicked(this.files[0])">
+  </div>
+  <!-- QuietRank: a cross-space inbox, not a fourth tab inside one space. -->
+  <div id="signalsScreen" style="display:none">
+    <div class="sig-bar">
+      <button class="btn-plain" onclick="closeSignals()">← back</button>
+      <h3 style="margin:0">Signals</h3>
+      <div class="segmented" id="sigFilter">
+        <button data-f="all" class="sel" onclick="qrSetFilter('all')">All</button>
+        <button data-f="priority" onclick="qrSetFilter('priority')">Priority</button>
+        <button data-f="digest" onclick="qrSetFilter('digest')">Digest</button>
+      </div>
+      <button class="btn-plain" onclick="qrMarkAllSeen()">mark all read</button>
+    </div>
+    <div id="sigList"></div>
   </div>
   <div id="members"></div>
 </main>
@@ -85,8 +111,7 @@
 
 <dialog id="dlgVoiceReview">
   <h3>voice message</h3>
-  <canvas id="voiceWave" width="260" height="48"></canvas>
-  <audio id="voicePreview" controls style="width:100%"></audio>
+  <div id="voicePlayerHost"></div>
   <input id="voiceTranscript" placeholder="transcript (optional, but the real fallback on text terminals)">
   <div class="row"><button onclick="sendVoice()">send</button>
   <button onclick="dlgVoiceReview.close()">discard</button></div>
@@ -159,6 +184,17 @@
     <h3>4 · what should it remember?</h3>
     <div id="memOpts"></div>
     <input id="wTitle" placeholder="name of the place">
+    <div class="wiz-vis">
+      <div class="segmented" id="wVisibility">
+        <button data-v="private" class="sel" onclick="pickWizVis('private')">Private</button>
+        <button data-v="public" onclick="pickWizVis('public')">Public by link</button>
+      </div>
+      <div class="segmented" id="wPublicMode" style="display:none">
+        <button data-v="community" class="sel" onclick="pickWizMode('community')">Community · anyone may join &amp; write</button>
+        <button data-v="broadcast" onclick="pickWizMode('broadcast')">Broadcast · only you post</button>
+      </div>
+      <p class="hint" id="wVisHint" style="display:none">Anyone who obtains the link can read this space. Access cannot currently be revoked.</p>
+    </div>
     <div class="row"><button onclick="wizStep(3)">back</button>
     <button onclick="wizCreate()">create the place</button></div>
   </div>
@@ -166,6 +202,50 @@
 
 <!-- Enter with a pass (UI-2): an explicit async state machine. Pending never
      means access — the space opens only after the owner's device confirms. -->
+<!-- PA-1: owner-only Access sheet for public spaces (badge click). -->
+<dialog id="dlgAccess" class="sheet">
+  <h3>Access</h3>
+  <div class="settings-sec">
+    <div class="list">
+      <div class="list-row">
+        <span class="lr-label">Listing</span>
+        <div class="segmented" id="accVis">
+          <button data-v="unlisted" onclick="setAccessVis('unlisted')">Unlisted</button>
+          <button data-v="public" onclick="setAccessVis('public')">Public</button>
+        </div>
+      </div>
+      <div class="list-row">
+        <span class="lr-label">Mode</span>
+        <div class="segmented" id="accMode">
+          <button data-v="all" onclick="setAccessMode('all')">Community</button>
+          <button data-v="curated" onclick="setAccessMode('curated')">Broadcast</button>
+        </div>
+      </div>
+    </div>
+    <p class="hint">Community: anyone may join and write. Broadcast: only you and curators post. Existing posts always remain — policy never rewrites history.</p>
+  </div>
+  <div class="settings-sec">
+    <p class="hint">Curators</p>
+    <div id="accCurators" class="list"></div>
+    <div class="list">
+      <div class="list-row"><span class="lr-label">Principal</span>
+        <input type="text" id="accCurPrin" placeholder="principal id (hex)"></div>
+      <div class="list-row"><span class="lr-label">Device</span>
+        <input type="text" id="accCurDev" placeholder="device id (hex)"></div>
+    </div>
+    <div class="row"><button class="btn-plain" onclick="addCurator()">Add curator device</button></div>
+    <p class="hint">A curator is a specific device of a specific person — they can post the moment you add them.</p>
+  </div>
+  <div class="settings-sec">
+    <div class="row">
+      <button class="btn-plain" id="accFreezeBtn" onclick="toggleFreeze()">Freeze publication</button>
+    </div>
+    <p class="hint" id="accFreezeHint">Freeze pauses ALL publication — including yours. Readers see an honest “frozen” state; contributors keep drafts locally until you unfreeze.</p>
+  </div>
+  <p class="hint" id="accMsg" style="margin-left:4px"></p>
+  <div class="row" style="justify-content:flex-end"><button class="btn-filled" onclick="dlgAccess.close()">Done</button></div>
+</dialog>
+
 <dialog id="dlgJoin">
   <div id="joinInput">
     <h3 id="joinTitle">Enter with a pass</h3>
@@ -188,7 +268,7 @@
 <!-- Space Pass card (§12): the human invitation mechanic. A signed right to
      ask to enter — no keys travel in it. -->
 <dialog id="dlgPass">
-  <div class="pass-card glass">
+  <div class="pass-card">
     <div class="pass-head">
       <span class="glyph g48" id="passGlyph"></span>
       <div>
@@ -201,12 +281,18 @@
       <p class="hint" id="passVerifyHint"></p>
       <p class="verify-phrase" id="passPhrase"></p>
       <p class="pass-terms" id="passTerms"></p>
-      <div id="passQr" style="text-align:center;margin:8px 0"></div>
-      <p class="out" id="passLink" style="font-size:11px;max-height:54px;overflow:auto"></p>
+      <div class="pass-share">
+        <div class="pass-qr-view">
+          <div class="pass-qr-tile"><div id="passQr"></div></div>
+          <span class="pass-scan"></span>
+        </div>
+        <div class="pass-code">
+          <span class="pass-code-label">pass code</span>
+          <p class="out" id="passLink"></p>
+        </div>
+      </div>
     </div>
     <div id="passConfig">
-      <p class="hint" id="passRelayLabel"></p>
-      <input id="passRelay" placeholder="relay address, e.g. 192.168.1.10:7411">
       <div class="row" style="margin-top:8px">
         <label class="pass-opt">Who <select id="passUses"><option value="1">one person</option><option value="10">up to 10</option></select></label>
         <label class="pass-opt">For <select id="passTtl"><option value="1">1 hour</option><option value="24" selected>24 hours</option><option value="168">7 days</option></select></label>
@@ -253,8 +339,14 @@
 
 <dialog id="dlgSettings" class="sheet">
   <h3>Settings</h3>
+  <div class="segmented settings-tabs" id="setTabs">
+    <button data-cat="appearance" onclick="showSettingsCat('appearance')">Appearance</button>
+    <button data-cat="relay" onclick="showSettingsCat('relay')">Relay</button>
+    <button data-cat="attention" onclick="showSettingsCat('attention'); qrLoadSettings()">Attention</button>
+    <button data-cat="ai" onclick="showSettingsCat('ai')">AI</button>
+  </div>
+  <div class="settings-cat" data-cat="appearance">
   <div class="settings-sec">
-    <p class="hint">Appearance</p>
     <div class="list">
       <div class="list-row">
         <span class="lr-label">Theme</span>
@@ -293,12 +385,18 @@
       </div>
     </div>
   </div>
+  </div>
+  <div class="settings-cat" data-cat="relay">
   <div class="settings-sec">
-    <p class="hint">Relay · sync when off your network</p>
+    <p class="hint">Sync when off your network</p>
     <div class="list">
       <div class="list-row">
-        <span class="lr-label">Address<span class="lr-sub"> · a blind relay carries encrypted bundles</span></span>
+        <span class="lr-label">Address</span>
         <input type="text" id="relaySetAddr" placeholder="host:port, e.g. 203.0.113.7:7411 (blank = off)">
+      </div>
+      <div class="list-row">
+        <span class="lr-label">Sync every<span class="lr-sub"> (s)</span></span>
+        <input type="number" id="relaySetInterval" min="1" max="3600" step="1" placeholder="2">
       </div>
     </div>
     <p class="hint" id="relaySetMsg" style="margin-left:4px"></p>
@@ -306,9 +404,79 @@
       <button class="btn-tinted" onclick="saveRelay()">Save &amp; sync</button>
     </div>
     <p class="hint" style="margin-left:4px">Set an address and this device pushes &amp; pulls automatically every few seconds. Media stays on-demand — only text and manifests travel; open a media card to fetch its bytes. “Accepted by relay” is never “delivered”.</p>
+    <div id="relayPublicPanel" class="relay-public"></div>
   </div>
   <div class="settings-sec">
-    <p class="hint">AI regeneration</p>
+    <p class="hint">Manual · one-off hand-off</p>
+    <div class="row">
+      <button class="btn-plain" onclick="relayPush()">Push current space</button>
+      <button class="btn-plain" onclick="relayPull()">Pull for all spaces</button>
+    </div>
+    <p class="hint" id="relayInfo" style="margin-left:4px"></p>
+    <p class="hint" style="margin-left:4px">Uses the address above. A full dead-drop (media included) for the current space, or a one-time collect for every space — handy before going offline. Auto-sync above already keeps text flowing.</p>
+  </div>
+  <div class="settings-sec">
+    <p class="hint">Discover · catalog</p>
+    <div class="list">
+      <div class="list-row">
+        <span class="lr-label">Catalog link</span>
+        <input type="text" id="catalogLink" placeholder="paste a catalog space link (blank = official)">
+      </div>
+    </div>
+    <div class="row"><button class="btn-plain" onclick="saveCatalog()">Save catalog</button></div>
+    <p class="hint" id="catalogMsg" style="margin-left:4px"></p>
+    <p class="hint" style="margin-left:4px">“Discover” opens this catalog — itself just a public broadcast space of space-cards. Point it anywhere: anyone can run their own catalog.</p>
+  </div>
+  </div>
+  <div class="settings-cat" data-cat="attention">
+  <div class="settings-sec">
+    <p class="hint">Local AI attention</p>
+    <div class="segmented" id="attnMode">
+      <button data-v="off" onclick="qrPickMode('off')">Off</button>
+      <button data-v="minimal" class="sel" onclick="qrPickMode('minimal')">Minimal</button>
+      <button data-v="custom" onclick="qrPickMode('custom')">Custom</button>
+    </div>
+    <p class="hint" style="margin-left:4px">Notices questions, replies and messages addressed to you. Everything is processed on this device — nothing is sent to an external AI, and what caught your attention never leaves your machine.</p>
+  </div>
+  <div class="settings-sec">
+    <p class="hint">Your names</p>
+    <div class="list"><div class="list-row">
+      <span class="lr-label">Aliases<span class="lr-sub"> comma separated</span></span>
+      <input type="text" id="attnAliases" placeholder="Глеб, gleb">
+    </div></div>
+    <p class="hint" style="margin-left:4px">Used to spot when someone writes to you by name. Explicit, because guessing name forms fires on ordinary words.</p>
+  </div>
+  <div class="settings-sec">
+    <p class="hint">What you care about</p>
+    <textarea id="attnWatched" rows="4" placeholder="mesh-сети и автономная связь&#10;open-source CAD&#10;предложения о сотрудничестве"></textarea>
+    <p class="hint" style="margin-left:4px">One per line. Matched as phrases today; a later wave adds cross-language meaning.</p>
+  </div>
+  <div class="settings-sec">
+    <p class="hint">How often it may interrupt</p>
+    <div class="list">
+      <div class="list-row"><span class="lr-label">Max per day</span>
+        <input type="number" id="attnMaxDay" min="0" max="200"></div>
+      <div class="list-row"><span class="lr-label">Min gap<span class="lr-sub"> seconds</span></span>
+        <input type="number" id="attnGap" min="0" max="86400"></div>
+      <div class="list-row"><span class="lr-label">Quiet hours</span>
+        <input type="checkbox" id="attnQuiet" style="width:auto"></div>
+      <div class="list-row"><span class="lr-label">From / to<span class="lr-sub"> hour</span></span>
+        <input type="number" id="attnQuietFrom" min="0" max="23" style="width:70px">
+        <input type="number" id="attnQuietTo" min="0" max="23" style="width:70px"></div>
+    </div>
+    <p class="hint" style="margin-left:4px">Over-budget signals move to the digest — they are never dropped.</p>
+  </div>
+  <div class="settings-sec">
+    <div class="row">
+      <button class="btn-tinted" onclick="qrSaveSettings()">Save</button>
+      <button class="btn-plain" onclick="qrForget()">Delete what it learned</button>
+    </div>
+    <p class="hint" id="attnMsg" style="margin-left:4px"></p>
+  </div>
+  </div>
+
+  <div class="settings-cat" data-cat="ai">
+  <div class="settings-sec">
     <div class="list">
       <div class="list-row">
         <span class="lr-label">Provider</span>
@@ -332,6 +500,7 @@
       <button class="btn-plain" onclick="testLLM()">Test connection</button>
     </div>
     <p class="hint" style="margin-left:4px">Your key never leaves this device except to reach the provider you choose. Local models need no key.</p>
+  </div>
   </div>
   <div class="row" style="justify-content:flex-end"><button class="btn-filled" onclick="dlgSettings.close()">Done</button></div>
 </dialog>
@@ -370,9 +539,10 @@
 <dialog id="dlgComposer" class="sheet composer-sheet">
   <div class="comp-head">
     <h3 style="margin:0">Compose a post</h3>
-    <select id="compKind" class="comp-kind">
+    <select id="compKind" class="comp-kind" onchange="onKindChange()">
       <option value="article">article</option><option value="note">note</option>
       <option value="release">release</option><option value="log">log</option>
+      <option value="space">space card</option>
     </select>
   </div>
   <div id="compCover"></div>
@@ -464,20 +634,6 @@
   <p class="hint" id="meshInfo"></p>
 </dialog>
 
-<dialog id="dlgRelay">
-  <h3>blind relay</h3>
-  <p class="hint">a relay holds encrypted bundles for peers who are offline.
-  It sees a rotating hint and ciphertext — nothing else. Its receipt means
-  <b>accepted by relay</b>, never “delivered”.</p>
-  <input id="relayAddr" placeholder="relay address, e.g. 192.168.1.10:7411">
-  <div class="row">
-    <button onclick="relayPush()">push current space</button>
-    <button onclick="relayPull()">pull for all spaces</button>
-    <button onclick="dlgRelay.close()">close</button>
-  </div>
-  <p class="hint" id="relayInfo"></p>
-</dialog>
-
 <dialog id="dlgInvite">
   <h3>invite to <span id="invSpace"></span></h3>
   <input id="invDevice" placeholder="peer device id (hex)">
@@ -540,6 +696,8 @@
 <script src="resonance.js"></script>
 <script src="effects.js"></script>
 <script src="shelf.js"></script>
+<script src="mentions.js"></script>
+<script src="quietrank.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

@@ -248,6 +248,19 @@ func (r *Runtime) RequestAsset(space id.TerminalID, asset string) error {
 // chunks; peers tried sequentially (plan §5: no fan-out duplication).
 func (r *Runtime) fetchLoop(key AssetKey, ref *schemas.AssetRef, st *spaceState) FetchReason {
 	deadline := time.Now().Add(2 * time.Minute)
+	relayAddr := r.GetSettings().Relay
+	// Track hashes we asked for over the relay so we can stop asking on exit.
+	registered := map[id.Hash]struct{}{}
+	defer func() {
+		if len(registered) == 0 {
+			return
+		}
+		hs := make([]id.Hash, 0, len(registered))
+		for h := range registered {
+			hs = append(hs, h)
+		}
+		r.clearRelayWants(key.Space, hs)
+	}()
 	for attempt := 0; time.Now().Before(deadline); attempt++ {
 		r.mu.Lock()
 		res, err := assets.Missing(r.root, ref)
@@ -268,7 +281,34 @@ func (r *Runtime) fetchLoop(key AssetKey, ref *schemas.AssetRef, st *spaceState)
 		r.mu.Unlock()
 
 		if len(conns) == 0 {
-			return ReasonNoPeers
+			// No direct peer. If a relay is configured, register the missing
+			// blobs as a request: the background auto-sync push rides them to
+			// peers, a holder answers into our inbox, and PullFromRelay stores
+			// the bytes — we just wait here for the asset to complete.
+			if relayAddr == "" {
+				return ReasonNoPeers
+			}
+			// Keep the want set equal to what's STILL missing: drop hashes that
+			// have since arrived. Otherwise a >budget asset keeps asking for
+			// chunks it already has, and the holder refills each response with
+			// the same early chunks — the tail never ships and the fetch stalls.
+			wantSet := make(map[id.Hash]struct{}, len(want))
+			for _, h := range want {
+				wantSet[h] = struct{}{}
+			}
+			var satisfied []id.Hash
+			for h := range registered {
+				if _, still := wantSet[h]; !still {
+					satisfied = append(satisfied, h)
+				}
+			}
+			if len(satisfied) > 0 {
+				r.clearRelayWants(key.Space, satisfied)
+			}
+			r.addRelayWants(key.Space, want)
+			registered = wantSet
+			time.Sleep(600 * time.Millisecond)
+			continue
 		}
 		peer := conns[attempt%len(conns)]
 		if closed, _ := peer.Closed(); closed {
