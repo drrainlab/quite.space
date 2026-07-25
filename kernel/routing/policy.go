@@ -5,6 +5,7 @@
 package routing
 
 import (
+	"errors"
 	"strings"
 	"sync"
 	"time"
@@ -44,6 +45,14 @@ var radioAdmittedPrefixes = []string{
 	"card.", "publication.", "appdef.", "poll.", "form.", "appearance.",
 	"composition.", "space.", "listening.",
 }
+
+// ErrTooLarge marks a frame that will never fit this carrier. It is not
+// ErrNoRoom: a full store empties, so refusing for space is temporary and
+// the sender should retry. Size is permanent for this link, and retrying it
+// on radio spends airtime to fail identically every time. The two must be
+// distinguishable or a message that needs a broadband path sits in a retry
+// loop that cannot succeed.
+var ErrTooLarge = errors.New("routing: frame exceeds what this carrier can send")
 
 // RadioAdmits decides whether a frame may occupy radio custody/airtime.
 func RadioAdmits(schema string, size int) bool {

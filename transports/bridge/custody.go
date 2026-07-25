@@ -376,7 +376,10 @@ func (b *Bridge) sendOnRadio(msg []byte) error {
 // the sender hears about the withdrawal.
 func (b *Bridge) releaseUnairable(rec *routing.CustodyRecord, now time.Time) {
 	if rec.Guaranteed {
-		// Given up early, not run out of time.
+		// Given up early, not run out of time. The sender needs to know
+		// promptly, because retrying this frame on this carrier will fail
+		// the same way every time — it is a size problem, not a space one,
+		// and it wants a broadband path rather than another attempt here.
 		b.noteLapsed([]*routing.CustodyRecord{rec}, ackLapsed, now)
 	}
 	b.queue.Ack(rec.ID)

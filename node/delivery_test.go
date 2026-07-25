@@ -431,3 +431,175 @@ func TestCustodyAppliesOnlyToTheBatchThatWasSent(t *testing.T) {
 		t.Fatalf("the acknowledged event is not in custody: %+v", covered)
 	}
 }
+
+// multiFixture is one node with three tracked events in one space, so the
+// per-frame custody model can be exercised on a real batch.
+type multiFixture struct {
+	*custodyFixture
+	ids []id.EventID
+}
+
+func newMultiFixture(t *testing.T) *multiFixture {
+	t.Helper()
+	f := newCustodyFixture(t)
+	ids := []id.EventID{f.eid}
+	for _, text := range []string{"second of the batch", "third of the batch"} {
+		e, err := f.rt.Say(f.tid, text, SayOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, e)
+	}
+	return &multiFixture{custodyFixture: f, ids: ids}
+}
+
+// signFor builds a receipt naming an arbitrary subset of the batch.
+func (m *multiFixture) signFor(t *testing.T, kind bridge.ReceiptKind, attempt []byte,
+	lease string, expires time.Time, frames ...id.EventID) *bridge.CustodyReceipt {
+
+	t.Helper()
+
+	r := &bridge.CustodyReceipt{
+		FrameIDs:    frames,
+		StoreID:     "store",
+		AcceptedAt:  uint64(m.now.Unix()),
+		ExpiresAt:   uint64(expires.Unix()),
+		Instance:    "gw0",
+		Kind:        kind,
+		Attempt:     attempt,
+		Lease:       lease,
+		IngressLink: "mesh:test",
+		LoopDomain:  "radio",
+	}
+	decoded, err := bridge.DecodeReceipt(r.Sign(m.priv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return decoded
+}
+
+// applyAll runs the machine for every frame the receipt names, exactly as
+// the engine callback does.
+func (m *multiFixture) applyAll(rec *bridge.CustodyReceipt) {
+	m.rt.mu.Lock()
+	defer m.rt.mu.Unlock()
+	for _, eid := range rec.FrameIDs {
+		m.rt.applyReceiptToLedger(eid, rec, m.now)
+	}
+}
+
+func (m *multiFixture) get(t *testing.T, eid id.EventID) DeliveryIntent {
+	t.Helper()
+	in, ok := m.rt.ledger.Get(eid)
+	if !ok {
+		t.Fatal("intent missing")
+	}
+	return in
+}
+
+// A batch is the unit of TRANSMISSION, not of custody. The gateway takes
+// what it can and says so; the frames it did not name stay ours.
+//
+// Refusing the whole batch because one frame did not fit would block every
+// message behind it — on a link where airtime is the scarce resource, that
+// is the expensive kind of wrong.
+func TestPartialCustodyLeavesUnnamedFramesRetryable(t *testing.T) {
+	m := newMultiFixture(t)
+	attempt := m.openAttempt(t)
+	a, b, c := m.ids[0], m.ids[1], m.ids[2]
+
+	// The gateway had room for A and C but not B.
+	m.applyAll(m.signFor(t, bridge.ReceiptAccepted, attempt[:], "L-AC",
+		m.now.Add(time.Hour), a, c))
+
+	for _, eid := range []id.EventID{a, c} {
+		in := m.get(t, eid)
+		if in.State != IntentCustody || in.Lease != "L-AC" {
+			t.Fatalf("an accepted frame is not in custody: %+v", in)
+		}
+	}
+	unnamed := m.get(t, b)
+	if unnamed.State == IntentCustody {
+		t.Fatal("a frame the gateway never named was put in custody")
+	}
+	if unnamed.Lease != "" {
+		t.Fatalf("a lease leaked to an unnamed frame: %q", unnamed.Lease)
+	}
+	if unnamed.Proof >= claims.DeliveryAcceptedByRelay {
+		t.Fatalf("proof was raised for an unnamed frame: %v", unnamed.Proof)
+	}
+	// It is still ours to send.
+	due := m.rt.ledger.Due(m.now, 10)
+	var found bool
+	for _, in := range due {
+		if in.EventID == b {
+			found = true
+		}
+		if in.EventID == a || in.EventID == c {
+			t.Fatal("a frame in custody is still being retried")
+		}
+	}
+	if !found {
+		t.Fatal("the refused frame stopped being retryable")
+	}
+}
+
+// A late receipt for the accepted frames must not touch a frame authored
+// afterwards, even though it shares the attempt token.
+func TestLateReceiptDoesNotReachAFrameAuthoredLater(t *testing.T) {
+	m := newMultiFixture(t)
+	attempt := m.openAttempt(t)
+	a, c := m.ids[0], m.ids[2]
+	accepted := m.signFor(t, bridge.ReceiptAccepted, attempt[:], "L-AC",
+		m.now.Add(time.Hour), a, c)
+	m.applyAll(accepted)
+
+	// D joins the running epoch after the batch went out.
+	d, err := m.rt.Say(m.tid, "authored after the batch", SayOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.rt.mu.Lock()
+	same, _ := m.rt.openAttempt(m.tid, m.now)
+	m.rt.mu.Unlock()
+	if same != attempt {
+		t.Fatal("setup: D did not join the running epoch")
+	}
+
+	// The same receipt arrives again, delayed.
+	m.applyAll(accepted)
+
+	in := m.get(t, d)
+	if in.State == IntentCustody || in.Lease != "" {
+		t.Fatalf("a receipt reached a frame it never named, on the strength "+
+			"of a shared attempt token: %+v", in)
+	}
+}
+
+// The gateway comes back for the frame it could not fit, under its own
+// lease. Two leases coexist within one attempt without conflicting: they
+// cover disjoint frames, and the conflict rule is about one FRAME held by
+// two leases, not one attempt spanning several.
+func TestRefusedFrameLaterAcceptedUnderItsOwnLease(t *testing.T) {
+	m := newMultiFixture(t)
+	attempt := m.openAttempt(t)
+	a, b, c := m.ids[0], m.ids[1], m.ids[2]
+
+	m.applyAll(m.signFor(t, bridge.ReceiptAccepted, attempt[:], "L-AC",
+		m.now.Add(time.Hour), a, c))
+	// Room frees up; B is taken under a different lease.
+	m.applyAll(m.signFor(t, bridge.ReceiptAccepted, attempt[:], "L-B",
+		m.now.Add(time.Hour), b))
+
+	if in := m.get(t, b); in.State != IntentCustody || in.Lease != "L-B" {
+		t.Fatalf("the refused frame was not accepted later: %+v", in)
+	}
+	for _, eid := range []id.EventID{a, c} {
+		if in := m.get(t, eid); in.Lease != "L-AC" {
+			t.Fatalf("the second lease disturbed the first: %+v", in)
+		}
+	}
+	if audits := m.rt.ReceiptAudits(b); len(audits) != 0 {
+		t.Fatalf("a legitimate second lease was recorded as a conflict: %+v", audits)
+	}
+}
