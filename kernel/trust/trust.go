@@ -134,6 +134,11 @@ type ProjectedPresence struct {
 	Current    bool
 	State      string
 	AgeSeconds uint64
+	// RemainingSeconds is how long a CURRENT announce still has to run. It
+	// comes from the expiry the member signed into the claim, not from any
+	// local assumption about how long presence lasts — so a UI can count it
+	// down without inventing a TTL of its own. Zero unless Current.
+	RemainingSeconds uint64
 }
 
 // Presence projects a terminal's presence at the given time.
@@ -143,7 +148,8 @@ func (e *Engine) Presence(t id.TerminalID, nowUnix uint64) ProjectedPresence {
 		return ProjectedPresence{}
 	}
 	if p.Current(nowUnix) {
-		return ProjectedPresence{Known: true, Current: true, State: p.State}
+		return ProjectedPresence{Known: true, Current: true, State: p.State,
+			RemainingSeconds: p.ExpiresAt - nowUnix}
 	}
 	return ProjectedPresence{Known: true, Current: false, State: p.State,
 		AgeSeconds: p.AgeSeconds(nowUnix)}

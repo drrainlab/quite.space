@@ -910,6 +910,9 @@ async function refreshSpace() {
   document.getElementById('honesty').innerHTML = parts.join(' · ');
 
   const members = await api(`/api/spaces/${current}/members`);
+  // Our own card is the source of truth for the composer's presence button,
+  // including on a tab that has only just opened.
+  presenceAdopt(members);
   const mbox = document.getElementById('members');
   mbox.innerHTML = '';
   // the relic: grown from shared life, identical on every replica.
@@ -1082,8 +1085,8 @@ async function say(e) {
 
 const PRESENCE_TTL = 300;
 let presenceStates = [];
-let presenceLive = '';   // the state we posted, echoed on the button
-let presenceUntil = 0;   // epoch seconds; what we TOLD the node, nothing more
+let presenceLive = '';   // the state the node reports for us, echoed on the button
+let presenceUntil = 0;   // epoch seconds, derived from the signed claim's expiry
 let presenceTimer = null;
 
 /** Rebuild the menu for the space's declared vocabulary. */
@@ -1153,11 +1156,29 @@ document.addEventListener('keydown', e => {
 });
 
 /**
- * Reflect presence on the button for exactly as long as we told the node it
- * would last, then stop. This claims nothing we did not send: the TTL shown
- * is the TTL posted, the countdown starts only after the post succeeded, and
- * it is dropped on any space change rather than carried somewhere it is not
- * true.
+ * Adopt whatever the node reports as OUR presence in this space.
+ *
+ * This is what makes the button survive a reload: the state is not something
+ * the tab remembered, it is read back from our own member card, and the
+ * remaining time comes from the expiry we signed into the claim. A tab that
+ * has just opened knows exactly as much as one that has been sitting here.
+ * @param {Array<any>} members
+ */
+function presenceAdopt(members) {
+  const me = members.find(m => m.mine);
+  const p = me && me.presence;
+  if (!p || !p.known || !p.current) { presenceForget(); return; }
+  presenceLive = p.state;
+  presenceUntil = Math.floor(Date.now() / 1000) + (p.remaining_seconds || 0);
+  if (!presenceTimer) presenceTimer = setInterval(presenceRender, 1000);
+  presenceRender();
+}
+
+/**
+ * Draw the button from that state, and stop when it runs out. The countdown
+ * is local only between refreshes — every refresh replaces it with what the
+ * node says, so the tab can never drift into claiming presence it does not
+ * have.
  */
 function presenceRender() {
   const label = document.getElementById('presenceLabel');
@@ -1185,6 +1206,8 @@ async function setPresence(state) {
   presenceClose(true);
   try {
     await api(`/api/spaces/${current}/presence`, { method: 'POST', body: JSON.stringify({ state, ttl_seconds: PRESENCE_TTL }) });
+    // Paint immediately so the click has an answer, then let the refresh
+    // below replace it with the node's own reading.
     presenceLive = state;
     presenceUntil = Math.floor(Date.now() / 1000) + PRESENCE_TTL;
     if (!presenceTimer) presenceTimer = setInterval(presenceRender, 1000);

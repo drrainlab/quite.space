@@ -103,6 +103,24 @@ func TestStalePresenceIsNotOnline(t *testing.T) {
 	}
 }
 
+// A UI that counts presence down must count down the expiry the member
+// SIGNED, not a TTL it assumed locally. Anything else drifts the moment a
+// client and a member disagree about how long presence lasts.
+func TestRemainingTimeComesFromTheSignedExpiry(t *testing.T) {
+	e := NewEngine()
+	src := id.TerminalID{7}
+	e.UpdatePresence(claims.Presence{
+		State: "listening", EmittedAt: 1000, ExpiresAt: 1300, Source: src,
+	})
+	if p := e.Presence(src, 1200); p.RemainingSeconds != 100 {
+		t.Fatalf("remaining wrong: %+v", p)
+	}
+	// An expired announce has no remaining time to report — only an age.
+	if p := e.Presence(src, 1400); p.RemainingSeconds != 0 {
+		t.Fatalf("expired presence still reports time left: %+v", p)
+	}
+}
+
 func TestSelfDeclaredIsNeverVerified(t *testing.T) {
 	self := claims.Claim{Key: "calibrated", Value: "true",
 		Origin: claims.OriginSelfDeclared, IssuedAt: 100}

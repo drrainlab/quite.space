@@ -677,11 +677,17 @@ type memberResp struct {
 	DeclaredLabels []string `json:"declared_labels"`
 	SysLabels      []string `json:"sys_labels"`
 	Commandable    bool     `json:"commandable"`
-	Presence       struct {
+	// Mine marks this node's own card, so a UI can show you your own state
+	// without having to guess which member you are.
+	Mine     bool `json:"mine"`
+	Presence struct {
 		Known   bool   `json:"known"`
 		Current bool   `json:"current"`
 		State   string `json:"state,omitempty"`
 		AgeSec  uint64 `json:"age_seconds,omitempty"`
+		// LeftSec is what the signed claim says is still to run, never a
+		// local assumption about how long presence lasts.
+		LeftSec uint64 `json:"remaining_seconds,omitempty"`
 	} `json:"presence"`
 }
 
@@ -705,11 +711,13 @@ func (a *APIServer) handleMembers(w http.ResponseWriter, r *http.Request) {
 			Model: "not specified", IOMode: c.IOMode,
 			Capabilities: c.Capabilities, DeclaredLabels: c.DeclaredLabels,
 			SysLabels: c.SysLabels, Commandable: c.CanReceiveCommands,
+			Mine:      c.Principal == a.rt.Principal.ID,
 		}
 		m.Presence.Known = c.Presence.Known
 		m.Presence.Current = c.Presence.Current
 		m.Presence.State = c.Presence.State
 		m.Presence.AgeSec = c.Presence.AgeSeconds
+		m.Presence.LeftSec = c.Presence.RemainingSeconds
 		out = append(out, m)
 	}
 	writeJSON(w, out)
