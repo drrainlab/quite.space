@@ -51,23 +51,24 @@ func main() {
 		os.Exit(2)
 	}
 
-	var radio transports.Endpoint
-	var rerr error
-	switch {
-	case strings.HasPrefix(radioTarget, "tcp:"):
-		radio, rerr = meshtastic.DialTCP(strings.TrimPrefix(radioTarget, "tcp:"))
-	case strings.HasPrefix(radioTarget, "serial:"):
-		radio, rerr = meshtastic.OpenSerial(strings.TrimPrefix(radioTarget, "serial:"))
-	default:
-		fmt.Fprintln(os.Stderr, "error: radio target must be tcp: or serial:")
-		os.Exit(2)
-	}
+	// A gateway runs unattended on a Pi for weeks. The radio behind it will
+	// be unplugged, rebooted, or lose its access point at some point, and
+	// before RB-2 the first of those ended the deployment silently: the
+	// reader goroutine exited and the daemon went on printing statistics for
+	// a link that no longer existed. Supervise outlives the device.
+	mesh, rerr := meshtastic.Supervise(radioTarget, meshtastic.Options{},
+		meshtastic.DefaultBackoff())
 	if rerr != nil {
 		fmt.Fprintln(os.Stderr, "radio:", rerr)
 		os.Exit(1)
 	}
+	defer mesh.Close()
+	var radio transports.Endpoint = mesh
 	// Real radios default to RAW; --compact is the operator's opt-in
-	// (every peer on the carrier must speak compact too — TN-2A).
+	// (every peer on the carrier must speak compact too — TN-2A). The
+	// wrapper goes OUTSIDE supervision: the compact profile is a property of
+	// the carrier and its peers, not of the local USB cable, so it must
+	// survive the device being replaced underneath.
 	if flags["compact"] != "" {
 		radio = compact.Wrap(radio)
 	}
@@ -145,12 +146,28 @@ func main() {
 				fmt.Println("relay pull:", err)
 			}
 			s := b.Stats()
-			fmt.Printf("radio in/out %d/%d · relay in/out %d/%d · custody %d · dedup %d · refused %d\n",
-				s.RadioIn, s.RadioOut, s.RelayIn, s.RelayOut, b.QueueLen(), s.Deduped, s.Refused)
+			fmt.Printf("radio in/out %d/%d · relay in/out %d/%d · custody %d · dedup %d · refused %d%s\n",
+				s.RadioIn, s.RadioOut, s.RelayIn, s.RelayOut, b.QueueLen(),
+				s.Deduped, s.Refused, radioLine(mesh.Status()))
 		case <-sweepT.C:
 			b.Sweep(time.Now())
 		}
 	}
+}
+
+// radioLine appends the radio's state to the statistics line, but only when
+// there is something to say. A gateway that has been carrying frames for a
+// week should not have its log filled with "radio ok"; a gateway whose radio
+// has gone should say so on every line until someone notices.
+func radioLine(s meshtastic.SuperviseStatus) string {
+	switch {
+	case s.Reconnecting:
+		return fmt.Sprintf("\n  RADIO DOWN — %s · retrying in %s (%d attempts, %d reconnects)",
+			s.Err, s.NextRetryIn.Round(time.Second), s.Attempts, s.Reconnects)
+	case s.Reconnects > 0:
+		return fmt.Sprintf(" · radio reconnected %d×", s.Reconnects)
+	}
+	return ""
 }
 
 // loadSubscriptions reads the operator's routing capabilities. One line per

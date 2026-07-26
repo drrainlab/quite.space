@@ -7,7 +7,6 @@ package node
 
 import (
 	"errors"
-	"strings"
 	"time"
 
 	"github.com/drrainlab/quiet_places/transports"
@@ -19,6 +18,15 @@ import (
 var (
 	meshPumpEvery    = 2 * time.Second
 	meshSummaryEvery = 60 * time.Second
+
+	// Reconnect schedule. A radio disappears for ordinary reasons — a USB
+	// port knocked loose, a node rebooting after a config change, a TCP node
+	// whose WiFi dropped — and before RB-2 any of those made the node
+	// permanently deaf with no error anywhere. The schedule itself lives in
+	// transports/meshtastic, shared with the bridge daemon.
+	meshBackoffMin = time.Second
+	meshBackoffMax = 30 * time.Second
+	meshStableFor  = 60 * time.Second
 )
 
 // StartMeshtastic attaches a radio. target forms:
@@ -64,30 +72,34 @@ func (r *Runtime) startMesh(target string, compactOn bool) error {
 
 func (r *Runtime) startMeshWire(target string, wire meshWire) error {
 	r.mu.Lock()
-	if r.mesh != nil {
-		if closed, _ := r.mesh.Closed(); !closed {
-			r.mu.Unlock()
-			return errors.New("node: a radio is already connected")
-		}
+	if r.meshSupervised {
+		r.mu.Unlock()
+		return errors.New("node: a radio is already connected")
 	}
 	r.mu.Unlock()
 
-	var radio *meshtastic.Radio
-	var err error
-	switch {
-	case strings.HasPrefix(target, "tcp:"):
-		radio, err = meshtastic.DialTCP(strings.TrimPrefix(target, "tcp:"))
-	case strings.HasPrefix(target, "serial:"):
-		radio, err = meshtastic.OpenSerial(strings.TrimPrefix(target, "serial:"))
-	default:
-		return errors.New("node: mesh target must be tcp:HOST[:PORT] or serial:/dev/PATH")
-	}
+	// The FIRST dial is synchronous and its error is the caller's. A
+	// supervisor that swallowed it would turn "you typed the wrong device
+	// path" into a node quietly retrying a radio that does not exist —
+	// indistinguishable, from the outside, from one that is simply out of
+	// range. Everything after this point is a link that once worked, and
+	// those are worth retrying.
+	radio, err := meshtastic.Supervise(target, meshtastic.Options{}, meshtastic.Backoff{
+		Min: meshBackoffMin, Max: meshBackoffMax, Stable: meshStableFor,
+	})
 	if err != nil {
 		return err
 	}
+
 	r.mu.Lock()
 	r.mesh = radio
+	r.meshSupervised = true
 	r.mu.Unlock()
+
+	// Adopted ONCE, for the life of the runtime. The endpoint outlives the
+	// device behind it, so a radio coming and going never re-attaches
+	// anything — which is why link stacking is impossible here rather than
+	// merely cleaned up afterwards.
 	var lk link = radio
 	switch wire {
 	case wireCompact:
@@ -99,10 +111,13 @@ func (r *Runtime) startMeshWire(target string, wire meshWire) error {
 	return nil
 }
 
-// compactLink pairs the compact-wrapped endpoint with the radio's liveness.
+// compactLink pairs the compact-wrapped endpoint with the link's liveness.
+// Liveness comes from the SUPERVISED link, not from whichever device is
+// behind it at this instant: a radio being replaced is not a dead link, and
+// treating it as one would tear down the pump the reconnect exists to keep.
 type compactLink struct {
 	transports.Endpoint
-	radio *meshtastic.Radio
+	radio *meshtastic.Supervised
 }
 
 func (c compactLink) Closed() (bool, error) { return c.radio.Closed() }
@@ -113,6 +128,17 @@ type MeshStatus struct {
 	NodeNum   uint32
 	TX, RX    int
 	Err       string
+
+	// Reconnecting distinguishes "there is no radio configured" from "the
+	// radio is gone and we are trying to get it back". Both show as not
+	// connected, and they call for different reactions.
+	Reconnecting bool
+	// Attempts counts dials since the link first went down, Reconnects the
+	// ones that worked. A high Attempts with Reconnects climbing beside it
+	// is a flapping link; a high Attempts alone is a radio that is not there.
+	Attempts    int
+	Reconnects  int
+	NextRetryIn time.Duration
 }
 
 // Mesh reports radio state.
@@ -123,11 +149,31 @@ func (r *Runtime) Mesh() MeshStatus {
 	if radio == nil {
 		return MeshStatus{}
 	}
-	closed, err := radio.Closed()
-	st := MeshStatus{Connected: !closed, NodeNum: radio.NodeNum()}
-	st.TX, st.RX = radio.Stats()
-	if err != nil {
-		st.Err = err.Error()
+	s := radio.Status()
+	return MeshStatus{
+		Connected:    s.Connected,
+		NodeNum:      s.NodeNum,
+		TX:           s.TX,
+		RX:           s.RX,
+		Err:          s.Err,
+		Reconnecting: s.Reconnecting,
+		Attempts:     s.Attempts,
+		Reconnects:   s.Reconnects,
+		NextRetryIn:  s.NextRetryIn,
 	}
-	return st
+}
+
+// MeshConfig reports what the attached radio says it is configured for, for
+// the diagnostic in transports/meshtastic. While a radio is connected this
+// is live: a node re-sends the affected message when someone changes its
+// settings, so the answer keeps up with a radio being reconfigured at the
+// bench. While it is not, this is the last thing the radio said.
+func (r *Runtime) MeshConfig() meshtastic.NodeConfig {
+	r.mu.Lock()
+	radio := r.mesh
+	r.mu.Unlock()
+	if radio == nil {
+		return meshtastic.NodeConfig{}
+	}
+	return radio.Config()
 }

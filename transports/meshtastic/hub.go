@@ -75,7 +75,25 @@ func StartHub(addr string) (*Hub, error) {
 func (h *Hub) Addr() string { return h.l.Addr().String() }
 
 // Close stops the hub.
-func (h *Hub) Close() error { return h.l.Close() }
+func (h *Hub) Close() error {
+	h.DropAll()
+	return h.l.Close()
+}
+
+// DropAll disconnects every client but keeps listening — a radio being
+// unplugged and plugged back in, or rebooting after a config change. The
+// address stays the same, which is what makes reconnection testable.
+func (h *Hub) DropAll() {
+	h.mu.Lock()
+	conns := make([]net.Conn, 0, len(h.clients))
+	for c := range h.clients {
+		conns = append(conns, c)
+	}
+	h.mu.Unlock()
+	for _, c := range conns {
+		c.Close()
+	}
+}
 
 func hubMyInfo(num uint32) []byte {
 	inner := appendVarintField(nil, 1, uint64(num))

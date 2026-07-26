@@ -78,7 +78,9 @@ type Radio struct {
 }
 
 // DialTCP connects to a WiFi/ethernet node or meshtasticd (port 4403).
-func DialTCP(addr string) (*Radio, error) {
+func DialTCP(addr string) (*Radio, error) { return dialTCP(addr, Options{}) }
+
+func dialTCP(addr string, opts Options) (*Radio, error) {
 	if _, _, err := net.SplitHostPort(addr); err != nil {
 		addr = net.JoinHostPort(addr, "4403")
 	}
@@ -86,7 +88,7 @@ func DialTCP(addr string) (*Radio, error) {
 	if err != nil {
 		return nil, err
 	}
-	return Connect(c, Options{})
+	return Connect(c, opts)
 }
 
 // Connect performs the config handshake over an open stream and starts the

@@ -52,9 +52,13 @@ type Runtime struct {
 
 	lanNode *lan.Node
 	lanPort int
-	mesh    *meshtastic.Radio
-	stop    chan struct{}
-	wg      sync.WaitGroup
+	// mesh is a SUPERVISED link (RB-2): it outlives the device behind it and
+	// redials with backoff, so a radio that is unplugged and plugged back in
+	// does not leave the node permanently deaf.
+	mesh           *meshtastic.Supervised
+	meshSupervised bool
+	stop           chan struct{}
+	wg             sync.WaitGroup
 
 	// relayClk is the SyncClock calibration against a common relay (LR-2).
 	relayClk relayClock
@@ -364,6 +368,9 @@ func (r *Runtime) Close() {
 	close(r.stop)
 	if r.lanNode != nil {
 		r.lanNode.Close()
+	}
+	if r.mesh != nil {
+		r.mesh.Close() // stop supervising and let go of the device
 	}
 	r.wg.Wait()
 	r.mu.Lock()
