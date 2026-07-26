@@ -1316,3 +1316,86 @@
 }
 /* A hidden tab animates nothing. */
 body.hidden-tab .sky { animation-play-state: paused; }
+
+/* ---- nav row: five instruments on a panel ----
+   These were five identical pills, so the eye had to read every label to
+   find anything. Each action now carries a drawn mark and its own hue, and
+   the button gets a faint horizontal grain — a nod to a console readout,
+   kept quiet enough that the row still recedes when you are not looking for
+   it. The hue is a per-button custom property so everything downstream
+   (mark, rail, hover glow, focus ring) stays in one family automatically. */
+.nav-row { gap: 6px; }
+
+.nav-act {
+  --n: 265 45% 66%;                       /* fallback hue: the app's lilac */
+  position: relative; overflow: hidden;
+  display: inline-flex; align-items: center; gap: 7px;
+  padding-left: 11px;
+  color: hsl(var(--n));
+  border-color: hsl(var(--n) / .28);
+  background:
+    /* the grain — 2px lines, almost subliminal */
+    repeating-linear-gradient(180deg,
+      hsl(var(--n) / .05) 0 1px, transparent 1px 3px),
+    linear-gradient(180deg, hsl(var(--n) / .10), hsl(var(--n) / .03));
+  transition: border-color .18s ease, box-shadow .18s ease, color .18s ease;
+}
+/* The rail: a lit edge down the left side, like a key that knows what it does. */
+.nav-act::before {
+  content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px;
+  background: hsl(var(--n)); opacity: .5;
+  transition: opacity .18s ease, box-shadow .18s ease;
+}
+.nav-act:hover, .nav-act:focus-visible {
+  color: hsl(var(--n) / 1);
+  border-color: hsl(var(--n) / .6);
+  box-shadow: 0 0 0 1px hsl(var(--n) / .18), 0 4px 18px hsl(var(--n) / .16);
+}
+.nav-act:hover::before, .nav-act:focus-visible::before {
+  opacity: 1; box-shadow: 0 0 8px hsl(var(--n) / .8);
+}
+.nav-act:active { transform: translateY(1px); }
+
+.nav-mark {
+  width: 15px; height: 15px; flex: none;
+  fill: none; stroke: currentColor; stroke-width: 1.4;
+  stroke-linecap: round; stroke-linejoin: round;
+  opacity: .85;
+}
+.nav-act:hover .nav-mark, .nav-act:focus-visible .nav-mark { opacity: 1; }
+
+/* The hues carry meaning, not decoration: making is warm, arriving is green,
+   looking outward is cyan, something wanting attention is amber, and you are
+   the app's own lilac. */
+.nav-act[data-act="create"]   { --n: 28 78% 64%; }   /* + space  — a warm start */
+.nav-act[data-act="join"]     { --n: 152 46% 56%; }  /* join     — a door in */
+.nav-act[data-act="discover"] { --n: 190 62% 58%; }  /* discover — a sweep out */
+.nav-act[data-act="signals"]  { --n: 42 82% 62%; }   /* signals  — attention */
+.nav-act[data-act="me"]       { --n: 265 55% 70%; }  /* me       — the app itself */
+
+/* Light theme: the same hues, darkened and desaturated enough to sit on
+   paper rather than glow off it. */
+:root[data-theme="light"] .nav-act {
+  --n: 265 40% 42%;
+  background:
+    repeating-linear-gradient(180deg, hsl(var(--n) / .05) 0 1px, transparent 1px 3px),
+    linear-gradient(180deg, hsl(var(--n) / .07), hsl(var(--n) / .02));
+}
+:root[data-theme="light"] .nav-act[data-act="create"]   { --n: 24 72% 40%; }
+:root[data-theme="light"] .nav-act[data-act="join"]     { --n: 156 52% 28%; }
+:root[data-theme="light"] .nav-act[data-act="discover"] { --n: 194 64% 31%; }
+:root[data-theme="light"] .nav-act[data-act="signals"]  { --n: 34 74% 34%; }
+:root[data-theme="light"] .nav-act[data-act="me"]       { --n: 265 46% 42%; }
+
+/* The minimal-mono preset asked for less, so the grain, the rail and the hue
+   go — but the mark stays. A drawn symbol is information, not decoration. */
+:root[data-preset="minimal-mono"] .nav-act {
+  --n: 0 0% 55%;
+  background: var(--panel); box-shadow: none;
+}
+:root[data-preset="minimal-mono"] .nav-act::before { display: none; }
+:root[data-preset="minimal-mono"] .nav-act { color: var(--acc); }
+@media (prefers-reduced-motion: reduce) {
+  .nav-act, .nav-act::before, .nav-mark { transition: none; }
+  .nav-act:active { transform: none; }
+}
