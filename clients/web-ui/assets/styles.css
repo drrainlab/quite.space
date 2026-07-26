@@ -513,12 +513,9 @@
     60% { transform: scale(1.08); opacity: 1; }
     100% { transform: scale(1); opacity: 1; }
   }
-  /* new feed row: short fade + rise, once, only on genuinely-new entries */
-  .entry.enter { animation: qs-enter 300ms ease-out 1; }
-  @keyframes qs-enter {
-    from { opacity: 0; transform: translateY(6px); }
-    to { opacity: 1; transform: translateY(0); }
-  }
+  /* New feed rows arrive as a nova — see the .entry.enter block near the end
+     of this file. The old fade-and-rise lived here; it was replaced rather
+     than layered, so there is exactly one arrival animation to reason about. */
 
   /* ============ PUI-1: messenger layout + Apple-style controls ============ */
 
@@ -1222,7 +1219,7 @@
 
   @media (prefers-reduced-motion: reduce) {
     body { transition: none; }
-    .glyph.pulse-in, .entry.enter { animation: none; }
+    .glyph.pulse-in { animation: none; }
     .sc-appearance::before { transition: none; }
     dialog[open], dialog[open]::backdrop { animation: none; }
     /* resonance arrivals never animate; static residue stays */
@@ -1421,3 +1418,75 @@ header .nav-act { padding: 5px 11px 5px 10px; min-height: 30px; }
   .nav-act, .nav-act::before, .nav-mark { transition: none; }
   .nav-act:active { transform: none; }
 }
+
+/* ---- quick links (SP-1) ---- */
+.ql-block { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.ql-phrase {
+  font-size: 19px; letter-spacing: .04em; text-align: center;
+  color: var(--acc); margin: 10px 0 4px; word-spacing: .35em;
+}
+.ql-phrase.spent { color: var(--dim); text-decoration: line-through; }
+.ql-row { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 3px 0; }
+.ql-note { color: var(--dim); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ql-state {
+  font-size: 10px; text-transform: uppercase; letter-spacing: .06em;
+  padding: 1px 6px; border-radius: 3px; border: 1px solid var(--line);
+}
+.ql-state.live { color: #5bc292; border-color: #5bc29255; }
+.ql-state.expired, .ql-state.withdrawn { color: var(--dim); }
+.ql-preview {
+  margin: 10px 0; padding: 12px; border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md); background: var(--panel);
+}
+.ql-from, .ql-space { color: var(--fg); font-size: 15px; margin: 2px 0 8px; }
+
+/* ---- a message arriving ----
+   Something that has travelled over a mesh radio for two minutes deserves
+   more than sliding up from the bottom. It condenses: a point of light
+   brightens, then the words settle out of it.
+
+   Everything animates transform, opacity and filter only, and every rule is
+   scoped to .arriving — a class added for exactly one animation and then
+   removed. Nothing here runs in a loop; a chat log that never stops moving is
+   a chat log nobody can read. */
+.entry.enter { animation: nova-settle 900ms cubic-bezier(.16,.8,.3,1) 1 both; }
+.entry.enter .bubble, .entry.enter .who { animation: nova-words 900ms ease-out 1 both; }
+
+/* The seed: one bright point on the pseudo-element, which flares and dies.
+   It is drawn where the message will be rather than at its centre, so the
+   text appears to condense out of it rather than be revealed by it. */
+.entry.enter::before {
+  content: ""; position: absolute; left: 50%; top: 50%;
+  width: 4px; height: 4px; margin: -2px 0 0 -2px; border-radius: 50%;
+  background: #fff; pointer-events: none; z-index: 2;
+  box-shadow: 0 0 6px 2px rgba(190,205,255,.9), 0 0 18px 6px rgba(150,170,230,.45);
+  animation: nova-spark 900ms ease-out 1 both;
+}
+.entry { position: relative; }
+
+@keyframes nova-spark {
+  0%   { opacity: 0; transform: scale(.2); }
+  14%  { opacity: 1; transform: scale(1); }
+  38%  { opacity: 1; transform: scale(2.6); }
+  100% { opacity: 0; transform: scale(9); }
+}
+@keyframes nova-settle {
+  0%   { opacity: 0; transform: scale(.94); }
+  30%  { opacity: 0; transform: scale(.97); }
+  100% { opacity: 1; transform: none; }
+}
+/* The words condense: blurred and colourless at first, then themselves. */
+@keyframes nova-words {
+  0%   { opacity: 0; filter: blur(6px) brightness(2.2); }
+  34%  { opacity: .25; filter: blur(4px) brightness(1.8); }
+  100% { opacity: 1; filter: none; }
+}
+
+/* Asked for less motion: the message still marks itself as new, with light
+   instead of movement. Removing the cue entirely would cost information. */
+@media (prefers-reduced-motion: reduce) {
+  .entry.enter, .entry.enter .bubble, .entry.enter .who { animation: none; }
+  .entry.enter::before { animation: nova-quiet 700ms ease-out 1 both; }
+  @keyframes nova-quiet { 0% { opacity: .9; } 100% { opacity: 0; } }
+}
+:root[data-preset="minimal-mono"] .entry.enter::before { display: none; }

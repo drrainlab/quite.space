@@ -279,7 +279,21 @@
 
 <dialog id="dlgJoin">
   <div id="joinInput">
-    <h3 id="joinTitle">Enter with a pass</h3>
+    <h3 id="joinTitle">Enter with a link</h3>
+    <div class="segmented" id="joinMode" style="margin-bottom:10px">
+      <button data-m="link" class="sel" onclick="joinSetMode('link')">With a link</button>
+      <button data-m="pass" onclick="joinSetMode('pass')">With a pass</button>
+    </div>
+    <div id="joinLinkPane">
+      <p class="hint">Five words someone read out to you:</p>
+      <input id="joinWords" placeholder="quiet://moss.ember.tide.wren.slate" autocomplete="off"
+             oninput="qlOnWordsInput()" onkeydown="if(event.key==='Enter'){event.preventDefault();enterWithLink()}">
+      <p class="hint" id="joinWordsHint"></p>
+      <div id="joinPreview" style="display:none"></div>
+      <div class="row"><button onclick="enterWithLink()" id="joinLinkBtn">Open the link</button>
+      <button onclick="dlgJoin.close()">cancel</button></div>
+    </div>
+    <div id="joinPassPane" style="display:none">
     <p class="hint" id="joinPaste">Paste the pass link someone shared with you:</p>
     <textarea id="joinPass" rows="3" placeholder="paste pass link"></textarea>
     <div class="row"><button onclick="requestEntry()" id="joinEnterBtn">Request entry</button>
@@ -289,6 +303,7 @@
       <div class="ap-meter"><div class="ap-meter-fill" id="apLevel"></div></div>
       <p class="hint" id="apRecvMsg">Listening… ask them to play the pass.</p>
       <div class="ap-blocks" id="apBlocks"></div>
+    </div>
     </div>
   </div>
   <div id="joinWaiting" style="display:none;text-align:center">
@@ -662,6 +677,21 @@
   <p class="hint" id="meDeviceName" style="text-align:center"></p>
   <p class="hint" style="margin-top:12px">Verification code — compare it out loud with someone to confirm you're talking to the right device:</p>
   <p class="verify-phrase" id="meVerify" style="text-align:center;color:var(--accent)"></p>
+  <!-- A quick link is the only sharing path here that touches a relay, so it
+       says so, right where the choice is made. -->
+  <div class="ql-block">
+    <p class="hint">Hand someone a way in — five words they can read out loud.
+      Works once, lasts ten minutes.</p>
+    <div class="row"><button onclick="mintQuickLink()" id="qlMintBtn">Make a quick link</button></div>
+    <div id="qlOut" style="display:none">
+      <p class="ql-phrase" id="qlPhrase"></p>
+      <p class="out" id="qlLink"></p>
+      <div class="row"><button onclick="qlCopy()">Copy link</button></div>
+      <p class="hint" id="qlNote"></p>
+      <p class="hint" id="qlExpiry"></p>
+    </div>
+    <div id="qlIssued"></div>
+  </div>
   <div class="row" style="margin-top:10px">
     <button onclick="renameSelf()">Change name</button>
     <button onclick="document.getElementById('meTech').style.display='block'">Technical details</button>
@@ -764,6 +794,7 @@
 <script src="shelf.js"></script>
 <script src="mentions.js"></script>
 <script src="quietrank.js"></script>
+<script src="quicklink.js"></script>
 <script src="starfield.js"></script>
 <script src="audiopass.js"></script>
 <script src="gateway.js"></script>
