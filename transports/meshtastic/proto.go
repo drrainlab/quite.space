@@ -114,11 +114,25 @@ type RxPacket struct {
 	Encrypted bool // decoded absent: the radio gave us ciphertext only
 }
 
+// ConfigField is one configuration-bearing FromRadio member, kept raw so
+// config.go can decode it without this file growing a second schema.
+type ConfigField struct {
+	Field int
+	Raw   []byte
+}
+
 // FromRadioMsg is the subset of FromRadio we care about.
 type FromRadioMsg struct {
 	Packet           *RxPacket
 	MyNodeNum        *uint32
 	ConfigCompleteID *uint32
+	// Config carries config=5, channel=10 and metadata=13 (RB-2).
+	Config []ConfigField
+	// Skipped lists the top-level field numbers this build did not read.
+	// Must-ignore is the rule, but silently ignoring is how a transcription
+	// error in a hand-written protobuf subset stays invisible: `--raw`
+	// prints these so real hardware can correct us.
+	Skipped []int
 }
 
 type reader struct {
@@ -231,7 +245,16 @@ func DecodeFromRadio(b []byte) (*FromRadioMsg, error) {
 			}
 			u := uint32(v)
 			msg.ConfigCompleteID = &u
+		case (field == 5 || field == 10 || field == 13) && wt == wireBytes:
+			// config / channel / metadata — decoded in config.go.
+			raw, err := r.bytes()
+			if err != nil {
+				return nil, err
+			}
+			msg.Config = append(msg.Config, ConfigField{
+				Field: field, Raw: append([]byte(nil), raw...)})
 		default:
+			msg.Skipped = append(msg.Skipped, field)
 			if err := r.skip(wt); err != nil {
 				return nil, err
 			}

@@ -74,6 +74,7 @@ type Radio struct {
 	nodeNum uint32
 	rxCount int
 	txCount int
+	cfg     NodeConfig
 }
 
 // DialTCP connects to a WiFi/ethernet node or meshtasticd (port 4403).
@@ -137,6 +138,7 @@ func Connect(conn io.ReadWriteCloser, opts Options) (*Radio, error) {
 		if msg.MyNodeNum != nil {
 			r.nodeNum = *msg.MyNodeNum
 		}
+		r.absorb(msg)
 		if msg.ConfigCompleteID != nil && *msg.ConfigCompleteID == wantID {
 			break
 		}
@@ -150,6 +152,44 @@ func Connect(conn io.ReadWriteCloser, opts Options) (*Radio, error) {
 	return r, nil
 }
 
+// absorb folds a frame's configuration content into the node's picture of
+// itself. Called during the handshake and for the life of the link: a node
+// re-sends the affected message when its configuration changes, so the
+// diagnostic keeps up with a radio someone is reconfiguring at the bench.
+func (r *Radio) absorb(msg *FromRadioMsg) {
+	if len(msg.Config) == 0 && len(msg.Skipped) == 0 && msg.MyNodeNum == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if msg.MyNodeNum != nil {
+		r.cfg.NodeNum = *msg.MyNodeNum
+	}
+	for _, f := range msg.Config {
+		r.cfg.absorbConfig(f.Field, f.Raw)
+	}
+	for _, field := range msg.Skipped {
+		if r.cfg.Unrecognised == nil {
+			r.cfg.Unrecognised = map[int]int{}
+		}
+		r.cfg.Unrecognised[field]++
+	}
+}
+
+// Config reports what the node told us about itself. Fields the node never
+// reported are absent, not zero — see config.go.
+func (r *Radio) Config() NodeConfig {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := r.cfg
+	out.Channels = append([]ChannelInfo(nil), r.cfg.Channels...)
+	out.Unrecognised = make(map[int]int, len(r.cfg.Unrecognised))
+	for k, v := range r.cfg.Unrecognised {
+		out.Unrecognised[k] = v
+	}
+	return out
+}
+
 func (r *Radio) readLoop(br *bufio.Reader) {
 	for {
 		frame, err := readFrame(br)
@@ -158,7 +198,11 @@ func (r *Radio) readLoop(br *bufio.Reader) {
 			return
 		}
 		msg, err := DecodeFromRadio(frame)
-		if err != nil || msg.Packet == nil {
+		if err != nil {
+			continue
+		}
+		r.absorb(msg)
+		if msg.Packet == nil {
 			continue
 		}
 		p := msg.Packet
