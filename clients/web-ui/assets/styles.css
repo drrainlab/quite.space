@@ -1172,3 +1172,15 @@
   .gw-kv > span:first-child { flex: none; }
   .gw-row { flex-direction: column; align-items: stretch; gap: .4rem; }
 }
+
+/* Prepare-device flow: the QR, the once-only secret, the numbered steps. */
+.gw-qr { text-align: center; margin: .7rem 0; }
+.gw-qr img { max-width: 240px; width: 100%; height: auto; border-radius: .5rem;
+  background: #fff; padding: .5rem; }
+/* The link contains the channel key. It is styled as a warning, not a hint,
+   because a person skimming must not mistake it for a diagnostic string. */
+.gw-secret { border-left: 2px solid #d8a657; padding-left: .6rem; margin: .5rem 0;
+  font-size: .85rem; line-height: 1.45; color: #d8a657; }
+.gw-steps { margin: .3rem 0 .6rem 1.1rem; padding: 0; font-size: .88rem; line-height: 1.5; }
+.gw-steps li { margin-bottom: .3rem; }
+.gw-section h4 { margin-top: .7rem; }

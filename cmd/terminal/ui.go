@@ -72,6 +72,16 @@ func runUI(args []string, withUI bool) error {
 		fmt.Printf("radio profile %q loaded — the Gateway screen will name any "+
 			"field that does not match\n", p.Name)
 	}
+	// Channel 0 is the radio's PRIMARY channel, which on a real device is
+	// usually the public default-key one shared with everyone in range.
+	// Selecting a dedicated channel keeps a segment off other people's air.
+	if ch := flags["mesh-channel"]; ch != "" {
+		var n uint32
+		if _, err := fmt.Sscanf(ch, "%d", &n); err != nil || n > 7 {
+			return fmt.Errorf("--mesh-channel must be 0..7, got %q", ch)
+		}
+		rt.SetMeshChannel(n)
+	}
 	if net := flags["mesh-network"]; net != "" {
 		rt.SetMeshNetwork(net)
 		fmt.Println("listening for gateway beacons on network", net)
@@ -97,8 +107,14 @@ func runUI(args []string, withUI bool) error {
 		if err := start(target); err != nil {
 			fmt.Println("mesh: connection failed:", err)
 		} else {
-			fmt.Printf("mesh: connected as node %d via %s (%s wire, summaries every 60s — LoRa airtime)\n",
-				rt.Mesh().NodeNum, target, wire)
+			m := rt.Mesh()
+			fmt.Printf("mesh: channel %d · connected as node %d via %s (%s wire, summaries every 60s — LoRa airtime)\n",
+				m.Channel, m.NodeNum, target, wire)
+			if m.Channel == 0 {
+				fmt.Println("  note: channel 0 is this radio's PRIMARY channel, usually the" +
+					" public default-key one.\n  Everyone in range sees these packets (contents stay" +
+					" encrypted) and relays them.\n  Use --mesh-channel N for a channel of your own.")
+			}
 		}
 	}
 

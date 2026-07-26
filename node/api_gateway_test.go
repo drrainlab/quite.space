@@ -264,11 +264,54 @@ func TestTheScreenWarnsAboutThePublicDefaultKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	advice := strings.Join(gatewayScreen(t, rt).Advice, " ")
-	if !strings.Contains(advice, "built-in") {
+	if !strings.Contains(advice, "public") {
 		t.Errorf("no warning about the public default key: %q", advice)
+	}
+	// It must name the channel we actually TRANSMIT on. A radio with eight
+	// configured channels is normal; warning about all of them is noise, and
+	// warning about the wrong one is worse than silence.
+	if !strings.Contains(advice, "We transmit on channel 0") {
+		t.Errorf("the warning does not name the transmitting channel: %q", advice)
 	}
 	if !strings.Contains(advice, "end to end") {
 		t.Errorf("the warning overstates the risk — messages ARE still "+
 			"encrypted end to end: %q", advice)
+	}
+}
+
+// A radio can have private channels configured and still be transmitting on
+// its public primary. Only the channel carrying our traffic matters.
+func TestTheScreenWarnsOnlyAboutTheChannelWeUse(t *testing.T) {
+	rt := openRuntime(t, t.TempDir(), "bob")
+	defer rt.Close()
+	rt.SetMeshChannel(1)
+
+	hub, err := meshtastic.StartHub("127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer hub.Close()
+	// The hub's simulated device reports one PRIMARY channel at index 0 with
+	// the public default key — but we transmit on channel 1.
+	hub.SetConfig(&meshtastic.HubConfig{
+		Region: 3, UsePreset: true, TxEnabled: true, HopLimit: 3,
+		ChannelName: "LongFast", PSK: []byte{0x01},
+	})
+	if err := rt.StartMeshtastic("tcp:" + hub.Addr()); err != nil {
+		t.Fatal(err)
+	}
+
+	g := gatewayScreen(t, rt)
+	if g.Radio.Channel != 1 {
+		t.Fatalf("screen reports channel %d, want 1", g.Radio.Channel)
+	}
+	advice := strings.Join(g.Advice, " ")
+	if strings.Contains(advice, "We transmit on channel 0") {
+		t.Errorf("warned about a channel we do not transmit on: %q", advice)
+	}
+	// And it must notice we are pointed at a channel this radio lacks —
+	// otherwise the packets go nowhere with no error at all.
+	if !strings.Contains(advice, "no such channel") {
+		t.Errorf("transmitting on an unconfigured channel was not flagged: %q", advice)
 	}
 }

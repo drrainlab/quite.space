@@ -37,6 +37,9 @@ const usage = `usage: quiet-radio --radio tcp:HOST[:PORT]|serial:/dev/PATH
 
   --profile FILE       check this node against a segment profile
   --save-profile FILE  capture a profile from this (correctly configured) node
+  --channel N          which channel index to capture (default: the PRIMARY,
+                       which on most radios is the PUBLIC default-key channel —
+                       pass your own channel's index instead)
   --raw                also list the message types the node sent
 
 Set one radio up by hand, capture its profile, then check the others
@@ -70,7 +73,18 @@ func run(args []string) int {
 	}
 
 	if path := flags["save-profile"]; path != "" {
-		p, err := meshtastic.ProfileFrom(profileName(flags, path), cfg)
+		// A segment of one's own is usually a SECONDARY channel; the primary
+		// is normally the public default-key one. Capturing the wrong channel
+		// produces a profile that verifies clean while two radios talk past
+		// each other.
+		index := -1
+		if c := flags["channel"]; c != "" {
+			if _, err := fmt.Sscanf(c, "%d", &index); err != nil || index < 0 || index > 7 {
+				fmt.Fprintf(os.Stderr, "--channel must be 0..7, got %q\n", c)
+				return 2
+			}
+		}
+		p, err := meshtastic.ProfileFromChannel(profileName(flags, path), cfg, index)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "\n"+err.Error())
 			return 2

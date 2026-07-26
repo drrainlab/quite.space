@@ -60,7 +60,10 @@ type Runtime struct {
 	// meshNetworkID scopes which segment's gateway beacons this node listens
 	// to; gateways is what it has heard (RB-2). Presence is advisory — it is
 	// what a person is SHOWN, never a gate on the queue.
-	meshNetworkID  string
+	meshNetworkID string
+	// meshChannel is the Meshtastic channel index this node transmits on.
+	// 0 is a node's PRIMARY channel, usually the shared public one.
+	meshChannel    uint32
 	gateways       map[string]*GatewayPresence
 	foreignBeacons int
 	// radioProfile is what this segment's radios are expected to be set to,

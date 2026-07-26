@@ -284,6 +284,20 @@ func (p Profile) checkKey(ch ChannelInfo, reported bool, idx string) Check {
 // its profile, then check every other radio against it. The key stays on the
 // radios; only its fingerprint travels.
 func ProfileFrom(name string, cfg NodeConfig) (Profile, error) {
+	return ProfileFromChannel(name, cfg, -1)
+}
+
+// ProfileFromChannel captures a profile describing a SPECIFIC channel index.
+//
+// A segment of one's own is usually a SECONDARY channel: the PRIMARY is
+// typically the public default-key channel every Meshtastic user in range
+// shares. Capturing the primary would produce a profile describing the wrong
+// channel entirely — one that then verifies "clean" while the two radios talk
+// past each other on different air.
+//
+// index < 0 means "the primary", which is the right default only when nobody
+// has said otherwise.
+func ProfileFromChannel(name string, cfg NodeConfig, index int) (Profile, error) {
 	if cfg.LoRa == nil {
 		return Profile{}, fmt.Errorf("meshtastic: this node reported no LoRa " +
 			"configuration, so there is nothing to capture. A profile taken " +
@@ -300,7 +314,16 @@ func ProfileFrom(name string, cfg NodeConfig) (Profile, error) {
 	if l.UsePreset {
 		p.ModemPreset = &preset
 	}
-	if ch, ok := cfg.PrimaryChannel(); ok {
+	ch, ok := cfg.PrimaryChannel()
+	if index >= 0 {
+		ch, ok = cfg.Channel(index)
+		if !ok {
+			return Profile{}, fmt.Errorf("meshtastic: this node has no channel %d "+
+				"to capture — a profile naming a channel the radio does not have "+
+				"would verify nothing", index)
+		}
+	}
+	if ok {
 		p.channelSpecified = true
 		p.ChannelIndex = ch.Index
 		p.ChannelName = ch.Name

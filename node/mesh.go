@@ -84,9 +84,14 @@ func (r *Runtime) startMeshWire(target string, wire meshWire) error {
 	// indistinguishable, from the outside, from one that is simply out of
 	// range. Everything after this point is a link that once worked, and
 	// those are worth retrying.
-	radio, err := meshtastic.Supervise(target, meshtastic.Options{}, meshtastic.Backoff{
-		Min: meshBackoffMin, Max: meshBackoffMax, Stable: meshStableFor,
-	})
+	r.mu.Lock()
+	channel := r.meshChannel
+	r.mu.Unlock()
+
+	radio, err := meshtastic.Supervise(target,
+		meshtastic.Options{Channel: channel}, meshtastic.Backoff{
+			Min: meshBackoffMin, Max: meshBackoffMax, Stable: meshStableFor,
+		})
 	if err != nil {
 		return err
 	}
@@ -139,6 +144,10 @@ type MeshStatus struct {
 	Attempts    int
 	Reconnects  int
 	NextRetryIn time.Duration
+	// Channel is the mesh channel index this link transmits on. Surfaced
+	// because "which channel am I actually on?" must never be a question
+	// someone answers by guessing.
+	Channel uint32
 }
 
 // Mesh reports radio state.
@@ -151,6 +160,7 @@ func (r *Runtime) Mesh() MeshStatus {
 	}
 	s := radio.Status()
 	return MeshStatus{
+		Channel:      radio.Channel(),
 		Connected:    s.Connected,
 		NodeNum:      s.NodeNum,
 		TX:           s.TX,
@@ -161,6 +171,78 @@ func (r *Runtime) Mesh() MeshStatus {
 		Reconnects:   s.Reconnects,
 		NextRetryIn:  s.NextRetryIn,
 	}
+}
+
+// SetMeshChannel selects the mesh channel index this node transmits on.
+// Must be called BEFORE the radio is attached.
+//
+// Channel 0 is the node's PRIMARY channel, which on a real device is very
+// often the public default-key channel every Meshtastic user in range shares.
+// Transmitting there is visible to all of them and spends their airtime, so a
+// segment of one's own belongs on a dedicated channel — that is the
+// defence-in-depth the threat model asks for, on top of (never instead of)
+// the end-to-end encryption the payload already carries.
+func (r *Runtime) SetMeshChannel(index uint32) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.meshChannel = index
+}
+
+// MeshChannel reports the configured transmit channel index.
+func (r *Runtime) MeshChannel() uint32 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.meshChannel
+}
+
+// ApplyRadioPlan writes a configuration plan to the attached radio. The radio
+// reboots afterwards; the supervised link reconnects on its own, and the
+// caller verifies by re-reading once it is back.
+func (r *Runtime) ApplyRadioPlan(plan *meshtastic.ApplyPlan) error {
+	r.mu.Lock()
+	radio := r.mesh
+	r.mu.Unlock()
+	if radio == nil {
+		return errors.New("node: no radio is attached")
+	}
+	return radio.Apply(plan)
+}
+
+// WaitForRadioCycle blocks until the radio has gone away and come back —
+// i.e. until the reconnect counter passes `since` AND the link is up again.
+//
+// Waiting on "connected" alone does not work after a reboot request: the
+// device takes a couple of seconds to actually reset, so the link is still up
+// when the wait begins and it returns immediately. The caller then reads the
+// PRE-reboot configuration and concludes, wrongly, that the write did not
+// take. A monotonic counter cannot be missed that way; a transient boolean
+// can. Pass the value of Mesh().Reconnects captured BEFORE the write.
+func (r *Runtime) WaitForRadioCycle(since int, limit time.Duration) bool {
+	deadline := time.Now().Add(limit)
+	for time.Now().Before(deadline) {
+		if st := r.Mesh(); st.Reconnects > since && st.Connected {
+			return true
+		}
+		select {
+		case <-r.stop:
+			return false
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+	st := r.Mesh()
+	return st.Reconnects > since && st.Connected
+}
+
+// MeshTarget reports the device the radio link is dialled to, empty when no
+// radio is attached.
+func (r *Runtime) MeshTarget() string {
+	r.mu.Lock()
+	radio := r.mesh
+	r.mu.Unlock()
+	if radio == nil {
+		return ""
+	}
+	return radio.Target()
 }
 
 // MeshAttached reports whether a radio has been attached at all —

@@ -32,7 +32,7 @@ func main() {
 	relayAddr := flags["relay"]
 	if radioTarget == "" || relayAddr == "" {
 		fmt.Fprintln(os.Stderr, `usage: quiet-bridge --radio tcp:HOST[:PORT]|serial:/dev/PATH --relay HOST:PORT
-       [--data DIR] [--subscriptions FILE] [--compact] [--network ID]
+       [--data DIR] [--subscriptions FILE] [--compact] [--network ID] [--channel N]
        [--airtime BYTES_PER_MIN] [--ttl HOURS]`)
 		os.Exit(2)
 	}
@@ -56,8 +56,17 @@ func main() {
 	// before RB-2 the first of those ended the deployment silently: the
 	// reader goroutine exited and the daemon went on printing statistics for
 	// a link that no longer existed. Supervise outlives the device.
-	mesh, rerr := meshtastic.Supervise(radioTarget, meshtastic.Options{},
-		meshtastic.DefaultBackoff())
+	// The gateway must sit on the SAME channel as the nodes it serves.
+	// Channel 0 is a radio's PRIMARY channel, usually the shared public one.
+	var meshChannel uint32
+	if c := flags["channel"]; c != "" {
+		if _, err := fmt.Sscanf(c, "%d", &meshChannel); err != nil || meshChannel > 7 {
+			fmt.Fprintf(os.Stderr, "--channel must be 0..7, got %q\n", c)
+			os.Exit(2)
+		}
+	}
+	mesh, rerr := meshtastic.Supervise(radioTarget,
+		meshtastic.Options{Channel: meshChannel}, meshtastic.DefaultBackoff())
 	if rerr != nil {
 		fmt.Fprintln(os.Stderr, "radio:", rerr)
 		os.Exit(1)
@@ -113,6 +122,7 @@ func main() {
 	defer b.Close()
 	fmt.Println(b)
 	fmt.Printf("custodian public key (pin on nodes): %x\n", b.CustodianPub())
+	fmt.Printf("mesh channel %d\n", meshChannel)
 	fmt.Println("blind by construction: no identity, no space keys, headers only")
 
 	stop := make(chan os.Signal, 1)

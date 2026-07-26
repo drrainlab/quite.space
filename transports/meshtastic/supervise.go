@@ -259,6 +259,40 @@ func (s *Supervised) Poll() [][]byte {
 	return radio.Poll()
 }
 
+// Apply writes a configuration plan to the radio currently behind this link.
+// The radio reboots, and the supervisor reconnects to it on its own — so the
+// caller can simply wait for the link to come back and then re-read.
+func (s *Supervised) Apply(plan *ApplyPlan) error {
+	s.mu.Lock()
+	radio, closed := s.radio, s.closed
+	s.mu.Unlock()
+	if closed {
+		return errors.New("meshtastic: radio link closed")
+	}
+	if radio == nil {
+		return errors.New("meshtastic: no radio is attached right now")
+	}
+	return radio.Apply(plan)
+}
+
+// Target is the device this link talks to, in the form it was dialled with
+// ("serial:/dev/ttyACM0", "tcp:host:port"). Anything generating instructions
+// for a person must use THIS, not a guess from the list of serial ports: on a
+// laptop that list is mostly Bluetooth audio devices, and telling somebody to
+// configure their headphones is a special kind of unhelpful.
+func (s *Supervised) Target() string { return s.target }
+
+// Channel is the mesh channel index this link transmits on. Like
+// Capabilities, it belongs to the carrier configuration rather than to
+// whichever device object is behind the link at this instant, so it survives
+// a reconnect.
+//
+// It is worth being able to read back: channel 0 is a node's PRIMARY channel,
+// which on a real device is very often the public default-key one shared by
+// every Meshtastic user in range. "Which channel am I actually on?" should
+// never be a question someone has to answer by guessing.
+func (s *Supervised) Channel() uint32 { return s.opts.withDefaults().Channel }
+
 // Capabilities are a property of the carrier, not of the particular device,
 // so they hold across a reconnect.
 func (s *Supervised) Capabilities() transports.Capabilities {

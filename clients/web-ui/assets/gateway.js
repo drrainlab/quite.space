@@ -9,6 +9,10 @@
 // and the plaintext never reaches this far — see transports/meshtastic.
 
 let gwTimer = null;
+// The minted channel, held in memory for this screen only. Never persisted:
+// it contains the key, and the whole design of the prepare flow is that we
+// are the key's origin and never its keeper.
+let GW_PREPARED = null;
 
 function openGateway() {
   dlgMesh.showModal();
@@ -31,9 +35,10 @@ async function refreshGateway() {
     return;
   }
   box.innerHTML = [
-    gwAdvice(g), gwRadioBlock(g), gwProfileBlock(g),
+    gwAdvice(g), gwScanBlock(g), gwAppliedBlock(), gwPrepareBlock(g), gwRadioBlock(g), gwProfileBlock(g),
     gwPresenceBlock(g), gwPinsBlock(g),
   ].filter(Boolean).join('');
+  if (GW_PREPARED) renderPrepared();
 }
 
 // Advice comes first and is the only part written as sentences: everything
@@ -184,4 +189,225 @@ function section(title, inner) {
 
 function row(label, value) {
   return `<div class="gw-kv"><span class="dim">${esc(label)}</span><span>${value}</span></div>`;
+}
+
+
+// ---- Prepare this device for a segment ----
+//
+// Mints a channel and shows it as a link and QR. It does NOT write to the
+// radio: importing is one tap in the Meshtastic app, and we then verify what
+// actually landed by reading the radio back.
+
+function gwPrepareBlock(g) {
+  if (!g.radio.connected) return '';
+  if (GW_PREPARED) return section('segment channel', '<div id="gwPrepared"></div>');
+  const named = (g.profile && g.profile.length)
+    ? '<p class="hint">A segment profile is already installed. Preparing again mints a NEW channel with a new key — every radio in the segment would have to import it.</p>'
+    : '<p class="hint">Create a channel of your own for this segment, so its traffic is not on the public channel everyone in range shares.</p>';
+  return section('prepare this device', named +
+    `<div class="row">
+       <input id="gwSegName" placeholder="channel name" maxlength="11" value="pinelover">
+       <button class="btn-tinted" onclick="gwPrepare()">Prepare</button>
+     </div>
+     <p class="hint">Up to 11 characters — the radio firmware refuses longer names rather than shortening them.</p>`);
+}
+
+async function gwPrepare() {
+  const el = document.getElementById('gwSegName');
+  const name = (el ? el.value : '').trim();
+  if (!name) return;
+  try {
+    GW_PREPARED = await api('/api/gateway/prepare', {
+      method: 'POST', body: JSON.stringify({ name }),
+    });
+    refreshGateway();
+  } catch (err) { alert(err.message); }
+}
+
+function renderPrepared() {
+  const host = document.getElementById('gwPrepared');
+  if (!host || !GW_PREPARED) return;
+  const p = GW_PREPARED;
+  host.innerHTML = `
+    <p><b>${esc(p.channel)}</b> \u00b7 slot ${p.index} \u00b7 ${esc(p.region)} \u00b7 ${esc(p.preset)} \u00b7 hop ${p.hopLimit}</p>
+    ${p.warnings.map(w => `<p class="gw-secret">${esc(w)}</p>`).join('')}
+    ${p.qrPngBase64 ? `<div class="gw-qr"><img alt="channel QR" src="data:image/png;base64,${p.qrPngBase64}"></div>` : ''}
+    <div class="gw-fix"><code id="gwUrl">${esc(p.url)}</code></div>
+    <div class="row">
+      <button onclick="gwCopy('gwUrl')">copy link</button>
+      <button onclick="gwAdoptProfile()">use this segment on this node</button>
+      <button class="btn-plain" onclick="gwForget()">forget</button>
+    </div>
+    <h4>steps</h4>
+    <ol class="gw-steps">${p.steps.map(s => `<li>${esc(s)}</li>`).join('')}</ol>
+    ${cmdBlock('or from a terminal (adds, never replaces)', p.addCommands)}
+    ${cmdBlock('radio settings, if this one does not match', p.regionCommands)}
+    <h4>segment profile</h4>
+    <p class="hint">Safe to send: it carries the fingerprint, not the key. Whoever joins checks their radio against it.</p>
+    <div class="gw-fix"><code id="gwProf">${esc(p.profile)}</code></div>
+    <div class="row"><button onclick="gwCopy('gwProf')">copy profile</button></div>`;
+}
+
+function cmdBlock(title, cmds) {
+  if (!cmds || !cmds.length) return '';
+  return `<h4>${esc(title)}</h4>` +
+    cmds.map(c => `<div class="gw-fix"><code>${esc(c)}</code></div>`).join('');
+}
+
+async function gwAdoptProfile() {
+  if (!GW_PREPARED) return;
+  try {
+    const r = await api('/api/gateway/profile', {
+      method: 'POST', body: JSON.stringify({ profile: GW_PREPARED.profile }),
+    });
+    alert(`This node now uses segment "${r.name}" on channel ${r.channel}.\n\n` +
+      'Import the link on the radio too, then press refresh to verify.');
+    refreshGateway();
+  } catch (err) { alert(err.message); }
+}
+
+// Forget drops the key from memory. It was never stored anywhere else.
+function gwForget() {
+  if (!confirm('Forget this link?\n\nThe key is only held on this screen and is ' +
+    'not stored anywhere. Once forgotten it cannot be shown again, and any radio ' +
+    'that has not imported it yet will need a newly prepared channel.')) return;
+  GW_PREPARED = null;
+  refreshGateway();
+}
+
+function gwCopy(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  navigator.clipboard.writeText(el.textContent).catch(() => {
+    const r = document.createRange();
+    r.selectNodeContents(el);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(r);
+  });
+}
+
+
+// One-button setup: write to the radio, reboot, re-read, report.
+//
+// "Applied" and "verified" are shown as separate facts. Having sent a write
+// is not evidence that it took, and a button that conflates the two is how a
+// person ends up trusting a radio that is not configured.
+async function gwApply() {
+  const el = document.getElementById('gwSegName');
+  const name = (el ? el.value : '').trim();
+  if (!name) return;
+  if (!confirm(`Set up this radio for segment "${name}"?\n\n` +
+    'A new channel with a fresh private key is added to the first free slot. ' +
+    'Channels already on the radio are left alone. The radio then reboots, ' +
+    'which takes about half a minute.')) return;
+
+  const host = document.getElementById('gwBody');
+  host.innerHTML = `<p class="hint">Writing to the radio, then waiting for it to
+    reboot and come back. This takes up to a minute \u2014 leave it plugged in.</p>`;
+  clearInterval(gwTimer); // do not let the poll redraw over the progress
+  try {
+    const r = await api('/api/gateway/apply', {
+      method: 'POST', body: JSON.stringify({ name }),
+    });
+    GW_APPLIED = r;
+  } catch (err) {
+    GW_APPLIED = { applied: false, verified: false, note: err.message, report: [] };
+  }
+  gwTimer = setInterval(refreshGateway, 4000);
+  refreshGateway();
+}
+
+let GW_APPLIED = null;
+
+function gwAppliedBlock() {
+  if (!GW_APPLIED) return '';
+  const r = GW_APPLIED;
+  const verdict = r.verified
+    ? '<span class="gw-on">the radio reports exactly what was asked for</span>'
+    : (r.applied
+        ? '<span class="gw-warn">written, but not confirmed</span>'
+        : '<span class="gw-off">not applied</span>');
+  return section('setup result', `<p>${verdict}</p>` +
+    (r.note ? `<p class="hint">${esc(r.note)}</p>` : '') +
+    (r.report || []).map(line => {
+      const cls = line.startsWith('ok') ? 'gw-on'
+        : line.startsWith('WRONG') ? 'gw-off' : 'dim';
+      return `<div class="gw-kv"><span class="${cls}">${esc(line)}</span></div>`;
+    }).join('') +
+    (r.profile ? `<h4>segment profile \u2014 send this to whoever joins</h4>
+       <div class="gw-fix"><code id="gwAppliedProf">${esc(r.profile)}</code></div>
+       <div class="row"><button onclick="gwCopy('gwAppliedProf')">copy profile</button>
+       <button class="btn-plain" onclick="GW_APPLIED=null;refreshGateway()">dismiss</button></div>`
+      : `<div class="row"><button class="btn-plain" onclick="GW_APPLIED=null;refreshGateway()">dismiss</button></div>`));
+}
+
+
+// ---- Finding the radio ----
+//
+// Device paths are not stable: a T3-S3 that enumerates by its MAC comes back
+// by USB location after a reset. Typing a path is asking someone to track
+// something that changes underneath them, so we look instead — and show what
+// answered on every port, including the ones we chose not to open.
+
+let GW_SCAN = null;
+let GW_SCANNING = false;
+
+function gwScanBlock(g) {
+  const head = g.radio.attached
+    ? ''
+    : `<p class="hint">No radio is attached yet. Plug a Meshtastic node in over USB and scan \u2014
+       the device path is found for you, and it changes on its own after a reset.</p>`;
+  const btn = `<div class="row">
+      <button class="btn-tinted" onclick="gwScan()" ${GW_SCANNING ? 'disabled' : ''}>
+        ${GW_SCANNING ? 'scanning\u2026' : 'Scan for radios'}</button>
+    </div>`;
+  return section('find a radio', head + btn + '<div id="gwScanOut">' +
+    (GW_SCANNING ? '<p class="hint">Opening each serial port in turn. A few seconds.</p>'
+                 : gwScanResults()) + '</div>');
+}
+
+function gwScanResults() {
+  if (!GW_SCAN) return '';
+  const icon = { radio: '\u25cf', attached: '\u25cf', busy: '\u25cb', silent: '\u25cb', skipped: '\u00b7' };
+  const cls  = { radio: 'gw-on', attached: 'gw-on', busy: 'gw-warn', silent: 'dim', skipped: 'dim' };
+  const rows = (GW_SCAN.ports || []).map(p => {
+    const bits = [];
+    if (p.firmware) bits.push('firmware ' + p.firmware);
+    if (p.region) bits.push(p.region);
+    if (p.preset) bits.push(p.preset);
+    if (p.channels) bits.push(p.channels + ' channels');
+    if (p.primaryKey) bits.push('primary key ' + p.primaryKey);
+    const action = (p.kind === 'radio')
+      ? `<button class="btn-tinted" onclick="gwAttach('${esc(p.port)}')">attach</button>` : '';
+    return `<div class="gw-row"><div>
+      <span class="${cls[p.kind] || 'dim'}">${icon[p.kind] || '\u00b7'}</span>
+      <b class="mono">${esc(p.port)}</b><br>
+      <span class="hint">${esc(p.detail || p.kind)}</span>
+      ${bits.length ? `<br><span class="hint">${esc(bits.join(' \u00b7 '))}</span>` : ''}
+    </div>${action}</div>`;
+  }).join('');
+  return (GW_SCAN.note ? `<p class="hint">${esc(GW_SCAN.note)}</p>` : '') + rows;
+}
+
+async function gwScan() {
+  GW_SCANNING = true;
+  refreshGateway();
+  try {
+    GW_SCAN = await api('/api/gateway/scan', { method: 'POST', body: '{}' });
+  } catch (err) {
+    GW_SCAN = { ports: [], note: 'scan failed: ' + err.message };
+  }
+  GW_SCANNING = false;
+  refreshGateway();
+}
+
+async function gwAttach(port) {
+  try {
+    await api('/api/gateway/attach', {
+      method: 'POST', body: JSON.stringify({ port }),
+    });
+    GW_SCAN = null;
+    refreshGateway();
+  } catch (err) { alert(err.message); }
 }

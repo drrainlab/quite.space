@@ -342,8 +342,20 @@
   <div class="segmented settings-tabs" id="setTabs">
     <button data-cat="appearance" onclick="showSettingsCat('appearance')">Appearance</button>
     <button data-cat="relay" onclick="showSettingsCat('relay')">Relay</button>
+    <button data-cat="radio" onclick="showSettingsCat('radio')">Radio</button>
     <button data-cat="attention" onclick="showSettingsCat('attention'); qrLoadSettings()">Attention</button>
     <button data-cat="ai" onclick="showSettingsCat('ai')">AI</button>
+  </div>
+  <div class="settings-cat" data-cat="radio">
+  <div class="settings-sec">
+    <p class="hint">A Meshtastic radio lets this node reach people with no internet at all.
+    Set one up, see what it is configured for, and check it against the segment.</p>
+    <div class="row">
+      <button class="btn-tinted" onclick="dlgSettings.close(); openGateway()">Open radio &amp; gateway</button>
+    </div>
+    <p class="hint">Everything to do with the radio lives there: setup, diagnostics,
+    which channel it transmits on, and which gateways it trusts.</p>
+  </div>
   </div>
   <div class="settings-cat" data-cat="appearance">
   <div class="settings-sec">

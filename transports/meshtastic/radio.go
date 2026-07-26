@@ -36,9 +36,20 @@ const (
 	start2     = 0xC3
 	maxFrame   = 512
 	wakeLen    = 32 // serial wake: 32× START2
-	handshakeT = 12 * time.Second
 	heartbeatT = 30 * time.Second
 )
+
+// handshakeIdle bounds how long the config dump may go QUIET, not how long it
+// may take in total.
+//
+// A node hands a connecting client its entire database: LoRa config, every
+// channel, module config, and one node_info per node it has ever heard. On a
+// busy mesh that is hundreds of frames, and a fixed total budget fails on
+// exactly the radios that matter most — the ones with real neighbours. A
+// device streaming steadily is making progress; only silence means it is not.
+//
+// A var so tests can shrink it.
+var handshakeIdle = 8 * time.Second
 
 // Options configure the adapter.
 type Options struct {
@@ -116,23 +127,36 @@ func Connect(conn io.ReadWriteCloser, opts Options) (*Radio, error) {
 		return nil, err
 	}
 
-	// Read config stream until config_complete_id echoes our id.
+	// Read the config stream until config_complete_id echoes our id. The
+	// deadline is pushed forward on every frame that arrives: the dump is as
+	// long as the node's database, and only silence means it has stalled.
 	br := bufio.NewReaderSize(conn, 2*maxFrame)
-	deadline := time.Now().Add(handshakeT)
 	type deadliner interface{ SetReadDeadline(time.Time) error }
-	if d, ok := conn.(deadliner); ok {
-		d.SetReadDeadline(deadline)
+	d, canDeadline := conn.(deadliner)
+	extend := func() {
+		if canDeadline {
+			d.SetReadDeadline(time.Now().Add(handshakeIdle))
+		}
 	}
+	extend()
+	deadline := time.Now().Add(handshakeIdle)
+	frames := 0
 	for {
 		if time.Now().After(deadline) {
 			conn.Close()
-			return nil, errors.New("meshtastic: config handshake timed out")
+			return nil, fmt.Errorf("meshtastic: the node went quiet during the "+
+				"config handshake after %d frames (waited %s)", frames, handshakeIdle)
 		}
 		frame, err := readFrame(br)
 		if err != nil {
 			conn.Close()
-			return nil, fmt.Errorf("meshtastic: handshake read: %w", err)
+			return nil, fmt.Errorf("meshtastic: handshake read after %d frames: %w",
+				frames, err)
 		}
+		// Progress: the device is talking, so give it another window.
+		frames++
+		deadline = time.Now().Add(handshakeIdle)
+		extend()
 		msg, err := DecodeFromRadio(frame)
 		if err != nil {
 			continue // tolerate frames we cannot parse during config dump

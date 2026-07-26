@@ -50,6 +50,7 @@ type gwRadio struct {
 	NodeNum      string `json:"nodeNum"`
 	TX           int    `json:"tx"`
 	RX           int    `json:"rx"`
+	Channel      int    `json:"channel"`
 	Attempts     int    `json:"attempts"`
 	Reconnects   int    `json:"reconnects"`
 	NextRetryIn  string `json:"nextRetryIn"`
@@ -123,6 +124,7 @@ func (a *APIServer) handleGateway(w http.ResponseWriter, r *http.Request) {
 		Reconnecting: m.Reconnecting,
 		TX:           m.TX,
 		RX:           m.RX,
+		Channel:      int(m.Channel),
 		Attempts:     m.Attempts,
 		Reconnects:   m.Reconnects,
 		Err:          m.Err,
@@ -235,13 +237,29 @@ func gatewayAdvice(g gatewayResp) []string {
 			"its new configuration immediately.")
 	}
 	if g.Config != nil {
+		// Warn about the channel we actually TRANSMIT on, not every channel
+		// the radio happens to have configured. A node with eight channels
+		// is normal; what matters is the one carrying our traffic.
 		for _, ch := range g.Config.Channels {
-			if strings.HasPrefix(ch.Key, "default") {
-				out = append(out, "Channel "+ch.Name+" uses the built-in "+
-					"Meshtastic key, which everyone has. Anyone in range can "+
-					"read this channel's traffic. Your messages stay encrypted "+
-					"end to end regardless — but the radio layer adds nothing.")
+			if ch.Index != g.Radio.Channel {
+				continue
 			}
+			if strings.HasPrefix(ch.Key, "default") || ch.Key == "none" {
+				out = append(out, "We transmit on channel "+itoa(ch.Index)+
+					" ("+chName(ch)+"), which uses "+ch.Key+". Everyone in "+
+					"range sees these packets and their radios relay them. "+
+					"Your messages stay encrypted end to end regardless — but "+
+					"the radio layer adds nothing. Use a dedicated channel "+
+					"with a private key.")
+			}
+		}
+		// Transmitting on a channel the radio does not have configured is
+		// silence with no error anywhere: the packets go nowhere.
+		if _, ok := channelAt(g.Config.Channels, g.Radio.Channel); !ok && g.Radio.Connected {
+			out = append(out, "We are set to transmit on channel "+
+				itoa(g.Radio.Channel)+", but this radio has no such channel "+
+				"configured. Nothing will be sent. Add the channel, or pick "+
+				"one this radio has.")
 		}
 	}
 	if len(g.Gateways) == 0 && g.Radio.Connected && g.ProfileVerdict != "wrong" {
@@ -342,4 +360,21 @@ func pinnedKeyOf(pins []CustodianPin, link string) ed25519.PublicKey {
 		}
 	}
 	return nil
+}
+
+// channelAt finds the radio's configured channel at an index.
+func channelAt(chans []gwChannel, index int) (gwChannel, bool) {
+	for _, ch := range chans {
+		if ch.Index == index {
+			return ch, true
+		}
+	}
+	return gwChannel{}, false
+}
+
+func chName(ch gwChannel) string {
+	if ch.Name == "" {
+		return "unnamed"
+	}
+	return ch.Name
 }
