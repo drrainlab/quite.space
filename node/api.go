@@ -712,7 +712,7 @@ func (a *APIServer) handleMembers(w http.ResponseWriter, r *http.Request) {
 			Model: "not specified", IOMode: c.IOMode,
 			Capabilities: c.Capabilities, DeclaredLabels: c.DeclaredLabels,
 			SysLabels: c.SysLabels, Commandable: c.CanReceiveCommands,
-			Mine:      c.Principal == a.rt.Principal.ID,
+			Mine: c.Principal == a.rt.Principal.ID,
 		}
 		m.Presence.Known = c.Presence.Known
 		m.Presence.Current = c.Presence.Current
