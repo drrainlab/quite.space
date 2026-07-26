@@ -1441,44 +1441,45 @@ header .nav-act { padding: 5px 11px 5px 10px; min-height: 30px; }
 .ql-from, .ql-space { color: var(--fg); font-size: 15px; margin: 2px 0 8px; }
 
 /* ---- a message arriving ----
-   Something that has travelled over a mesh radio for two minutes deserves
-   more than sliding up from the bottom. It condenses: a point of light
-   brightens, then the words settle out of it.
+   A spark the size of a pixel, then the message floats up out of it. Short:
+   at 900ms this read as a production number, and a chat log is somewhere you
+   spend hours. 460ms is felt rather than watched, which is the whole brief.
 
-   Everything animates transform, opacity and filter only, and every rule is
-   scoped to .arriving — a class added for exactly one animation and then
-   removed. Nothing here runs in a loop; a chat log that never stops moving is
-   a chat log nobody can read. */
-.entry.enter { animation: nova-settle 900ms cubic-bezier(.16,.8,.3,1) 1 both; }
-.entry.enter .bubble, .entry.enter .who { animation: nova-words 900ms ease-out 1 both; }
+   transform, opacity and filter only, every rule scoped to .entry.enter, and
+   nothing loops — a feed that never stops moving is a feed nobody can read. */
+.entry { position: relative; }
+.entry.enter { animation: nova-settle 460ms cubic-bezier(.16,1,.3,1) 1 both; }
+.entry.enter .bubble, .entry.enter .who { animation: nova-words 460ms ease-out 1 both; }
 
-/* The seed: one bright point on the pseudo-element, which flares and dies.
-   It is drawn where the message will be rather than at its centre, so the
-   text appears to condense out of it rather than be revealed by it. */
+/* The seed. Two pixels, because a point is a point: at four it read as a
+   glowing ball being drawn, at two it reads as something catching the light
+   for an instant. The glow does the visible work; the dot is just its core. */
 .entry.enter::before {
   content: ""; position: absolute; left: 50%; top: 50%;
-  width: 4px; height: 4px; margin: -2px 0 0 -2px; border-radius: 50%;
+  width: 2px; height: 2px; margin: -1px 0 0 -1px; border-radius: 50%;
   background: #fff; pointer-events: none; z-index: 2;
-  box-shadow: 0 0 6px 2px rgba(190,205,255,.9), 0 0 18px 6px rgba(150,170,230,.45);
-  animation: nova-spark 900ms ease-out 1 both;
+  box-shadow: 0 0 4px 1px rgba(200,215,255,.95), 0 0 12px 3px rgba(150,170,230,.4);
+  animation: nova-spark 460ms ease-out 1 both;
 }
-.entry { position: relative; }
 
 @keyframes nova-spark {
-  0%   { opacity: 0; transform: scale(.2); }
-  14%  { opacity: 1; transform: scale(1); }
-  38%  { opacity: 1; transform: scale(2.6); }
-  100% { opacity: 0; transform: scale(9); }
+  0%   { opacity: 0; transform: scale(.5); }
+  18%  { opacity: 1; transform: scale(1); }
+  45%  { opacity: .85; transform: scale(2.4); }
+  100% { opacity: 0; transform: scale(7); }
 }
+/* Ease-out float: it arrives fast and settles, rather than easing in from
+   nowhere. The rise is small — six pixels — so it reads as settling, not as
+   sliding in from off-screen. */
 @keyframes nova-settle {
-  0%   { opacity: 0; transform: scale(.94); }
-  30%  { opacity: 0; transform: scale(.97); }
+  0%   { opacity: 0; transform: translateY(6px) scale(.98); }
+  22%  { opacity: 0; transform: translateY(5px) scale(.985); }
   100% { opacity: 1; transform: none; }
 }
-/* The words condense: blurred and colourless at first, then themselves. */
+/* The words condense out of the light: blurred and too bright, then themselves. */
 @keyframes nova-words {
-  0%   { opacity: 0; filter: blur(6px) brightness(2.2); }
-  34%  { opacity: .25; filter: blur(4px) brightness(1.8); }
+  0%   { opacity: 0; filter: blur(4px) brightness(1.9); }
+  30%  { opacity: .3; filter: blur(2.5px) brightness(1.5); }
   100% { opacity: 1; filter: none; }
 }
 
@@ -1486,7 +1487,7 @@ header .nav-act { padding: 5px 11px 5px 10px; min-height: 30px; }
    instead of movement. Removing the cue entirely would cost information. */
 @media (prefers-reduced-motion: reduce) {
   .entry.enter, .entry.enter .bubble, .entry.enter .who { animation: none; }
-  .entry.enter::before { animation: nova-quiet 700ms ease-out 1 both; }
+  .entry.enter::before { animation: nova-quiet 500ms ease-out 1 both; }
   @keyframes nova-quiet { 0% { opacity: .9; } 100% { opacity: 0; } }
 }
 :root[data-preset="minimal-mono"] .entry.enter::before { display: none; }

@@ -492,7 +492,10 @@ async function refresh() {
       d.className = 'space' + (s.id === current ? ' active' : '');
       d.setAttribute('role', 'button');
       d.tabIndex = 0;
-      const title = s.title || t('conv.member');
+      // display_title, not title: an unnamed line reads as the other person
+      // on each side, which one shared title could never do. The node
+      // projects it; the real title is still what the space is called.
+      const title = s.display_title || s.title || t('conv.member');
       const an = ARCHETYPES[s.character?.archetype]?.name || '';
       const bits = [];
       if (an) bits.push(esc(an));
@@ -775,7 +778,8 @@ async function refreshSpace() {
   applyTheme(char);
   loadSpaceAppearance(current);
   // Conversation header: title + invite (owned private) + info toggle.
-  document.getElementById('convTitle').textContent = sp ? (sp.title || t('conv.member')) : '';
+  document.getElementById('convTitle').textContent =
+    sp ? (sp.display_title || sp.title || t('conv.member')) : '';
   document.getElementById('inviteBtn').style.display = (sp?.owned && !sp?.visibility) ? '' : 'none';
   document.getElementById('customizeBtn').style.display = sp?.owned ? '' : 'none';
   document.getElementById('resPalBtn').style.display = sp?.owned ? '' : 'none';

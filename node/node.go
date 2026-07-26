@@ -741,8 +741,13 @@ func (r *Runtime) Space(tid id.TerminalID) (*terminals.Space, bool) {
 
 // SpaceInfo is the list projection.
 type SpaceInfo struct {
-	ID            id.TerminalID
-	Title         string
+	ID    id.TerminalID
+	Title string
+	// DisplayTitle is what to put in a list, which is not always the title.
+	// A line between two people reads better as the other person's name than
+	// as "my line" — and it reads that way on BOTH sides, which a stored
+	// title never could, since the title is shared. See lineDisplayTitle.
+	DisplayTitle  string
 	Owned         bool
 	Events        int
 	Messages      int
@@ -764,6 +769,7 @@ func (r *Runtime) Spaces() []SpaceInfo {
 		}
 		out = append(out, SpaceInfo{
 			ID: tid, Title: meta.Title, Owned: meta.Owned,
+			DisplayTitle:  lineDisplayTitle(meta.Title, st.space, r.Principal.ID),
 			Events:        events,
 			Messages:      len(st.space.State.Messages()),
 			Undecryptable: st.space.Undecryptable,
@@ -774,7 +780,7 @@ func (r *Runtime) Spaces() []SpaceInfo {
 	// reshuffle on every poll ("jumping"). Title first, id as a stable
 	// tiebreak — same order every refresh.
 	sort.Slice(out, func(i, j int) bool {
-		li, lj := strings.ToLower(out[i].Title), strings.ToLower(out[j].Title)
+		li, lj := strings.ToLower(out[i].DisplayTitle), strings.ToLower(out[j].DisplayTitle)
 		if li != lj {
 			return li < lj
 		}

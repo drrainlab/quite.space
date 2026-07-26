@@ -356,3 +356,41 @@ func (r *Runtime) spaceTitle(tid id.TerminalID) string {
 	}
 	return ""
 }
+
+// lineDisplayTitle answers "what should this space be called in a list".
+//
+// A line is one space with one title, shared by everyone in it. Alice named
+// it, so Bob joining sees Alice's words — "my line" — which is exactly wrong
+// from his side. Renaming it on join would be worse: it would rename it for
+// Alice too, because there is only one title.
+//
+// So the name is not stored, it is PROJECTED at read time, and each side
+// projects it differently: a two-person line shows the other person. Nothing
+// is written, the real title is untouched and still shown wherever the space
+// is configured, and the moment a third person arrives — or either side
+// renames it deliberately — the title takes over again.
+//
+// The default title is the gate. A space somebody bothered to name keeps its
+// name, even with two people in it; only the one nobody has named yet gets
+// this treatment, so there is never a chosen title being quietly overridden.
+func lineDisplayTitle(title string, sp *terminals.Space, me id.PrincipalID) string {
+	if title != LineTitle || sp == nil {
+		return title
+	}
+	cards := sp.MemberCards(uint64(time.Now().Unix()))
+	if len(cards) != 2 {
+		return title
+	}
+	for _, c := range cards {
+		if c.Principal == me {
+			continue
+		}
+		if c.Name != "" {
+			return c.Name
+		}
+		// They are here but have not said who they are yet. The title is a
+		// better answer than a hex prefix nobody can read.
+		return title
+	}
+	return title
+}

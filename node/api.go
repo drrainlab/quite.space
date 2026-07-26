@@ -299,8 +299,11 @@ func characterOf(c terminals.Character) characterResp {
 }
 
 type spaceResp struct {
-	ID            string        `json:"id"`
-	Title         string        `json:"title"`
+	ID    string `json:"id"`
+	Title string `json:"title"`
+	// DisplayTitle is what to show in a list. Usually the title; for an
+	// unnamed line between two people, the other person. See lineDisplayTitle.
+	DisplayTitle  string        `json:"display_title"`
 	Owned         bool          `json:"owned"`
 	Events        int           `json:"events"`
 	Messages      int           `json:"messages"`
@@ -322,7 +325,7 @@ func (a *APIServer) handleSpaces(w http.ResponseWriter, r *http.Request) {
 	out := make([]spaceResp, 0, len(spaces))
 	for _, s := range spaces {
 		resp := spaceResp{
-			ID: s.ID.Hex(), Title: s.Title, Owned: s.Owned,
+			ID: s.ID.Hex(), Title: s.Title, DisplayTitle: s.DisplayTitle, Owned: s.Owned,
 			Events: s.Events, Messages: s.Messages,
 			Undecryptable: s.Undecryptable, Peers: s.Peers,
 		}
