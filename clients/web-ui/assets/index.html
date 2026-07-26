@@ -252,7 +252,13 @@
     <p class="hint" id="joinPaste">Paste the pass link someone shared with you:</p>
     <textarea id="joinPass" rows="3" placeholder="paste pass link"></textarea>
     <div class="row"><button onclick="requestEntry()" id="joinEnterBtn">Request entry</button>
+    <button id="apListenBtn" onclick="apToggleListen()">listen for a pass</button>
     <button onclick="dlgJoin.close()">cancel</button></div>
+    <div id="apRecv" class="ap-panel" style="display:none">
+      <div class="ap-meter"><div class="ap-meter-fill" id="apLevel"></div></div>
+      <p class="hint" id="apRecvMsg">Listening… ask them to play the pass.</p>
+      <div class="ap-blocks" id="apBlocks"></div>
+    </div>
   </div>
   <div id="joinWaiting" style="display:none;text-align:center">
     <div class="glyph" id="joinGlyph" style="width:56px;height:56px;margin:6px auto"></div>
@@ -281,6 +287,13 @@
       <p class="hint" id="passVerifyHint"></p>
       <p class="verify-phrase" id="passPhrase"></p>
       <p class="pass-terms" id="passTerms"></p>
+      <div class="ap-panel" id="apSend">
+        <div class="row">
+          <button id="apPlayBtn" onclick="apTogglePlay()">play this pass as sound</button>
+        </div>
+        <p class="hint" id="apSendMsg">Anyone who can hear this can join, until it expires
+        or its uses run out. Sound records — treat it like reading a password aloud.</p>
+      </div>
       <div class="pass-share">
         <div class="pass-qr-view">
           <div class="pass-qr-tile"><div id="passQr"></div></div>
@@ -712,6 +725,7 @@
 <script src="shelf.js"></script>
 <script src="mentions.js"></script>
 <script src="quietrank.js"></script>
+<script src="audiopass.js"></script>
 <script src="gateway.js"></script>
 <script src="app.js"></script>
 </body>
