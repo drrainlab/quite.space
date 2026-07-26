@@ -1441,53 +1441,93 @@ header .nav-act { padding: 5px 11px 5px 10px; min-height: 30px; }
 .ql-from, .ql-space { color: var(--fg); font-size: 15px; margin: 2px 0 8px; }
 
 /* ---- a message arriving ----
-   A point of light blinks, and then the message is there. In that order, and
-   they do not overlap much: the spark has its own short timeline and the
-   message starts after it, so what you read is "something flickered, then a
-   message" rather than one compound effect.
+   Something detonates, and the message is there.
 
-   The spark does NOT grow. An earlier version scaled it up sevenfold with a
-   wide glow, which is how a two-pixel dot becomes a big expanding circle —
-   the thing this is not. It stays two pixels and only its brightness moves.
+   The shape is the whole trick. A disc that grows is a ring, always — that is
+   what an expanding circle IS, and no amount of tuning talks it out of that.
+   So the flare is a CROSS: a thin horizontal streak with a shorter vertical
+   one through it, the diffraction spikes a real point of light throws. It
+   grows and dies exactly like the disc did, but because it is linear rather
+   than round it reads as a burst instead of a ripple.
 
-   transform, opacity and filter only, every rule scoped to .entry.enter, and
-   nothing loops — a feed that never stops moving is a feed nobody can read. */
+   Two pseudo-elements: ::before is the hot core (it barely grows — growth is
+   what made the ring), ::after is the flare. Then the message, on its own
+   later timeline, so the two do not blur into one compound effect.
+
+   transform, opacity and filter only, all scoped to .entry.enter, nothing
+   loops — a feed that never stops moving is a feed nobody can read. */
 .entry { position: relative; }
 
-/* The message waits out the blink (fill-mode both holds it invisible during
-   the delay), then rises the last few pixels and settles. */
-.entry.enter { animation: nova-settle 320ms cubic-bezier(.16,1,.3,1) 130ms 1 both; }
-.entry.enter .bubble, .entry.enter .who { animation: nova-words 320ms ease-out 130ms 1 both; }
+/* The ROW is never faded. Its opacity would take ::before and ::after down
+   with it — they are its children — so a row animating from opacity 0 hides
+   the very burst it is supposed to be showing. That is exactly what went
+   wrong here: the flash was invisible for its whole life and only its dying
+   tail showed, as the row came up. The content fades; the row does not. */
+.entry.enter .bubble, .entry.enter .who {
+  animation: nova-words 320ms cubic-bezier(.16,1,.3,1) 150ms 1 both;
+}
+/* The burst goes BEHIND the message. A cross of light drawn over the words
+   is a cross drawn through them; light belongs behind the thing it lights. */
+.entry.enter .bubble { position: relative; z-index: 1; }
 
+/* The core. Two pixels of white going briefly blue-hot. It scales to 1.5 and
+   no further: past that the bloom closes into a ring again. */
 .entry.enter::before {
   content: ""; position: absolute; left: 50%; top: 50%;
   width: 2px; height: 2px; margin: -1px 0 0 -1px; border-radius: 50%;
-  background: #fff; pointer-events: none; z-index: 2;
-  box-shadow: 0 0 3px 1px rgba(205,220,255,.9), 0 0 7px 2px rgba(150,170,230,.3);
-  animation: nova-spark 260ms ease-out 1 both;
+  pointer-events: none; z-index: 0;
+  animation: nova-core 260ms cubic-bezier(.2,.9,.3,1) 1 both;
 }
 
-/* Brightness only — no scale, so it reads as a blink and not as a ripple. */
-@keyframes nova-spark {
-  0%   { opacity: 0; }
-  30%  { opacity: 1; }
-  60%  { opacity: .8; }
-  100% { opacity: 0; }
+/* The flare: crossed streaks, each fading to nothing at its tips so there are
+   no ends to see. Horizontal dominates — a bright point smeared sideways is
+   what a lens actually does, and the asymmetry keeps it from reading as a
+   drawn asterisk. */
+.entry.enter::after {
+  content: ""; position: absolute; left: 50%; top: 50%;
+  width: 54px; height: 30px; margin: -15px 0 0 -27px;
+  pointer-events: none; z-index: 0;
+  background:
+    linear-gradient(90deg, transparent, rgba(214,228,255,.95) 48%, rgba(190,205,255,.95) 52%, transparent)
+      center / 100% 1px no-repeat,
+    linear-gradient(180deg, transparent, rgba(178,196,255,.7) 50%, transparent)
+      center / 1px 100% no-repeat;
+  animation: nova-flare 300ms cubic-bezier(.15,.85,.25,1) 1 both;
 }
-@keyframes nova-settle {
-  0%   { opacity: 0; transform: translateY(5px); }
-  100% { opacity: 1; transform: none; }
+
+@keyframes nova-core {
+  0%   { opacity: 0; transform: scale(.4);
+         box-shadow: 0 0 2px 1px rgba(255,255,255,.9); background: #fff; }
+  22%  { opacity: 1; transform: scale(1.5);
+         box-shadow: 0 0 5px 2px rgba(235,243,255,1), 0 0 10px 3px rgba(150,175,255,.5);
+         background: #fff; }
+  60%  { opacity: .7; transform: scale(1.1);
+         box-shadow: 0 0 4px 1px rgba(170,195,255,.7); background: #dce8ff; }
+  100% { opacity: 0; transform: scale(.8);
+         box-shadow: 0 0 2px 0 rgba(150,175,255,0); background: #b9cdff; }
 }
-/* Just enough blur that the words resolve rather than switch on. */
+/* Out fast, gone fast, and wider than it is tall the whole way. */
+@keyframes nova-flare {
+  0%   { opacity: 0; transform: scale(.15, .3); }
+  18%  { opacity: 1; transform: scale(.75, .85); }
+  100% { opacity: 0; transform: scale(2.3, 1.25); }
+}
+
 @keyframes nova-words {
-  0%   { opacity: 0; filter: blur(3px); }
-  100% { opacity: 1; filter: none; }
+  0%   { opacity: 0; filter: blur(3px); transform: translateY(5px); }
+  100% { opacity: 1; filter: none; transform: none; }
 }
 
-/* Asked for less motion: the message still marks itself as new, with the
-   blink alone. Removing the cue entirely would cost information. */
+/* Asked for less motion: the core alone, fading, with no burst and no
+   movement. Removing the cue entirely would cost information. */
 @media (prefers-reduced-motion: reduce) {
-  .entry.enter, .entry.enter .bubble, .entry.enter .who { animation: none; }
-  .entry.enter::before { animation: nova-spark 400ms ease-out 1 both; }
+  .entry.enter .bubble, .entry.enter .who { animation: none; }
+  .entry.enter::after { display: none; }
+  .entry.enter::before { animation: nova-quiet 420ms ease-out 1 both; }
+  @keyframes nova-quiet {
+    0%   { opacity: .95; background: #fff; box-shadow: 0 0 4px 1px rgba(220,235,255,.8); }
+    100% { opacity: 0; background: #fff; box-shadow: 0 0 4px 1px rgba(220,235,255,0); }
+  }
 }
+:root[data-preset="minimal-mono"] .entry.enter::after { display: none; }
 :root[data-preset="minimal-mono"] .entry.enter::before { display: none; }
