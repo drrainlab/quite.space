@@ -311,6 +311,9 @@ function syncSettingsUI() {
   document.querySelectorAll('#setRenderMode button').forEach(b =>
     b.classList.toggle('sel', b.dataset.v === rm));
   const fx = localStorage.getItem('qp.effects') || 'full';
+  const sky = (typeof SKY !== 'undefined') ? SKY.userMode() : 'drift';
+  document.querySelectorAll('#setStarfield button').forEach(b =>
+    b.classList.toggle('sel', b.dataset.v === sky));
   document.querySelectorAll('#setEffects button').forEach(b =>
     b.classList.toggle('sel', b.dataset.v === fx));
 }

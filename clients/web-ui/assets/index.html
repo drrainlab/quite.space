@@ -391,7 +391,15 @@
         </div>
       </div>
       <div class="list-row">
-        <span class="lr-label">Detail<span class="lr-sub"> · how much a space renders</span></span>
+        <span class="lr-label">Starfield</span>
+        <div class="segmented" id="setStarfield">
+          <button data-v="drift" onclick="setStarfield('drift')">Drift</button>
+          <button data-v="still" onclick="setStarfield('still')">Still</button>
+          <button data-v="off" onclick="setStarfield('off')">Off</button>
+        </div>
+      </div>
+      <div class="list-row">
+        <span class="lr-label">Motion</span>
         <div class="segmented" id="setRenderMode">
           <button data-v="auto" onclick="setRenderMode('auto')">Auto</button>
           <button data-v="full" onclick="setRenderMode('full')">Full</button>
@@ -725,6 +733,7 @@
 <script src="shelf.js"></script>
 <script src="mentions.js"></script>
 <script src="quietrank.js"></script>
+<script src="starfield.js"></script>
 <script src="audiopass.js"></script>
 <script src="gateway.js"></script>
 <script src="app.js"></script>

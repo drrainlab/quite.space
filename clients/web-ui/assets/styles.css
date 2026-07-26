@@ -1193,3 +1193,49 @@
 .ap-blocks { display: flex; flex-wrap: wrap; gap: 3px; margin-top: .5rem; }
 .ap-b { width: 12px; height: 12px; border-radius: 2px; background: #6ec48a; }
 .ap-b.off { background: rgba(255,255,255,.12); }
+
+/* ---- A quiet sky behind dialogs and the conversation ----
+   The stars live in the element's own background, not in a pseudo-element.
+   That is not a style preference, it is the only thing that works on both
+   surfaces: a dialog paints its glass background OVER any z-index:-1 child,
+   and #log scrolls, which would carry an absolutely-positioned layer away
+   with the messages. A background with the default `scroll` attachment is
+   pinned to the border box, so the sky stays put while the conversation
+   moves through it — which is also exactly the right feeling.
+
+   Layers are painted once by starfield.js and arrive as --sky-* data URIs.
+   `screen` keeps them additive over a dark surface: stars add light, the
+   black between them adds nothing, so the panel underneath survives. */
+
+.sky {
+  background-image: var(--sky-glow), var(--sky-near), var(--sky-mid), var(--sky-far);
+  background-repeat: repeat;
+  background-size: 260px 260px, 560px 560px, 420px 420px, 320px 320px;
+  background-blend-mode: screen;
+  transition: background-image .6s ease;
+}
+:root[data-sky="off"] .sky { background-image: none; }
+
+/* Drift moves each layer by a whole number of its own tiles, so the loop is
+   seamless in both axes. Nearer layers travel further in the same time — that
+   difference is the entire illusion of depth.
+
+   The --sky-glow layer is a scatter of small soft points travelling much
+   further than anything else. Under `screen` each point lifts whichever star
+   it crosses and then lets it go, so stars catch light one at a time. That is
+   the twinkle: no per-star animation, no canvas redraw, just one more tile
+   moving at a different speed. */
+:root[data-sky="drift"] .sky { animation: sky-drift 220s linear infinite; }
+
+@keyframes sky-drift {
+  from { background-position: 0 0, 0 0, 0 0, 0 0; }
+  to   { background-position: 3120px -2080px, -1120px 560px, -840px 420px, -320px 320px; }
+}
+
+/* Still keeps the sky and stops the movement — for someone who wants calm
+   rather than nothing. Reduced motion lands in the same place. */
+@media (prefers-reduced-motion: reduce) {
+  .sky { animation: none !important; }
+}
+/* A hidden tab animates nothing. */
+body.hidden-tab .sky { animation-play-state: paused; }
