@@ -71,8 +71,15 @@ type Runtime struct {
 	carriedOrder []id.EventID
 
 	// custodians: pinned bridge custodian keys per link domain (ADR-015
-	// §7, TOFU forbidden). r.mu-guarded.
-	custodians map[string][]byte
+	// §7, TOFU forbidden). r.mu-guarded. custodianPins is the same trust
+	// with the metadata a person needs to audit it; custodianWarn holds
+	// pins that could not be read, which are NOT trusted but must be seen.
+	custodians    map[string][]byte
+	custodianPins map[string]CustodianPin
+	custodianWarn []string
+	// dataDir is where plain, auditable state lives beside the encrypted
+	// store — the delivery ledger and the custodian pins.
+	dataDir string
 	// custodyLapses holds gateways' withdrawals of custody claims —
 	// device-local diagnostics, never part of any log or projection.
 	custodyLapses map[id.EventID]CustodyLapse
@@ -160,7 +167,7 @@ func Open(dataDir string, passphrase []byte, displayName string) (*Runtime, erro
 	if err != nil {
 		return nil, err
 	}
-	r := &Runtime{root: root, spaces: map[id.TerminalID]*spaceState{},
+	r := &Runtime{root: root, dataDir: dataDir, spaces: map[id.TerminalID]*spaceState{},
 		assetIdx: newAssetIndex(), passes: newPassRegistry(),
 		joins: map[string]*joinAttempt{}, stop: make(chan struct{}),
 		relayWants: map[id.TerminalID]map[id.Hash]struct{}{}}
@@ -173,6 +180,8 @@ func Open(dataDir string, passphrase []byte, displayName string) (*Runtime, erro
 		return nil, err
 	}
 	r.ledger = lg
+	// Trust in gateways is restored before anything can act on a receipt.
+	r.loadCustodians()
 
 	ks, err := root.LoadKeystore()
 	switch {

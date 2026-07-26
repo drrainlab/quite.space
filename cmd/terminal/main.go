@@ -29,6 +29,8 @@ func main() {
 		err = runInspect(os.Args[2:])
 	case "meshhub":
 		err = runMeshHub(os.Args[2:])
+	case "custodian":
+		err = runCustodian(os.Args[2:])
 	default:
 		usage()
 		os.Exit(2)
@@ -57,6 +59,8 @@ usage:
   terminal inspect --bundle FILE         list frames in a *.terminal-bundle
   terminal meshhub [--listen ADDR]       run a fake Meshtastic mesh (dev tool):
                                          point nodes at it with --mesh tcp:ADDR
+  terminal custodian list|pin|unpin      which gateways this node trusts
+                                         (public keys; no passphrase needed)
 `)
 }
 
