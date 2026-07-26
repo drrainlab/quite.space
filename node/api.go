@@ -116,6 +116,7 @@ func (a *APIServer) Handler() http.Handler {
 	mux.HandleFunc("POST /api/spaces/{id}/passes", a.auth(a.handleMintPass))
 	mux.HandleFunc("GET /api/spaces/{id}/passes", a.auth(a.handleListPasses))
 	mux.HandleFunc("DELETE /api/spaces/{id}/passes/{pass}", a.auth(a.handleRevokePass))
+	a.routeQuickLinks(mux)
 	mux.HandleFunc("POST /api/join-requests", a.auth(a.handleJoinRequest))
 	mux.HandleFunc("GET /api/join-requests/{req}", a.auth(a.handleJoinStatus))
 	mux.HandleFunc("GET /api/gateway", a.auth(a.handleGateway))
