@@ -157,7 +157,10 @@
   #composer { display: flex;
     background: var(--glass); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); }
   #composer input {
-    flex: 1; background: transparent; color: var(--fg);
+    /* min-width:0 because an <input> carries a default intrinsic width that
+       flex will not shrink below without being told. Without it the row
+       overflows on a narrow screen and pushes `send` off the edge. */
+    flex: 1; min-width: 0; background: transparent; color: var(--fg);
     border: 0; padding: 12px 16px; font: inherit; outline: none;
   }
   button {
@@ -169,6 +172,74 @@
   select {
     background: var(--panel); color: var(--dim); border: 0;
     border-left: 1px solid var(--line); font: inherit; padding: 0 8px; outline: none;
+  }
+
+  /* ---- picker: a <select> we draw ourselves ----
+     The native popup is rendered by the operating system and ignores every
+     token in this file, so in a dark room it arrives white with a blue
+     highlight. Everything here exists to put that menu back inside the
+     design — and the keyboard handling in app.js exists so that replacing a
+     native control does not quietly cost anything. */
+  .picker { position: relative; display: flex; }
+  .picker.none { display: none; }
+  .picker-btn {
+    display: flex; align-items: center; gap: 8px;
+    background: transparent; color: var(--dim);
+    border: 0; border-left: 1px solid var(--line); border-radius: 0;
+    padding: 0 14px; height: 100%; min-height: 0;
+    font: inherit; white-space: nowrap; cursor: pointer;
+    transition: color .15s ease, background-color .15s ease;
+  }
+  .picker-btn:hover, .picker-btn:focus-visible { color: var(--fg); background: var(--panel); }
+  /* The chevron is drawn rather than typed: a glyph would inherit the font's
+     own idea of weight and baseline and never quite sit right. */
+  .picker-chev {
+    width: 7px; height: 7px; flex: none; margin-top: -3px;
+    border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor;
+    transform: rotate(45deg); opacity: .55;
+    transition: transform .18s ease, opacity .18s ease;
+  }
+  .picker-btn[aria-expanded="true"] .picker-chev { transform: rotate(-135deg) translate(-2px,-2px); opacity: 1; }
+  .picker-btn[aria-expanded="true"] { color: var(--fg); background: var(--panel); }
+
+  /* Live presence: the button carries the state and its remaining minutes,
+     so the control says what it did instead of resetting to a placeholder. */
+  .picker.live .picker-btn { color: var(--acc); }
+  .picker.live .picker-btn::before {
+    content: ""; width: 6px; height: 6px; border-radius: 50%; flex: none;
+    background: currentColor; box-shadow: 0 0 6px currentColor;
+  }
+
+  /* Opens UPWARD — the composer sits on the bottom edge of the window. */
+  .picker-menu {
+    position: absolute; bottom: calc(100% + 8px); right: 0; z-index: 40;
+    min-width: 190px; padding: 6px;
+    display: flex; flex-direction: column;
+    background: var(--surface-raised); border: 1px solid var(--glass-border);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 18px 44px rgba(0,0,0,.55), 0 2px 8px rgba(0,0,0,.4);
+    animation: picker-in 140ms cubic-bezier(.21,.9,.35,1) 1;
+  }
+  .picker-menu[hidden] { display: none; }
+  .picker-menu [role="menuitem"] {
+    background: transparent; border: 0; border-radius: var(--radius-sm);
+    color: var(--fg); font: inherit; text-align: left;
+    padding: 8px 12px; min-height: 0; cursor: pointer;
+    transition: background-color .12s ease, color .12s ease;
+  }
+  .picker-menu [role="menuitem"]:hover,
+  .picker-menu [role="menuitem"]:focus-visible {
+    background: var(--panel); color: var(--acc); outline: none;
+  }
+  .picker-empty { color: var(--dim); font-size: 11px; padding: 8px 12px; max-width: 220px; }
+
+  @keyframes picker-in {
+    from { opacity: 0; transform: translateY(6px) scale(.97); }
+    to   { opacity: 1; transform: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .picker-menu { animation: none; }
+    .picker-chev { transition: none; }
   }
   dialog {
     background: var(--glass); backdrop-filter: blur(28px); -webkit-backdrop-filter: blur(28px);
@@ -729,6 +800,12 @@
     #dlgPass, #dlgJoin { width: 100%; max-width: 100%; height: 100%;
       border-radius: 0; }
     .ic { min-width: 40px; min-height: 40px; }
+    /* The composer has five things in one row and a phone's worth of width.
+       The presence label gives ground first: it is the only one that can be
+       read from its dot and still make sense. */
+    .picker-btn { padding: 0 10px; gap: 6px; }
+    #presenceLabel { max-width: 76px; overflow: hidden; text-overflow: ellipsis; }
+    .picker-menu { min-width: 168px; }
   }
   /* space composition contract (SC-0) — scoped appearance + object renderers */
   .sc-appearance { position: relative; }

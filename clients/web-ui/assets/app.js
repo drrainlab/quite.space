@@ -794,10 +794,7 @@ async function refreshSpace() {
   } else { persona.innerHTML = ''; }
 
   // presence selector fed by the space's declared vocabulary.
-  const sel = document.getElementById('presence');
-  const states = [...new Set(char?.presence || [])];
-  sel.innerHTML = '<option value="">presence…</option>' +
-    states.map(s => `<option>${esc(s)}</option>`).join('');
+  presenceSetStates([...new Set(char?.presence || [])]);
 
   await RES.load(current); // palette must exist before rows render
   const entries = await api(`/api/spaces/${current}/entries`);
@@ -806,6 +803,9 @@ async function refreshSpace() {
   if (seenSpace !== current) {
     seenSpace = current; seenEntries = new Set(); hereMembers = new Set();
     feedSig = []; feedContentSig = [];
+    // Presence is per-space, so the countdown does not follow you into a
+    // room where it was never posted.
+    presenceForget();
     RES.refresh(current);
     if (typeof mentionsReset === 'function') {
       mentionsReset();
@@ -1072,11 +1072,123 @@ async function say(e) {
   return false;
 }
 
+// ---- presence picker ----
+//
+// A native <select> would be less code, but its popup is drawn by the
+// operating system and cannot be themed: it arrives white-and-blue in the
+// middle of a dark room. This is the same control drawn by us — and since
+// choosing a presence posts an event rather than setting a lasting form
+// value, a menu is also the more honest shape for it.
+
+const PRESENCE_TTL = 300;
+let presenceStates = [];
+let presenceLive = '';   // the state we posted, echoed on the button
+let presenceUntil = 0;   // epoch seconds; what we TOLD the node, nothing more
+let presenceTimer = null;
+
+/** Rebuild the menu for the space's declared vocabulary. */
+function presenceSetStates(states) {
+  presenceStates = states;
+  const menu = document.getElementById('presenceMenu');
+  menu.innerHTML = states.map(s =>
+    `<button type="button" role="menuitem" onclick="setPresence('${esc(s)}')">${esc(s)}</button>`
+  ).join('') || '<div class="picker-empty">this space declares no presence states</div>';
+  document.getElementById('presencePicker').classList.toggle('none', !states.length);
+}
+
+function presenceOpen() { return !document.getElementById('presenceMenu').hidden; }
+
+/** @param {'first'|'last'} [focus] where to land when opened by keyboard */
+function presenceToggle(focus) {
+  const menu = document.getElementById('presenceMenu');
+  const btn = document.getElementById('presenceBtn');
+  const open = menu.hidden;
+  menu.hidden = !open;
+  btn.setAttribute('aria-expanded', String(open));
+  if (open) {
+    document.addEventListener('mousedown', presenceOutside, true);
+    const items = menu.querySelectorAll('[role=menuitem]');
+    if (focus === 'first') items[0]?.focus();
+    else if (focus === 'last') items[items.length - 1]?.focus();
+  } else {
+    document.removeEventListener('mousedown', presenceOutside, true);
+  }
+}
+
+function presenceClose(refocus) {
+  if (!presenceOpen()) return;
+  presenceToggle();
+  if (refocus) document.getElementById('presenceBtn').focus();
+}
+
+function presenceOutside(e) {
+  if (!document.getElementById('presencePicker').contains(e.target)) presenceClose();
+}
+
+function presenceBtnKey(e) {
+  if (presenceOpen()) { if (e.key === 'Escape') presenceClose(); return; }
+  const open = { ArrowDown: 'first', ArrowUp: 'last', Enter: 'first', ' ': 'first' }[e.key];
+  if (!open) return;
+  e.preventDefault();
+  // The same keydown bubbles on to the document handler below, which would
+  // then treat the freshly focused item as "already there" and step past it.
+  // Opening and moving are one gesture, not two.
+  e.stopPropagation();
+  presenceToggle(open);
+}
+
+// Arrow keys move within the menu and wrap; Escape returns to the button.
+// Without this a custom menu is strictly worse than the native select it
+// replaced, whatever it looks like.
+document.addEventListener('keydown', e => {
+  if (!presenceOpen()) return;
+  const items = [...document.querySelectorAll('#presenceMenu [role=menuitem]')];
+  const at = items.indexOf(document.activeElement);
+  if (e.key === 'Escape') { e.preventDefault(); presenceClose(true); }
+  else if (e.key === 'ArrowDown') { e.preventDefault(); items[(at + 1) % items.length]?.focus(); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); items[(at - 1 + items.length) % items.length]?.focus(); }
+  else if (e.key === 'Home') { e.preventDefault(); items[0]?.focus(); }
+  else if (e.key === 'End') { e.preventDefault(); items[items.length - 1]?.focus(); }
+  else if (e.key === 'Tab') { presenceClose(); }
+});
+
+/**
+ * Reflect presence on the button for exactly as long as we told the node it
+ * would last, then stop. This claims nothing we did not send: the TTL shown
+ * is the TTL posted, the countdown starts only after the post succeeded, and
+ * it is dropped on any space change rather than carried somewhere it is not
+ * true.
+ */
+function presenceRender() {
+  const label = document.getElementById('presenceLabel');
+  const picker = document.getElementById('presencePicker');
+  const left = presenceUntil - Math.floor(Date.now() / 1000);
+  if (left <= 0) {
+    presenceUntil = 0;
+    label.textContent = 'presence…';
+    picker.classList.remove('live');
+    if (presenceTimer) { clearInterval(presenceTimer); presenceTimer = null; }
+    return;
+  }
+  label.textContent = `${presenceLive} · ${Math.ceil(left / 60)}m`;
+  picker.classList.add('live');
+}
+
+function presenceForget() {
+  presenceUntil = 0; presenceLive = '';
+  if (presenceTimer) { clearInterval(presenceTimer); presenceTimer = null; }
+  presenceRender();
+}
+
 async function setPresence(state) {
   if (!state || !current) return;
+  presenceClose(true);
   try {
-    await api(`/api/spaces/${current}/presence`, { method: 'POST', body: JSON.stringify({ state, ttl_seconds: 300 }) });
-    document.getElementById('presence').value = '';
+    await api(`/api/spaces/${current}/presence`, { method: 'POST', body: JSON.stringify({ state, ttl_seconds: PRESENCE_TTL }) });
+    presenceLive = state;
+    presenceUntil = Math.floor(Date.now() / 1000) + PRESENCE_TTL;
+    if (!presenceTimer) presenceTimer = setInterval(presenceRender, 1000);
+    presenceRender();
     refreshSpace();
   } catch (err) { alert(err.message); }
 }

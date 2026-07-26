@@ -71,9 +71,20 @@
              oninput="mentionsOnInput(event); mentionsRenderChips()"
              onkeydown="if (mentionsOnKeydown(event)) return false;"
              onblur="mentionsClosePicker()">
-      <select id="presence" onchange="setPresence(this.value)" title="presence (TTL 5 min)">
-        <option value="">presence…</option>
-      </select>
+      <!-- A native <select> cannot be themed: the popup is drawn by the OS, so
+           it arrives white-and-blue in the middle of a dark room. This is the
+           same control, drawn by us. -->
+      <div class="picker" id="presencePicker">
+        <button type="button" class="picker-btn" id="presenceBtn"
+                aria-haspopup="menu" aria-expanded="false" aria-controls="presenceMenu"
+                title="presence (TTL 5 min)"
+                onclick="presenceToggle()" onkeydown="presenceBtnKey(event)">
+          <span id="presenceLabel">presence…</span>
+          <span class="picker-chev" aria-hidden="true"></span>
+        </button>
+        <div class="picker-menu" id="presenceMenu" role="menu"
+             aria-labelledby="presenceBtn" hidden></div>
+      </div>
       <button type="submit" style="border:0">send</button>
     </form>
     <div id="readerBar" style="display:none">
