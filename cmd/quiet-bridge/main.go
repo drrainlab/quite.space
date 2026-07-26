@@ -32,7 +32,7 @@ func main() {
 	relayAddr := flags["relay"]
 	if radioTarget == "" || relayAddr == "" {
 		fmt.Fprintln(os.Stderr, `usage: quiet-bridge --radio tcp:HOST[:PORT]|serial:/dev/PATH --relay HOST:PORT
-       [--data DIR] [--subscriptions FILE] [--compact]
+       [--data DIR] [--subscriptions FILE] [--compact] [--network ID]
        [--airtime BYTES_PER_MIN] [--ttl HOURS]`)
 		os.Exit(2)
 	}
@@ -73,6 +73,8 @@ func main() {
 		radio = compact.Wrap(radio)
 	}
 
+	network := flags["network"]
+
 	subs, err := loadSubscriptions(flags["subscriptions"])
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "subscriptions:", err)
@@ -100,6 +102,7 @@ func main() {
 		RelayAddr:     relayAddr,
 		RelayDomain:   routing.LoopDomainID("relay:" + relayAddr),
 		Subscriptions: subs,
+		NetworkID:     networkID(network, subs),
 		AirtimePerMin: airtime,
 		QueueCaps:     caps,
 	})
@@ -135,16 +138,22 @@ func main() {
 			// frames only when something asks. A full data queue must never
 			// be the reason the bridge went silent.
 			b.PushAcks(now)
+			b.PushBeacon(now)
 			b.WakeRadio(now)
 			b.PushRadio(now)
 		case <-relayT.C:
 			now := time.Now()
-			if _, err := b.PushRelay(now); err != nil {
-				fmt.Println("relay push:", err)
+			pushErr := firstErr(b.PushRelay(now))
+			if pushErr != nil {
+				fmt.Println("relay push:", pushErr)
 			}
-			if _, err := b.PullRelay(now); err != nil {
-				fmt.Println("relay pull:", err)
+			pullErr := firstErr(b.PullRelay(now))
+			if pullErr != nil {
+				fmt.Println("relay pull:", pullErr)
 			}
+			// What the beacon reports about the internet side comes from
+			// what actually happened, not from configuration.
+			b.NoteRelayResult(pushErr, pullErr)
 			s := b.Stats()
 			fmt.Printf("radio in/out %d/%d · relay in/out %d/%d · custody %d · dedup %d · refused %d%s\n",
 				s.RadioIn, s.RadioOut, s.RelayIn, s.RelayOut, b.QueueLen(),
@@ -154,6 +163,24 @@ func main() {
 		}
 	}
 }
+
+// networkID names the segment this gateway announces itself on. Without one
+// a beacon cannot say which segment it belongs to and none is sent, so it
+// falls back to the subscriptions file, which already states it.
+func networkID(flag string, subs []bridge.Subscription) string {
+	if flag != "" {
+		return flag
+	}
+	for _, s := range subs {
+		if s.NetworkID != "" {
+			return s.NetworkID
+		}
+	}
+	return ""
+}
+
+// firstErr keeps a (count, error) pair readable at the call site.
+func firstErr(_ int, err error) error { return err }
 
 // radioLine appends the radio's state to the statistics line, but only when
 // there is something to say. A gateway that has been carrying frames for a

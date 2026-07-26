@@ -71,6 +71,13 @@ type Config struct {
 	// carrier for one destination (default wakeCooldown).
 	WakeEvery time.Duration
 
+	// NetworkID names the radio segment this gateway serves. Beacons carry
+	// it so a node can tell this gateway from another operator's on the same
+	// frequency; without one, no beacon is sent at all (RB-2).
+	NetworkID string
+	// BeaconEvery bounds gateway announcements (default beaconEvery).
+	BeaconEvery time.Duration
+
 	AirtimePerMin float64
 	QueueCaps     routing.QueueCaps
 	RelayTTL      time.Duration // retention horizon to poll across buckets
@@ -91,6 +98,15 @@ type Bridge struct {
 	subs       map[id.TerminalID]Subscription
 	nextStream uint64
 	stats      Stats
+
+	// Gateway presence (RB-2). bootID is random per process start and
+	// beaconSeq increases within one run, which orders announcements without
+	// any shared clock; relayHealthy is what the beacon reports about the
+	// internet side.
+	bootID       uint64
+	beaconSeq    uint64
+	lastBeacon   time.Time
+	relayHealthy bool
 
 	// carried is the carriage ledger: per destination, per author chain,
 	// how far this bridge has taken frames into custody. It is built from
@@ -119,7 +135,8 @@ type Stats struct {
 	// acknowledged frames whose custody expired and was withdrawn;
 	// Unairable counts frames released because they could never cross this
 	// carrier at all.
-	Wakes, NoMailbox, NoRoom, CustodyLapsed, Unairable int
+	// Beacons counts gateway presence announcements (RB-2).
+	Wakes, NoMailbox, NoRoom, CustodyLapsed, Unairable, Beacons int
 }
 
 // New opens the bridge: durable queue, seen-cache snapshot, custodian key.
@@ -150,6 +167,7 @@ func New(cfg Config) (*Bridge, error) {
 		seen:      routing.NewSeenCache(0, cfg.QueueCaps.OperatorTTL),
 		routes:    routing.NewRoutes(0),
 		custodian: key,
+		bootID:    newBootID(),
 		reasm:     kernelsync.NewReassembler(),
 		airtime:   routing.NewTokenBucket(cfg.AirtimePerMin, 2048, time.Now()),
 		subs:      map[id.TerminalID]Subscription{},

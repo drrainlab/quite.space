@@ -20,12 +20,44 @@ type ChainAdvert struct {
 	ContiguousUntil uint64
 }
 
-// msgCustody carries a custodian-signed receipt for accepted frames
-// (append-only message-type table; raw peers skip unknown types).
-const msgCustody = 5
+// msgCustody carries a custodian-signed receipt for accepted frames;
+// msgBeacon carries a gateway's signed announcement of itself (append-only
+// message-type table; raw peers skip unknown types).
+const (
+	msgCustody = 5
+	msgBeacon  = 6
+)
 
-// keyReceipt is the receipt bytes key (append-only key table).
-const keyReceipt = 7
+// keyReceipt is the receipt bytes key; keyBeacon the beacon bytes key
+// (append-only key table).
+const (
+	keyReceipt = 7
+	keyBeacon  = 9
+)
+
+// EncodeBeaconMessage wraps a signed beacon for the carrier.
+//
+// A beacon names no terminal — it is about the SEGMENT, not about any space.
+// That is why it cannot ride a per-space engine and is handled at link level:
+// putting a terminal id on it would tell every listener on the carrier which
+// spaces this segment serves.
+func EncodeBeaconMessage(beacon []byte) []byte {
+	buf := codec.AppendMap(nil, 2)
+	buf = codec.AppendUint(buf, keyType)
+	buf = codec.AppendUint(buf, msgBeacon)
+	buf = codec.AppendUint(buf, keyBeacon)
+	buf = codec.AppendBytes(buf, beacon)
+	return buf
+}
+
+// ExtractBeacon returns the signed beacon bytes; ok=false for anything else.
+func ExtractBeacon(raw []byte) ([]byte, bool) {
+	msg, err := decodeMessage(raw)
+	if err != nil || msg.msgType != msgBeacon || len(msg.beacon) == 0 {
+		return nil, false
+	}
+	return msg.beacon, true
+}
 
 // EncodeFramesMessage builds a frames message for a terminal — the bridge
 // re-emission path (identical wire to an engine's own msgFrames).

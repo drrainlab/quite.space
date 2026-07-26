@@ -252,12 +252,21 @@ func (r *Runtime) adoptLinkFiltered(c link, pump, summaryEvery time.Duration,
 			// addressed to its siblings, and those spaces then never synced
 			// over this link at all. It looked like an occasional slow test
 			// because the list order comes from a map.
+			var beacons [][]byte
 			for _, pkt := range c.Poll() {
 				raw, err := reasm.Feed(pkt)
 				if errors.Is(err, kernelsync.ErrNotFragment) {
 					raw, err = pkt, nil // a wrapper may deliver whole messages
 				}
 				if err != nil || raw == nil {
+					continue
+				}
+				// A gateway beacon is about the SEGMENT, not about a space:
+				// it carries no terminal id, so it cannot be routed to an
+				// engine. Collected here and folded in after the lock, since
+				// noteBeacon takes r.mu itself.
+				if b, ok := kernelsync.ExtractBeacon(raw); ok {
+					beacons = append(beacons, b)
 					continue
 				}
 				term, ok := kernelsync.PeekTerminal(raw)
@@ -277,6 +286,10 @@ func (r *Runtime) adoptLinkFiltered(c link, pump, summaryEvery time.Duration,
 			}
 			r.curLink = ""
 			r.mu.Unlock()
+
+			for _, b := range beacons {
+				r.noteBeacon(label, b, time.Now())
+			}
 
 			// Health is recorded from what ACTUALLY happened on the wire,
 			// not from what policy hoped for — and only when we tried to

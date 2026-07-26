@@ -57,6 +57,12 @@ type Runtime struct {
 	// does not leave the node permanently deaf.
 	mesh           *meshtastic.Supervised
 	meshSupervised bool
+	// meshNetworkID scopes which segment's gateway beacons this node listens
+	// to; gateways is what it has heard (RB-2). Presence is advisory — it is
+	// what a person is SHOWN, never a gate on the queue.
+	meshNetworkID  string
+	gateways       map[string]*GatewayPresence
+	foreignBeacons int
 	stop           chan struct{}
 	wg             sync.WaitGroup
 

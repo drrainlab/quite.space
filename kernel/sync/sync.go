@@ -185,6 +185,7 @@ type message struct {
 	blobs   [][]byte
 	receipt []byte
 	attempt []byte
+	beacon  []byte
 }
 
 func decodeMessage(data []byte) (*message, error) {
@@ -289,6 +290,8 @@ func decodeMessage(data []byte) (*message, error) {
 				}
 				msg.blobs = append(msg.blobs, append([]byte(nil), b...))
 			}
+		case keyBeacon:
+			msg.beacon, err = d.ReadBytes()
 		case keyReceipt:
 			var b []byte
 			b, err = d.ReadBytes()
