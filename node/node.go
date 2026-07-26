@@ -63,8 +63,11 @@ type Runtime struct {
 	meshNetworkID  string
 	gateways       map[string]*GatewayPresence
 	foreignBeacons int
-	stop           chan struct{}
-	wg             sync.WaitGroup
+	// radioProfile is what this segment's radios are expected to be set to,
+	// so a mismatch can be named rather than merely displayed.
+	radioProfile *meshtastic.Profile
+	stop         chan struct{}
+	wg           sync.WaitGroup
 
 	// relayClk is the SyncClock calibration against a common relay (LR-2).
 	relayClk relayClock

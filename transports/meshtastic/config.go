@@ -489,3 +489,17 @@ func decodeMetadataFirmware(b []byte) (string, bool) {
 	}
 	return "", false
 }
+
+// RegionValue and PresetValue resolve a name (or a bare number) for tools
+// that take these as flags. Unknown names give the zero value rather than an
+// error: a dev tool asked for a region it cannot resolve should report an
+// obviously wrong radio, not refuse to start.
+func RegionValue(name string) uint32 {
+	v, _ := resolveEnum(regionNames, name, "region")
+	return v
+}
+
+func PresetValue(name string) uint32 {
+	v, _ := resolveEnum(presetNames, name, "modem preset")
+	return v
+}

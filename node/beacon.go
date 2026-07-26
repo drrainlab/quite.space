@@ -196,7 +196,15 @@ func (r *Runtime) Gateways() []GatewayPresence {
 	defer r.mu.Unlock()
 	out := make([]GatewayPresence, 0, len(r.gateways))
 	for _, g := range r.gateways {
-		out = append(out, *g)
+		p := *g
+		// Trust is evaluated NOW, not remembered from when the beacon
+		// arrived. Someone who pins a gateway from the screen would
+		// otherwise go on being told it is untrusted until the next
+		// announcement — up to several minutes on LoRa, and indistinguishable
+		// from a button that did nothing.
+		pin, pinned := r.custodians[p.LinkDomain]
+		p.Trusted = pinned && string(pin) == string(p.Key)
+		out = append(out, p)
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Trusted != out[j].Trusted {

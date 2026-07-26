@@ -12,6 +12,7 @@ import (
 	webui "github.com/drrainlab/quiet_places/clients/web-ui"
 	"github.com/drrainlab/quiet_places/node"
 	"github.com/drrainlab/quiet_places/transports/lan"
+	"github.com/drrainlab/quiet_places/transports/meshtastic"
 )
 
 // runUI starts the node runtime, the local API, and (unless --no-browser)
@@ -54,6 +55,28 @@ func runUI(args []string, withUI bool) error {
 			fmt.Printf("LAN: listening on :%d, announcing to %s\n", rt.LAN().Port, lan.MulticastAddr)
 		}
 	}
+	// The segment's expected radio settings and its network id arrive with the
+	// beta package, beside the gateway pin. Installed BEFORE the radio is
+	// attached so the Gateway screen can judge the very first configuration
+	// the node reports, rather than only the second.
+	if path := flags["radio-profile"]; path != "" {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("radio profile: %w", err)
+		}
+		p, err := meshtastic.ParseProfile(data)
+		if err != nil {
+			return fmt.Errorf("radio profile %s: %w", path, err)
+		}
+		rt.SetRadioProfile(&p)
+		fmt.Printf("radio profile %q loaded — the Gateway screen will name any "+
+			"field that does not match\n", p.Name)
+	}
+	if net := flags["mesh-network"]; net != "" {
+		rt.SetMeshNetwork(net)
+		fmt.Println("listening for gateway beacons on network", net)
+	}
+
 	if target := flags["mesh"]; target != "" {
 		start := rt.StartMeshtastic
 		wire := "raw"

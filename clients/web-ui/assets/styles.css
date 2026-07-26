@@ -1133,3 +1133,42 @@
     [class*="fx-arrive-"], [class*="fx-arrive-"] > .fx-layer, .fx-plus {
       animation: none; }
   }
+
+/* ---- Gateway screen (RB-2) ----
+   Diagnostics for someone standing next to a radio that is not working.
+   Colour carries meaning here, so every state also carries words: a person
+   reading this on a phone in sunlight should not have to see the difference
+   between amber and red to know what is wrong. */
+.gw-section { margin-top: 1rem; border-top: 1px solid var(--line, #2a2a2a); padding-top: .6rem; }
+.gw-section h4 { margin: 0 0 .4rem; font-size: .8rem; letter-spacing: .08em;
+  text-transform: uppercase; opacity: .55; font-weight: 600; }
+.gw-kv { display: flex; gap: .8rem; align-items: baseline; padding: .15rem 0;
+  font-size: .88rem; }
+.gw-kv > span:first-child { flex: 0 0 7.5rem; font-size: .8rem; }
+.gw-kv > span:last-child { flex: 1; min-width: 0; word-break: break-word; }
+.gw-row { display: flex; gap: .8rem; align-items: center; justify-content: space-between;
+  padding: .45rem 0; border-bottom: 1px solid var(--line-soft, #1e1e1e); }
+.gw-row:last-child { border-bottom: 0; }
+.gw-advice { background: var(--tint, rgba(255,255,255,.04)); border-radius: .5rem;
+  padding: .6rem .8rem; margin-top: .6rem; }
+.gw-advice p { margin: 0 0 .5rem; font-size: .9rem; line-height: 1.45; }
+.gw-advice p:last-child { margin-bottom: 0; }
+.gw-fix { margin-top: .3rem; }
+/* The fix line is the one thing here a person will copy, so it WRAPS rather
+   than scrolling sideways: a command clipped at the edge of a dialog is a
+   command they cannot read or select. */
+.gw-fix code { display: block; padding: .35rem .5rem; border-radius: .35rem;
+  background: rgba(0,0,0,.25); font-size: .82rem;
+  white-space: pre-wrap; overflow-wrap: anywhere; }
+.gw-on { color: #6ec48a; }
+.gw-warn { color: #d8a657; }
+.gw-off { color: #e06c75; }
+
+/* On a narrow screen the label column and the value cannot both fit, and
+   the value is the part that matters — someone is reading this on a phone
+   while standing next to the radio. Stack instead of clipping. */
+@media (max-width: 560px) {
+  .gw-kv { flex-direction: column; gap: 0; }
+  .gw-kv > span:first-child { flex: none; }
+  .gw-row { flex-direction: column; align-items: stretch; gap: .4rem; }
+}

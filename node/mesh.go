@@ -163,6 +163,34 @@ func (r *Runtime) Mesh() MeshStatus {
 	}
 }
 
+// MeshAttached reports whether a radio has been attached at all —
+// distinct from Connected, which is about the device being there right now.
+// "No radio configured" and "the radio is gone" call for different actions.
+func (r *Runtime) MeshAttached() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.meshSupervised
+}
+
+// SetRadioProfile installs the segment's expected radio settings, so the
+// Gateway screen can say which field is wrong rather than only what the
+// radio is set to. It arrives with the beta package, beside the gateway pin.
+func (r *Runtime) SetRadioProfile(p *meshtastic.Profile) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.radioProfile = p
+}
+
+// RadioProfile reports the installed profile.
+func (r *Runtime) RadioProfile() (meshtastic.Profile, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.radioProfile == nil {
+		return meshtastic.Profile{}, false
+	}
+	return *r.radioProfile, true
+}
+
 // MeshConfig reports what the attached radio says it is configured for, for
 // the diagnostic in transports/meshtastic. While a radio is connected this
 // is live: a node re-sends the affected message when someone changes its

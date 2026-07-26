@@ -12,7 +12,7 @@
   <span id="conn" class="conn-chip off" onclick="dlgLan.showModal()" tabindex="0"
     role="button" aria-label="Connection details"><span class="dot"></span><span id="connText">Not connected</span></span>
   <span style="flex:1"></span>
-  <span id="mesh" class="dim mono" onclick="dlgMesh.showModal()" style="cursor:pointer" title="Meshtastic radio" tabindex="0"></span>
+  <span id="mesh" class="dim mono" onclick="openGateway()" style="cursor:pointer" title="Meshtastic radio" tabindex="0"></span>
   <span id="protoToggle" class="dim mono" onclick="toggleProtocol()" style="cursor:pointer" tabindex="0" role="button"
     title="Protocol view — the technical layer"></span>
   <button class="icon-btn" onclick="openSettings()" title="Settings" aria-label="Settings">⚙</button>
@@ -623,15 +623,17 @@
   <p class="hint" id="lanInfo"></p>
 </dialog>
 
-<dialog id="dlgMesh">
-  <h3>meshtastic radio</h3>
+<dialog id="dlgMesh" class="sheet">
+  <h3>radio &amp; gateway</h3>
   <p class="hint">connect a node: <code>tcp:HOST[:PORT]</code> (WiFi node / meshtasticd)
   or <code>serial:/dev/tty…</code> (USB). Sync over LoRa is slow by physics —
   summaries go out once a minute.</p>
   <input id="meshTarget" placeholder="tcp:192.168.1.42  or  serial:/dev/tty.usbserial-0001">
   <div class="row"><button onclick="meshConnect()">connect</button>
+  <button onclick="refreshGateway()">refresh</button>
   <button onclick="dlgMesh.close()">close</button></div>
   <p class="hint" id="meshInfo"></p>
+  <div id="gwBody"></div>
 </dialog>
 
 <dialog id="dlgInvite">
@@ -698,6 +700,7 @@
 <script src="shelf.js"></script>
 <script src="mentions.js"></script>
 <script src="quietrank.js"></script>
+<script src="gateway.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

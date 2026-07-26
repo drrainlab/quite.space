@@ -47,6 +47,7 @@ func usage() {
 usage:
   terminal ui   --passphrase P [--data DIR] [--name N] [--no-browser] [--no-lan]
                 [--mesh tcp:HOST[:PORT] | --mesh serial:/dev/PATH]
+                [--radio-profile FILE] [--mesh-network ID]
                                          run the node and open the web UI
   terminal node --passphrase P [--data DIR]
                                          run headless (API only, no UI assets)
