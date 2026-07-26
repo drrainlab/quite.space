@@ -190,3 +190,54 @@ func TestNonMemberCannotWrite(t *testing.T) {
 		t.Fatal("non-member wrote into a private space")
 	}
 }
+
+// The rule stated where it lives, so it holds for every caller and not just
+// the pass path: admitting a device that is already carried changes nothing.
+func TestAcceptingAnExistingMemberIsANoOp(t *testing.T) {
+	alice, err := human.New("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	space, err := terminals.NewSpace("Line", alice.Principal.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	space.EnablePrivate(alice.Device)
+	space.AddMember(alice.Device.ID, alice.Device.X25519Pub)
+	if _, err := alice.RotateEpoch(space); err != nil {
+		t.Fatal(err)
+	}
+
+	bob, err := human.New("bob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := space.AcceptIntoSpace(alice, bob.Device.ID,
+		bob.Device.X25519Pub, "bob", alice.Principal.ID, 100); err != nil {
+		t.Fatal(err)
+	}
+	events, epoch := space.Log.Len(), space.CurrentEpoch()
+
+	// The same device again — a second link, a re-sent request, a double click.
+	n, key, mf, err := space.AcceptIntoSpace(alice, bob.Device.ID,
+		bob.Device.X25519Pub, "bob", alice.Principal.ID, 200)
+	if err != nil {
+		t.Fatalf("re-admitting an existing member failed: %v", err)
+	}
+	if space.Log.Len() != events {
+		t.Fatalf("re-admission wrote %d event(s) about somebody already here",
+			space.Log.Len()-events)
+	}
+	if space.CurrentEpoch() != epoch {
+		t.Fatalf("re-admission rotated the epoch %d → %d, re-keying the space "+
+			"for everyone", epoch, space.CurrentEpoch())
+	}
+	// It must still answer usefully: a member who lost their copy converges.
+	if n != epoch || key == ([32]byte{}) || len(mf) == 0 {
+		t.Fatalf("re-admission gave nothing to converge with: epoch %d, key set %v, manifest %d bytes",
+			n, key != [32]byte{}, len(mf))
+	}
+	if !space.HasMember(bob.Device.ID) {
+		t.Fatal("bob stopped being a member")
+	}
+}

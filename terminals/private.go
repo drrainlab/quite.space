@@ -71,6 +71,17 @@ func (s *Space) AddMember(dev id.DeviceID, xpub [32]byte) {
 	s.priv2.members[dev] = xpub
 }
 
+// HasMember reports whether a device is already carried by rotations. It is
+// the honest answer to "is this person already in", because the device is the
+// cryptographic subject here — not the principal, and certainly not a name.
+func (s *Space) HasMember(dev id.DeviceID) bool {
+	if s.priv2 == nil {
+		return false
+	}
+	_, ok := s.priv2.members[dev]
+	return ok
+}
+
 // RemoveMember drops a device from future rotations (controller side). The
 // caller must rotate afterwards; removal without rotation changes nothing.
 func (s *Space) RemoveMember(dev id.DeviceID) {

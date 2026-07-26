@@ -251,3 +251,114 @@ func TestTheLineIsCreatedOnceAndReused(t *testing.T) {
 		t.Fatal("two links reused the same words")
 	}
 }
+
+// Letting the same person in twice must not admit them twice. It is the same
+// device and the same principal; a second link is the same person asking
+// again, not a new member. Before this was handled, every repeat join rotated
+// the epoch for everyone and wrote another member_added into a log that keeps
+// everything forever.
+func TestAdmittingTheSamePersonTwiceChangesNothing(t *testing.T) {
+	rtA := openRuntime(t, t.TempDir(), "alice")
+	defer rtA.Close()
+	rtB := openRuntime(t, t.TempDir(), "bob")
+	defer rtB.Close()
+	srv, _ := setUpRelay(t, rtA, rtB)
+	defer srv.Close()
+
+	// Wait on the REQUEST, not on the member count: the count is already 2
+	// after the first join, so waiting on it would let the second attempt
+	// finish after the measurement and quietly prove nothing.
+	join := func(which string) {
+		info, err := rtA.MintQuickLink(id.TerminalID{}, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		p, err := rtB.ResolveQuickLink(info.Phrase)
+		if err != nil {
+			t.Fatal(err)
+		}
+		reqID, err := rtB.JoinByPass(p.PassLink)
+		if err != nil {
+			t.Fatal(err)
+		}
+		waitUntil(t, 20*time.Second, which+" join to be answered", func() bool {
+			st, _ := rtB.JoinStatus(reqID)
+			return st == JoinReady
+		})
+	}
+
+	join("first")
+	line, _ := rtA.LineSpace()
+	sp, _ := rtA.Space(line)
+	members := len(sp.MemberCards(uint64(time.Now().Unix())))
+	events := sp.Log.Len()
+	epoch := sp.CurrentEpoch()
+
+	join("second") // the same person, a second link
+
+	sp, _ = rtA.Space(line)
+	if got := len(sp.MemberCards(uint64(time.Now().Unix()))); got != members {
+		t.Fatalf("the second join changed the member count: %d → %d", members, got)
+	}
+	if got := sp.Log.Len(); got != events {
+		t.Fatalf("the second join wrote %d event(s) for somebody already here",
+			got-events)
+	}
+	if got := sp.CurrentEpoch(); got != epoch {
+		t.Fatalf("the second join rotated the epoch (%d → %d), re-keying the "+
+			"space for everyone because one member asked to come in again",
+			epoch, got)
+	}
+}
+
+// While it is unclear who is there, the line should say what it knows rather
+// than repeat its own default title back at the person who made it.
+func TestALineSaysWhatItKnows(t *testing.T) {
+	rtA := openRuntime(t, t.TempDir(), "alice")
+	defer rtA.Close()
+	rtB := openRuntime(t, t.TempDir(), "bob")
+	defer rtB.Close()
+	srv, _ := setUpRelay(t, rtA, rtB)
+	defer srv.Close()
+
+	info, err := rtA.MintQuickLink(id.TerminalID{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	line, _ := rtA.LineSpace()
+	shown := func(rt *Runtime, tid id.TerminalID) string {
+		for _, s := range rt.Spaces() {
+			if s.ID == tid {
+				return s.DisplayTitle
+			}
+		}
+		return ""
+	}
+	if got := shown(rtA, line); got != "waiting for someone" {
+		t.Fatalf("an empty line should say so, showed %q", got)
+	}
+
+	p, err := rtB.ResolveQuickLink(info.Phrase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reqID, err := rtB.JoinByPass(p.PassLink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, 20*time.Second, "the join to be answered", func() bool {
+		st, _ := rtB.JoinStatus(reqID)
+		return st == JoinReady
+	})
+	waitUntil(t, 20*time.Second, "bob's name to arrive", func() bool {
+		return shown(rtA, line) == "bob"
+	})
+	// A named space is never overridden, however few people are in it.
+	named, err := rtA.CreateSpace("Release notes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := shown(rtA, named); got != "Release notes" {
+		t.Fatalf("a named space lost its name: %q", got)
+	}
+}

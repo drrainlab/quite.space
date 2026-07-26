@@ -378,7 +378,14 @@ func lineDisplayTitle(title string, sp *terminals.Space, me id.PrincipalID) stri
 		return title
 	}
 	cards := sp.MemberCards(uint64(time.Now().Unix()))
-	if len(cards) != 2 {
+	switch {
+	case len(cards) <= 1:
+		// Nobody has walked in yet. "my line" says nothing a person did not
+		// already know; the state of the line is the useful thing to show,
+		// and it is true whether the link was said out loud, scanned, or
+		// played as tones.
+		return "waiting for someone"
+	case len(cards) > 2:
 		return title
 	}
 	for _, c := range cards {
@@ -388,9 +395,10 @@ func lineDisplayTitle(title string, sp *terminals.Space, me id.PrincipalID) stri
 		if c.Name != "" {
 			return c.Name
 		}
-		// They are here but have not said who they are yet. The title is a
-		// better answer than a hex prefix nobody can read.
-		return title
+		// Here, but their manifest has not arrived — so we know somebody
+		// came and not yet who. Say exactly that rather than showing a hex
+		// prefix or pretending it is still empty.
+		return "someone arrived"
 	}
 	return title
 }

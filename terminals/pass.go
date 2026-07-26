@@ -633,6 +633,19 @@ func (s *Space) AcceptIntoSpace(self *Participant, device id.DeviceID, xpub [32]
 	if s.priv == nil {
 		return 0, epochKey, nil, errors.New("terminals: only the controller can accept")
 	}
+	// Already in? Then this is the same person asking again — a second pass,
+	// a re-sent request, a link handed out twice — and admitting them again
+	// would mean re-keying the space for EVERYONE and writing another
+	// member_added into a log that keeps everything forever. Neither is a
+	// thing that should happen because somebody clicked twice.
+	//
+	// The current epoch still goes back, so a guest who lost their copy can
+	// converge. That discloses nothing: this device is a member and already
+	// holds that key.
+	if s.HasMember(device) {
+		n := s.priv2.current
+		return n, s.priv2.epochs[n].Key, append([]byte(nil), s.ManifestFrame...), nil
+	}
 	s.AddMember(device, xpub)
 	if _, err := self.RotateEpoch(s); err != nil {
 		return 0, epochKey, nil, err
