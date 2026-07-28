@@ -339,6 +339,35 @@ const ATMO = (() => {
     if (hasSound && soundMode() === 'remember' && localStorage.getItem(CONSENT_KEY)) {
       enter(true);
     }
+
+    // "Use this atmosphere" — the recipe, into a new draft of your own.
+    //
+    // It copies the FORM and names the source; it does not copy the sound,
+    // because an audio asset belongs to the post that published it and
+    // carrying the reference would make a new post depend on a blob its
+    // author never had. The lineage digest is deliberately NOT filled in
+    // here: the node computes it from the source it actually holds when the
+    // draft is published, so "derived from that post" is something anyone can
+    // check rather than a sentence this client wrote about itself.
+    if (typeof openComposer === 'function' && typeof SCENES !== 'undefined' &&
+        SCENES.get(String(atmosphere.visual.scene || ''))) {
+      const take = document.createElement('button');
+      take.className = 'btn-plain';
+      take.textContent = 'Use this atmosphere';
+      take.title = 'Start a new post with this look';
+      take.onclick = () => {
+        const copy = JSON.parse(JSON.stringify(atmosphere));
+        delete copy.audio;
+        delete copy.reactive;
+        copy.fallback = { text: String((atmosphere.fallback || {}).text || '') };
+        copy.derived_from = { publication_id: postId };
+        unmount();
+        openComposer(null, '');
+        composerDoc.atmosphere = copy;
+        renderComposerAtmosphere();
+      };
+      doors.appendChild(take);
+    }
   }
 
   /**
@@ -412,7 +441,12 @@ const ATMO = (() => {
     return 'this space asks for stillness';
   }
 
-  return { marker, mount, unmount, level, soundMode, setSoundMode, stopBed };
+  // paletteOf/paramsOf/declineReason are exported for the authoring side.
+  // The point of putting both directions in one file was that they share one
+  // reading of the recipe; leaving these private would have meant the editor
+  // reimplementing them, which is exactly how a preview drifts from a post.
+  return { marker, mount, unmount, level, soundMode, setSoundMode, stopBed,
+           paletteOf, paramsOf, declineReason: stageDeclinedBecause };
 })();
 
 if (typeof window !== 'undefined') {
@@ -420,3 +454,303 @@ if (typeof window !== 'undefined') {
   window.setAtmosphereSound =
     (/** @type {'ask'|'never'|'remember'} */ m) => ATMO.setSoundMode(m);
 }
+
+// ---------------------------------------------------------------------------
+// AUTHORING (AM-5)
+//
+// The composer side lives here rather than in publications.js so that both
+// directions share one reading of the recipe — paletteOf, paramsOf and the
+// permille convention are written once. An editor that converted parameters
+// its own way would be the fastest route to a preview that does not match
+// what gets published.
+//
+// The editor writes the CONTRACT's shape directly (permille integers, hex
+// strings, a list of {name,value}) rather than a convenient intermediate that
+// someone later has to map. What the sliders move is exactly what gets signed.
+// ---------------------------------------------------------------------------
+
+const ATMO_EDIT = (() => {
+  /** Bounds restated from protocol/publication/atmosphere.go. */
+  const MAX_PARAMS = 16, MAX_PALETTE = 4, MAX_FALLBACK = 200, MAX_FADE = 10000;
+
+  /** A fresh recipe: the default scene, a seed, and the space's own colours. */
+  function blank() {
+    const id = (typeof SCENES !== 'undefined' && SCENES.list()[0]) || 'drift@1';
+    return {
+      visual: { scene: id, seed: rollSeed(), params: [], palette: defaultPalette() },
+      fallback: { text: '' },
+    };
+  }
+
+  /**
+   * A seed the author can re-roll. It is a uint64 on the wire; JavaScript
+   * numbers are exact to 2^53, so this stays inside that — a seed that lost
+   * precision on the way through the editor would publish a different picture
+   * from the one that was previewed.
+   */
+  function rollSeed() { return Math.floor(Math.random() * 9007199254740991); }
+
+  /** Start from the space's own palette when it has one: an atmosphere should
+   *  look like it belongs to the room it is published in. */
+  function defaultPalette() {
+    const out = [];
+    try {
+      const el = document.getElementById('content');
+      const cs = el && getComputedStyle(el);
+      for (const [name, prop] of [['ground', '--bg'], ['accent', '--acc'], ['warm', '--human']]) {
+        const v = (cs && cs.getPropertyValue(prop).trim() || '').toLowerCase();
+        if (!/^#[0-9a-fA-F]{6}$/.test(v)) continue;
+        // Skip a colour the palette already has. Several of the theme's
+        // variables coincide in most spaces — accent and human are the same
+        // in every archetype that does not distinguish them — and a palette
+        // offering the same swatch twice reads as a broken picker.
+        if (out.some(t => t.hex === v)) continue;
+        out.push({ name, hex: v });
+      }
+    } catch { /* fall through to the built-in */ }
+    return out.length ? out : [
+      { name: 'ground', hex: '#0b1020' },
+      { name: 'accent', hex: '#7ab4e0' },
+    ];
+  }
+
+  function el(tag, cls, text) {
+    const n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  }
+
+  function row(label, control) {
+    const r = el('div', 'atmo-edit-row');
+    r.appendChild(el('span', 'atmo-edit-label', label));
+    r.appendChild(control);
+    return r;
+  }
+
+  /**
+   * Render the atmosphere editor for a composer document.
+   *
+   * @param {HTMLElement} host
+   * @param {any} doc the composer's document; doc.atmosphere is edited in place
+   * @param {() => void} [onChange] called after every edit
+   */
+  function render(host, doc, onChange) {
+    host.innerHTML = '';
+    host.className = 'atmo-edit';
+    const changed = () => { render(host, doc, onChange); if (onChange) onChange(); };
+
+    if (!doc.atmosphere) {
+      const add = el('button', 'btn-plain', '+ Atmosphere');
+      add.type = 'button';
+      add.title = 'Publish the way this post is meant to be read';
+      add.onclick = () => { doc.atmosphere = blank(); changed(); };
+      host.appendChild(add);
+      return;
+    }
+
+    const a = doc.atmosphere;
+    const head = el('div', 'atmo-edit-head');
+    head.appendChild(el('strong', null, 'Atmosphere'));
+    const drop = el('button', 'btn-plain', 'Remove');
+    drop.type = 'button';
+    drop.onclick = () => { delete doc.atmosphere; changed(); };
+    head.appendChild(drop);
+    host.appendChild(head);
+
+    // --- the live preview, through the SAME renderer the reader gets -------
+    // Not a mock and not a screenshot: if the preview used anything else, the
+    // safety cap and the mode ladder would be absent from it and an author
+    // would tune against a picture nobody else can see.
+    const preview = el('div', 'atmo-edit-preview');
+    host.appendChild(preview);
+    playPreview(preview, a);
+
+    // --- scene ------------------------------------------------------------
+    const pick = el('select', 'atmo-edit-scene');
+    for (const id of (typeof SCENES !== 'undefined' ? SCENES.list() : [])) {
+      const o = el('option', null, SCENES.get(id).label + '  (' + id + ')');
+      o.value = id;
+      if (id === a.visual.scene) o.selected = true;
+      pick.appendChild(o);
+    }
+    pick.onchange = () => {
+      a.visual.scene = pick.value;
+      // Parameters belong to a scene, so they do not survive a change of one.
+      // Carrying them across would silently apply another scene's tuning under
+      // the same names and produce a picture the author did not choose.
+      a.visual.params = [];
+      changed();
+    };
+    host.appendChild(row('Scene', pick));
+
+    // --- seed -------------------------------------------------------------
+    const seedWrap = el('div', 'atmo-edit-seed');
+    const seedVal = el('code', null, String(a.visual.seed));
+    const dice = el('button', 'btn-plain', '⚄ Reroll');
+    dice.type = 'button';
+    dice.onclick = () => { a.visual.seed = rollSeed(); changed(); };
+    seedWrap.appendChild(seedVal);
+    seedWrap.appendChild(dice);
+    host.appendChild(row('Seed', seedWrap));
+
+    // --- parameters, bounded by the scene's own declaration ---------------
+    const def = typeof SCENES !== 'undefined' ? SCENES.get(a.visual.scene) : null;
+    if (def) {
+      const names = Object.keys(def.params).slice(0, MAX_PARAMS);
+      const current = ATMO.paramsOf(a);
+      for (const name of names) {
+        const value = Object.prototype.hasOwnProperty.call(current, name)
+          ? current[name] : def.params[name];
+        const s = el('input', 'atmo-edit-slider');
+        s.type = 'range'; s.min = '0'; s.max = '1000'; s.step = '10';
+        s.value = String(value);
+        const out = el('span', 'atmo-edit-num', String(value));
+        s.oninput = () => { out.textContent = s.value; };
+        s.onchange = () => {
+          setParam(a, name, Number(s.value));
+          changed();
+        };
+        const wrap = el('div', 'atmo-edit-slider-wrap');
+        wrap.appendChild(s); wrap.appendChild(out);
+        host.appendChild(row(name, wrap));
+      }
+    }
+
+    // --- palette ----------------------------------------------------------
+    const pal = el('div', 'atmo-edit-palette');
+    (a.visual.palette || []).forEach((tok, i) => {
+      const c = el('input', 'atmo-edit-colour');
+      c.type = 'color'; c.value = tok.hex;
+      c.title = i === 0 ? 'the ground everything settles toward' : tok.name;
+      c.onchange = () => { tok.hex = c.value.toLowerCase(); changed(); };
+      pal.appendChild(c);
+    });
+    if ((a.visual.palette || []).length < MAX_PALETTE) {
+      const more = el('button', 'btn-plain', '+');
+      more.type = 'button';
+      more.title = 'add a colour';
+      more.onclick = () => {
+        a.visual.palette.push({ name: 'c' + a.visual.palette.length, hex: '#8fa6c4' });
+        changed();
+      };
+      pal.appendChild(more);
+    }
+    if ((a.visual.palette || []).length > 1) {
+      const less = el('button', 'btn-plain', '−');
+      less.type = 'button';
+      less.title = 'remove the last colour';
+      less.onclick = () => { a.visual.palette.pop(); changed(); };
+      pal.appendChild(less);
+    }
+    host.appendChild(row('Palette', pal));
+
+    // --- the words, which are required -----------------------------------
+    // ADR-013 invariant 1: the renderer may degrade, the meaning may not. A
+    // reader who gets no picture — old client, reduced motion, an id we do
+    // not know — still gets this, so the validator refuses a recipe without
+    // it and the editor says so before the publish button does.
+    const fall = el('textarea', 'atmo-edit-text');
+    fall.maxLength = MAX_FALLBACK;
+    fall.rows = 2;
+    fall.placeholder = 'Describe it in words — this is what a reader sees when the picture cannot be shown';
+    fall.value = a.fallback.text || '';
+    host.appendChild(row('In words', fall));
+    const warn = el('p', 'hint warn',
+      'A description in words is required — it is what a reader gets when the picture cannot be shown.');
+    host.appendChild(warn);
+    // Typing must not re-render: the editor rebuilds itself on structural
+    // changes, and doing that per keystroke would take the caret away
+    // mid-sentence. So the warning is toggled in place instead.
+    const syncWarn = () => { warn.hidden = !!(a.fallback.text || '').trim(); };
+    fall.oninput = () => { a.fallback.text = fall.value; syncWarn(); };
+    syncWarn();
+
+    // --- sound ------------------------------------------------------------
+    const sound = el('div', 'atmo-edit-sound');
+    if (a.audio && a.audio.asset) {
+      sound.appendChild(el('code', null, a.audio.asset.slice(0, 8) + '…'));
+      const g = el('input', 'atmo-edit-slider');
+      g.type = 'range'; g.min = '0'; g.max = '1000'; g.step = '10';
+      g.value = String(a.audio.gain ?? 700);
+      g.title = 'gain';
+      g.onchange = () => { a.audio.gain = Number(g.value); if (onChange) onChange(); };
+      sound.appendChild(g);
+      const loop = el('button', 'btn-plain', a.audio.mode === 'once' ? 'once' : 'loop');
+      loop.type = 'button';
+      loop.onclick = () => { a.audio.mode = a.audio.mode === 'once' ? 'loop' : 'once'; changed(); };
+      sound.appendChild(loop);
+      const rm = el('button', 'btn-plain', 'Remove');
+      rm.type = 'button';
+      rm.onclick = () => { delete a.audio; changed(); };
+      sound.appendChild(rm);
+    } else {
+      const pickAudio = el('button', 'btn-plain', 'Add a sound…');
+      pickAudio.type = 'button';
+      pickAudio.onclick = () => chooseAsset('audio/*', async f => {
+        const r = await uploadAssetFile(f);
+        a.audio = { asset: r.asset_id, mode: 'loop', gain: 700, fade_in_ms: 600, fade_out_ms: 900 };
+        if (Number(a.audio.fade_in_ms) > MAX_FADE) a.audio.fade_in_ms = MAX_FADE;
+        changed();
+      });
+      sound.appendChild(pickAudio);
+    }
+    host.appendChild(row('Sound', sound));
+
+    // --- lineage, when this recipe came from somebody else's post ----------
+    if (a.derived_from && (a.derived_from.publication_id || a.derived_from.recipe_hash)) {
+      const note = el('p', 'hint',
+        a.derived_from.publication_id
+          ? 'Derived from an atmosphere in this space. The link is recorded when you publish.'
+          : 'Derived from another atmosphere, recorded by digest only.');
+      host.appendChild(note);
+    }
+  }
+
+  /** Set one parameter without disturbing the order of the others. */
+  function setParam(a, name, value) {
+    a.visual.params = a.visual.params || [];
+    const v = Math.max(0, Math.min(1000, Math.round(value)));
+    const found = a.visual.params.find(p => p.name === name);
+    if (found) { found.value = v; return; }
+    a.visual.params.push({ name, value: v });
+  }
+
+  /** A one-shot file picker that does not disturb the composer's own input. */
+  function chooseAsset(accept, fn) {
+    const inp = document.createElement('input');
+    inp.type = 'file';
+    inp.accept = accept;
+    inp.style.display = 'none';
+    inp.onchange = async () => {
+      const f = inp.files && inp.files[0];
+      inp.remove();
+      if (f) { try { await fn(f); } catch (e) { console.warn('atmosphere asset:', e); } }
+    };
+    document.body.appendChild(inp);
+    inp.click();
+  }
+
+  /** Play the recipe under construction, through the reader's own stage. */
+  function playPreview(host, a) {
+    if (typeof STAGE === 'undefined' || typeof SCENES === 'undefined') return;
+    STAGE.clear();
+    const scene = SCENES.make(String(a.visual.scene || ''), {
+      seed: Number(a.visual.seed) || 0, params: ATMO.paramsOf(a),
+    });
+    if (!scene) {
+      host.appendChild(el('p', 'hint', 'This build cannot render that scene.'));
+      return;
+    }
+    // The preview obeys the same ladder as the reader. If it says no, say so
+    // rather than showing an author a moving picture their own settings have
+    // already turned off for everyone.
+    if (!STAGE.play(host, scene, { palette: ATMO.paletteOf(a), seed: Number(a.visual.seed) || 0 })) {
+      host.appendChild(el('p', 'hint', 'Preview is still — ' + ATMO.declineReason()));
+    }
+  }
+
+  return { render, blank, rollSeed };
+})();
+
+if (typeof window !== 'undefined') window.ATMO_EDIT = ATMO_EDIT;

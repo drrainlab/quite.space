@@ -488,7 +488,18 @@ function openComposer(doc, baseRevision) {
   renderCompCover();
   renderComposerChips();
   renderComposerBlocks();
+  renderComposerAtmosphere();
   dlgComposer.showModal();
+}
+
+// The atmosphere editor writes straight into composerDoc.atmosphere, in the
+// contract's own shape — permille integers and hex strings — so what the
+// sliders move is exactly what gets signed. It is re-rendered rather than
+// patched because the parameter list depends on which scene is selected.
+function renderComposerAtmosphere() {
+  const box = document.getElementById('compAtmosphere');
+  if (!box || typeof ATMO_EDIT === 'undefined') return;
+  ATMO_EDIT.render(box, composerDoc);
 }
 
 // ---- cover: a slim drop strip above the title ----
@@ -777,6 +788,15 @@ async function saveComposerDraft() {
       body: JSON.stringify({ document_id: doc.document_id, document: doc }) });
     msg.textContent = 'Draft saved on this device.'; msg.className = 'hint';
   } catch (err) { msg.textContent = err.message; msg.className = 'hint warn'; }
+}
+
+// Closing the composer stops the preview. The stage holds exactly one scene,
+// so a preview left running would go on drawing behind whatever the reader
+// opens next — and would be stopped only by accident, when that post started
+// its own.
+function closeComposer() {
+  if (typeof STAGE !== 'undefined') STAGE.clear();
+  dlgComposer.close();
 }
 
 async function publishComposer() {

@@ -1580,3 +1580,40 @@ header .nav-act { padding: 5px 11px 5px 10px; min-height: 30px; }
     background: var(--bg, #0b1020); border-radius: 8px; padding: 6px 8px;
   }
 }
+
+/* ---- Atmosphere editor (AM-5) ---------------------------------------------
+   A block inside the composer sheet, quiet enough that it does not compete
+   with the post being written. */
+.atmo-edit {
+  margin: 10px 0; padding: 10px 12px;
+  border: 1px solid var(--line, rgba(255,255,255,.12)); border-radius: 12px;
+}
+.atmo-edit-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.atmo-edit-row {
+  display: flex; align-items: center; gap: 10px; margin: 7px 0;
+}
+.atmo-edit-label {
+  flex: 0 0 5.5rem; font-size: .84rem; opacity: .72;
+  letter-spacing: .02em; text-transform: lowercase;
+}
+.atmo-edit-row > :not(.atmo-edit-label) { flex: 1 1 auto; min-width: 0; }
+/* The preview is the reader's own stage, so it needs a real height to be
+   measured into — see the note about zero-size hosts in stage.js. */
+.atmo-edit-preview {
+  position: relative; overflow: hidden;
+  height: 150px; margin: 8px 0 12px; border-radius: 10px;
+  border: 1px solid var(--line, rgba(255,255,255,.1));
+}
+.atmo-edit-seed { display: flex; align-items: center; gap: 8px; }
+.atmo-edit-seed code { font-size: .78rem; opacity: .8; overflow: hidden; text-overflow: ellipsis; }
+.atmo-edit-slider-wrap { display: flex; align-items: center; gap: 8px; }
+.atmo-edit-slider { flex: 1 1 auto; }
+.atmo-edit-num { flex: 0 0 3ch; text-align: right; font-size: .78rem; opacity: .7; }
+.atmo-edit-palette { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.atmo-edit-colour {
+  width: 30px; height: 26px; padding: 0; border-radius: 6px; cursor: pointer;
+  border: 1px solid var(--line, rgba(255,255,255,.18)); background: none;
+}
+.atmo-edit-text { width: 100%; resize: vertical; }
+.atmo-edit-sound { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.atmo-edit-sound code { font-size: .76rem; opacity: .7; }

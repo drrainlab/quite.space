@@ -316,6 +316,44 @@ func (r *Runtime) spaceAssetOK(tid id.TerminalID) func(string) bool {
 	}
 }
 
+// ErrNoSuchSource is returned when a draft claims to derive from a
+// publication this space does not hold, or from one carrying no atmosphere.
+// Refusing is the point: an unresolvable pointer published as-is would be a
+// lineage claim nobody could ever check.
+var ErrNoSuchSource = errors.New(
+	"node: that atmosphere's source is not in this space — nothing to derive from")
+
+// resolveLineageLocked fills derived_from from the source the draft names.
+// Caller holds r.mu.
+//
+// Anonymous inheritance — a digest with no pointer — is left exactly as it
+// arrived. It claims only "this recipe equals some other recipe", which is
+// either true of the bytes or not, and it names nobody, so there is nothing
+// here to verify on the author's behalf.
+func resolveLineageLocked(st *spaceState, doc *publication.Document) error {
+	if doc == nil || doc.Atmosphere == nil || doc.Atmosphere.Derived == nil {
+		return nil
+	}
+	d := doc.Atmosphere.Derived
+	if d.PublicationID == "" {
+		return nil
+	}
+	raw, err := hex.DecodeString(d.PublicationID)
+	if err != nil || len(raw) != 16 {
+		return ErrNoSuchSource
+	}
+	var srcID [16]byte
+	copy(srcID[:], raw)
+	src, ok := st.space.State.PublicationByID(srcID)
+	if !ok || src.Document == nil || src.Document.Atmosphere == nil {
+		return ErrNoSuchSource
+	}
+	// Both fields come off the source, not off the request.
+	d.RecipeHash = src.Document.Atmosphere.RecipeHash()
+	d.RevisionHash = src.RevisionEventID.Hex()
+	return nil
+}
+
 // ErrPublishConflict marks a stale base revision (optimistic concurrency).
 var ErrPublishConflict = errors.New("node: the post changed elsewhere — republish from the latest revision")
 
@@ -328,6 +366,21 @@ func (r *Runtime) PublishDocument(tid id.TerminalID, doc *publication.Document, 
 	st, ok := r.spaces[tid]
 	if !ok {
 		return id.EventID{}, errors.New("node: unknown space")
+	}
+	// Lineage is COMPUTED HERE, never accepted from the caller — and this is
+	// the whole difference between a verifiable digest and a free-text claim.
+	// If a client could hand us the hash alongside the pointer, "derived from
+	// that post" would be a sentence anyone can write about any post. So when
+	// a draft names a source, the node looks that source up in this space and
+	// takes the digest off the recipe it actually holds, overwriting whatever
+	// arrived. A name that resolves to nothing is refused rather than
+	// published as an unverifiable claim.
+	//
+	// It runs BEFORE Validate so the bytes that get checked are the bytes that
+	// get signed; filling this in afterwards would sign a field nothing had
+	// looked at.
+	if err := resolveLineageLocked(st, doc); err != nil {
+		return id.EventID{}, err
 	}
 	if err := publication.Validate(doc, r.spaceAssetOK(tid)); err != nil {
 		return id.EventID{}, err
