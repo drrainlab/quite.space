@@ -29,6 +29,10 @@ async function loadSpaceAppearance(sid) {
   try {
     const snap = await api(`/api/spaces/${sid}/appearance`);
     applyScopedAppearance(document.getElementById('content'), snap.appearance, renderMode());
+    // MotionPolicy has been in the signed appearance since SC-0 and read by
+    // nothing; atmosphere is its first consumer (AM-3). A space asking for
+    // stillness caps every scene in it, and cannot raise anyone's setting.
+    if (typeof STAGE !== 'undefined') STAGE.setPolicy((snap.appearance || {}).motion || '');
   } catch (e) { /* space may not project a contract (not owned) — ignore */ }
 }
 
