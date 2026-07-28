@@ -112,7 +112,17 @@ const STAGE = (() => {
 
   function resize(c) {
     const r = c.host.getBoundingClientRect();
+    // A host that is momentarily detached or hidden measures 0x0. Rebuilding
+    // to a 1x1 canvas would throw the accumulated picture away for nothing —
+    // keep the last good frame and wait for a real rectangle.
+    if (r.width < 1 || r.height < 1) return;
     const w = Math.max(1, Math.round(r.width)), h = Math.max(1, Math.round(r.height));
+    // Setting canvas.width CLEARS the canvas, so a "resize" to the same size
+    // is not a no-op — it is a visible wipe of everything the scene has laid
+    // down. The ResizeObserver fires on observe() and on reattachment, both
+    // with unchanged dimensions; skip them.
+    if (c.w === w && c.h === h) return;
+    c.w = w; c.h = h;
     // CAP THE BACKING STORE, and cap it hard.
     //
     // The cost of a bed is fill rate, and fill rate is proportional to area

@@ -190,6 +190,64 @@ function stageLifecycle() {
   check('...and tears down like any other', [canvases(), harness.observed()], [0, 0]);
 }
 
+// ------------------------------------------- same-post re-render preservation
+
+function preserveAcrossRerender() {
+  const { harness, get } = boot([
+    'modes.js', 'audio.js', 'brush.js', 'scenes.js', 'scenes/field.js',
+    'stage.js', 'atmosphere.js',
+  ]);
+  const STAGE = get('STAGE'), ATMO = get('ATMO');
+  const doc = harness.document;
+
+  const recipe = {
+    visual: { scene: 'drift@1', seed: 7, params: [],
+              palette: [{ name: 'g', hex: '#0b1020' }, { name: 'a', hex: '#7ab4e0' }] },
+    fallback: { text: 'a field' },
+  };
+
+  const shell = doc.createElement('div');
+  const bar = doc.createElement('div');
+  harness.body.appendChild(shell);
+  harness.body.appendChild(bar);
+
+  ATMO.mount(shell, recipe, 'p1', { bar, enter: 'quiet' });
+  harness.tick(200);
+  check('entering quiet starts the scene', STAGE.running(), true);
+  const stage0 = shell.querySelectorAll('div.atmo-stage')[0];
+  const canvas0 = stage0 && stage0.querySelectorAll('canvas')[0];
+  check('the stage layer holds the canvas', !!canvas0, true);
+
+  // Recognition: the same post+recipe is held; an edited recipe is not.
+  check('the same recipe is recognised as held', ATMO.holds('p1', recipe), true);
+  check('another post is not', ATMO.holds('p2', recipe), false);
+  const edited = JSON.parse(JSON.stringify(recipe));
+  edited.visual.seed = 8;
+  check('an edited recipe is not', ATMO.holds('p1', edited), false);
+
+  // The reaction path: the article is rebuilt around a LIVE atmosphere.
+  // Nothing may stop — this is the bug where reacting to a post killed its
+  // scene and sound.
+  const before = harness.pending();
+  const kept = ATMO.detach();
+  check('detach hands back the bar node', kept && kept.bar === bar, true);
+  harness.tick(100); // the article is being rebuilt; the scene keeps drawing
+  check('the scene never stopped during the rebuild', STAGE.running(), true);
+  const shell2 = doc.createElement('div');
+  harness.body.appendChild(shell2);
+  ATMO.reattach(shell2);
+  harness.tick(100);
+  check('...and keeps running after reattach', STAGE.running(), true);
+  check('...on the SAME canvas, not a replacement',
+    shell2.querySelectorAll('div.atmo-stage')[0].querySelectorAll('canvas')[0] === canvas0, true);
+  check('...and the new shell carries the class',
+    shell2.classList.contains('atmo-shell'), true);
+
+  ATMO.unmount();
+  check('unmount still tears everything down',
+    [STAGE.running(), harness.pending()], [false, 0]);
+}
+
 // ------------------------------------------------------------- the mode ladder
 
 function ladder() {
@@ -223,6 +281,7 @@ function ladder() {
 
 arbiter();
 stageLifecycle();
+preserveAcrossRerender();
 ladder();
 
 if (failures) {

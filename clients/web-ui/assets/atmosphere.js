@@ -236,6 +236,49 @@ const ATMO = (() => {
   }
 
   /**
+   * Is this exact atmosphere already mounted and alive for this post?
+   * A re-render of the same article must not pass through unmount/mount —
+   * that stops the scene and the bed, which is how a REACTION on a post
+   * killed its whole atmosphere: the resonance row's onChange refetches the
+   * post and rebuilds the article.
+   * @param {string} postId @param {any} atmosphere
+   */
+  function holds(postId, atmosphere) {
+    return !!(mounted && mounted.postId === postId &&
+      mounted.recipeSig === JSON.stringify(atmosphere));
+  }
+
+  /**
+   * Lift the live atmosphere out of the DOM before the article is wiped.
+   * Nothing is stopped: the scene keeps drawing (a detached canvas draws
+   * fine) and the bed keeps playing (its <audio> was never in the DOM).
+   * Returns the pieces the caller must put back, or null if nothing is up.
+   */
+  function detach() {
+    if (!mounted) return null;
+    mounted.stage.remove();
+    mounted.scrim.remove();
+    if (mounted.bar) mounted.bar.remove();
+    mounted.shell.classList.remove('atmo-shell');
+    return { bar: mounted.bar };
+  }
+
+  /**
+   * Put a detached atmosphere back into (a rebuilt) shell. The caller has
+   * already placed the bar node into the content flow; the layers go back
+   * underneath. All the closures inside mount() keep working because the
+   * NODES are the same — only their position in the document changed.
+   * @param {HTMLElement} shell
+   */
+  function reattach(shell) {
+    if (!mounted) return;
+    shell.prepend(mounted.scrim);
+    shell.prepend(mounted.stage);
+    shell.classList.add('atmo-shell');
+    mounted.shell = shell;
+  }
+
+  /**
    * Put a post's atmosphere BEHIND its reading view.
    *
    * The shell is the article container itself. mount() prepends two layers —
@@ -278,7 +321,12 @@ const ATMO = (() => {
     shell.classList.add('atmo-shell');
     styleScrim(scrim, atmosphere);
 
-    mounted = { shell, stage, scrim, bar, scene, atmosphere, postId };
+    mounted = { shell, stage, scrim, bar, scene, atmosphere, postId,
+                // The recipe's identity, so a re-render can tell "the same
+                // atmosphere, keep it running" from "an edit changed it,
+                // remount". JSON is fine here: the projection is canonical
+                // enough that an unchanged recipe stringifies identically.
+                recipeSig: JSON.stringify(atmosphere) };
 
     // The poster (an author-supplied image) or the deterministic still — the
     // first frame re-derived from the seed, nothing cached anywhere. Either
@@ -298,6 +346,10 @@ const ATMO = (() => {
     const hasSound = !!(atmosphere.audio && atmosphere.audio.asset);
     const label = (typeof SCENES !== 'undefined' &&
       SCENES.get(String(atmosphere.visual.scene || ''))?.label) || 'Atmosphere';
+    // Whether THIS mount's scene is actually on the stage. STAGE.running()
+    // alone cannot answer that — it is false during a mechanical pause
+    // (offscreen host, hidden tab) and during the person's own pause.
+    let sceneLive = false;
 
     /** Rebuild the bar for one of its two states. */
     function renderBar(state, notes) {
@@ -313,7 +365,12 @@ const ATMO = (() => {
       const name = document.createElement('span');
       name.className = 'atmo-bar-label';
       if (state === 'live') {
-        name.textContent = label + ' \u00B7 moving' + (bed ? ' \u00B7 sound' : '');
+        // Say only what is true: a declined scene is not "moving", and a
+        // person's pause is its own state, not motion.
+        const bits = [label];
+        if (sceneLive) bits.push(STAGE.paused() ? 'paused' : 'moving');
+        if (bed) bits.push('sound');
+        name.textContent = bits.join(' \u00B7 ');
       } else {
         name.textContent = label + ' atmosphere';
         // The author's words are the atmosphere's description AND its last
@@ -331,7 +388,7 @@ const ATMO = (() => {
       };
 
       if (state === 'live') {
-        btn(STAGE.paused() ? 'Resume' : 'Pause', 'btn-plain', () => {
+        if (sceneLive) btn(STAGE.paused() ? 'Resume' : 'Pause', 'btn-plain', () => {
           // Pause freezes ON THE CURRENT FRAME — the canvas keeps what it
           // holds and nothing is redrawn. A pause that jumped back to the
           // opening frame would read as the composition resetting, and a
@@ -352,6 +409,7 @@ const ATMO = (() => {
         btn('Leave', 'btn-plain', () => {
           // The exit IS the deterministic reset: stop everything and return
           // to the still first frame with the doors.
+          sceneLive = false;
           STAGE.clear();
           stopBed();
           if (!fall.poster && scene) stillFrame(stage, scene, atmosphere);
@@ -391,7 +449,7 @@ const ATMO = (() => {
       if (stillRO) { stillRO.disconnect(); stillRO = null; }
       stage.querySelectorAll(':scope > canvas.stage-canvas').forEach(c => c.remove());
       if (scene) {
-        const ok = STAGE.play(stage, scene, {
+        sceneLive = STAGE.play(stage, scene, {
           palette: paletteOf(atmosphere),
           seed: Number(atmosphere.visual.seed) || 0,
           level,
@@ -399,7 +457,7 @@ const ATMO = (() => {
         // Declining is a normal outcome, not a failure — but it has to be
         // SAID, or a person who set reduced motion months ago just sees a
         // still picture and assumes the post is broken.
-        if (!ok) {
+        if (!sceneLive) {
           notes.push('showing the still \u2014 ' + stageDeclinedBecause());
           if (!fall.poster) stillFrame(stage, scene, atmosphere);
         }
@@ -409,6 +467,10 @@ const ATMO = (() => {
         if (!r.ok) notes.push(r.why);
         else if (soundMode() === 'remember') localStorage.setItem(CONSENT_KEY, '1');
       }
+      // Nothing came up at all — no motion, no sound. That is not a "live"
+      // state to control, it is the still state with an explanation, and the
+      // doors stay so the person can try again when the reason lifts.
+      if (!sceneLive && !bed) { renderBar('still', notes); return; }
       renderBar('live', notes);
     }
 
@@ -614,7 +676,8 @@ const ATMO = (() => {
   // The point of putting both directions in one file was that they share one
   // reading of the recipe; leaving these private would have meant the editor
   // reimplementing them, which is exactly how a preview drifts from a post.
-  return { marker, mount, unmount, cardStill, level, soundMode, setSoundMode, stopBed,
+  return { marker, mount, unmount, holds, detach, reattach, cardStill,
+           level, soundMode, setSoundMode, stopBed,
            paletteOf, paramsOf, declineReason: stageDeclinedBecause };
 })();
 

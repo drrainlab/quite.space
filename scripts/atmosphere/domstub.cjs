@@ -43,7 +43,7 @@ function install(global, size) {
   function makeEl(tag) {
     const el = {
       tagName: String(tag).toUpperCase(),
-      className: '', id: '', textContent: '', title: '',
+      id: '', textContent: '', title: '',
       style: { cssText: '', setProperty() {}, removeProperty() {} },
       dataset: {},
       children: [], parentNode: null,
@@ -69,6 +69,13 @@ function install(global, size) {
       querySelectorAll(sel) { return findAll(el, sel); },
       querySelector(sel) { return findAll(el, sel)[0] || null; },
     };
+    // className and classList must be the SAME state: real code assigns
+    // el.className = 'x' and later queries by class, and a stub where those
+    // are two stores makes class selectors silently blind.
+    Object.defineProperty(el, 'className', {
+      get() { return [...el.classList._s].join(' '); },
+      set(v) { el.classList._s = new Set(String(v).split(/\s+/).filter(Boolean)); },
+    });
     return el;
   }
 

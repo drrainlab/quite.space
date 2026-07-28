@@ -148,10 +148,19 @@ async function openPub(docID, mode) {
 
 function renderArticle(p, mode) {
   const box = document.getElementById('pubArticle');
-  // innerHTML = '' drops the canvas and the audio element from the DOM but
-  // stops neither. Tear down before wiping, on every re-render — a comment
-  // arriving must not leave a second scene running behind the first.
-  if (typeof ATMO !== 'undefined') ATMO.unmount();
+  // A re-render of the SAME post with the SAME recipe must not stop the
+  // atmosphere: reacting to a post refetches it and lands here, and tearing
+  // the scene and the bed down over a reaction reads as the post breaking.
+  // The live pieces are lifted out, the article is rebuilt, and they go
+  // back — nothing stops, nothing restarts, the audio never gaps. Any other
+  // case (different post, edited recipe, no atmosphere) tears down as
+  // before: innerHTML='' drops nodes but stops nothing, so an explicit
+  // unmount must precede the wipe.
+  const doc0 = p.document;
+  const preserved = (typeof ATMO !== 'undefined' && doc0.atmosphere &&
+    ATMO.holds(String(p.document_id || openDocID), doc0.atmosphere))
+    ? ATMO.detach() : null;
+  if (!preserved && typeof ATMO !== 'undefined') ATMO.unmount();
   box.innerHTML = '';
   const doc = p.document;
 
@@ -182,9 +191,16 @@ function renderArticle(p, mode) {
   // mounting now would size the background canvas to 1x1.
   let atmoBar = null;
   if (doc.atmosphere && typeof ATMO !== 'undefined') {
-    atmoBar = document.createElement('div');
-    atmoBar.className = 'atmo-bar';
-    box.appendChild(atmoBar);
+    if (preserved) {
+      // The SAME bar node, so every closure inside the running mount keeps
+      // pointing at a live element rather than an orphan.
+      atmoBar = preserved.bar;
+      box.appendChild(atmoBar);
+    } else {
+      atmoBar = document.createElement('div');
+      atmoBar.className = 'atmo-bar';
+      box.appendChild(atmoBar);
+    }
   }
 
   const h = document.createElement('h2');
@@ -260,7 +276,9 @@ function renderArticle(p, mode) {
   document.getElementById('pubFeed').style.display = 'none';
   box.style.display = '';
   // Now that the article has layout, the atmosphere can measure its shell.
-  if (atmoBar) {
+  if (preserved) {
+    ATMO.reattach(box);
+  } else if (atmoBar) {
     ATMO.mount(box, doc.atmosphere, String(openDocID),
                { bar: atmoBar, enter: mode || 'still' });
   }
