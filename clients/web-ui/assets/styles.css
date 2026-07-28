@@ -1557,7 +1557,17 @@ header .nav-act { padding: 5px 11px 5px 10px; min-height: 30px; }
    and the scrim (readability). NO overflow:hidden on the shell itself — it
    would clip focus outlines, menus and tooltips; clipping and rounding
    belong to the background layers alone. */
-.atmo-shell { position: relative; }
+.atmo-shell {
+  position: relative;
+  /* The layers span the article's full box, so without an inset of its own
+     the title and text sit flush against the atmosphere's edge. This padding
+     exists only while the shell class does — an ordinary post keeps its
+     exact pre-AM-6 geometry. */
+  padding: 18px 22px 14px;
+}
+@media (max-width: 600px) {
+  .atmo-shell { padding: 12px 14px 10px; }
+}
 .atmo-stage, .atmo-scrim {
   position: absolute; inset: 0; z-index: 0;
   overflow: hidden; border-radius: var(--radius-md);
