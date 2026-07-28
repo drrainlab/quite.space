@@ -32,6 +32,11 @@ function switchView(v) {
 
 async function refreshPosts() {
   if (!current) return;
+  // Leaving the article takes its atmosphere with it — the scene and the bed
+  // both. renderArticle() wipes the container, but a canvas removed from the
+  // DOM keeps its rAF loop and an <audio> removed from the DOM keeps playing,
+  // so the teardown has to be asked for rather than assumed.
+  if (typeof ATMO !== 'undefined') ATMO.unmount();
   const feed = document.getElementById('pubFeed');
   try {
     const r = await api(`/api/spaces/${current}/publications`);
@@ -64,6 +69,14 @@ async function refreshPosts() {
       const m = document.createElement('div');
       m.className = 'pub-meta';
       m.textContent = `${p.kind} · ${p.comment_count} ${p.comment_count === 1 ? 'comment' : 'comments'}`;
+      // A post in the feed stays an ordinary readable post: the atmosphere
+      // gets a MARKER here and nothing else. Never a live canvas — twenty
+      // running scenes is a feed nobody can read, and an immersive mode you
+      // fall into by scrolling is not a mode anyone chose.
+      if (typeof ATMO !== 'undefined') {
+        const mk = ATMO.marker(p.atmosphere);
+        if (mk) m.appendChild(mk);
+      }
       card.appendChild(m);
       // PA-1 space-cards: categories render as chips on the card.
       if (p.kind === 'space' && p.tags?.length) {
@@ -97,6 +110,10 @@ async function openPub(docID) {
 
 function renderArticle(p) {
   const box = document.getElementById('pubArticle');
+  // innerHTML = '' drops the canvas and the audio element from the DOM but
+  // stops neither. Tear down before wiping, on every re-render — a comment
+  // arriving must not leave a second scene running behind the first.
+  if (typeof ATMO !== 'undefined') ATMO.unmount();
   box.innerHTML = '';
   const doc = p.document;
 
@@ -119,6 +136,21 @@ function renderArticle(p) {
     autoMediaSrc(cov, doc.cover); // fetch bytes on view (media on-demand)
     box.appendChild(cov);
   }
+  // The atmosphere sits above the title and below the cover: entering is a
+  // deliberate act, so its doors are the first thing after the picture and
+  // before the words. Nothing here moves or sounds until one is pressed.
+  //
+  // The element goes in HERE for position, but it is mounted at the very
+  // bottom of this function — `box` is display:none until the last line, and
+  // a host with no layout gives back a zero-size rectangle, so mounting now
+  // would size every canvas to 1x1 and draw the still frame into nothing.
+  let atmoHost = null;
+  if (doc.atmosphere && typeof ATMO !== 'undefined') {
+    atmoHost = document.createElement('div');
+    atmoHost.className = 'atmo-region';
+    box.appendChild(atmoHost);
+  }
+
   const h = document.createElement('h2');
   h.className = 'pub-h1'; h.textContent = doc.title;
   box.appendChild(h);
@@ -191,6 +223,8 @@ function renderArticle(p) {
 
   document.getElementById('pubFeed').style.display = 'none';
   box.style.display = '';
+  // Now that the article has layout, the atmosphere can measure its host.
+  if (atmoHost) ATMO.mount(atmoHost, doc.atmosphere, String(openDocID));
   startCommentPoll(); // receive others' comments live while this article is open
 }
 

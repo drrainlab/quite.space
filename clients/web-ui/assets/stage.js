@@ -64,6 +64,8 @@ const STAGE = (() => {
 
   let raf = 0;
   let current = null; // { scene, canvas, brush, host, t, last, io }
+  /** Re-measures the host whenever it gains or changes layout — see below. */
+  let ro = null;
   /** The current space's MotionPolicy, or '' when no space is in view. */
   let policy = '';
 
@@ -77,6 +79,7 @@ const STAGE = (() => {
       current = null;
       try { c.scene.stop?.(); } catch { /* a scene's failure is not ours */ }
       c.io?.disconnect();
+      if (ro) ro.unobserve(c.host);
       c.canvas.remove();
     }
   }
@@ -136,7 +139,8 @@ const STAGE = (() => {
     c.ctx.setTransform(scale, 0, 0, scale, 0, 0);
     // Setting width clears the canvas, so the brush starts from the ground
     // colour again — which is exactly what its luminance model should believe.
-    c.brush = BRUSH.make({ width: w, height: h, palette: c.palette, seed: c.seed, ctx: c.ctx });
+    c.brush = BRUSH.make({ width: w, height: h, palette: c.palette,
+                           seed: c.seed, ctx: c.ctx, level: c.level });
   }
 
   /**
@@ -147,7 +151,9 @@ const STAGE = (() => {
    *
    * @param {HTMLElement} host
    * @param {{draw:(b:any,t:number,dt:number)=>void, stop?:()=>void}} scene
-   * @param {{palette?:string[], seed?:number}} [opts] the recipe's own palette
+   * @param {{palette?:string[], seed?:number, level?:(()=>number)}} [opts]
+   *   the recipe's own palette and seed, plus the bed's loudness if one is
+   *   playing — the single live value a scene is allowed to see
    */
   function play(host, scene, opts) {
     clear();
@@ -166,9 +172,11 @@ const STAGE = (() => {
       brush: null, rate: 1,
       palette: (opts && opts.palette) || ['#000000'],
       seed: (opts && opts.seed) || 0,
+      level: (opts && opts.level) || null,
     };
     current = c;
     resize(c);
+    if (ro) ro.observe(host);
 
     // Offscreen is the same as hidden. Scrolling a post out of view should
     // cost nothing, and on a long feed that is the common case.
@@ -271,7 +279,18 @@ const STAGE = (() => {
   // Turning reduced motion ON while a scene is playing must stop it, not wait
   // for the next navigation.
   MODES.onPreferenceChange(apply);
-  window.addEventListener('resize', () => { if (current) resize(current); });
+  // Watching the WINDOW is not enough, and the gap is not exotic: a host is
+  // measured the moment play() is called, and at that moment it may have no
+  // layout at all — an article still display:none, a pane the browser has
+  // collapsed, a column that resizes when the sidebar opens. A host with no
+  // layout hands back a zero rectangle and the scene gets a 1x1 canvas
+  // stretched across the region, which looks like a broken scene rather than
+  // a mis-measured one. Observing the host itself covers every case,
+  // including the window resize that used to be handled alone.
+  ro = window.ResizeObserver ? new ResizeObserver(() => {
+    if (current) resize(current);
+  }) : null;
+  if (!ro) window.addEventListener('resize', () => { if (current) resize(current); });
 
   return { play, clear, running, allowed, mode, wanted, apply, set,
            setPolicy, userMode };

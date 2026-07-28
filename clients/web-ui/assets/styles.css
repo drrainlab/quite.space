@@ -1539,3 +1539,44 @@ header .nav-act { padding: 5px 11px 5px 10px; min-height: 30px; }
   position: absolute; inset: 0; width: 100%; height: 100%;
   pointer-events: none; z-index: 0; border-radius: inherit;
 }
+
+/* ---- Post atmosphere (AM-4) ------------------------------------------------
+   The feed marker is deliberately quiet: a chip that says another layer
+   exists, sized and coloured like the meta line it sits in. It must not
+   compete with the title, because the post is still a post. */
+.atmo-marker {
+  margin-left: .5em; padding: .1em .5em;
+  border: 1px solid var(--line, rgba(255,255,255,.14));
+  border-radius: 999px;
+  font-size: .92em; letter-spacing: .02em; opacity: .8;
+}
+
+/* The region in the reading view. Its height is what the scene is drawn into,
+   so it is stated here rather than left to content: a host that collapses to
+   nothing gives the stage a 1x1 canvas and the bed never appears. */
+.atmo-region {
+  position: relative; overflow: hidden;
+  min-height: 190px; margin: 10px 0 14px;
+  border-radius: 12px;
+  border: 1px solid var(--line, rgba(255,255,255,.12));
+  display: flex; flex-direction: column; justify-content: flex-end;
+  gap: 8px; padding: 14px;
+}
+.atmo-poster {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: cover; z-index: 0;
+}
+/* Above the canvas and the poster, both of which are z-index 0. */
+.atmo-fallback, .atmo-doors { position: relative; z-index: 1; margin: 0; }
+.atmo-fallback { font-size: .95rem; line-height: 1.5; opacity: .9; text-wrap: pretty; }
+.atmo-doors { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.atmo-note { font-size: .86rem; opacity: .72; }
+
+/* Reduced transparency is the third accessibility axis the ladder names, and
+   the only one with nowhere else to live: an opaque backdrop under the words
+   so a moving field can never be the thing text has to be read against. */
+@media (prefers-reduced-transparency: reduce) {
+  .atmo-fallback, .atmo-doors {
+    background: var(--bg, #0b1020); border-radius: 8px; padding: 6px 8px;
+  }
+}

@@ -445,6 +445,23 @@
         </div>
       </div>
       <div class="list-row">
+        <span class="lr-label">Atmosphere</span>
+        <div class="segmented" id="setAtmosphere">
+          <button data-v="full" onclick="setAtmosphere('full')">Full</button>
+          <button data-v="calm" onclick="setAtmosphere('calm')">Calm</button>
+          <button data-v="poster" onclick="setAtmosphere('poster')">Still</button>
+          <button data-v="off" onclick="setAtmosphere('off')">Off</button>
+        </div>
+      </div>
+      <div class="list-row">
+        <span class="lr-label">Atmosphere sound</span>
+        <div class="segmented" id="setAtmosphereSound">
+          <button data-v="ask" onclick="setAtmosphereSound('ask')">Ask</button>
+          <button data-v="remember" onclick="setAtmosphereSound('remember')">Remember</button>
+          <button data-v="never" onclick="setAtmosphereSound('never')">Never</button>
+        </div>
+      </div>
+      <div class="list-row">
         <span class="lr-label">Motion</span>
         <div class="segmented" id="setRenderMode">
           <button data-v="auto" onclick="setRenderMode('auto')">Auto</button>
@@ -813,6 +830,7 @@
 <script src="brush.js"></script>
 <script src="scenes.js"></script>
 <script src="scenes/field.js"></script>
+<script src="atmosphere.js"></script>
 <script src="stage.js"></script>
 <script src="backup.js"></script>
 <script src="quicklink.js"></script>

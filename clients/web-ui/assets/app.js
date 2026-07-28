@@ -320,6 +320,12 @@ function syncSettingsUI() {
     b.classList.toggle('sel', b.dataset.v === sky));
   document.querySelectorAll('#setEffects button').forEach(b =>
     b.classList.toggle('sel', b.dataset.v === fx));
+  const atmo = (typeof STAGE !== 'undefined') ? STAGE.userMode() : 'full';
+  document.querySelectorAll('#setAtmosphere button').forEach(b =>
+    b.classList.toggle('sel', b.dataset.v === atmo));
+  const snd = (typeof ATMO !== 'undefined') ? ATMO.soundMode() : 'ask';
+  document.querySelectorAll('#setAtmosphereSound button').forEach(b =>
+    b.classList.toggle('sel', b.dataset.v === snd));
 }
 
 // ---- AI composition (SC-4): prompt → validated proposal → accept ----
