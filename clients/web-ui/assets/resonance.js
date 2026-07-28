@@ -131,9 +131,16 @@ function renderResonanceRow(res, targetId, onChange) {
   add.addEventListener('touchend', () => clearTimeout(pressT));
   row.appendChild(add);
   // Residue (RP-2A) refreshes on every render — calm state, no arrival here.
+  //
+  // Deliberately NOT the article: a message bubble wearing a faint ring
+  // reads as a touched object, but the same ring around a whole post drew a
+  // contour around the entire reading surface — and since AM-6 that surface
+  // IS the atmosphere, which carries the post's mood by itself. The chips in
+  // the resonance row still say who resonated; the post's aesthetics get
+  // their own pass later.
   requestAnimationFrame(() => {
     if (typeof RESFX === 'undefined') return;
-    const host = row.closest('.bubble, .shelf-card, #pubArticle');
+    const host = row.closest('.bubble, .shelf-card');
     if (host) RESFX.applyResidue(host, res);
   });
   return row;
