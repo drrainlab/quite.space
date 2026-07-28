@@ -27,7 +27,7 @@ func TestPublicSpaceCreateRestartAndMetaTamper(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sp, _ := rt.Space(tid)
+	sp, _ := rt.spaceForTest(tid)
 	if sp.Private {
 		t.Fatal("public space must not be private")
 	}
@@ -57,7 +57,7 @@ func TestPublicSpaceCreateRestartAndMetaTamper(t *testing.T) {
 
 	rt2 := openRuntime(t, dir, "owner")
 	defer rt2.Close()
-	sp2, ok := rt2.Space(tid)
+	sp2, ok := rt2.spaceForTest(tid)
 	if !ok {
 		t.Fatal("space lost across restart")
 	}
@@ -100,7 +100,7 @@ func TestPrivateSpaceSurvivesVisibilityTamper(t *testing.T) {
 
 	rt2 := openRuntime(t, dir, "owner")
 	defer rt2.Close()
-	sp, _ := rt2.Space(tid)
+	sp, _ := rt2.spaceForTest(tid)
 	if !sp.Private {
 		t.Fatal("tampered cache disabled encryption on a private space (I1 violation)")
 	}
@@ -138,7 +138,7 @@ func TestReaderRoleNeverEmits(t *testing.T) {
 
 	rt2 := openRuntime(t, dir, "owner")
 	defer rt2.Close()
-	sp, _ := rt2.Space(tid)
+	sp, _ := rt2.spaceForTest(tid)
 	before := sp.Log.Len()
 	if _, err := rt2.Say(tid, "readers cannot talk", SayOptions{}); err == nil {
 		t.Fatal("reader Say accepted")
@@ -193,7 +193,7 @@ func TestPublicSpaceFramesArePlaintext(t *testing.T) {
 	if _, err := rt.Say(tid, "visible to anyone with the id", SayOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	sp, _ := rt.Space(tid)
+	sp, _ := rt.spaceForTest(tid)
 	assertAllPlaintext(t, sp)
 }
 

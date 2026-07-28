@@ -225,12 +225,14 @@ func (a *APIServer) handleResonance(w http.ResponseWriter, r *http.Request) {
 			re.Key = body.Reaction.Key
 			// The wire fallback for a semantic emit comes from the palette /
 			// registry — the client never invents it.
-			sp, ok := a.rt.Space(tid)
-			if !ok {
-				httpErr(w, http.StatusNotFound, errors.New("unknown space"))
+			var pal resonance.Palette
+			if err := a.rt.withSpace(tid, func(st *spaceState) error {
+				pal, _ = st.space.State.ActivePalette()
+				return nil
+			}); err != nil {
+				httpErr(w, http.StatusNotFound, err)
 				return
 			}
-			pal, _ := sp.State.ActivePalette()
 			re.Fallback = resonance.ResolveFallback(re.Key, &pal, "")
 		case "unicode":
 			re.Kind = resonance.KindUnicode
@@ -290,12 +292,17 @@ func (a *APIServer) handleGetResonancePalette(w http.ResponseWriter, r *http.Req
 		httpErr(w, http.StatusBadRequest, err)
 		return
 	}
-	sp, ok := a.rt.Space(tid)
-	if !ok {
-		httpErr(w, http.StatusNotFound, errors.New("unknown space"))
+	var (
+		pal resonance.Palette
+		own bool
+	)
+	if err := a.rt.withSpace(tid, func(st *spaceState) error {
+		pal, own = st.space.State.ActivePalette()
+		return nil
+	}); err != nil {
+		httpErr(w, http.StatusNotFound, err)
 		return
 	}
-	pal, own := sp.State.ActivePalette()
 	source := "default"
 	if own {
 		source = "space"
@@ -359,39 +366,46 @@ func (a *APIServer) handleResonanceActors(w http.ResponseWriter, r *http.Request
 		httpErr(w, http.StatusBadRequest, err)
 		return
 	}
-	sp, ok := a.rt.Space(tid)
-	if !ok {
-		httpErr(w, http.StatusNotFound, errors.New("unknown space"))
-		return
-	}
+	// The target id parses without the space, and is the only 400 here.
 	target, err := parseEventID(r.PathValue("target"))
 	if err != nil {
 		httpErr(w, http.StatusBadRequest, err)
 		return
 	}
-	me := a.rt.Principal.ID
-	names := map[id.PrincipalID]string{me: a.rt.DisplayName()}
-	for _, c := range sp.MemberCards(0) {
-		if c.Name != "" {
-			names[c.Principal] = c.Name
+	var (
+		out   []map[string]any
+		total int
+	)
+	if err := a.rt.withSpace(tid, func(st *spaceState) error {
+		me := a.rt.Principal.ID
+		names := map[id.PrincipalID]string{me: a.rt.DisplayName()}
+		for _, c := range st.space.MemberCards(0) {
+			if c.Name != "" {
+				names[c.Principal] = c.Name
+			}
 		}
-	}
-	agg := sp.State.ResonanceFor(target)
-	pal, _ := sp.State.ActivePalette()
-	out := make([]map[string]any, 0, len(agg.Groups))
-	for _, g := range agg.Groups {
-		actors := make([]resActorResp, 0, len(g.Actors))
-		for _, actor := range g.Actors {
-			actors = append(actors, resActorResp{Name: names[actor], Mine: actor == me})
+		agg := st.space.State.ResonanceFor(target)
+		pal, _ := st.space.State.ActivePalette()
+		total = agg.Total
+		out = make([]map[string]any, 0, len(agg.Groups))
+		for _, g := range agg.Groups {
+			actors := make([]resActorResp, 0, len(g.Actors))
+			for _, actor := range g.Actors {
+				actors = append(actors, resActorResp{Name: names[actor], Mine: actor == me})
+			}
+			re := projectReactionResp(g.Reaction, &pal)
+			out = append(out, map[string]any{
+				"kind": re.Kind, "key": re.Key, "value": re.Value,
+				"fallback": re.Fallback, "label": re.Label,
+				"count": g.Count, "actors": actors,
+			})
 		}
-		re := projectReactionResp(g.Reaction, &pal)
-		out = append(out, map[string]any{
-			"kind": re.Kind, "key": re.Key, "value": re.Value,
-			"fallback": re.Fallback, "label": re.Label,
-			"count": g.Count, "actors": actors,
-		})
+		return nil
+	}); err != nil {
+		httpErr(w, http.StatusNotFound, err)
+		return
 	}
-	writeJSON(w, map[string]any{"groups": out, "total": agg.Total})
+	writeJSON(w, map[string]any{"groups": out, "total": total})
 }
 
 var _ = reducers.ResonanceAggregate{}

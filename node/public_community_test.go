@@ -80,7 +80,7 @@ func TestCommunityColdStartJoinAndPublish(t *testing.T) {
 	joiner.Close()
 	joiner2 := openRuntime(t, joinerDir, "joiner")
 	defer joiner2.Close()
-	sp2, ok := joiner2.Space(tid)
+	sp2, ok := joiner2.spaceForTest(tid)
 	if !ok {
 		t.Fatal("joiner lost the space across restart")
 	}

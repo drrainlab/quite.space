@@ -330,23 +330,28 @@ func (a *APIServer) handleSpaces(w http.ResponseWriter, r *http.Request) {
 			Events: s.Events, Messages: s.Messages,
 			Undecryptable: s.Undecryptable, Peers: s.Peers,
 		}
-		if sp, ok := a.rt.Space(s.ID); ok {
-			_, c := sp.Character()
+		// One locked scope per space. The replica read and the keystore read
+		// used to be separate critical sections with an unlocked projection
+		// between them; now they are one, so a space cannot be re-shaped by
+		// relay sync halfway through its own row.
+		//
+		// A space listed a moment ago can already be gone (Spaces() snapshots
+		// under its own lock): it simply stays unprojected, as before.
+		_ = a.rt.withSpace(s.ID, func(st *spaceState) error {
+			_, c := st.space.Character()
 			resp.Character = characterOf(c)
-			pol := sp.Policy()
+			pol := st.space.Policy()
 			if pol.IsPublic() {
 				resp.Visibility = string(pol.Visibility)
 				resp.Join = pol.Join
 				resp.Publish = pol.Publish
 				resp.Frozen = pol.Frozen
 			}
-			resp.IgnoredByPolicy = sp.PolicyStats.IgnoredTotal
-			a.rt.mu.Lock()
+			resp.IgnoredByPolicy = st.space.PolicyStats.IgnoredTotal
 			resp.Role = a.rt.ks.Spaces[s.ID].Role
-			st := a.rt.spaces[s.ID]
-			resp.CanWrite = st != nil && a.rt.canWrite(st) == nil
-			a.rt.mu.Unlock()
-		}
+			resp.CanWrite = a.rt.canWrite(st) == nil
+			return nil
+		})
 		out = append(out, resp)
 	}
 	writeJSON(w, out)
@@ -433,19 +438,21 @@ func (a *APIServer) handleMessages(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusBadRequest, err)
 		return
 	}
-	s, ok := a.rt.Space(tid)
-	if !ok {
-		httpErr(w, http.StatusNotFound, errors.New("unknown space"))
+	var out []messageResp
+	if err := a.rt.withSpace(tid, func(st *spaceState) error {
+		msgs := st.space.State.Messages()
+		out = make([]messageResp, 0, len(msgs))
+		for _, m := range msgs {
+			out = append(out, messageResp{
+				ID: m.ID.Hex(), Author: m.Author.String(), Text: m.Text,
+				ProducedBy: m.ProducedBy.String(), Revised: m.Revised,
+				Clock: m.Clock, Mine: m.Author == a.rt.Principal.ID,
+			})
+		}
+		return nil
+	}); err != nil {
+		httpErr(w, http.StatusNotFound, err)
 		return
-	}
-	msgs := s.State.Messages()
-	out := make([]messageResp, 0, len(msgs))
-	for _, m := range msgs {
-		out = append(out, messageResp{
-			ID: m.ID.Hex(), Author: m.Author.String(), Text: m.Text,
-			ProducedBy: m.ProducedBy.String(), Revised: m.Revised,
-			Clock: m.Clock, Mine: m.Author == a.rt.Principal.ID,
-		})
 	}
 	writeJSON(w, out)
 }
@@ -523,16 +530,16 @@ func (a *APIServer) handleState(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusBadRequest, err)
 		return
 	}
-	s, ok := a.rt.Space(tid)
-	if !ok {
-		httpErr(w, http.StatusNotFound, errors.New("unknown space"))
-		return
-	}
-	resp := stateResp{Cards: []cardResp{}, Undecryptable: s.Undecryptable, Events: s.Log.Len()}
-	for _, c := range s.State.Cards() {
-		resp.Cards = append(resp.Cards, cardResp{ID: c.ID.Hex(), Title: c.Title, Status: c.Status})
-	}
-	if o, ok := s.State.LatestObservation(); ok {
+	resp := stateResp{Cards: []cardResp{}}
+	if err := a.rt.withSpace(tid, func(st *spaceState) error {
+		resp.Undecryptable, resp.Events = st.space.Undecryptable, st.space.Log.Len()
+		for _, c := range st.space.State.Cards() {
+			resp.Cards = append(resp.Cards, cardResp{ID: c.ID.Hex(), Title: c.Title, Status: c.Status})
+		}
+		o, ok := st.space.State.LatestObservation()
+		if !ok {
+			return nil
+		}
 		now := uint64(time.Now().Unix())
 		fresh := "unknown"
 		age := uint64(0)
@@ -556,6 +563,10 @@ func (a *APIServer) handleState(w http.ResponseWriter, r *http.Request) {
 			Freshness: fresh,
 			AgeSec:    age,
 		}
+		return nil
+	}); err != nil {
+		httpErr(w, http.StatusNotFound, err)
+		return
 	}
 	writeJSON(w, resp)
 }

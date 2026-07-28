@@ -25,7 +25,7 @@ func TestCustodyReceiptPinning(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sp, _ := rt.Space(tid)
+	sp, _ := rt.spaceForTest(tid)
 
 	sign := func(priv ed25519.PrivateKey) []byte {
 		r := &bridge.CustodyReceipt{

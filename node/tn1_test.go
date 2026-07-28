@@ -76,7 +76,7 @@ func TestAdoptLinkFilteredScopesSpaces(t *testing.T) {
 	filtered := appliedCh(t, bob, tidB)
 	// Joining already put each space's genesis in Bob's log. The leak test
 	// is about GROWTH over the scoped link, not about emptiness.
-	bBefore, _ := bob.Space(tidB)
+	bBefore, _ := bob.spaceForTest(tidB)
 	baseB := bBefore.Log.Len()
 
 	pair := loopback.NewPair(loopback.Faults{Seed: 5})
@@ -86,10 +86,10 @@ func TestAdoptLinkFilteredScopesSpaces(t *testing.T) {
 	bob.adoptLink(testLink{pair.B}, 30*time.Millisecond, 200*time.Millisecond, "test")
 
 	dump := func() string {
-		bA, _ := bob.Space(tidA)
-		bB, _ := bob.Space(tidB)
-		aA, _ := alice.Space(tidA)
-		aB, _ := alice.Space(tidB)
+		bA, _ := bob.spaceForTest(tidA)
+		bB, _ := bob.spaceForTest(tidB)
+		aA, _ := alice.spaceForTest(tidA)
+		aB, _ := alice.spaceForTest(tidB)
 		return "alice log A=" + itoa(aA.Log.Len()) + " B=" + itoa(aB.Log.Len()) +
 			" · bob log A=" + itoa(bA.Log.Len()) + " B=" + itoa(bB.Log.Len()) +
 			" · bob msgs A=" + itoa(len(bA.State.Messages())) +
@@ -118,7 +118,7 @@ func TestAdoptLinkFilteredScopesSpaces(t *testing.T) {
 
 	// The allowed space converges.
 	await("the allowed space to sync")
-	bA, _ := bob.Space(tidA)
+	bA, _ := bob.spaceForTest(tidA)
 	if len(bA.State.Messages()) == 0 {
 		t.Fatalf("applied an event but no message surfaced: %s", dump())
 	}
@@ -131,7 +131,7 @@ func TestAdoptLinkFilteredScopesSpaces(t *testing.T) {
 	}
 	await("a second event over the same link")
 
-	bB, _ := bob.Space(tidB)
+	bB, _ := bob.spaceForTest(tidB)
 	if n := len(bB.State.Messages()); n != 0 {
 		t.Fatalf("filtered space leaked %d messages over the scoped link", n)
 	}
@@ -193,7 +193,7 @@ func TestOneLinkCarriesEveryJoinedSpace(t *testing.T) {
 		case <-deadline:
 			var stuck []string
 			for j, tid := range tids {
-				sp, _ := bob.Space(tid)
+				sp, _ := bob.spaceForTest(tid)
 				stuck = append(stuck, "room"+itoa(j)+"="+itoa(len(sp.State.Messages())))
 			}
 			t.Fatalf("room %d never synced over the shared link; bob has %v "+
@@ -201,7 +201,7 @@ func TestOneLinkCarriesEveryJoinedSpace(t *testing.T) {
 		}
 	}
 	for i, tid := range tids {
-		sp, _ := bob.Space(tid)
+		sp, _ := bob.spaceForTest(tid)
 		if len(sp.State.Messages()) == 0 {
 			t.Fatalf("room %d applied an event but shows no message", i)
 		}

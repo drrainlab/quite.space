@@ -28,7 +28,7 @@ func TestAIDocumentProposal(t *testing.T) {
 		t.Fatalf("proposal not parsed: %+v", doc)
 	}
 	// Not published: the projection stays empty until the user publishes.
-	sp, _ := rt.Space(tid)
+	sp, _ := rt.spaceForTest(tid)
 	if len(sp.State.Publications()) != 0 {
 		t.Fatal("AI proposal auto-published")
 	}

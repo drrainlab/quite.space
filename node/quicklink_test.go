@@ -290,10 +290,10 @@ func TestAdmittingTheSamePersonTwiceChangesNothing(t *testing.T) {
 	join("first")
 	line, _ := rtA.LineSpace() // lazily created, so only after a first join
 
-	// Observe under the runtime's own lock. Runtime.Space() hands back the
-	// *Space and releases r.mu, so reading through it races with the
-	// relay-sync goroutine, which writes under r.mu — -race says so, loudly.
-	// This test is in package node and can simply take the same lock.
+	// Observe under the runtime's own lock. spaceForTest hands back the *Space
+	// and releases r.mu, so reading through it races with the relay-sync
+	// goroutine, which writes under r.mu — -race says so, loudly. This test is
+	// in package node and can simply take the same lock.
 	observe := func() (members, events int, epoch uint64) {
 		rtA.mu.Lock()
 		defer rtA.mu.Unlock()

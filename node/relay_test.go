@@ -55,7 +55,7 @@ func TestStoreAndForwardThroughBlindRelay(t *testing.T) {
 
 	// Honesty check: the sender's proven level is accepted_by_relay, and
 	// the projection cannot be read as delivery.
-	sA, _ := rtA.Space(tid)
+	sA, _ := rtA.spaceForTest(tid)
 	st := sA.Trust.Delivery(msgID, tid)
 	if st.Level != claims.DeliveryAcceptedByRelay {
 		t.Fatalf("pushed event level = %v", st.Level)
@@ -72,7 +72,7 @@ func TestStoreAndForwardThroughBlindRelay(t *testing.T) {
 	if applied == 0 {
 		t.Fatal("nothing applied from relay")
 	}
-	sB, _ := rtB.Space(tid)
+	sB, _ := rtB.spaceForTest(tid)
 	msgs := sB.State.Messages()
 	if len(msgs) != 1 || msgs[0].Text != "left the recorder in the usual place" {
 		t.Fatalf("message did not survive the dead drop: %+v", msgs)

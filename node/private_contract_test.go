@@ -27,7 +27,7 @@ func TestPrivateSpaceNeverTouchesPublicMailboxes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sp, ok := owner.Space(tid); !ok || sp.Policy().IsPublic() {
+	if sp, ok := owner.spaceForTest(tid); !ok || sp.Policy().IsPublic() {
 		t.Fatal("CreateSpace produced a public policy")
 	}
 	if _, err := owner.Say(tid, "for our eyes only", SayOptions{}); err != nil {

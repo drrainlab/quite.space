@@ -34,7 +34,7 @@ func TestPublicationLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sp, _ := rt.Space(tid)
+	sp, _ := rt.spaceForTest(tid)
 	pubs := sp.State.Publications()
 	if len(pubs) != 1 || pubs[0].Title != "First Post" {
 		t.Fatalf("projection missing: %+v", pubs)

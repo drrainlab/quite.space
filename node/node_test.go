@@ -47,7 +47,7 @@ func TestRestartContinuesSeamlessly(t *testing.T) {
 	if rt2.Principal.Fingerprint() != fp {
 		t.Fatal("identity changed across restart")
 	}
-	s, ok := rt2.Space(tid)
+	s, ok := rt2.spaceForTest(tid)
 	if !ok {
 		t.Fatal("space lost across restart")
 	}

@@ -137,7 +137,7 @@ func TestRadioBridgeClosesTheLoop(t *testing.T) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	sa, _ := alice.Space(tid)
+	sa, _ := alice.spaceForTest(tid)
 	if got := sa.State.Messages()[0].Text; got != fromBob {
 		t.Fatalf("uplink mangled the message: %q", got)
 	}

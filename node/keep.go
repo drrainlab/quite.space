@@ -154,63 +154,66 @@ func (a *APIServer) handleShelf(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusBadRequest, err)
 		return
 	}
-	sp, ok := a.rt.Space(tid)
-	if !ok {
-		httpErr(w, http.StatusNotFound, errors.New("unknown space"))
-		return
-	}
-	me := a.rt.Principal.ID
-	names := map[id.PrincipalID]string{me: a.rt.DisplayName()}
-	for _, c := range sp.MemberCards(0) {
-		if c.Name != "" {
-			names[c.Principal] = c.Name
-		}
-	}
-	items := sp.State.Shelf()
-	out := make([]shelfItemResp, 0, len(items))
-	for _, it := range items {
-		resp := shelfItemResp{
-			Target: it.Target.Hex(), Kind: it.Kind, Removed: it.Removed,
-			Keepers: make([]shelfKeeperResp, 0, len(it.Keepers)),
-		}
-		for _, k := range it.Keepers {
-			resp.Keepers = append(resp.Keepers, shelfKeeperResp{
-				Author: k.Author.String(), AuthorName: names[k.Author],
-				Mine: k.Author == me, Note: k.Note, Clock: k.Clock,
-			})
-		}
-		if !it.Removed {
-			switch {
-			case it.Kind == "publication":
-				if docID, ok := sp.State.PublicationDocByTarget(it.Target); ok {
-					for _, p := range sp.State.Publications() {
-						if p.DocumentID == docID && !p.Archived {
-							resp.Publication = map[string]any{
-								"id":          hex.EncodeToString(docID[:]),
-								"title":       p.Title,
-								"author":      p.Author.String(),
-								"author_name": names[p.Author],
-							}
-							break
-						}
-					}
-				}
-			case it.Kind == "app":
-				if rec, ok := sp.State.AppInstanceByEvent(it.Target); ok {
-					resp.App = map[string]any{
-						"instance": rec.Instance.InstanceID,
-						"app_id":   rec.Instance.AppID,
-						"title":    rec.Instance.Props["title"],
-					}
-				}
-			default:
-				if e, ok := sp.State.EntryByID(it.Target); ok {
-					er := a.projectEntry(tid, sp, &e, me, names)
-					resp.Entry = &er
-				}
+	var out []shelfItemResp
+	if err := a.rt.withSpace(tid, func(st *spaceState) error {
+		sp := st.space
+		me := a.rt.Principal.ID
+		names := map[id.PrincipalID]string{me: a.rt.DisplayName()}
+		for _, c := range sp.MemberCards(0) {
+			if c.Name != "" {
+				names[c.Principal] = c.Name
 			}
 		}
-		out = append(out, resp)
+		items := sp.State.Shelf()
+		out = make([]shelfItemResp, 0, len(items))
+		for _, it := range items {
+			resp := shelfItemResp{
+				Target: it.Target.Hex(), Kind: it.Kind, Removed: it.Removed,
+				Keepers: make([]shelfKeeperResp, 0, len(it.Keepers)),
+			}
+			for _, k := range it.Keepers {
+				resp.Keepers = append(resp.Keepers, shelfKeeperResp{
+					Author: k.Author.String(), AuthorName: names[k.Author],
+					Mine: k.Author == me, Note: k.Note, Clock: k.Clock,
+				})
+			}
+			if !it.Removed {
+				switch {
+				case it.Kind == "publication":
+					if docID, ok := sp.State.PublicationDocByTarget(it.Target); ok {
+						for _, p := range sp.State.Publications() {
+							if p.DocumentID == docID && !p.Archived {
+								resp.Publication = map[string]any{
+									"id":          hex.EncodeToString(docID[:]),
+									"title":       p.Title,
+									"author":      p.Author.String(),
+									"author_name": names[p.Author],
+								}
+								break
+							}
+						}
+					}
+				case it.Kind == "app":
+					if rec, ok := sp.State.AppInstanceByEvent(it.Target); ok {
+						resp.App = map[string]any{
+							"instance": rec.Instance.InstanceID,
+							"app_id":   rec.Instance.AppID,
+							"title":    rec.Instance.Props["title"],
+						}
+					}
+				default:
+					if e, ok := sp.State.EntryByID(it.Target); ok {
+						er := a.projectEntry(tid, sp, &e, me, names)
+						resp.Entry = &er
+					}
+				}
+			}
+			out = append(out, resp)
+		}
+		return nil
+	}); err != nil {
+		httpErr(w, http.StatusNotFound, err)
+		return
 	}
 	writeJSON(w, out)
 }

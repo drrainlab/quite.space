@@ -298,51 +298,55 @@ func (r *Runtime) ListDrafts(tid id.TerminalID) ([]string, error) {
 // ---- API ----
 
 func (a *APIServer) publicationJSON(tid id.TerminalID, docID [16]byte) (map[string]any, bool) {
-	sp, ok := a.rt.Space(tid)
-	if !ok {
-		return nil, false
-	}
-	pub, ok := sp.State.PublicationByID(docID)
-	if !ok {
-		return nil, false
-	}
-	me := a.rt.Principal.ID
-	names := map[id.PrincipalID]string{me: a.rt.DisplayName()}
-	for _, c := range sp.MemberCards(0) {
-		if c.Name != "" {
-			names[c.Principal] = c.Name
+	var out map[string]any
+	// The whole projection — publication, member names, comments, resonance —
+	// reads the replica, so it all belongs inside one locked scope.
+	err := a.rt.withSpace(tid, func(st *spaceState) error {
+		sp := st.space
+		pub, ok := sp.State.PublicationByID(docID)
+		if !ok {
+			return errors.New("unknown publication")
 		}
-	}
-	comments := make([]map[string]any, 0, len(pub.Comments))
-	for _, c := range pub.Comments {
-		cm := map[string]any{
-			"comment_id":  hex.EncodeToString(c.CommentID[:]),
-			"text":        c.Text,
-			"author":      c.Author.String(),
-			"author_name": names[c.Author],
-			"mine":        c.Author == me,
-			"clock":       c.Clock,
-			"created_at":  c.CreatedAt,
+		me := a.rt.Principal.ID
+		names := map[id.PrincipalID]string{me: a.rt.DisplayName()}
+		for _, c := range sp.MemberCards(0) {
+			if c.Name != "" {
+				names[c.Principal] = c.Name
+			}
 		}
-		if c.ParentID != nil {
-			cm["parent_comment_id"] = hex.EncodeToString(c.ParentID[:])
+		comments := make([]map[string]any, 0, len(pub.Comments))
+		for _, c := range pub.Comments {
+			cm := map[string]any{
+				"comment_id":  hex.EncodeToString(c.CommentID[:]),
+				"text":        c.Text,
+				"author":      c.Author.String(),
+				"author_name": names[c.Author],
+				"mine":        c.Author == me,
+				"clock":       c.Clock,
+				"created_at":  c.CreatedAt,
+			}
+			if c.ParentID != nil {
+				cm["parent_comment_id"] = hex.EncodeToString(c.ParentID[:])
+			}
+			comments = append(comments, cm)
 		}
-		comments = append(comments, cm)
-	}
-	target := reducers.PubReactionTarget(docID)
-	out := map[string]any{
-		"document":          documentToJSON(pub.Document),
-		"author":            pub.Author.String(),
-		"revision_event_id": pub.RevisionEventID.Hex(),
-		"clock":             pub.Clock,
-		"archived":          pub.Archived,
-		"comments":          comments,
-		"reaction_target":   target.Hex(),
-	}
-	if res := a.projectResonance(sp, target, me, names); res != nil {
-		out["resonance"] = res
-	}
-	return out, true
+		target := reducers.PubReactionTarget(docID)
+		out = map[string]any{
+			"document":          documentToJSON(pub.Document),
+			"author":            pub.Author.String(),
+			"revision_event_id": pub.RevisionEventID.Hex(),
+			"clock":             pub.Clock,
+			"archived":          pub.Archived,
+			"comments":          comments,
+			"reaction_target":   target.Hex(),
+		}
+		if res := a.projectResonance(sp, target, me, names); res != nil {
+			out["resonance"] = res
+		}
+		return nil
+	})
+	// Unknown space and unknown publication are both "not here", as before.
+	return out, err == nil
 }
 
 func (a *APIServer) handleListPublications(w http.ResponseWriter, r *http.Request) {
@@ -351,25 +355,26 @@ func (a *APIServer) handleListPublications(w http.ResponseWriter, r *http.Reques
 		httpErr(w, http.StatusBadRequest, err)
 		return
 	}
-	sp, ok := a.rt.Space(tid)
-	if !ok {
-		httpErr(w, http.StatusNotFound, errors.New("unknown space"))
-		return
-	}
 	out := []map[string]any{}
-	for _, p := range sp.State.Publications() {
-		out = append(out, map[string]any{
-			"document_id":       hex.EncodeToString(p.DocumentID[:]),
-			"title":             p.Title,
-			"summary":           p.Document.Summary,
-			"kind":              p.Document.Kind,
-			"cover":             p.Document.Cover,
-			"tags":              p.Document.Tags,
-			"author":            p.Author.String(),
-			"clock":             p.Clock,
-			"revision_event_id": p.RevisionEventID.Hex(),
-			"comment_count":     len(p.Comments),
-		})
+	if err := a.rt.withSpace(tid, func(st *spaceState) error {
+		for _, p := range st.space.State.Publications() {
+			out = append(out, map[string]any{
+				"document_id":       hex.EncodeToString(p.DocumentID[:]),
+				"title":             p.Title,
+				"summary":           p.Document.Summary,
+				"kind":              p.Document.Kind,
+				"cover":             p.Document.Cover,
+				"tags":              p.Document.Tags,
+				"author":            p.Author.String(),
+				"clock":             p.Clock,
+				"revision_event_id": p.RevisionEventID.Hex(),
+				"comment_count":     len(p.Comments),
+			})
+		}
+		return nil
+	}); err != nil {
+		httpErr(w, http.StatusNotFound, err)
+		return
 	}
 	writeJSON(w, map[string]any{"publications": out})
 }

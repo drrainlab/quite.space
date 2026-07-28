@@ -59,7 +59,7 @@ func TestPolicyRevisionCuratorAddViaProjection(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	sp, _ := owner.Space(tid)
+	sp, _ := owner.spaceForTest(tid)
 	if m := manifestRevisionOf(t, sp.ManifestFrame); m != 2 {
 		t.Fatalf("revision = %d, want 2", m)
 	}
@@ -84,7 +84,7 @@ func TestPolicyRevisionCuratorAddViaProjection(t *testing.T) {
 	if _, err := owner.collectPublicIngress(addr, tid); err != nil {
 		t.Fatal(err)
 	}
-	osp, _ := owner.Space(tid)
+	osp, _ := owner.spaceForTest(tid)
 	if got := len(osp.State.Messages()); got != 2 {
 		t.Fatalf("curator post not materialized: %d", got)
 	}
@@ -94,7 +94,7 @@ func TestPolicyRevisionCuratorAddViaProjection(t *testing.T) {
 	if err := curator.fetchPublicProjection(addr, tid); err != nil {
 		t.Fatal(err) // idempotent refetch fine
 	}
-	csp, _ := curator.Space(tid)
+	csp, _ := curator.spaceForTest(tid)
 	if m := manifestRevisionOf(t, csp.ManifestFrame); m != 2 {
 		t.Fatalf("reader manifest regressed to %d", m)
 	}
@@ -161,7 +161,7 @@ func TestModeFlipKeepsCommunityContent(t *testing.T) {
 	if _, err := owner.collectPublicIngress(addr, tid); err != nil {
 		t.Fatal(err)
 	}
-	sp, _ := owner.Space(tid)
+	sp, _ := owner.spaceForTest(tid)
 	if got := len(sp.State.Messages()); got != 2 {
 		t.Fatalf("community post not materialized: %d", got)
 	}
@@ -179,7 +179,7 @@ func TestModeFlipKeepsCommunityContent(t *testing.T) {
 	owner.Close()
 	owner2 := openRuntime(t, ownerDir, "owner")
 	defer owner2.Close()
-	sp2, _ := owner2.Space(tid)
+	sp2, _ := owner2.spaceForTest(tid)
 	msgs := sp2.State.Messages()
 	if len(msgs) != 2 {
 		t.Fatalf("fresh replay lost community content: %d messages", len(msgs))
@@ -255,7 +255,7 @@ func TestTrueFreeze(t *testing.T) {
 	if err := joiner.fetchPublicProjection(addr, tid); err != nil {
 		t.Fatal(err)
 	}
-	jsp, _ := joiner.Space(tid)
+	jsp, _ := joiner.spaceForTest(tid)
 	if !jsp.Policy().Frozen {
 		t.Fatal("joiner did not learn the freeze")
 	}
@@ -273,7 +273,7 @@ func TestTrueFreeze(t *testing.T) {
 	if got, err := owner.collectPublicIngress(addr, tid); err != nil || got != 0 {
 		t.Fatalf("frozen ingress moved data: %d %v", got, err)
 	}
-	sp, _ := owner.Space(tid)
+	sp, _ := owner.spaceForTest(tid)
 	if got := len(sp.State.Messages()); got != 1 {
 		t.Fatalf("frozen space materialized new content: %d", got)
 	}
@@ -295,7 +295,7 @@ func TestTrueFreeze(t *testing.T) {
 	if _, err := owner.collectPublicIngress(addr, tid); err != nil {
 		t.Fatal(err)
 	}
-	sp, _ = owner.Space(tid)
+	sp, _ = owner.spaceForTest(tid)
 	deadline := time.Now().Add(5 * time.Second)
 	for len(sp.State.Messages()) != 2 && time.Now().Before(deadline) {
 		time.Sleep(100 * time.Millisecond)
@@ -338,7 +338,7 @@ func TestRevisionRefusals(t *testing.T) {
 	if err := owner.RevisePolicy(pub, PolicyDelta{Visibility: &visPub}); err != nil {
 		t.Fatal(err)
 	}
-	sp, _ := owner.Space(pub)
+	sp, _ := owner.spaceForTest(pub)
 	if m := manifestRevisionOf(t, sp.ManifestFrame); m != 2 {
 		t.Fatalf("revision = %d, want 2", m)
 	}

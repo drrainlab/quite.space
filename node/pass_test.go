@@ -69,7 +69,7 @@ func TestPassLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := bob.Space(tid); ok {
+	if _, ok := bob.spaceForTest(tid); ok {
 		t.Fatal("Bob has the space while still only pending — pass leaked access")
 	}
 
@@ -78,12 +78,12 @@ func TestPassLifecycle(t *testing.T) {
 	if space != tid.Hex() {
 		t.Fatalf("joined the wrong space: %s", space)
 	}
-	if _, ok := bob.Space(tid); !ok {
+	if _, ok := bob.spaceForTest(tid); !ok {
 		t.Fatal("Bob ready but space not open")
 	}
 
 	// Bob is now a real member on Alice's side.
-	sA, _ := alice.Space(tid)
+	sA, _ := alice.spaceForTest(tid)
 	if _, ok := sA.Members()[bob.Device.ID]; !ok {
 		t.Fatal("Bob's device is not in the space membership")
 	}
@@ -104,7 +104,7 @@ func TestPassLifecycle(t *testing.T) {
 	if _, err := bob.PullFromRelay(addr); err != nil {
 		t.Fatal(err)
 	}
-	sB, _ := bob.Space(tid)
+	sB, _ := bob.spaceForTest(tid)
 	if sB == nil {
 		t.Fatal("Bob has no replica")
 	}
@@ -166,7 +166,7 @@ func TestPassHistoryPolicy(t *testing.T) {
 	if _, err := bob.PullFromRelay(addr); err != nil {
 		t.Fatal(err)
 	}
-	sB, _ := bob.Space(tid)
+	sB, _ := bob.spaceForTest(tid)
 	var seen bool
 	for _, m := range sB.State.Messages() {
 		if m.Text == "the first listen happened here" {
@@ -225,7 +225,7 @@ func TestPassSingleUse(t *testing.T) {
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	if _, ok := carol.Space(tid); ok {
+	if _, ok := carol.spaceForTest(tid); ok {
 		t.Fatal("Carol opened the space off a spent pass")
 	}
 }

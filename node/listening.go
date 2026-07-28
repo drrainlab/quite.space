@@ -223,58 +223,64 @@ func (a *APIServer) handleListeningSession(w http.ResponseWriter, r *http.Reques
 		httpErr(w, http.StatusBadRequest, err)
 		return
 	}
-	sp, ok := a.rt.Space(tid)
-	if !ok {
-		httpErr(w, http.StatusNotFound, errors.New("unknown space"))
-		return
-	}
+	// The instance id needs no space, and it is the only 400 here.
 	iid, err := hex16(r.PathValue("instance"))
 	if err != nil {
 		httpErr(w, http.StatusBadRequest, err)
 		return
 	}
-	sess, ok := sp.State.ListeningSession(iid)
-	if !ok {
-		httpErr(w, http.StatusNotFound, errors.New("unknown app instance"))
-		return
-	}
-	rec, _ := sp.State.AppInstanceByID(iid)
-
-	me := a.rt.Principal.ID
-	names := map[id.PrincipalID]string{me: a.rt.DisplayName()}
-	for _, c := range sp.MemberCards(0) {
-		if c.Name != "" {
-			names[c.Principal] = c.Name
+	var out map[string]any
+	if err := a.rt.withSpace(tid, func(st *spaceState) error {
+		sess, ok := st.space.State.ListeningSession(iid)
+		if !ok {
+			return errors.New("unknown app instance")
 		}
-	}
+		rec, _ := st.space.State.AppInstanceByID(iid)
 
-	out := map[string]any{
-		"host":      sess.Host.Hex(),
-		"host_name": names[sess.Host],
-		"i_am_host": sess.Host == me,
-		"ignored":   map[string]int{"non_host": sess.IgnoredNonHost, "malformed": sess.IgnoredMalformed},
-	}
-	if sess.HasCommand {
-		out["command"] = sess.Command
-		out["command_clock"] = sess.Clock
-	}
-	if rec != nil {
-		track := map[string]any{
-			"title":       rec.Instance.Props["title"],
-			"asset":       rec.Instance.Props["asset"],
-			"duration_ms": rec.Instance.Props["duration_ms"],
-		}
-		if aidHex := rec.Instance.Props["asset"]; aidHex != "" {
-			if st, err := a.rt.AssetStatus(tid, aidHex); err == nil {
-				track["asset_state"] = string(st.State)
-				track["asset_missing"] = st.Missing
-				track["asset_total"] = st.Total
-			} else {
-				track["asset_state"] = "unknown"
+		me := a.rt.Principal.ID
+		names := map[id.PrincipalID]string{me: a.rt.DisplayName()}
+		for _, c := range st.space.MemberCards(0) {
+			if c.Name != "" {
+				names[c.Principal] = c.Name
 			}
 		}
-		out["track"] = track
+
+		out = map[string]any{
+			"host":      sess.Host.Hex(),
+			"host_name": names[sess.Host],
+			"i_am_host": sess.Host == me,
+			"ignored":   map[string]int{"non_host": sess.IgnoredNonHost, "malformed": sess.IgnoredMalformed},
+		}
+		if sess.HasCommand {
+			out["command"] = sess.Command
+			out["command_clock"] = sess.Clock
+		}
+		if rec != nil {
+			track := map[string]any{
+				"title":       rec.Instance.Props["title"],
+				"asset":       rec.Instance.Props["asset"],
+				"duration_ms": rec.Instance.Props["duration_ms"],
+			}
+			if aidHex := rec.Instance.Props["asset"]; aidHex != "" {
+				// assetStatusLocked, not AssetStatus: r.mu is already held.
+				if as, err := a.rt.assetStatusLocked(AssetKey{Space: tid, Asset: aidHex}); err == nil {
+					track["asset_state"] = string(as.State)
+					track["asset_missing"] = as.Missing
+					track["asset_total"] = as.Total
+				} else {
+					track["asset_state"] = "unknown"
+				}
+			}
+			out["track"] = track
+		}
+		return nil
+	}); err != nil {
+		httpErr(w, http.StatusNotFound, err)
+		return
 	}
+	// The shared clock lives behind its own mutex and does not touch the
+	// replica — read it outside the space lock, which keeps that scope short
+	// and keeps the two locks unordered with respect to each other.
 	now, source, unc := a.rt.sharedNow()
 	out["now_ms"] = now
 	out["source_id"] = source

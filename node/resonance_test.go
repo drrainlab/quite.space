@@ -50,7 +50,7 @@ func TestResonanceEmitGates(t *testing.T) {
 	if err := rt.ResonanceSet(tid, eid, semanticRe("spark", "✦")); err != nil {
 		t.Fatal(err)
 	}
-	sp, _ := rt.Space(tid)
+	sp, _ := rt.spaceForTest(tid)
 	agg := sp.State.ResonanceFor(eid)
 	if agg.Total != 1 || agg.Groups[0].Reaction.Key != "spark" {
 		t.Fatalf("replacement wrong: %+v", agg)

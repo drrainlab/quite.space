@@ -29,7 +29,7 @@ func emitVisual(t *testing.T, rt *Runtime, tid id.TerminalID, data []byte, chunk
 	if err != nil {
 		t.Fatal(err)
 	}
-	sp, _ := rt.Space(tid)
+	sp, _ := rt.spaceForTest(tid)
 	rt.mu.Lock()
 	_, err = rt.Self.Emit(sp, schemas.BlockVisual, payload, signal.AuthorshipHuman, uint64(time.Now().Unix()))
 	rt.mu.Unlock()

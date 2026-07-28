@@ -111,7 +111,7 @@ func TestAttentionNeverReachesTheRelay(t *testing.T) {
 	}
 
 	// The log itself never grew an attention event.
-	sp, _ := bob.Space(tid)
+	sp, _ := bob.spaceForTest(tid)
 	for schema := range sp.State.Unsupported {
 		if strings.Contains(schema, "attention") {
 			t.Fatalf("an attention schema reached the reducer: %s", schema)
@@ -180,7 +180,7 @@ func TestAttentionDoesNotAffectTheSpaceDigest(t *testing.T) {
 	if _, err := rt.Say(tid, "первое сообщение", SayOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	sp, _ := rt.Space(tid)
+	sp, _ := rt.spaceForTest(tid)
 	before := sp.State.Digest()
 
 	pol := rt.AttentionPolicy()

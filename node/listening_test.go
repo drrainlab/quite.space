@@ -45,7 +45,7 @@ func TestListeningHostGateAndCounters(t *testing.T) {
 		map[string]any{"action": "pause", "position_ms": float64(5000)}); err != nil {
 		t.Fatal(err)
 	}
-	sp, _ := rt.Space(tid)
+	sp, _ := rt.spaceForTest(tid)
 	iid, _ := hex16(inst.InstanceID)
 	sess, ok := sp.State.ListeningSession(iid)
 	if !ok || !sess.HasCommand {
@@ -71,7 +71,7 @@ func TestListeningHostGateAndCounters(t *testing.T) {
 		map[string]any{"action": "play", "position_ms": float64(0), "start_session": true}); err != nil {
 		t.Fatal(err)
 	}
-	sp2, _ := rt2.Space(tid)
+	sp2, _ := rt2.spaceForTest(tid)
 	sess2, _ := sp2.State.ListeningSession(iid)
 	if sess2.Command.SessionEpoch != 2 || sess2.Command.Sequence != 1 {
 		t.Fatalf("epoch not persisted across restart: %+v", sess2.Command)

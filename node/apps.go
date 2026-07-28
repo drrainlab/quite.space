@@ -302,19 +302,20 @@ func (a *APIServer) handleListApps(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusBadRequest, err)
 		return
 	}
-	sp, ok := a.rt.Space(tid)
-	if !ok {
-		httpErr(w, http.StatusNotFound, errors.New("unknown space"))
-		return
-	}
 	out := []map[string]any{}
-	for _, rec := range sp.State.AppInstances() {
-		out = append(out, map[string]any{
-			"instance_id": rec.Instance.InstanceID,
-			"app_id":      rec.Instance.AppID,
-			"document_id": rec.Instance.DocumentID,
-			"props":       rec.Instance.Props,
-		})
+	if err := a.rt.withSpace(tid, func(st *spaceState) error {
+		for _, rec := range st.space.State.AppInstances() {
+			out = append(out, map[string]any{
+				"instance_id": rec.Instance.InstanceID,
+				"app_id":      rec.Instance.AppID,
+				"document_id": rec.Instance.DocumentID,
+				"props":       rec.Instance.Props,
+			})
+		}
+		return nil
+	}); err != nil {
+		httpErr(w, http.StatusNotFound, err)
+		return
 	}
 	writeJSON(w, map[string]any{"apps": out})
 }
@@ -351,31 +352,34 @@ func (a *APIServer) handleAppMeta(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusBadRequest, err)
 		return
 	}
-	sp, ok := a.rt.Space(tid)
-	if !ok {
-		httpErr(w, http.StatusNotFound, errors.New("unknown space"))
-		return
-	}
+	// Parse the path argument BEFORE taking the lock: it needs no space, and
+	// it is the one error here that is a 400 rather than a 404.
 	iid, err := hex16(r.PathValue("instance"))
 	if err != nil {
 		httpErr(w, http.StatusBadRequest, err)
 		return
 	}
-	rec, ok := sp.State.AppInstanceByID(iid)
-	if !ok {
-		httpErr(w, http.StatusNotFound, errors.New("unknown app instance"))
-		return
-	}
-	a.rt.mu.Lock()
-	st := a.rt.spaces[tid]
-	def, err := a.rt.resolveDefinition(st, rec.Instance)
-	a.rt.mu.Unlock()
-	if err != nil {
+	var (
+		inst *appdef.Instance
+		def  *appdef.Definition
+	)
+	// Instance lookup and definition resolution are now one critical section.
+	// They were two, and the instance was read from an unlocked replica.
+	if err := a.rt.withSpace(tid, func(st *spaceState) error {
+		rec, ok := st.space.State.AppInstanceByID(iid)
+		if !ok {
+			return errors.New("unknown app instance")
+		}
+		inst = rec.Instance
+		var err error
+		def, err = a.rt.resolveDefinition(st, rec.Instance)
+		return err
+	}); err != nil {
 		httpErr(w, http.StatusNotFound, err)
 		return
 	}
 	writeJSON(w, map[string]any{
-		"instance":   rec.Instance,
+		"instance":   inst,
 		"definition": def,
 	})
 }

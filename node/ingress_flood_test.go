@@ -68,7 +68,7 @@ func TestIngressFloodThrottledNotLost(t *testing.T) {
 	if _, err := owner.collectPublicIngress(addr, tid); err != nil {
 		t.Fatal(err)
 	}
-	osp, _ := owner.Space(tid)
+	osp, _ := owner.spaceForTest(tid)
 	// Throttle: loud's flood is capped this cycle — NOT all of it landed.
 	if got := countFlood(osp.State.Messages()); got > ingressMaxFramesPerAuthorCycle {
 		t.Fatalf("first drain took %d flood frames — per-author cap not enforced", got)
@@ -96,12 +96,12 @@ func TestIngressFloodThrottledNotLost(t *testing.T) {
 		if _, err := owner.collectPublicIngress(addr, tid); err != nil {
 			t.Fatal(err)
 		}
-		osp, _ = owner.Space(tid)
+		osp, _ = owner.spaceForTest(tid)
 		if countFlood(osp.State.Messages()) == flood {
 			return // no loss — every flooded message eventually landed
 		}
 	}
-	osp, _ = owner.Space(tid)
+	osp, _ = owner.spaceForTest(tid)
 	t.Fatalf("flood not fully delivered: %d/%d after convergence loop",
 		countFlood(osp.State.Messages()), flood)
 }

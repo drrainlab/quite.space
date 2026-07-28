@@ -800,8 +800,49 @@ func (r *Runtime) SetCardStatus(tid id.TerminalID, card id.EventID, title, statu
 	return err
 }
 
-// Space returns a replica for read-side projections.
-func (r *Runtime) Space(tid id.TerminalID) (*terminals.Space, bool) {
+// errUnknownSpace is what a scoped read reports when the space is not on this
+// device. Handlers map it to 404; it keeps the old wire text.
+var errUnknownSpace = errors.New("unknown space")
+
+// withSpace runs fn against a space while r.mu is held, and reports whether
+// the space is known.
+//
+// It replaces an accessor that handed the *terminals.Space back to the caller,
+// which was a race BY CONSTRUCTION: the replica is mutated in place by the
+// relay-sync goroutine (relaySyncOnce -> PullFromRelay -> AttachSyncApply ->
+// Space.absorb -> registry Upsert, all under r.mu), so any projection that
+// read the pointer after the lock was released was a concurrent map
+// read/write — a fatal, unrecoverable Go error, not merely stale data. Auto
+// sync is on by default, so that writer runs in normal operation.
+//
+// Scoping the pointer to a callback makes the read and the lock the same
+// length, and makes an escaping pointer visible at review time rather than
+// invisible at the call site.
+//
+// Two rules for fn, both learned from the call sites this replaced:
+//
+//   - fn must not call a Runtime method that takes r.mu — sync.Mutex is not
+//     reentrant, so that self-deadlocks. Use the *Locked helpers instead
+//     (assetStatusLocked, not AssetStatus).
+//   - fn should BUILD the response, not write it. Serving JSON inside the
+//     callback would hold the lock across a write to the client, letting one
+//     slow reader stall relay sync and every other space.
+func (r *Runtime) withSpace(tid id.TerminalID, fn func(st *spaceState) error) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	st, ok := r.spaces[tid]
+	if !ok {
+		return errUnknownSpace
+	}
+	return fn(st)
+}
+
+// spaceForTest hands out the live replica pointer the way the old exported
+// Space() did. It is for tests, which observe a replica between synchronous
+// steps; product code must use withSpace instead, since anything read through
+// this pointer is read with no lock held. The name is deliberately awkward:
+// this is the footgun, kept only where the test is the only goroutine.
+func (r *Runtime) spaceForTest(tid id.TerminalID) (*terminals.Space, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	st, ok := r.spaces[tid]

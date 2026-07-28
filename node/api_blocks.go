@@ -379,32 +379,37 @@ func (a *APIServer) handleEntries(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusBadRequest, err)
 		return
 	}
-	sp, ok := a.rt.Space(tid)
-	if !ok {
-		httpErr(w, http.StatusNotFound, errors.New("unknown space"))
-		return
-	}
-	me := a.rt.Principal.ID
-	// Resolve author principals to human display names (self-declared
-	// claims from member manifests) — the honest projection that keeps
-	// principal:hex out of the human path.
-	names := map[id.PrincipalID]string{me: a.rt.DisplayName()}
-	for _, c := range sp.MemberCards(0) {
-		if c.Name != "" {
-			names[c.Principal] = c.Name
+	var out []entryResp
+	if err := a.rt.withSpace(tid, func(st *spaceState) error {
+		me := a.rt.Principal.ID
+		// Resolve author principals to human display names (self-declared
+		// claims from member manifests) — the honest projection that keeps
+		// principal:hex out of the human path.
+		names := map[id.PrincipalID]string{me: a.rt.DisplayName()}
+		for _, c := range st.space.MemberCards(0) {
+			if c.Name != "" {
+				names[c.Principal] = c.Name
+			}
 		}
-	}
-	entries := sp.State.Entries()
-	out := make([]entryResp, 0, len(entries))
-	for i := range entries {
-		resp := a.projectEntry(tid, sp, &entries[i], me, names)
-		resp.Kept, _ = sp.State.KeepState(entries[i].ID, me)
-		resp.KeepCount = sp.State.KeepCount(entries[i].ID)
-		out = append(out, resp)
+		entries := st.space.State.Entries()
+		out = make([]entryResp, 0, len(entries))
+		for i := range entries {
+			resp := a.projectEntry(tid, st.space, &entries[i], me, names)
+			resp.Kept, _ = st.space.State.KeepState(entries[i].ID, me)
+			resp.KeepCount = st.space.State.KeepCount(entries[i].ID)
+			out = append(out, resp)
+		}
+		return nil
+	}); err != nil {
+		httpErr(w, http.StatusNotFound, err)
+		return
 	}
 	writeJSON(w, out)
 }
 
+// projectEntry renders one entry. It reads the replica and the asset index,
+// so it MUST be called with r.mu held — i.e. from inside a withSpace scope,
+// which is where sp legitimately comes from.
 func (a *APIServer) projectEntry(tid id.TerminalID, sp *terminals.Space,
 	e *reducers.Entry, me id.PrincipalID, names map[id.PrincipalID]string) entryResp {
 	resp := entryResp{
@@ -418,7 +423,10 @@ func (a *APIServer) projectEntry(tid id.TerminalID, sp *terminals.Space,
 	}
 
 	attachAsset := func(ref *schemas.AssetRef) {
-		st, err := a.rt.AssetStatus(tid, ref.PublicIDHex())
+		// assetStatusLocked, not AssetStatus: every caller of projectEntry
+		// already holds r.mu (see projectEntry's doc comment), and the
+		// exported form would take it a second time and self-deadlock.
+		st, err := a.rt.assetStatusLocked(AssetKey{Space: tid, Asset: ref.PublicIDHex()})
 		ar := &assetResp{
 			ID: ref.PublicIDHex(), MediaType: ref.MediaType,
 			Size: ref.Size, DurationMS: ref.DurationMS,

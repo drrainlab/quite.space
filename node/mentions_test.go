@@ -31,7 +31,7 @@ func TestMentionsAndReplyReachTheProjection(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	sp, _ := rt.Space(tid)
+	sp, _ := rt.spaceForTest(tid)
 	api, err := NewAPIServer(rt, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -79,7 +79,7 @@ func TestRevisionDoesNotForgeAReplyEdge(t *testing.T) {
 	}
 	// Emit a revision the way the protocol does it: message.revised.v1
 	// reuses the reply_to wire field as its revision TARGET.
-	sp0, _ := rt.Space(tid)
+	sp0, _ := rt.spaceForTest(tid)
 	rev, err := (&schemas.TextMessage{Text: "вторая версия", ReplyTo: &eid}).Encode()
 	if err != nil {
 		t.Fatal(err)
@@ -89,7 +89,7 @@ func TestRevisionDoesNotForgeAReplyEdge(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	sp, _ := rt.Space(tid)
+	sp, _ := rt.spaceForTest(tid)
 	me := rt.Principal.ID
 	api, err := NewAPIServer(rt, nil)
 	if err != nil {
@@ -119,7 +119,7 @@ func TestMentionsMeIsViewerRelative(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sp, _ := rt.Space(tid)
+	sp, _ := rt.spaceForTest(tid)
 	api, err := NewAPIServer(rt, nil)
 	if err != nil {
 		t.Fatal(err)

@@ -33,7 +33,7 @@ func TestKeepEmitGatesAndShelf(t *testing.T) {
 	if err := rt.Keep(tid, eid, "our anthem"); err != nil {
 		t.Fatal(err)
 	}
-	sp, _ := rt.Space(tid)
+	sp, _ := rt.spaceForTest(tid)
 	shelf := sp.State.Shelf()
 	if len(shelf) != 1 || shelf[0].Kind != "text" {
 		t.Fatalf("shelf wrong: %+v", shelf)
@@ -61,7 +61,7 @@ func TestKeepEmitGatesAndShelf(t *testing.T) {
 	rt.Close()
 	rt2 := openRuntime(t, dir, "alice")
 	defer rt2.Close()
-	sp2, ok := rt2.Space(tid)
+	sp2, ok := rt2.spaceForTest(tid)
 	if !ok {
 		t.Fatal("space lost")
 	}

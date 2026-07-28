@@ -146,7 +146,7 @@ func TestCustodyWithdrawalIsNotRecordedAsCustody(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sp, _ := rt.Space(tid)
+	sp, _ := rt.spaceForTest(tid)
 
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {

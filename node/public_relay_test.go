@@ -55,7 +55,7 @@ func TestPublicProjectionEndToEnd(t *testing.T) {
 		if n := msgCount(reader, tid); n != 3 {
 			t.Fatalf("stranger %d materialized %d messages", i, n)
 		}
-		sp, _ := reader.Space(tid)
+		sp, _ := reader.spaceForTest(tid)
 		if sp.Private {
 			t.Fatalf("stranger %d replica marked private", i)
 		}

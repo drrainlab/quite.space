@@ -53,7 +53,7 @@ func TestBackupRestoresTheSpacesAndTheHistory(t *testing.T) {
 	if rt2.Principal.Fingerprint() != fingerprint {
 		t.Fatal("identity did not survive the restore")
 	}
-	sp, ok := rt2.Space(tid)
+	sp, ok := rt2.spaceForTest(tid)
 	if !ok {
 		t.Fatal("the space did not survive — this is exactly what the identity-only " +
 			"recovery bundle could not carry")
