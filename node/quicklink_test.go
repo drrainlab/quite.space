@@ -288,23 +288,46 @@ func TestAdmittingTheSamePersonTwiceChangesNothing(t *testing.T) {
 	}
 
 	join("first")
-	line, _ := rtA.LineSpace()
-	sp, _ := rtA.Space(line)
-	members := len(sp.MemberCards(uint64(time.Now().Unix())))
-	events := sp.Log.Len()
-	epoch := sp.CurrentEpoch()
+	line, _ := rtA.LineSpace() // lazily created, so only after a first join
+
+	// Observe under the runtime's own lock. Runtime.Space() hands back the
+	// *Space and releases r.mu, so reading through it races with the
+	// relay-sync goroutine, which writes under r.mu — -race says so, loudly.
+	// This test is in package node and can simply take the same lock.
+	observe := func() (members, events int, epoch uint64) {
+		rtA.mu.Lock()
+		defer rtA.mu.Unlock()
+		st := rtA.spaces[line]
+		return len(st.space.MemberCards(uint64(time.Now().Unix()))),
+			st.space.Log.Len(), st.space.CurrentEpoch()
+	}
+
+	// A second barrier, and it has to be here rather than inside join(): the
+	// request reaching JoinReady means B has been ANSWERED, which is enough to
+	// know A has decided — the grant, the member_added and the epoch are all
+	// written before the answer goes out. A's member CARD is not, because it
+	// needs B's terminal manifest, which syncs separately and afterwards. So
+	// the baseline below has to wait for the card as well, or it captures a
+	// count of 1 and the first join's own card arriving late reads as the
+	// second join admitting somebody. Only visible under -race, which is slow
+	// enough to open the gap every time.
+	waitUntil(t, 20*time.Second, "the first join's member card to arrive", func() bool {
+		m, _, _ := observe()
+		return m == 2
+	})
+	members, events, epoch := observe()
 
 	join("second") // the same person, a second link
 
-	sp, _ = rtA.Space(line)
-	if got := len(sp.MemberCards(uint64(time.Now().Unix()))); got != members {
+	gotMembers, gotEvents, gotEpoch := observe()
+	if got := gotMembers; got != members {
 		t.Fatalf("the second join changed the member count: %d → %d", members, got)
 	}
-	if got := sp.Log.Len(); got != events {
+	if got := gotEvents; got != events {
 		t.Fatalf("the second join wrote %d event(s) for somebody already here",
 			got-events)
 	}
-	if got := sp.CurrentEpoch(); got != epoch {
+	if got := gotEpoch; got != epoch {
 		t.Fatalf("the second join rotated the epoch (%d → %d), re-keying the "+
 			"space for everyone because one member asked to come in again",
 			epoch, got)
