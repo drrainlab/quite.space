@@ -231,14 +231,17 @@ func (r *Runtime) relaySyncOnce(addr string) {
 
 // RelaySyncStatus is the honest diagnostic for the UI.
 type RelaySyncStatus struct {
-	Addr    string              `json:"addr"`
-	Active  bool                `json:"active"`
-	Pushed  int                 `json:"pushed"`
-	Pulled  int                 `json:"pulled"`
-	LastErr string              `json:"last_error,omitempty"`
-	AgoPush int                 `json:"seconds_since_push,omitempty"`
-	AgoPull int                 `json:"seconds_since_pull,omitempty"`
-	Public  []PublicSpaceStatus `json:"public,omitempty"`
+	Addr   string `json:"addr"`
+	Active bool   `json:"active"`
+	// IntervalMs is the sync cadence. The UI breathes its connection light
+	// in this rhythm, so the pulse means something rather than decorating.
+	IntervalMs int                 `json:"interval_ms,omitempty"`
+	Pushed     int                 `json:"pushed"`
+	Pulled     int                 `json:"pulled"`
+	LastErr    string              `json:"last_error,omitempty"`
+	AgoPush    int                 `json:"seconds_since_push,omitempty"`
+	AgoPull    int                 `json:"seconds_since_pull,omitempty"`
+	Public     []PublicSpaceStatus `json:"public,omitempty"`
 }
 
 // PublicSpaceStatus is the per-public-space checkpoint/ingress diagnostic
@@ -269,7 +272,8 @@ func (r *Runtime) RelaySync() RelaySyncStatus {
 	defer rs.mu.Unlock()
 	st := RelaySyncStatus{
 		Addr: rs.addr, Active: rs.addr != "" && rs.stop != nil,
-		Pushed: rs.pushed, Pulled: rs.pulled, LastErr: rs.lastErr,
+		IntervalMs: int(rs.interval / time.Millisecond),
+		Pushed:     rs.pushed, Pulled: rs.pulled, LastErr: rs.lastErr,
 		Public: public,
 	}
 	if !rs.lastPush.IsZero() {

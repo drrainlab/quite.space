@@ -19,6 +19,9 @@ let feedSig = [];
 let feedContentSig = [];
 // Space Composition Contract (SC-0): the appearance snapshot last applied.
 let appearanceSpace = null;
+// The connection chip's last painted state — see refresh() for why repaints
+// must be gated on actual change.
+let connChipSig = '';
 
 // loadSpaceAppearance fetches the space's signed appearance snapshot and
 // applies its palette to a SCOPED container (never :root). Fetched once per
@@ -455,28 +458,53 @@ async function refresh() {
     document.getElementById('protoToggle').textContent = PROTOCOL ? t('protocol.on') : t('protocol.toggle');
 
     // Connection chip: human by default, raw string only in Protocol view.
-    const conn = document.getElementById('conn');
-    const cText = document.getElementById('connText');
+    //
+    // COMPUTED FULLY, THEN PAINTED ONCE, AND ONLY ON CHANGE. The old shape
+    // painted the base summary, awaited /api/relay/status over the network,
+    // and painted again — so every refresh flashed "Not connected" before
+    // settling on "relay", the text length changed, and the whole header
+    // twitched in rhythm with the poll. A chip that reports a steady state
+    // must not itself be unsteady.
+    let chipText, chipCls, pulseMs = 0;
     if (PROTOCOL) {
       const lan = status.lan;
-      cText.textContent = lan.listening ? `LAN :${lan.port} · ${lan.peers} peers` : 'LAN off';
-      conn.className = 'conn-chip' + (lan.peers ? '' : ' off');
+      chipText = lan.listening ? `LAN :${lan.port} · ${lan.peers} peers` : 'LAN off';
+      chipCls = 'conn-chip' + (lan.peers ? ' up' : ' off');
     } else {
       const s = connectionSummary(status);
-      cText.textContent = s.text;
-      conn.className = 'conn-chip ' + s.cls;
+      chipText = s.text;
+      chipCls = 'conn-chip ' + s.cls + (s.cls === 'off' ? '' : ' up');
       // Relay auto-sync: when there's no direct peer, show that the relay
       // is carrying us (honest — store-and-forward, not live).
       const peers = (status.lan.peers || 0) + (status.mesh.connected ? 1 : 0);
       if (peers === 0) {
         try {
           const rs = await api('/api/relay/status');
-          if (rs.active) {
-            cText.textContent = 'relay ⟳' + (rs.last_error ? ' · issue' : '');
-            conn.className = 'conn-chip' + (rs.last_error ? ' off' : '');
+          if (rs.active && !rs.last_error) {
+            chipText = 'relay';
+            chipCls = 'conn-chip up';
+            // The light breathes in the sync's own rhythm — the pulse IS the
+            // cadence, not decoration. Clamped so a 2s cycle does not strobe
+            // and a 5min one does not look dead.
+            pulseMs = Math.min(12000, Math.max(2400, rs.interval_ms || 4000));
+          } else if (rs.active) {
+            chipText = 'relay · issue';
+            chipCls = 'conn-chip off';
           }
         } catch (e) { /* relay status optional */ }
       }
+    }
+    const conn = document.getElementById('conn');
+    const cText = document.getElementById('connText');
+    // One write, and only when something actually changed: a chip repainted
+    // with identical content still restarts its CSS animation, which reads
+    // as a stutter in the breathing.
+    if (connChipSig !== chipText + '|' + chipCls + '|' + pulseMs) {
+      connChipSig = chipText + '|' + chipCls + '|' + pulseMs;
+      cText.textContent = chipText;
+      conn.className = chipCls;
+      if (pulseMs) conn.style.setProperty('--sync-pulse', pulseMs + 'ms');
+      else conn.style.removeProperty('--sync-pulse');
     }
     document.getElementById('fp').textContent = PROTOCOL ? status.fingerprint : '';
 
