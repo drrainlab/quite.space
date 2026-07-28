@@ -37,7 +37,29 @@ const (
 	ReasonStorageLimit FetchReason = "storage_limit"
 	ReasonUnsupported  FetchReason = "unsupported_manifest"
 	ReasonNoPeers      FetchReason = "no_peers"
+	// ReasonCancelled: the node is shutting down. Distinct from a timeout,
+	// because nothing was wrong with the fetch — we stopped waiting.
+	ReasonCancelled FetchReason = "cancelled"
 )
+
+// sleepOrStop waits, unless the node is shutting down. It reports false when
+// the wait was cut short.
+//
+// The bare time.Sleep calls this replaces were the last ones in non-test node
+// code, and they made shutdown take up to two minutes — long enough for macOS
+// or systemd to lose patience and kill the process, possibly in the middle of
+// a keystore write, which is exactly what the data-directory lock exists to
+// prevent.
+func (r *Runtime) sleepOrStop(d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return true
+	case <-r.stop:
+		return false
+	}
+}
 
 // FetchStatus is the projection of one asset's lifecycle.
 type FetchStatus struct {
@@ -307,7 +329,9 @@ func (r *Runtime) fetchLoop(key AssetKey, ref *schemas.AssetRef, st *spaceState)
 			}
 			r.addRelayWants(key.Space, want)
 			registered = wantSet
-			time.Sleep(600 * time.Millisecond)
+			if !r.sleepOrStop(600 * time.Millisecond) {
+				return ReasonCancelled
+			}
 			continue
 		}
 		peer := conns[attempt%len(conns)]
@@ -324,7 +348,9 @@ func (r *Runtime) fetchLoop(key AssetKey, ref *schemas.AssetRef, st *spaceState)
 		waitUntil := time.Now().Add(15 * time.Second)
 		start := time.Now()
 		for time.Now().Before(waitUntil) {
-			time.Sleep(150 * time.Millisecond)
+			if !r.sleepOrStop(150 * time.Millisecond) {
+				return ReasonCancelled
+			}
 			r.mu.Lock()
 			now, err := assets.Missing(r.root, ref)
 			r.mu.Unlock()

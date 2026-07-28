@@ -287,8 +287,11 @@ func TestAttemptSurvivesCrashBeforeFirstSend(t *testing.T) {
 	if !ok {
 		t.Fatal("no attempt opened")
 	}
-	// Power cut here: nothing was sent, and Close is never called.
+	// Power cut here: nothing was sent, and no graceful shutdown runs. The
+	// kernel is the only thing that tidies up after a dying process, and the
+	// one thing it releases is the data-directory lock.
 	rt.ledger.Close()
+	rt.abandonForTest()
 
 	rt2 := openRuntime(t, dir, "bob")
 	defer rt2.Close()

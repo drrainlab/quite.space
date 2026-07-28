@@ -70,7 +70,14 @@ type Runtime struct {
 	// so a mismatch can be named rather than merely displayed.
 	radioProfile *meshtastic.Profile
 	stop         chan struct{}
+	stopOnce     sync.Once
 	wg           sync.WaitGroup
+
+	// lock is this process's exclusive hold on the data directory. Two nodes
+	// on one directory both hold a Keystore and both write it back through
+	// tmp+rename: last writer wins, and what it wins is somebody's epoch
+	// keys. Held from before the store is unlocked until shutdown completes.
+	lock *storage.DirLock
 
 	// relayClk is the SyncClock calibration against a common relay (LR-2).
 	relayClk relayClock
@@ -171,18 +178,42 @@ type spaceState struct {
 // Open unlocks the data root and reconstructs the node: identity from the
 // keystore (created on first run), every known space from its log, chains
 // resumed so writing continues seamlessly.
-func Open(dataDir string, passphrase []byte, displayName string) (*Runtime, error) {
+func Open(dataDir string, passphrase []byte, displayName string) (rt *Runtime, err error) {
 	// All contract registrations happen in package inits, which have run by
 	// now — freeze the runtime contract registry (idempotent, LR-0a).
 	contract.Freeze()
+
+	// BEFORE the store: a person who launched the app twice should hear
+	// "already running" at once, not after a hundred milliseconds of scrypt
+	// and a passphrase prompt they never needed to answer.
+	lock, err := storage.Lock(dataDir)
+	if err != nil {
+		return nil, err
+	}
+	// Every failure below unwinds completely. Without this, Open leaked the
+	// store, the ledger and every opened event log on thirteen error paths —
+	// invisible until the lock existed, and then instantly the most common
+	// bug in the product: mistype your passphrase once, and you are locked
+	// out of your own data until you restart the process.
+	defer func() {
+		if err != nil {
+			if rt != nil {
+				rt.Close()
+			} else {
+				_ = lock.Release()
+			}
+		}
+	}()
+
 	root, err := storage.Open(dataDir, passphrase)
 	if err != nil {
 		return nil, err
 	}
-	r := &Runtime{root: root, dataDir: dataDir, spaces: map[id.TerminalID]*spaceState{},
+	r := &Runtime{root: root, lock: lock, dataDir: dataDir, spaces: map[id.TerminalID]*spaceState{},
 		assetIdx: newAssetIndex(), passes: newPassRegistry(),
 		joins: map[string]*joinAttempt{}, stop: make(chan struct{}),
 		relayWants: map[id.TerminalID]map[id.Hash]struct{}{}}
+	rt = r // from here the abort defer unwinds through Close
 
 	// The delivery ledger lives beside the store, not inside the encrypted
 	// keystore: it is written on every hand-off and must survive a crash on
@@ -384,24 +415,65 @@ func (r *Runtime) persistEpochsLocked(tid id.TerminalID, s *terminals.Space) {
 	_ = r.saveKeystore()
 }
 
-// Close stops background work.
+// abandonForTest models what the operating system does when a process dies:
+// it releases the data-directory lock and nothing else. No flush, no graceful
+// stop, no ledger close beyond what the caller does itself.
+//
+// It exists because "simulate a power cut by simply not calling Close" stopped
+// being an accurate simulation once the lock existed — in a real power cut the
+// PROCESS dies and the kernel drops the lock, whereas a leaked Runtime inside
+// a live test process still holds it, correctly. Tests that model a crash use
+// this so they model the right thing.
+func (r *Runtime) abandonForTest() {
+	r.stopOnce.Do(func() { close(r.stop) })
+	_ = r.lock.Release()
+}
+
+// closeGrace bounds how long shutdown waits for background work. macOS and
+// systemd both kill a process that takes too long to exit, and being killed
+// mid-keystore-write is precisely the outcome the data-directory lock exists
+// to prevent — so we would rather give up on a straggler goroutine than be
+// terminated in the middle of a rename.
+const closeGrace = 5 * time.Second
+
+// Close stops background work and releases the data directory.
+//
+// Idempotent: `close(r.stop)` panics on a second call, and shutdown paths run
+// twice more often than anyone expects — a window-close callback and an
+// application-quit callback, a deferred Close and an explicit one, an aborted
+// Open unwinding through the same path a healthy shutdown uses.
 func (r *Runtime) Close() {
-	close(r.stop)
+	r.stopOnce.Do(func() { close(r.stop) })
 	if r.lanNode != nil {
 		r.lanNode.Close()
 	}
 	if r.mesh != nil {
 		r.mesh.Close() // stop supervising and let go of the device
 	}
-	r.wg.Wait()
+
+	done := make(chan struct{})
+	go func() { r.wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(closeGrace):
+		// A loop did not notice the stop signal. Leave the lock HELD and let
+		// the process exit: the kernel drops it when our descriptors close,
+		// which is atomic with our death. Releasing it here would admit a
+		// second instance while a goroutine of ours is still writing.
+		return
+	}
+
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	for _, st := range r.spaces {
 		st.space.Log.Close()
 	}
 	if r.ledger != nil {
 		_ = r.ledger.Close()
 	}
+	r.mu.Unlock()
+
+	// Last, and only on a clean shutdown: everything that writes has stopped.
+	_ = r.lock.Release()
 }
 
 // ---- Space operations ----
