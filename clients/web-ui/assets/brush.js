@@ -123,10 +123,34 @@ const BRUSH = (() => {
   /** A scene that computes NaN gets the fallback, never a broken canvas. */
   function num(v, d) { return typeof v === 'number' && isFinite(v) ? v : d; }
 
-  /** sRGB channel to linear light. */
+  /**
+   * sRGB channel to linear light, through a table.
+   *
+   * This is the hottest arithmetic in the client: every mark costs one
+   * luminance evaluation, and a mark that hits the frame's ceiling costs
+   * eleven more as the bisection converges — three Math.pow calls each. The
+   * table removes the pow entirely. It took the headless sweep of six scenes
+   * from 92 seconds to a length that will not get the test switched off, and
+   * it is worth as much in the browser, where the same code runs per mark.
+   *
+   * 1024 entries with linear interpolation is accurate to about 1e-6, which
+   * is four orders below MAX_LUMA_STEP — the model's own approximations are
+   * far larger, and the per-frame readback corrects those anyway.
+   */
+  const LIN_N = 1024;
+  const LIN = new Float64Array(LIN_N + 1);
+  for (let i = 0; i <= LIN_N; i++) {
+    const c = i / LIN_N;
+    LIN[i] = c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  }
   function lin(c) {
-    c /= 255;
-    return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+    // Callers pass channels that the pessimism term can push a hair outside
+    // 0..255 before clamping; fold that in here rather than at every site.
+    const u = c <= 0 ? 0 : c >= 255 ? LIN_N : (c / 255) * LIN_N;
+    const i = u | 0;
+    if (i >= LIN_N) return LIN[LIN_N];
+    const f = u - i;
+    return LIN[i] + (LIN[i + 1] - LIN[i]) * f;
   }
 
   /**
@@ -175,6 +199,7 @@ const BRUSH = (() => {
    * @param {string[]} o.palette #rrggbb tokens; index 0 is the ground
    * @param {number} [o.seed]
    * @param {CanvasRenderingContext2D|null} [o.ctx] null meters without painting
+   * @param {(() => number)|null} [o.level] the bed's own loudness, 0..1
    */
   function make(o) {
     const W = Math.max(1, num(o.width, 1));
@@ -189,6 +214,9 @@ const BRUSH = (() => {
       const n = parseInt(h.slice(1), 16);
       return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
     });
+    // Each palette colour's own luminance, so admit() can tell which way a
+    // mark would move the picture without recomputing it per mark.
+    const palLuma = palRGB.map(c => lumaOf(c));
 
     // THE MODEL TRACKS MEAN sRGB CHANNELS, NOT MEAN LUMINANCE, and that is a
     // correctness requirement rather than a detail. A canvas composites alpha
@@ -243,12 +271,22 @@ const BRUSH = (() => {
      * the mean by weight w = a*f — exact for the mean, whatever the mark's
      * shape, since only its area enters.
      */
-    function admit(f, a, c) {
+    function admit(f, a, c, lc) {
       if (ops >= MAX_FRAME_OPS || coverage >= MAX_FRAME_COVERAGE) return 0;
       if (pendingRead) { pendingRead = false; resync(); }
       f = clamp(f, 0, 1);
       a = clamp(a, 0, 1);
       if (f <= 0 || a <= 0) return 0;
+      // Once the frame has spent its allowance, every further mark in the
+      // SAME direction is refused outright. Without this the bisection below
+      // still ran eleven times for each of them, only to converge on nothing:
+      // a scene draws hundreds of marks a frame and hits the ceiling early,
+      // so that was most of the work the sweep was doing. Marks going the
+      // other way still have room and fall through.
+      const cur = lumaOf(ch);
+      const off = cur - frameLuma;
+      if (lc > cur && off >= MAX_LUMA_STEP - 1e-9) return 0;
+      if (lc < cur && off <= 1e-9 - MAX_LUMA_STEP) return 0;
       let w = a * f;
       blend(ch, c, w, tmp, f);
       if (Math.abs(lumaOf(tmp) - frameLuma) > MAX_LUMA_STEP) {
@@ -257,7 +295,9 @@ const BRUSH = (() => {
         // is monotone in w, so the largest admissible weight is a bisection
         // away — and only ops that actually hit the ceiling pay for it.
         let lo = 0, hi = w;
-        for (let k = 0; k < 14; k++) {
+        // Eleven halvings put the weight within 5e-4 of the true boundary,
+        // which is a thousandth of the step it is bounding.
+        for (let k = 0; k < 11; k++) {
           const mid = (lo + hi) / 2;
           blend(ch, c, mid, tmp, f);
           if (Math.abs(lumaOf(tmp) - frameLuma) > MAX_LUMA_STEP) hi = mid; else lo = mid;
@@ -280,7 +320,7 @@ const BRUSH = (() => {
     /** @param {number} i */
     function colour(i) {
       const k = clamp(Math.floor(num(i, 0)), 0, pal.length - 1);
-      return { hex: pal[k], rgb: palRGB[k] };
+      return { hex: pal[k], rgb: palRGB[k], luma: palLuma[k] };
     }
 
     /** @param {string} hex @param {number} a */
@@ -300,6 +340,22 @@ const BRUSH = (() => {
       rand: rng(num(o.seed, 1)),
 
       /**
+       * How loud the post's OWN ambient bed is right now, 0..1.
+       *
+       * The one live input a scene gets, and the only one it will get. It is
+       * PERFORMANCE, not recipe (see the honesty split): it never enters the
+       * signed object, so a scene that leans on it is still the same scene
+       * everywhere — it just sits calmer where there is no sound. Zero when
+       * nothing is playing, which is the common case and must therefore look
+       * deliberate rather than broken.
+       *
+       * Deliberately not the microphone, not another post's audio, and not
+       * the system output: a scene that could hear the room would make every
+       * page that carries one a listening device.
+       */
+      level() { return clamp(num(o.level ? o.level() : 0, 0), 0, 1); },
+
+      /**
        * Lay a colour over the whole surface. The only full-surface verb, and
        * the reason full-screen high-contrast alternation is unavailable: its
        * alpha is capped low, so "black frame, white frame" cannot be written.
@@ -307,7 +363,7 @@ const BRUSH = (() => {
        */
       wash(colourIndex, alpha) {
         const c = colour(colourIndex);
-        const a = admit(1, clamp(num(alpha, 0), 0, MAX_WASH_ALPHA), c.rgb);
+        const a = admit(1, clamp(num(alpha, 0), 0, MAX_WASH_ALPHA), c.rgb, c.luma);
         if (a <= 0 || !ctx) return;
         ctx.fillStyle = rgba(c.hex, a);
         ctx.fillRect(0, 0, W, H);
@@ -323,7 +379,7 @@ const BRUSH = (() => {
         if (r <= 0) return;
         const c = colour(colourIndex);
         const a = admit(Math.PI * r * r / area,
-          clamp(num(alpha, 0), 0, MAX_INK_ALPHA), c.rgb);
+          clamp(num(alpha, 0), 0, MAX_INK_ALPHA), c.rgb, c.luma);
         if (a <= 0 || !ctx) return;
         ctx.fillStyle = rgba(c.hex, a);
         ctx.beginPath();
@@ -342,7 +398,7 @@ const BRUSH = (() => {
         if (r <= 0) return;
         const c = colour(colourIndex);
         const a = admit(Math.PI * r * r / 3 / area,
-          clamp(num(alpha, 0), 0, MAX_INK_ALPHA), c.rgb);
+          clamp(num(alpha, 0), 0, MAX_INK_ALPHA), c.rgb, c.luma);
         if (a <= 0 || !ctx) return;
         const cx = num(x, 0), cy = num(y, 0);
         const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
@@ -367,7 +423,7 @@ const BRUSH = (() => {
         if (w <= 0 || len <= 0) return;
         const c = colour(colourIndex);
         const a = admit(len * w / area,
-          clamp(num(alpha, 0), 0, MAX_INK_ALPHA), c.rgb);
+          clamp(num(alpha, 0), 0, MAX_INK_ALPHA), c.rgb, c.luma);
         if (a <= 0 || !ctx) return;
         ctx.strokeStyle = rgba(c.hex, a);
         ctx.lineWidth = w;

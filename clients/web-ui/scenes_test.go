@@ -160,7 +160,16 @@ func TestSceneFramesStayUnderTheFlashThreshold(t *testing.T) {
 	if _, err := os.Stat(script); err != nil {
 		t.Fatalf("the flash harness is missing: %v", err)
 	}
-	out, err := exec.Command(node, script).CombinedOutput()
+	// The full sweep is around a minute: six scenes times three seeds times
+	// every corner of a twelve-parameter space, four seconds each. That is the
+	// gate, so it is the default. `-short` runs one seed for local iteration
+	// and the harness prints how many cases it skipped, because a sweep that
+	// quietly narrows itself looks exactly like a sweep that found nothing.
+	args := []string{script}
+	if testing.Short() {
+		args = append(args, "--quick")
+	}
+	out, err := exec.Command(node, args...).CombinedOutput()
 	if err != nil {
 		t.Fatalf("flashcheck failed: %v\n%s", err, out)
 	}

@@ -49,6 +49,12 @@ const STAGE = (() => {
   const FRAME_TOLERANCE = MIN_FRAME_MS * 0.1;
   /** A tab that was hidden for a while must not resume with a huge dt. */
   const MAX_DT = 0.1;
+  /**
+   * The largest backing store a scene may be drawn into, in pixels.
+   * 640x400 in round numbers — see resize() for why this is a hard cap and
+   * not a device-pixel-ratio multiplier.
+   */
+  const MAX_BACKING_PIXELS = 256000;
 
   const LADDER = ['poster', 'calm', 'full'];
   /** What each space MotionPolicy allows at most. */
@@ -101,14 +107,33 @@ const STAGE = (() => {
   }
 
   function resize(c) {
-    // Cap the backing store: a scene on a 4K display should not quietly cost
-    // four times what it costs elsewhere.
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
     const r = c.host.getBoundingClientRect();
     const w = Math.max(1, Math.round(r.width)), h = Math.max(1, Math.round(r.height));
-    c.canvas.width = w * dpr;
-    c.canvas.height = h * dpr;
-    c.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    // CAP THE BACKING STORE, and cap it hard.
+    //
+    // The cost of a bed is fill rate, and fill rate is proportional to area
+    // however the marks are arranged: holding brightness constant means total
+    // painted coverage is a fixed FRACTION of the surface, so a surface with
+    // ten times the pixels costs ten times as much. Measured, drift at
+    // 1400x900 took 40ms a frame — past the whole 33ms budget — while the same
+    // scene at 400x300 took 4ms.
+    //
+    // So the scene is drawn small and stretched by CSS. That is a free trade
+    // here in a way it would not be for a photograph or for text: an ambient
+    // bed is soft gradients with no edge anyone can focus on, and upscaling
+    // soft gradients is invisible. What it buys is a bed that costs the same
+    // on a phone, a laptop and a wall display, instead of one that quietly
+    // becomes the most expensive thing on the page at 4K.
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    let scale = dpr;
+    if (w * h * scale * scale > MAX_BACKING_PIXELS) {
+      scale = Math.sqrt(MAX_BACKING_PIXELS / (w * h));
+    }
+    c.canvas.width = Math.max(1, Math.round(w * scale));
+    c.canvas.height = Math.max(1, Math.round(h * scale));
+    // The scene keeps thinking in CSS pixels whatever the backing store does,
+    // so a recipe means the same thing on every display.
+    c.ctx.setTransform(scale, 0, 0, scale, 0, 0);
     // Setting width clears the canvas, so the brush starts from the ground
     // colour again — which is exactly what its luminance model should believe.
     c.brush = BRUSH.make({ width: w, height: h, palette: c.palette, seed: c.seed, ctx: c.ctx });

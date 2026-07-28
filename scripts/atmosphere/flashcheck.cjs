@@ -37,7 +37,16 @@ const FIXTURES = path.join(__dirname, 'fixtures');
 
 const FPS = 30;
 const SECONDS = 4;
-const SEEDS = [1, 0x5eed, 4294967291];
+/**
+ * Three seeds, because a seed changes the field's phases and where everything
+ * starts — different weather, same dynamics — and one sample of that is not
+ * evidence. --quick drops to one for local iteration, and says so loudly:
+ * a sweep that quietly narrows its own coverage reads exactly like a sweep
+ * that found nothing.
+ */
+const ALL_SEEDS = [1, 0x5eed, 4294967291];
+const quick = process.argv.includes('--quick');
+const SEEDS = quick ? ALL_SEEDS.slice(0, 1) : ALL_SEEDS;
 /** The most dangerous palette an author may legally write. */
 const PALETTE = ['#000000', '#ffffff', '#ff0000', '#00ff88'];
 
@@ -109,8 +118,16 @@ function loadContext() {
   const fixtureFiles = fs.existsSync(FIXTURES)
     ? fs.readdirSync(FIXTURES).filter(f => f.endsWith('.js')).sort() : [];
   for (const f of fixtureFiles) load(path.join(FIXTURES, f));
+  const all = vm.runInContext('SCENES.list()', ctx);
 
-  return { ctx, shipped, sceneCount: sceneFiles.length, fixtureCount: fixtureFiles.length };
+  // Count SCENES, not the files they came from: one module can register a
+  // whole family, and reporting "1 shipped" for six presets reads as though
+  // five of them were never swept.
+  return {
+    ctx, shipped,
+    sceneCount: shipped.size,
+    fixtureCount: all.length - shipped.size,
+  };
 }
 
 // ------------------------------------------------------------------ 3. sweeping
@@ -201,6 +218,10 @@ const { ids, cases } = sweep(ctx, shipped);
 
 console.log(`\n${ids.length} scenes (${sceneCount} shipped, ${fixtureCount} adversarial), ` +
   `${cases} cases, ${SECONDS}s each at ${FPS}fps`);
+if (quick) {
+  console.log(`QUICK: 1 seed of ${ALL_SEEDS.length}. ` +
+    `${(ALL_SEEDS.length - 1) * cases} cases were NOT run — this is not the gate.`);
+}
 if (failures) {
   console.error(`\n${failures} failure(s)`);
   process.exit(1);
