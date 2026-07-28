@@ -51,6 +51,70 @@ type documentJSON struct {
 	Discussion string      `json:"discussion,omitempty"`
 	Visibility string      `json:"visibility_intent"`
 	Blocks     []blockJSON `json:"blocks"`
+	// A POINTER, so a post without one produces no key at all rather than an
+	// empty object. Every publication written before AM-1 must keep exactly
+	// the JSON shape it had, and the reader treats the field's presence as
+	// the question "does this post have another layer?" — an empty object
+	// would answer yes and then render a region with no scene and no words.
+	Atmosphere *atmosphereJSON `json:"atmosphere,omitempty"`
+}
+
+// The atmosphere as it crosses to the client. Field for field with
+// protocol/publication/atmosphere.go and nothing else: the Document it comes
+// from has already been validated against every bound in the contract, so
+// anything this layer renamed, defaulted or re-derived would be a second,
+// unvalidated opinion about the same recipe. Permille stays permille and hex
+// stays hex; the client divides once, in one place.
+type atmosphereJSON struct {
+	Visual   atmoVisualJSON    `json:"visual"`
+	Audio    *atmoAudioJSON    `json:"audio,omitempty"`
+	Reactive *atmoReactiveJSON `json:"reactive,omitempty"`
+	Fallback atmoFallbackJSON  `json:"fallback"`
+	// Lineage travels NOW, though only AM-5's "Use this atmosphere" reads it.
+	// The alternative is widening the wire shape twice for one feature, and a
+	// wire shape is the most expensive thing here to change twice.
+	DerivedFrom *atmoDerivedJSON `json:"derived_from,omitempty"`
+}
+
+type atmoVisualJSON struct {
+	Scene   string           `json:"scene"`
+	Seed    uint64           `json:"seed"`
+	Params  []atmoParamJSON  `json:"params,omitempty"`
+	Palette []atmoColourJSON `json:"palette,omitempty"`
+}
+
+type atmoParamJSON struct {
+	Name  string `json:"name"`
+	Value uint64 `json:"value"` // permille, 0..1000
+}
+
+type atmoColourJSON struct {
+	Name string `json:"name"`
+	Hex  string `json:"hex"`
+}
+
+type atmoAudioJSON struct {
+	Asset     string `json:"asset"`
+	Mode      string `json:"mode"` // loop | once
+	Gain      uint64 `json:"gain"` // permille
+	FadeInMs  uint64 `json:"fade_in_ms,omitempty"`
+	FadeOutMs uint64 `json:"fade_out_ms,omitempty"`
+}
+
+type atmoReactiveJSON struct {
+	Audio   bool `json:"audio"`
+	Pointer bool `json:"pointer"`
+}
+
+type atmoFallbackJSON struct {
+	Text   string `json:"text"`
+	Poster string `json:"poster,omitempty"`
+}
+
+type atmoDerivedJSON struct {
+	RecipeHash    string `json:"recipe_hash,omitempty"` // hex of the 32-byte digest
+	PublicationID string `json:"publication_id,omitempty"`
+	RevisionHash  string `json:"revision_hash,omitempty"`
 }
 
 func blockFromJSON(bj blockJSON) (publication.Block, error) {
@@ -140,6 +204,11 @@ func documentFromJSON(dj documentJSON) (*publication.Document, error) {
 		}
 		doc.Blocks = append(doc.Blocks, b)
 	}
+	atmo, err := atmosphereFromJSON(dj.Atmosphere)
+	if err != nil {
+		return nil, err
+	}
+	doc.Atmosphere = atmo
 	return doc, nil
 }
 
@@ -153,7 +222,88 @@ func documentToJSON(doc *publication.Document) documentJSON {
 	for _, b := range doc.Blocks {
 		dj.Blocks = append(dj.Blocks, blockToJSON(b))
 	}
+	dj.Atmosphere = atmosphereToJSON(doc.Atmosphere)
 	return dj
+}
+
+// atmosphereToJSON projects the recipe, or nil when there is not one.
+func atmosphereToJSON(a *publication.Atmosphere) *atmosphereJSON {
+	if a == nil {
+		return nil
+	}
+	aj := &atmosphereJSON{
+		Visual:   atmoVisualJSON{Scene: a.Visual.Scene, Seed: a.Visual.Seed},
+		Fallback: atmoFallbackJSON{Text: a.Fall.Text, Poster: a.Fall.Poster},
+	}
+	for _, p := range a.Visual.Params {
+		aj.Visual.Params = append(aj.Visual.Params, atmoParamJSON{Name: p.Name, Value: p.Value})
+	}
+	for _, c := range a.Visual.Palette {
+		aj.Visual.Palette = append(aj.Visual.Palette, atmoColourJSON{Name: c.Name, Hex: c.Hex})
+	}
+	if a.Audio != nil {
+		aj.Audio = &atmoAudioJSON{
+			Asset: a.Audio.Asset, Mode: a.Audio.Mode, Gain: a.Audio.Gain,
+			FadeInMs: a.Audio.FadeInMs, FadeOutMs: a.Audio.FadeOutMs,
+		}
+	}
+	if a.React != nil {
+		aj.Reactive = &atmoReactiveJSON{Audio: a.React.Audio, Pointer: a.React.Pointer}
+	}
+	if a.Derived != nil {
+		aj.DerivedFrom = &atmoDerivedJSON{
+			RecipeHash:    hex.EncodeToString(a.Derived.RecipeHash),
+			PublicationID: a.Derived.PublicationID,
+			RevisionHash:  a.Derived.RevisionHash,
+		}
+	}
+	return aj
+}
+
+// atmosphereFromJSON is the authoring direction, and it exists so that editing
+// a post does not silently strip its atmosphere: the composer round-trips a
+// document through this layer, and a field the round-trip drops is a field the
+// next save deletes. Bounds are NOT enforced here — publication.Validate is
+// the one place that decides what is legal, and a second opinion in this
+// layer is how the two drift apart.
+func atmosphereFromJSON(aj *atmosphereJSON) (*publication.Atmosphere, error) {
+	if aj == nil {
+		return nil, nil
+	}
+	a := &publication.Atmosphere{
+		Visual: publication.Visual{Scene: aj.Visual.Scene, Seed: aj.Visual.Seed},
+		Fall:   publication.Fallback{Text: aj.Fallback.Text, Poster: aj.Fallback.Poster},
+	}
+	for _, p := range aj.Visual.Params {
+		a.Visual.Params = append(a.Visual.Params, publication.Param{Name: p.Name, Value: p.Value})
+	}
+	for _, c := range aj.Visual.Palette {
+		a.Visual.Palette = append(a.Visual.Palette, publication.PaletteToken{Name: c.Name, Hex: c.Hex})
+	}
+	if aj.Audio != nil {
+		a.Audio = &publication.Audio{
+			Asset: aj.Audio.Asset, Mode: aj.Audio.Mode, Gain: aj.Audio.Gain,
+			FadeInMs: aj.Audio.FadeInMs, FadeOutMs: aj.Audio.FadeOutMs,
+		}
+	}
+	if aj.Reactive != nil {
+		a.React = &publication.Reactive{Audio: aj.Reactive.Audio, Pointer: aj.Reactive.Pointer}
+	}
+	if aj.DerivedFrom != nil {
+		d := &publication.Derived{
+			PublicationID: aj.DerivedFrom.PublicationID,
+			RevisionHash:  aj.DerivedFrom.RevisionHash,
+		}
+		if aj.DerivedFrom.RecipeHash != "" {
+			h, err := hex.DecodeString(aj.DerivedFrom.RecipeHash)
+			if err != nil {
+				return nil, errors.New("node: bad atmosphere recipe hash")
+			}
+			d.RecipeHash = h
+		}
+		a.Derived = d
+	}
+	return a, nil
 }
 
 // ---- Runtime operations ----
@@ -369,6 +519,12 @@ func (a *APIServer) handleListPublications(w http.ResponseWriter, r *http.Reques
 				"clock":             p.Clock,
 				"revision_event_id": p.RevisionEventID.Hex(),
 				"comment_count":     len(p.Comments),
+				// The feed marker needs the recipe to name the scene and to
+				// say whether there is sound. It gets the whole thing rather
+				// than a summary flag: a projection that invented its own
+				// smaller shape here would be a second wire format to keep in
+				// step, and the client already knows how to read this one.
+				"atmosphere": atmosphereToJSON(p.Document.Atmosphere),
 			})
 		}
 		return nil
