@@ -31,6 +31,10 @@ func main() {
 		err = runMeshHub(os.Args[2:])
 	case "custodian":
 		err = runCustodian(os.Args[2:])
+	case "backup":
+		err = runBackup(os.Args[2:])
+	case "restore":
+		err = runRestore(os.Args[2:])
 	default:
 		usage()
 		os.Exit(2)
@@ -52,9 +56,17 @@ usage:
   terminal node --passphrase P [--data DIR]
                                          run headless (API only, no UI assets)
   terminal demo                          run the reproducible two-node demo
+  terminal backup  --out FILE --passphrase P [--data DIR]
+                                         encrypted copy of EVERYTHING:
+                                         identity, spaces, epoch keys, history
+                                         (safe while the node is running)
+  terminal restore --in FILE --passphrase P --data DIR
+                                         unpack a backup into an EMPTY dir
   terminal identity new --passphrase P --out FILE
                                          create an identity, export encrypted
                                          recovery bundle, print fingerprint
+                                         (identity ONLY — for everything else
+                                         use 'terminal backup')
   terminal identity restore --passphrase P --in FILE
                                          restore an identity from a bundle
   terminal inspect --bundle FILE         list frames in a *.terminal-bundle

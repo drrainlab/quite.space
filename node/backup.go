@@ -303,3 +303,41 @@ func untarGzip(dir string, plain []byte) error {
 		}
 	}
 }
+
+// ---- "have you ever taken one?" ----
+//
+// A single timestamp, device-local, recorded beside the other plain auditable
+// state. It says a backup was taken; it never says where it was put. A node
+// that remembered backup locations would be a node that knows where your keys
+// live, which is precisely the thing a backup exists to keep elsewhere.
+
+const backupStampFile = "backup.stamp"
+
+func (r *Runtime) backupStampPath() string {
+	return filepath.Join(r.dataDir, backupStampFile)
+}
+
+// LastBackupAt is the unix time of the last backup taken from this device, or
+// zero if there has never been one.
+func (r *Runtime) LastBackupAt() int64 {
+	b, err := os.ReadFile(r.backupStampPath())
+	if err != nil {
+		return 0
+	}
+	var t int64
+	if _, err := fmt.Sscanf(strings.TrimSpace(string(b)), "%d", &t); err != nil {
+		return 0
+	}
+	return t
+}
+
+func (r *Runtime) noteBackupTaken() {
+	stamp := fmt.Sprintf("%d\n", time.Now().Unix())
+	tmp := r.backupStampPath() + ".tmp"
+	if err := os.WriteFile(tmp, []byte(stamp), 0o600); err != nil {
+		return
+	}
+	if err := os.Rename(tmp, r.backupStampPath()); err != nil {
+		os.Remove(tmp)
+	}
+}

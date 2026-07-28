@@ -1358,6 +1358,7 @@ function showIdentity() {
   const fp = status.fingerprint;
   document.getElementById('meGlyph').innerHTML =
     `<span class="glyph" style="width:56px;height:56px">${glyphSVG(fp, 'human', 56)}</span>`;
+  if (typeof refreshBackupState === 'function') refreshBackupState();
   document.getElementById('meName').textContent = (onboardInfo && onboardInfo.name) || 'me';
   document.getElementById('meDeviceName').textContent = (onboardInfo && onboardInfo.device_name) || 'this device';
   document.getElementById('meVerify').textContent = verificationPhrase(fp, 4);

@@ -692,6 +692,20 @@
     </div>
     <div id="qlIssued"></div>
   </div>
+  <!-- The one thing that cannot be recovered from anywhere else. Nothing in
+       this app can reset it for you, so the honest place for it is here,
+       beside your identity, not buried in a settings tab. -->
+  <div class="ql-block" id="backupBlock">
+    <p class="hint" id="backupState"></p>
+    <p class="hint">A backup holds everything: your identity, your spaces, their
+      keys and their history. Choose a passphrase for the file itself — it can
+      be a different one from the passphrase that opens this app.</p>
+    <input id="backupPass" type="password" placeholder="passphrase for the backup file" autocomplete="new-password">
+    <div class="row"><button onclick="saveBackup()" id="backupBtn">Save a backup</button></div>
+    <p class="hint">Restoring is a separate, deliberate act — a running node
+      holds its own directory open, so it cannot restore into itself:
+      <span class="mono">terminal restore --in FILE --data NEW-DIR</span></p>
+  </div>
   <div class="row" style="margin-top:10px">
     <button onclick="renameSelf()">Change name</button>
     <button onclick="document.getElementById('meTech').style.display='block'">Technical details</button>
@@ -794,6 +808,7 @@
 <script src="shelf.js"></script>
 <script src="mentions.js"></script>
 <script src="quietrank.js"></script>
+<script src="backup.js"></script>
 <script src="quicklink.js"></script>
 <script src="starfield.js"></script>
 <script src="audiopass.js"></script>
