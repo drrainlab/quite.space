@@ -37,6 +37,35 @@ const RUNTIME_REGISTRY = (() => {
     return d;
   }
 
+  // ---- teardown ----
+  //
+  // render() used to hand back a DOM node and forget it. Every tenant so far
+  // was fire-and-forget DOM, so nothing noticed — but a renderer that owns an
+  // animation loop or an AudioContext leaks on every re-render, and
+  // publications.js clears its container with innerHTML = '' on every article
+  // open. The listening room solved this privately with an isConnected poll;
+  // this is the same idea, once, for everyone.
+  //
+  // A renderer signals a teardown by setting node.__unmount = fn. Callers who
+  // replace rendered content call RUNTIME_REGISTRY.unmount(container) first.
+  const UNMOUNT = '__unmount';
+
+  /** Tear down every rendered node inside (and including) el. */
+  function unmount(el) {
+    if (!el) return;
+    const nodes = [];
+    if (el[UNMOUNT]) nodes.push(el);
+    if (el.querySelectorAll) {
+      for (const n of el.querySelectorAll('*')) if (n[UNMOUNT]) nodes.push(n);
+    }
+    for (const n of nodes) {
+      const fn = n[UNMOUNT];
+      n[UNMOUNT] = null;
+      // One tenant's failure must not strand the others.
+      try { fn(); } catch (e) { console.warn('unmount failed', e); }
+    }
+  }
+
   // render walks the chain. ctx is renderer-defined (space id, api helpers…).
   function render(schemaId, model, ctx) {
     const fn = renderers.get(schemaId);
@@ -54,5 +83,5 @@ const RUNTIME_REGISTRY = (() => {
     return fallbackCard(schemaId, model);
   }
 
-  return { register, freeze, known, render, fallbackCard };
+  return { register, freeze, known, render, fallbackCard, unmount };
 })();

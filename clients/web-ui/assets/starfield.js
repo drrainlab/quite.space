@@ -33,11 +33,14 @@ const SKY = (() => {
    * @returns {'off'|'still'|'drift'}
    */
   function mode() {
-    let m = userMode();
-    if (m === 'off') return 'off';
-    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) m = 'still';
-    if (typeof renderMode === 'function' && renderMode() === 'minimal') return 'off';
-    return m;
+    return MODES.resolve({
+      ladder: ['off', 'still', 'drift'],
+      user: userMode(),
+      // Reduced motion keeps the stars and stops them — a still sky is still
+      // a sky. Minimal drops the whole thing.
+      floorWhenReduced: 'still',
+      floorWhenMinimal: 'off',
+    });
   }
 
   /**
@@ -158,11 +161,8 @@ const SKY = (() => {
   document.addEventListener('DOMContentLoaded', () => { paintSurfaces(); apply(); });
   // A hidden tab paints nothing: the animation is paused in CSS, but the
   // attribute is refreshed on return in case the render mode changed.
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) apply(); });
-  if (window.matchMedia) {
-    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
-    if (mq.addEventListener) mq.addEventListener('change', apply);
-  }
+  MODES.onVisibilityChange(hidden => { if (!hidden) apply(); });
+  MODES.onPreferenceChange(apply);
 
   return { set, mode, userMode, apply };
 })();

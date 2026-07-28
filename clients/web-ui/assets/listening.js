@@ -198,6 +198,12 @@ function renderListeningRoom(box, inst) {
     st.following = true;
     update();
   });
+  // A listening session outranks everything: other people are hearing this
+  // too, so nothing local may talk over it.
+  const owner = 'room:' + (st.spaceID || 'current');
+  audio.addEventListener('play', () => AUDIO.request(owner, 'room', () => audio.pause()));
+  audio.addEventListener('pause', () => { if (audio.paused) AUDIO.release(owner); });
+  audio.addEventListener('ended', () => AUDIO.release(owner));
 
   function progPause() { st.programmatic++; audio.pause(); setTimeout(() => st.programmatic--, 50); }
   function progPlay() {

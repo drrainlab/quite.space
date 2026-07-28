@@ -56,21 +56,23 @@ const RESFX = (() => {
 
   // ---- modes ----
   // effectiveMode = min(space policy, user setting, accessibility, client).
-  const MODES = ['off', 'static', 'subtle', 'full'];
+  // The ladder itself lives in modes.js now — this used to be one of three
+  // copies of the same rule, and three copies of a rule drift.
+  const LADDER = ['off', 'static', 'subtle', 'full'];
   function userMode() { return localStorage.getItem('qp.effects') || 'full'; }
   function effectsMode() {
-    let m = userMode();
-    if (typeof RES !== 'undefined' && !RES.surfaceEffects()) m = 'off';
-    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      m = minMode(m, 'static');
-    }
-    if (typeof renderMode === 'function' && renderMode() === 'minimal') {
-      m = minMode(m, 'static');
-    }
-    if (document.hidden) m = minMode(m, 'static'); // background tab: no motion
-    return m;
+    return MODES.resolve({
+      ladder: LADDER,
+      user: userMode(),
+      // A space saying "no effects here" is a fact about the space, not a
+      // preference to be weighed against yours — hence a clamp, not a floor.
+      spaceAllows: typeof RES === 'undefined' || RES.surfaceEffects(),
+      floorWhenReduced: 'static',
+      floorWhenMinimal: 'static',
+      floorWhenHidden: 'static',
+    });
   }
-  function minMode(a, b) { return MODES[Math.min(MODES.indexOf(a), MODES.indexOf(b))]; }
+  function minMode(a, b) { return MODES.min(LADDER, a, b); }
 
   // ---- intensity: bounded logarithmic curve (1→0.12, 3→~0.19, 10→0.27, cap 0.30)
   function intensity(count) {

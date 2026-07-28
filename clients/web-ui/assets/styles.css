@@ -1531,3 +1531,11 @@ header .nav-act { padding: 5px 11px 5px 10px; min-height: 30px; }
 }
 :root[data-preset="minimal-mono"] .entry.enter::after { display: none; }
 :root[data-preset="minimal-mono"] .entry.enter::before { display: none; }
+
+/* ---- the atmosphere stage ----
+   One canvas, behind the content it lights, never above it. Sized by the host
+   and clipped to it, so a scene cannot paint outside the post it belongs to. */
+.stage-canvas {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  pointer-events: none; z-index: 0; border-radius: inherit;
+}

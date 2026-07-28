@@ -2103,15 +2103,22 @@ function makeAudioPlayer(src, wave, durationMs) {
     time.textContent = (audio.currentTime ? fmtDur(cur) + ' / ' : '') + fmtDur(total());
   }
 
+  // The arbiter replaces the two-line pairwise pause that used to live here:
+  // that version was never cleared and knew nothing about the listening room,
+  // the drone, or a bare <audio controls> in a publication.
+  const owner = 'player:' + Math.random().toString(36).slice(2);
   btn.onclick = () => {
     if (audio.paused) {
+      if (!AUDIO.request(owner, 'player', () => audio.pause())) return;
       if (nowPlayingAudio && nowPlayingAudio !== audio) nowPlayingAudio.pause();
       nowPlayingAudio = audio;
-      audio.play().catch(() => {});
+      audio.play().catch(() => AUDIO.release(owner));
     } else {
       audio.pause();
     }
   };
+  audio.addEventListener('pause', () => AUDIO.release(owner));
+  audio.addEventListener('ended', () => AUDIO.release(owner));
   audio.onplay = () => { btn.innerHTML = PAUSE_ICON; btn.setAttribute('aria-label', 'pause'); player.classList.add('playing'); };
   audio.onpause = () => { btn.innerHTML = PLAY_ICON; btn.setAttribute('aria-label', 'play'); player.classList.remove('playing'); };
   audio.onended = () => { btn.innerHTML = PLAY_ICON; player.classList.remove('playing'); paint(); };
