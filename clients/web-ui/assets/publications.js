@@ -38,6 +38,12 @@ async function refreshPosts() {
   // so the teardown has to be asked for rather than assumed.
   if (typeof ATMO !== 'undefined') ATMO.unmount();
   const feed = document.getElementById('pubFeed');
+  // Cards may hold disposers (a still-frame observer each) registered under
+  // the registry.js __unmount contract. innerHTML='' would drop the nodes
+  // but leave every IntersectionObserver watching a detached element.
+  feed.querySelectorAll('.pub-card').forEach(c => {
+    try { if (c.__unmount) c.__unmount(); } catch { /* not this card's day */ }
+  });
   try {
     const r = await api(`/api/spaces/${current}/publications`);
     feed.innerHTML = '';
@@ -69,15 +75,43 @@ async function refreshPosts() {
       const m = document.createElement('div');
       m.className = 'pub-meta';
       m.textContent = `${p.kind} · ${p.comment_count} ${p.comment_count === 1 ? 'comment' : 'comments'}`;
-      // A post in the feed stays an ordinary readable post: the atmosphere
-      // gets a MARKER here and nothing else. Never a live canvas — twenty
-      // running scenes is a feed nobody can read, and an immersive mode you
-      // fall into by scrolling is not a mode anyone chose.
+      // A post in the feed stays an ordinary readable post: NO live loops,
+      // ever. What an atmospheric card gets is a deterministic still as its
+      // background (drawn once, only near the viewport, disposed when far —
+      // see ATMO.cardStill) and two doors that carry the chosen mode into
+      // the article. The card itself opens still and silent.
       if (typeof ATMO !== 'undefined') {
         const mk = ATMO.marker(p.atmosphere);
         if (mk) m.appendChild(mk);
       }
       card.appendChild(m);
+      if (typeof ATMO !== 'undefined' && p.atmosphere) {
+        ATMO.cardStill(card, p.atmosphere);
+        // Doors only for a scene this build can actually render: a door onto
+        // a picture that cannot exist is a false promise — the same honesty
+        // rule as the marker's label.
+        const known = typeof SCENES !== 'undefined' && p.atmosphere.visual &&
+          SCENES.get(String(p.atmosphere.visual.scene || ''));
+        if (known) {
+          const doors = document.createElement('div');
+          doors.className = 'atmo-card-doors';
+          const door = (long, short, mode, cls) => {
+            const b = document.createElement('button');
+            b.className = cls;
+            b.innerHTML = `<span class="door-long"></span><span class="door-short"></span>`;
+            b.firstChild.textContent = long;
+            b.lastChild.textContent = short;
+            b.onclick = (e) => { e.stopPropagation(); openPub(p.document_id, mode); };
+            doors.appendChild(b);
+          };
+          door('Open quiet', 'Quiet', 'quiet', 'btn-tinted');
+          if (p.atmosphere.audio && p.atmosphere.audio.asset &&
+              ATMO.soundMode() !== 'never') {
+            door('Open with sound', 'Sound', 'sound', 'btn-filled');
+          }
+          card.appendChild(doors);
+        }
+      }
       // PA-1 space-cards: categories render as chips on the card.
       if (p.kind === 'space' && p.tags?.length) {
         const chips = document.createElement('div');
@@ -100,15 +134,19 @@ async function refreshPosts() {
 
 // ---- article view ----
 
-async function openPub(docID) {
+async function openPub(docID, mode) {
   openDocID = docID;
   try {
     const p = await api(`/api/spaces/${current}/publications/${docID}`);
-    renderArticle(p);
+    // mode is the entry chosen in the feed: 'quiet' | 'sound' | undefined
+    // (a plain click — still and silent). The door click there is the user
+    // gesture that satisfies audio autoplay; it must ride along rather than
+    // be asked for a second time on arrival.
+    renderArticle(p, mode);
   } catch (e) { console.error(e); }
 }
 
-function renderArticle(p) {
+function renderArticle(p, mode) {
   const box = document.getElementById('pubArticle');
   // innerHTML = '' drops the canvas and the audio element from the DOM but
   // stops neither. Tear down before wiping, on every re-render — a comment
@@ -136,19 +174,17 @@ function renderArticle(p) {
     autoMediaSrc(cov, doc.cover); // fetch bytes on view (media on-demand)
     box.appendChild(cov);
   }
-  // The atmosphere sits above the title and below the cover: entering is a
-  // deliberate act, so its doors are the first thing after the picture and
-  // before the words. Nothing here moves or sounds until one is pressed.
-  //
-  // The element goes in HERE for position, but it is mounted at the very
-  // bottom of this function — `box` is display:none until the last line, and
-  // a host with no layout gives back a zero-size rectangle, so mounting now
-  // would size every canvas to 1x1 and draw the still frame into nothing.
-  let atmoHost = null;
+  // AM-6: the atmosphere is a LAYER behind the whole article, not a block
+  // inside it. What goes into the content flow is only the slim control bar;
+  // the stage and scrim are prepended into `box` itself by ATMO.mount at the
+  // very bottom of this function — `box` is display:none until the last
+  // line, and a host with no layout gives back a zero-size rectangle, so
+  // mounting now would size the background canvas to 1x1.
+  let atmoBar = null;
   if (doc.atmosphere && typeof ATMO !== 'undefined') {
-    atmoHost = document.createElement('div');
-    atmoHost.className = 'atmo-region';
-    box.appendChild(atmoHost);
+    atmoBar = document.createElement('div');
+    atmoBar.className = 'atmo-bar';
+    box.appendChild(atmoBar);
   }
 
   const h = document.createElement('h2');
@@ -223,8 +259,11 @@ function renderArticle(p) {
 
   document.getElementById('pubFeed').style.display = 'none';
   box.style.display = '';
-  // Now that the article has layout, the atmosphere can measure its host.
-  if (atmoHost) ATMO.mount(atmoHost, doc.atmosphere, String(openDocID));
+  // Now that the article has layout, the atmosphere can measure its shell.
+  if (atmoBar) {
+    ATMO.mount(box, doc.atmosphere, String(openDocID),
+               { bar: atmoBar, enter: mode || 'still' });
+  }
   startCommentPoll(); // receive others' comments live while this article is open
 }
 

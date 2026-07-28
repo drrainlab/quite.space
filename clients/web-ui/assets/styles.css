@@ -1551,34 +1551,62 @@ header .nav-act { padding: 5px 11px 5px 10px; min-height: 30px; }
   font-size: .92em; letter-spacing: .02em; opacity: .8;
 }
 
-/* The region in the reading view. Its height is what the scene is drawn into,
-   so it is stated here rather than left to content: a host that collapses to
-   nothing gives the stage a 1x1 canvas and the bed never appears. */
-.atmo-region {
-  position: relative; overflow: hidden;
-  min-height: 190px; margin: 10px 0 14px;
-  border-radius: 12px;
-  border: 1px solid var(--line, rgba(255,255,255,.12));
-  display: flex; flex-direction: column; justify-content: flex-end;
-  gap: 8px; padding: 14px;
+/* ---- AM-6: the atmosphere is a layer behind the article ------------------
+   The article container becomes the shell. Two absolutely-positioned layers
+   sit behind everything it contains: the stage (the canvas / poster / still)
+   and the scrim (readability). NO overflow:hidden on the shell itself — it
+   would clip focus outlines, menus and tooltips; clipping and rounding
+   belong to the background layers alone. */
+.atmo-shell { position: relative; }
+.atmo-stage, .atmo-scrim {
+  position: absolute; inset: 0; z-index: 0;
+  overflow: hidden; border-radius: var(--radius-md);
+  pointer-events: none;
+}
+/* Everything the article contains is forced above both layers — the same
+   idiom as .sc-appearance > * . */
+.atmo-shell > :not(.atmo-stage):not(.atmo-scrim) {
+  position: relative; z-index: 1;
 }
 .atmo-poster {
   position: absolute; inset: 0; width: 100%; height: 100%;
-  object-fit: cover; z-index: 0;
+  object-fit: cover;
 }
-/* Above the canvas and the poster, both of which are z-index 0. */
-.atmo-fallback, .atmo-doors { position: relative; z-index: 1; margin: 0; }
-.atmo-fallback { font-size: .95rem; line-height: 1.5; opacity: .9; text-wrap: pretty; }
-.atmo-doors { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.atmo-note { font-size: .86rem; opacity: .72; }
 
-/* Reduced transparency is the third accessibility axis the ladder names, and
-   the only one with nowhere else to live: an opaque backdrop under the words
-   so a moving field can never be the thing text has to be read against. */
+/* The controller: a slim in-flow row, not a panel. Before entry it holds the
+   doors; after, Pause / Mute / Leave. */
+.atmo-bar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  margin: 2px 0 10px; font-size: .9rem; min-height: 1.8em;
+}
+.atmo-glyph { opacity: .6; }
+.atmo-glyph.on { opacity: 1; color: var(--acc); }
+.atmo-bar-label { opacity: .85; letter-spacing: .02em; }
+.atmo-note { font-size: .84rem; opacity: .72; }
+.atmo-take { margin-left: auto; }
+
+/* Feed cards: a deterministic still behind the card's own content, and two
+   doors. A card is a small self-contained tile, so clipping it is safe —
+   unlike the article shell. */
+.pub-card { position: relative; overflow: hidden; }
+.pub-card > * { position: relative; z-index: 1; }
+.pub-card-atmo {
+  position: absolute; inset: 0; z-index: 0;
+  opacity: .45; pointer-events: none;
+}
+.atmo-card-doors { display: flex; gap: 8px; margin-top: 8px; }
+.atmo-card-doors .door-short { display: none; }
+@media (max-width: 600px) {
+  .atmo-card-doors .door-long { display: none; }
+  .atmo-card-doors .door-short { display: inline; }
+}
+
+/* Reduced transparency: the scrim goes opaque, and the post reads as an
+   ordinary article. Text is never asked to survive a moving field — the
+   client's last word (ADR-013 invariant 5). */
 @media (prefers-reduced-transparency: reduce) {
-  .atmo-fallback, .atmo-doors {
-    background: var(--bg, #0b1020); border-radius: 8px; padding: 6px 8px;
-  }
+  .atmo-scrim { background: var(--bg, #0b1020) !important; }
+  .pub-card-atmo { opacity: .15; }
 }
 
 /* ---- Atmosphere editor (AM-5) ---------------------------------------------

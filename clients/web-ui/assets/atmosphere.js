@@ -208,36 +208,53 @@ const ATMO = (() => {
   }
 
   // ---- the reading view ----------------------------------------------------
+  //
+  // AM-6: the atmosphere is a LAYER, not a block. The article does not
+  // contain an atmosphere region — the article's own container becomes the
+  // shell, the scene lives on an absolutely-positioned stage BEHIND all of
+  // its content, a scrim sits between them for readability, and a slim bar
+  // in the content flow is the controller. The post exists inside the
+  // atmosphere; the atmosphere is not an insert inside the post.
 
-  let mounted = null; // { host }
-  /** Keeps the still frame the same size as the region it sits in. */
+  let mounted = null; // { shell, stage, scrim, bar, scene, atmosphere, postId }
+  /** Keeps the still frame the same size as the stage it sits in. */
   let stillRO = null;
 
-  /** Take down whatever is playing. Safe at any time, including twice. */
+  /** Take down whatever is playing and undo the shell. Safe to call twice. */
   function unmount() {
     stopBed();
     if (stillRO) { stillRO.disconnect(); stillRO = null; }
     if (typeof STAGE !== 'undefined') STAGE.clear();
-    mounted = null;
+    if (mounted) {
+      const m = mounted;
+      mounted = null;
+      try { m.stage.remove(); } catch { /* already gone */ }
+      try { m.scrim.remove(); } catch { /* already gone */ }
+      m.shell.classList.remove('atmo-shell');
+      if (m.bar) m.bar.innerHTML = '';
+    }
   }
 
   /**
-   * Put a post's atmosphere into its reading view.
+   * Put a post's atmosphere BEHIND its reading view.
    *
-   * Renders the poster and the two doors; entering starts the scene and, if
-   * that door had sound on it, the bed. Nothing moves and nothing sounds
-   * until then.
+   * The shell is the article container itself. mount() prepends two layers —
+   * the stage (canvas host) and the scrim (readability) — and renders the
+   * controller into `opts.bar`, a normal in-flow element the article
+   * provides. Nothing moves and nothing sounds until a door is used, unless
+   * `opts.enter` carries a mode the person already chose in the feed: that
+   * click was the consent, so arriving in the chosen state honours it
+   * rather than asking twice.
    *
-   * @param {HTMLElement} host the article's atmosphere region
+   * @param {HTMLElement} shell the article container (becomes .atmo-shell)
    * @param {any} atmosphere the recipe as projected by the node
    * @param {string} postId
+   * @param {{bar?: HTMLElement, enter?: 'still'|'quiet'|'sound'}} [opts]
    */
-  function mount(host, atmosphere, postId) {
+  function mount(shell, atmosphere, postId, opts) {
     unmount();
-    if (!host || !atmosphere || !atmosphere.visual) return;
-    mounted = { host };
-    host.classList.add('atmo-host');
-    host.innerHTML = '';
+    if (!shell || !atmosphere || !atmosphere.visual) return;
+    const bar = (opts && opts.bar) || null;
 
     const fall = atmosphere.fallback || {};
     const scene = typeof SCENES !== 'undefined'
@@ -247,58 +264,134 @@ const ATMO = (() => {
         })
       : null;
 
-    // The poster sits underneath for the whole life of the view. It is what
-    // reduced motion, the minimal render mode, a space that asked for
-    // stillness, a scene id this build does not know, and a scene that threw
-    // all resolve to — one answer for every way the picture can be absent.
+    // The two layers. Stage first, scrim second: both are z-index 0, so DOM
+    // order stacks the scrim above the picture — and everything the article
+    // already contains is forced above both by the .atmo-shell child rule.
+    const stage = document.createElement('div');
+    stage.className = 'atmo-stage';
+    stage.setAttribute('aria-hidden', 'true');
+    const scrim = document.createElement('div');
+    scrim.className = 'atmo-scrim';
+    scrim.setAttribute('aria-hidden', 'true');
+    shell.prepend(scrim);
+    shell.prepend(stage);
+    shell.classList.add('atmo-shell');
+    styleScrim(scrim, atmosphere);
+
+    mounted = { shell, stage, scrim, bar, scene, atmosphere, postId };
+
+    // The poster (an author-supplied image) or the deterministic still — the
+    // first frame re-derived from the seed, nothing cached anywhere. Either
+    // way the post is atmospheric from its first paint, motionless and
+    // silent: this is also exactly what reduced motion, the minimal mode, a
+    // space that asked for stillness and an unknown scene id all resolve to.
     if (fall.poster) {
       const img = document.createElement('img');
       img.className = 'atmo-poster';
       img.alt = '';
       autoMediaSrc(img, fall.poster);
-      host.appendChild(img);
+      stage.appendChild(img);
+    } else if (scene) {
+      stillFrame(stage, scene, atmosphere);
     }
 
-    // No poster asset? Draw the scene's own first frame and stop.
-    //
-    // Every scene opens settled rather than from an empty field (see WARMUP
-    // in scenes/field.js), which is what makes one frame worth looking at —
-    // the plan asks each scene for a poster-quality first frame and this is
-    // where that gets spent. It is a single draw with no loop, so it is
-    // still true that nothing moves before the reader asks: a still picture
-    // is exactly what reduced motion wants, not something to withhold from
-    // it. The cost is one frame, once, and it replaces an empty box.
-    if (!fall.poster && scene) stillFrame(host, scene, atmosphere);
-
-    // The words are required by the contract and are the last line of the
-    // fallback: a reader who gets no picture at all still gets the author's
-    // description of what the picture was.
-    const words = document.createElement('p');
-    words.className = 'atmo-fallback';
-    words.textContent = String(fall.text || '');
-    host.appendChild(words);
-
-    const doors = document.createElement('div');
-    doors.className = 'atmo-doors';
-    host.appendChild(doors);
-
-    const say = document.createElement('span');
-    say.className = 'atmo-note';
-    doors.appendChild(say);
-
     const hasSound = !!(atmosphere.audio && atmosphere.audio.asset);
+    const label = (typeof SCENES !== 'undefined' &&
+      SCENES.get(String(atmosphere.visual.scene || ''))?.label) || 'Atmosphere';
+
+    /** Rebuild the bar for one of its two states. */
+    function renderBar(state, notes) {
+      if (!bar) return;
+      bar.innerHTML = '';
+      bar.className = 'atmo-bar';
+
+      const glyph = document.createElement('span');
+      glyph.className = 'atmo-glyph' + (state === 'live' ? ' on' : '');
+      glyph.textContent = state === 'live' ? '\u25CF' : '\u25CC';
+      bar.appendChild(glyph);
+
+      const name = document.createElement('span');
+      name.className = 'atmo-bar-label';
+      if (state === 'live') {
+        name.textContent = label + ' \u00B7 moving' + (bed ? ' \u00B7 sound' : '');
+      } else {
+        name.textContent = label + ' atmosphere';
+        // The author's words are the atmosphere's description AND its last
+        // line of defence: title everywhere, visible text when the picture
+        // cannot exist at all.
+        name.title = String(fall.text || '');
+      }
+      bar.appendChild(name);
+
+      const btn = (text, cls, fn) => {
+        const b = document.createElement('button');
+        b.className = cls; b.textContent = text; b.onclick = fn;
+        bar.appendChild(b);
+        return b;
+      };
+
+      if (state === 'live') {
+        btn(STAGE.paused() ? 'Resume' : 'Pause', 'btn-plain', () => {
+          // Pause freezes ON THE CURRENT FRAME — the canvas keeps what it
+          // holds and nothing is redrawn. A pause that jumped back to the
+          // opening frame would read as the composition resetting, and a
+          // reset is what Leave is for.
+          if (STAGE.paused()) STAGE.resume(); else STAGE.pause();
+          renderBar('live', notes);
+        });
+        if (hasSound && soundMode() !== 'never') {
+          btn(bed ? 'Mute' : 'Unmute', 'btn-plain', () => {
+            if (bed) stopBed();
+            else {
+              const r = startBed(atmosphere.audio, postId);
+              if (!r.ok) notes = [r.why];
+            }
+            renderBar('live', notes);
+          });
+        }
+        btn('Leave', 'btn-plain', () => {
+          // The exit IS the deterministic reset: stop everything and return
+          // to the still first frame with the doors.
+          STAGE.clear();
+          stopBed();
+          if (!fall.poster && scene) stillFrame(stage, scene, atmosphere);
+          renderBar('still');
+        });
+      } else {
+        if (hasSound && soundMode() !== 'never') {
+          btn('Open with sound', 'btn-filled', () => enter(true));
+        }
+        // A quiet door needs a picture to open onto; without a known scene
+        // there is no motion to enter and the door would be a false promise.
+        if (scene) {
+          btn(hasSound && soundMode() !== 'never' ? 'Open quiet' : 'Open',
+              'btn-tinted', () => enter(false));
+        }
+        addTakeButton();
+      }
+
+      const say = document.createElement('span');
+      say.className = 'atmo-note';
+      // No scene at all: the author's words carry the meaning (ADR-013 §1).
+      const parts = [];
+      if (!scene && state !== 'live') {
+        if (fall.text) parts.push(String(fall.text));
+        parts.push('this version does not know that scene');
+      }
+      for (const n of notes || []) parts.push(n);
+      say.textContent = parts.join(' \u2014 ');
+      bar.appendChild(say);
+    }
 
     /** @param {boolean} withSound */
     function enter(withSound) {
-      doors.querySelectorAll('button').forEach(b => b.remove());
       const notes = [];
-      // From here the stage owns the canvas. Let go of the still, or the
-      // observer repaints a frozen frame over a running scene on every
-      // resize — which looks exactly like the scene stopping.
+      // From here the stage owns the canvas. Let go of the still, or its
+      // observer repaints a frozen frame over the running scene on resize.
       if (stillRO) { stillRO.disconnect(); stillRO = null; }
-      host.querySelectorAll(':scope > canvas.stage-canvas').forEach(c => c.remove());
+      stage.querySelectorAll(':scope > canvas.stage-canvas').forEach(c => c.remove());
       if (scene) {
-        const ok = STAGE.play(host, scene, {
+        const ok = STAGE.play(stage, scene, {
           palette: paletteOf(atmosphere),
           seed: Number(atmosphere.visual.seed) || 0,
           level,
@@ -306,53 +399,28 @@ const ATMO = (() => {
         // Declining is a normal outcome, not a failure — but it has to be
         // SAID, or a person who set reduced motion months ago just sees a
         // still picture and assumes the post is broken.
-        if (!ok) notes.push(stageDeclinedBecause());
-      } else {
-        notes.push('this version does not know that scene');
+        if (!ok) {
+          notes.push('showing the still \u2014 ' + stageDeclinedBecause());
+          if (!fall.poster) stillFrame(stage, scene, atmosphere);
+        }
       }
       if (withSound) {
         const r = startBed(atmosphere.audio, postId);
         if (!r.ok) notes.push(r.why);
         else if (soundMode() === 'remember') localStorage.setItem(CONSENT_KEY, '1');
       }
-      say.textContent = notes.length ? 'Showing the still image — ' + notes.join('; ') : '';
-      const leave = document.createElement('button');
-      leave.className = 'btn-plain'; leave.textContent = 'Leave';
-      leave.onclick = () => { unmount(); mount(host, atmosphere, postId); };
-      doors.appendChild(leave);
+      renderBar('live', notes);
     }
 
-    if (hasSound && soundMode() !== 'never') {
-      const b = document.createElement('button');
-      b.className = 'btn-filled'; b.textContent = 'Open with sound';
-      b.onclick = () => enter(true);
-      doors.appendChild(b);
-    }
-    const q = document.createElement('button');
-    q.className = 'btn-tinted';
-    q.textContent = hasSound && soundMode() !== 'never' ? 'Open quiet' : 'Open';
-    q.onclick = () => enter(false);
-    doors.appendChild(q);
-
-    // Remembering a yes is a convenience, never a default: it only applies
-    // when the person asked for it AND has already said yes once here.
-    if (hasSound && soundMode() === 'remember' && localStorage.getItem(CONSENT_KEY)) {
-      enter(true);
-    }
-
-    // "Use this atmosphere" — the recipe, into a new draft of your own.
-    //
-    // It copies the FORM and names the source; it does not copy the sound,
-    // because an audio asset belongs to the post that published it and
-    // carrying the reference would make a new post depend on a blob its
-    // author never had. The lineage digest is deliberately NOT filled in
-    // here: the node computes it from the source it actually holds when the
-    // draft is published, so "derived from that post" is something anyone can
-    // check rather than a sentence this client wrote about itself.
-    if (typeof openComposer === 'function' && typeof SCENES !== 'undefined' &&
-        SCENES.get(String(atmosphere.visual.scene || ''))) {
+    /** "Use this atmosphere" — the recipe, into a new draft of your own.
+     *  Copies the FORM and names the source; never the sound (that asset
+     *  belongs to the post that published it) and never the digest (the node
+     *  computes lineage from the source it actually holds, so the claim is
+     *  checkable rather than written by this client about itself). */
+    function addTakeButton() {
+      if (typeof openComposer !== 'function' || !scene) return;
       const take = document.createElement('button');
-      take.className = 'btn-plain';
+      take.className = 'btn-plain atmo-take';
       take.textContent = 'Use this atmosphere';
       take.title = 'Start a new post with this look';
       take.onclick = () => {
@@ -366,8 +434,109 @@ const ATMO = (() => {
         composerDoc.atmosphere = copy;
         renderComposerAtmosphere();
       };
-      doors.appendChild(take);
+      bar.appendChild(take);
     }
+
+    renderBar('still');
+
+    // The mode carried in from the feed. A door click there was the consent;
+    // arriving in the chosen state honours it rather than asking twice.
+    const how = (opts && opts.enter) || 'still';
+    if (how === 'sound') enter(true);
+    else if (how === 'quiet') enter(false);
+    // A plain open (still) with a remembered yes: the person's own standing
+    // instruction, recorded at their request, outranks the quiet default.
+    else if (hasSound && soundMode() === 'remember' && localStorage.getItem(CONSENT_KEY)) {
+      enter(true);
+    }
+  }
+
+  /**
+   * A deterministic still as a feed card's background — the first frame
+   * re-derived from the seed (nothing is cached), or the author's poster
+   * image when the recipe carries one, which is cheaper still.
+   *
+   * The ladder, and why:
+   *   poster        an <img>, no canvas at all
+   *   known scene   ONE canvas, drawn only while the card is in or near the
+   *                 viewport and discarded when it scrolls far away — a long
+   *                 feed must not accumulate a canvas per card
+   *   unknown scene nothing; the marker already says "Atmosphere" honestly
+   *
+   * Registers its disposer as `card.__unmount` — the registry.js teardown
+   * contract — and returns it. NO live loops here, ever: the feed rule.
+   *
+   * @param {HTMLElement} card
+   * @param {any} atmosphere
+   * @returns {(() => void) | null}
+   */
+  function cardStill(card, atmosphere) {
+    if (!card || !atmosphere || !atmosphere.visual) return null;
+    const fall = atmosphere.fallback || {};
+    const layer = document.createElement('div');
+    layer.className = 'pub-card-atmo';
+    layer.setAttribute('aria-hidden', 'true');
+
+    let dispose;
+    if (fall.poster) {
+      const img = document.createElement('img');
+      img.className = 'atmo-poster';
+      img.alt = '';
+      autoMediaSrc(img, fall.poster);
+      layer.appendChild(img);
+      card.prepend(layer);
+      dispose = () => layer.remove();
+    } else {
+      const scene = typeof SCENES !== 'undefined'
+        ? SCENES.make(String(atmosphere.visual.scene || ''), {
+            seed: Number(atmosphere.visual.seed) || 0,
+            params: paramsOf(atmosphere),
+          })
+        : null;
+      if (!scene) return null;
+      card.prepend(layer);
+      let io = null;
+      if (window.IntersectionObserver) {
+        let drawn = false;
+        io = new IntersectionObserver(es => {
+          const near = es.some(e => e.isIntersecting);
+          if (near && !drawn) {
+            drawn = true;
+            drawStill(layer, scene, atmosphere);
+          } else if (!near && drawn) {
+            drawn = false;
+            layer.querySelectorAll('canvas').forEach(c => c.remove());
+          }
+        }, { rootMargin: '600px 0px' });
+        io.observe(card);
+      } else {
+        drawStill(layer, scene, atmosphere);
+      }
+      dispose = () => { if (io) io.disconnect(); layer.remove(); };
+    }
+    // The registry teardown contract, so whoever wipes the feed can run it.
+    /** @type {any} */ (card).__unmount = dispose;
+    return dispose;
+  }
+
+  /**
+   * The readability layer, tuned to the recipe rather than fixed: a bright
+   * palette bleaches text faster, so its scrim is stronger. The gradient is
+   * denser where the title and text begin and lighter toward the edges, so
+   * the atmosphere stays most visible in the margins of the composition —
+   * a state the post sits in, not wallpaper behind every letter.
+   */
+  function styleScrim(scrim, atmosphere) {
+    const pal = paletteOf(atmosphere);
+    const ground = pal[0];
+    let maxLuma = 0;
+    for (const h of pal.slice(1)) maxLuma = Math.max(maxLuma, BRUSH.luminance(h));
+    const a = Math.min(0.8, 0.42 + 0.3 * maxLuma);
+    const n = parseInt(ground.slice(1), 16);
+    const rgb = `${(n >> 16) & 255},${(n >> 8) & 255},${n & 255}`;
+    scrim.style.background =
+      `radial-gradient(130% 110% at 50% 30%, rgba(${rgb},${a.toFixed(3)}) 0%, ` +
+      `rgba(${rgb},${(a * 0.72).toFixed(3)}) 70%, rgba(${rgb},${(a * 0.45).toFixed(3)}) 100%)`;
   }
 
   /**
@@ -392,7 +561,7 @@ const ATMO = (() => {
     if (window.ResizeObserver) {
       stillRO = new ResizeObserver(() => {
         // A running scene owns the canvas; the still must not fight it.
-        if (mounted && mounted.host === host && !STAGE.running()) {
+        if (mounted && mounted.stage === host && !STAGE.running()) {
           drawStill(host, scene, atmosphere);
         }
       });
@@ -445,7 +614,7 @@ const ATMO = (() => {
   // The point of putting both directions in one file was that they share one
   // reading of the recipe; leaving these private would have meant the editor
   // reimplementing them, which is exactly how a preview drifts from a post.
-  return { marker, mount, unmount, level, soundMode, setSoundMode, stopBed,
+  return { marker, mount, unmount, cardStill, level, soundMode, setSoundMode, stopBed,
            paletteOf, paramsOf, declineReason: stageDeclinedBecause };
 })();
 

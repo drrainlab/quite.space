@@ -74,6 +74,7 @@ const STAGE = (() => {
   /** Stop whatever is on stage. Safe to call at any time, including twice. */
   function clear() {
     if (raf) { cancelAnimationFrame(raf); raf = 0; }
+    userPaused = false; // the next scene must not inherit a frozen state
     if (current) {
       const c = current;
       current = null;
@@ -191,8 +192,18 @@ const STAGE = (() => {
     return true;
   }
 
+  /**
+   * True while the PERSON paused the scene. Distinct from the mechanical
+   * pauses (hidden tab, offscreen host): those end on their own — the
+   * IntersectionObserver and the visibility handler both call start() when
+   * their condition lifts — and without this flag they would quietly resume
+   * a scene the person had explicitly frozen. A person's pause outranks
+   * every automatic resume, and only resume() clears it.
+   */
+  let userPaused = false;
+
   function start() {
-    if (!current || raf || !allowed()) return;
+    if (!current || raf || userPaused || !allowed()) return;
     current.rate = RATE[mode()] || 0;
     current.last = performance.now();
     raf = requestAnimationFrame(frame);
@@ -212,6 +223,28 @@ const STAGE = (() => {
   function pause() {
     if (raf) { cancelAnimationFrame(raf); raf = 0; }
   }
+
+  /**
+   * Freeze the scene ON ITS CURRENT FRAME. The canvas keeps what it holds;
+   * nothing is redrawn — a pause that jumped back to the opening frame
+   * would read as the composition resetting, which is an exit, not a pause.
+   * Survives tab hides, host scrolling and preference re-applies until
+   * userResume() lifts it.
+   */
+  function userPause() {
+    if (!current) return;
+    userPaused = true;
+    pause();
+  }
+
+  /** Continue from exactly where userPause froze. */
+  function userResume() {
+    userPaused = false;
+    start();
+  }
+
+  /** Is the person's pause in force? */
+  function paused() { return userPaused; }
 
   /** @returns {'off'|'poster'|'calm'|'full'} what the person chose. */
   function userMode() {
@@ -293,7 +326,8 @@ const STAGE = (() => {
   if (!ro) window.addEventListener('resize', () => { if (current) resize(current); });
 
   return { play, clear, running, allowed, mode, wanted, apply, set,
-           setPolicy, userMode };
+           setPolicy, userMode,
+           pause: userPause, resume: userResume, paused };
 })();
 
 if (typeof window !== 'undefined') {

@@ -149,6 +149,35 @@ function stageLifecycle() {
   check('a throwing scene draws once', threw, 1);
   check('...and is torn down', [canvases(), STAGE.running()], [0, false]);
 
+  // The person's pause: freezes on the current frame, outranks every
+  // automatic resume, and Resume continues rather than restarts. This lives
+  // here on the synthetic clock because a browser pane that happens to be
+  // hidden pauses scenes too (correctly!), which makes visual verification
+  // of "is it still moving" indistinguishable from the feature under test.
+  let draws2 = 0, stops2 = 0, lastT = -1;
+  STAGE.play(host, { draw(b, t) { draws2++; lastT = t; }, stop() { stops2++; } },
+             { palette: ['#000000', '#ffffff'] });
+  harness.tick(200);
+  const beforePause = draws2, tAtPause = lastT;
+  STAGE.pause();
+  check('pause stops the loop', STAGE.running(), false);
+  check('...and reports itself', STAGE.paused(), true);
+  harness.tick(200);
+  check('nothing is drawn while paused', draws2, beforePause);
+  check('no frame callback is queued while paused', harness.pending(), 0);
+  // The automatic resumes must not override the person.
+  harness.document.hidden = true; harness.document.dispatch('visibilitychange');
+  harness.document.hidden = false; harness.document.dispatch('visibilitychange');
+  harness.tick(100);
+  check('a tab hide/show does not lift a user pause', draws2, beforePause);
+  STAGE.resume();
+  harness.tick(200);
+  check('resume continues drawing', draws2 > beforePause, true);
+  check('...the scene was never stopped/restarted', stops2, 0);
+  check('...and its clock continued rather than reset', lastT >= tAtPause, true);
+  STAGE.clear();
+  check('clear() ends the pause state with everything else', STAGE.paused(), false);
+
   // A real scene, through the real registry, for a full second of frames.
   const real = SCENES.make('drift@1', { seed: 3 });
   check('a built-in scene resolves', !!real, true);
