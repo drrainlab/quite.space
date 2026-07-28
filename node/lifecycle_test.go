@@ -164,3 +164,100 @@ func TestAlreadyRunningExplainsItself(t *testing.T) {
 		}
 	}
 }
+
+// A probe must not be indistinguishable from a start. storage.Open creates a
+// root on any path it is handed, so "is there a node here?" answered with Open
+// would answer by making one — and somebody who mistyped a directory would
+// find a plausible empty root at the typo while their real data sat elsewhere.
+func TestInspectCreatesNothing(t *testing.T) {
+	parent := t.TempDir()
+	missing := filepath.Join(parent, "not-created-by-looking")
+
+	st := Inspect(missing)
+	if st.Exists || st.HasRoot || st.HasIdentity || st.InUse {
+		t.Fatalf("a missing directory should report empty: %+v", st)
+	}
+	if _, err := os.Stat(missing); !os.IsNotExist(err) {
+		t.Fatal("Inspect created the directory it was asked about")
+	}
+
+	// An existing but empty directory: present, but no root, and still no
+	// salt conjured into it.
+	empty := filepath.Join(parent, "empty")
+	if err := os.MkdirAll(empty, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if st := Inspect(empty); !st.Exists || st.HasRoot || st.HasIdentity {
+		t.Fatalf("an empty directory misreported: %+v", st)
+	}
+	if _, err := os.Stat(filepath.Join(empty, "keys", "salt")); !os.IsNotExist(err) {
+		t.Fatal("Inspect created a salt in a directory it was only looking at")
+	}
+}
+
+func TestInspectSeesARealRootAndItsUse(t *testing.T) {
+	dir := t.TempDir()
+	if st := Inspect(dir); st.HasRoot || st.HasIdentity {
+		t.Fatalf("a fresh temp dir already looks like a root: %+v", st)
+	}
+	rt, err := Open(dir, []byte(testPass), "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := Inspect(dir)
+	if !st.Exists || !st.HasRoot || !st.HasIdentity {
+		t.Fatalf("a live root misreported: %+v", st)
+	}
+	if !st.InUse {
+		t.Fatal("a running node was not reported as holding the directory")
+	}
+	rt.Close()
+	if st := Inspect(dir); st.InUse {
+		t.Fatalf("the directory still reads as in use after a clean shutdown: %+v", st)
+	}
+}
+
+// The point of VerifyPassphrase: it works on a directory that is currently
+// open, which anything built on Open never could — Open would refuse itself.
+func TestVerifyPassphraseWorksWhileTheNodeIsRunning(t *testing.T) {
+	dir := t.TempDir()
+	rt, err := Open(dir, []byte(testPass), "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rt.Close()
+
+	if err := VerifyPassphrase(dir, []byte(testPass)); err != nil {
+		t.Fatalf("the right passphrase was rejected on a running node: %v", err)
+	}
+	if err := VerifyPassphrase(dir, []byte("not-the-passphrase")); !errors.Is(err, ErrWrongPassphrase) {
+		t.Fatalf("expected ErrWrongPassphrase, got: %v", err)
+	}
+	if err := VerifyPassphrase(dir, []byte("short")); !errors.Is(err, ErrPassphraseTooShort) {
+		t.Fatalf("expected ErrPassphraseTooShort, got: %v", err)
+	}
+}
+
+// Verifying against nothing must say "nothing here", not create a root and
+// then cheerfully accept whatever was typed.
+func TestVerifyAgainstAnEmptyDirectoryCreatesNothing(t *testing.T) {
+	dir := t.TempDir()
+	if err := VerifyPassphrase(dir, []byte(testPass)); !errors.Is(err, ErrNoRootHere) {
+		t.Fatalf("expected ErrNoRootHere, got: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "keys", "salt")); !os.IsNotExist(err) {
+		t.Fatal("verifying a passphrase created a data root")
+	}
+}
+
+// The two entry points used to default to different directories, so pinning
+// trust with one command and running the node with the other silently edited
+// two places.
+func TestThereIsOneDefaultDataDir(t *testing.T) {
+	if DefaultDataDir() == "" {
+		t.Fatal("no default data directory")
+	}
+	if DefaultDataDir() != DefaultDataDir() {
+		t.Fatal("the default is not stable")
+	}
+}

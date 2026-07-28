@@ -45,19 +45,50 @@ type Root struct {
 	key [32]byte
 }
 
+// ErrPassphraseTooShort is a refusal a caller can distinguish, because it is
+// the one passphrase failure that is the caller's own input rather than a
+// property of the stored data.
+var ErrPassphraseTooShort = errors.New("storage: passphrase must be at least 8 bytes")
+
+// ErrNoRootHere means the directory holds no Quiet Spaces data. Distinct from
+// a read error: nothing is wrong, there is simply nothing here.
+var ErrNoRootHere = errors.New("storage: no data root in this directory")
+
 // Open unlocks (or initializes) a data root with a passphrase. The scrypt
 // salt is created on first use; a wrong passphrase surfaces on the first
 // keystore read, not here (the salt alone cannot verify it).
-func Open(dir string, passphrase []byte) (*Root, error) {
+func Open(dir string, passphrase []byte) (*Root, error) { return open(dir, passphrase, true) }
+
+// OpenExisting is Open without the "or initializes": it creates no directory,
+// no salt, no file of any kind, and returns ErrNoRootHere when there is
+// nothing to open.
+//
+// It exists because probing must not be indistinguishable from starting. Open
+// conjures keys/salt on any path it is handed, so asking "is there a node
+// here?" with Open would answer by making one — and a person who mistyped a
+// directory would find a plausible-looking empty root at the typo, with their
+// real data still elsewhere.
+func OpenExisting(dir string, passphrase []byte) (*Root, error) {
+	return open(dir, passphrase, false)
+}
+
+func open(dir string, passphrase []byte, create bool) (*Root, error) {
 	if len(passphrase) < 8 {
-		return nil, errors.New("storage: passphrase must be at least 8 bytes")
-	}
-	if err := os.MkdirAll(filepath.Join(dir, "keys"), 0o700); err != nil {
-		return nil, err
+		return nil, ErrPassphraseTooShort
 	}
 	saltPath := filepath.Join(dir, "keys", "salt")
+	if !create {
+		if _, err := os.Stat(saltPath); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return nil, ErrNoRootHere
+			}
+			return nil, err
+		}
+	} else if err := os.MkdirAll(filepath.Join(dir, "keys"), 0o700); err != nil {
+		return nil, err
+	}
 	salt, err := os.ReadFile(saltPath)
-	if errors.Is(err, os.ErrNotExist) {
+	if errors.Is(err, os.ErrNotExist) && create {
 		salt = make([]byte, saltLen)
 		if _, err := rand.Read(salt); err != nil {
 			return nil, err
@@ -75,6 +106,21 @@ func Open(dir string, passphrase []byte) (*Root, error) {
 	r := &Root{dir: dir}
 	copy(r.key[:], key)
 	return r, nil
+}
+
+// HasRoot reports whether a directory holds Quiet Spaces data, touching
+// nothing. Stat only — no passphrase, no key derivation, no writes.
+func HasRoot(dir string) bool {
+	_, err := os.Stat(filepath.Join(dir, "keys", "salt"))
+	return err == nil
+}
+
+// HasKeystore reports whether a root has been through first run. A root with
+// a salt but no keystore is a directory somebody opened once and abandoned
+// before choosing a name.
+func HasKeystore(dir string) bool {
+	_, err := os.Stat(filepath.Join(dir, "keys", "keystore.enc"))
+	return err == nil
 }
 
 // EventsDir returns the segment directory for a terminal (kernel/eventlog).

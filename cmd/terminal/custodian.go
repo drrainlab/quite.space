@@ -31,7 +31,11 @@ func runCustodian(args []string) error {
 	flags := parseKV(rest)
 	dataDir := flags["data"]
 	if dataDir == "" {
-		dataDir = "./quiet-data"
+		// The same directory the node runs from. This used to default to
+		// ./quiet-data while the node used ~/.quiet-places, so pinning a
+		// custodian here and running the node there edited two different
+		// files — and both commands reported success.
+		dataDir = node.DefaultDataDir()
 	}
 	path := node.CustodianPath(dataDir)
 

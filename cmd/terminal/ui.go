@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"path/filepath"
 	"runtime"
 	"syscall"
 
@@ -22,11 +21,7 @@ func runUI(args []string, withUI bool) error {
 	flags := parseFlags(args)
 	dataDir := flags["data"]
 	if dataDir == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return err
-		}
-		dataDir = filepath.Join(home, ".quiet-places")
+		dataDir = node.DefaultDataDir()
 	}
 	pass := flags["passphrase"]
 	if pass == "" {
