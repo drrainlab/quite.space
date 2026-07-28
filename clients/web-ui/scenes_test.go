@@ -142,6 +142,33 @@ func TestSceneLintDetectsWhatItClaimsTo(t *testing.T) {
 	}
 }
 
+// TestAtmosphereRuntimeLifecycle pins the two contracts that are now
+// infrastructure rather than atmosphere's private business: the stage owns the
+// client's only animation loop, and the arbiter decides who is allowed to make
+// noise across seven independent playback owners. Surfaces that do not exist
+// yet will lean on both, and a leak check performed by hand in a browser does
+// not survive a refactor.
+//
+// It asserts bookkeeping only — canvases, observers, frame callbacks, who
+// holds the floor — because that is what our own code decides. Pixels and
+// loudness are measured against a real browser instead; the note at the top of
+// scripts/atmosphere/domstub.cjs says why a stub must not be asked about them.
+func TestAtmosphereRuntimeLifecycle(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not available")
+	}
+	script := filepath.Join("..", "..", "scripts", "atmosphere", "lifecycle.cjs")
+	if _, err := os.Stat(script); err != nil {
+		t.Fatalf("the lifecycle harness is missing: %v", err)
+	}
+	out, err := exec.Command(node, script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("lifecycle checks failed: %v\n%s", err, out)
+	}
+	t.Logf("%s", out)
+}
+
 // TestSceneFramesStayUnderTheFlashThreshold is the assertion AM-3 actually
 // rests on. The brush's cap is a model of what a scene painted; this measures
 // the sequence that model produces, across every scene, three seeds and every
