@@ -385,7 +385,7 @@ func (a *APIServer) handleEntries(w http.ResponseWriter, r *http.Request) {
 		// Resolve author principals to human display names (self-declared
 		// claims from member manifests) — the honest projection that keeps
 		// principal:hex out of the human path.
-		names := map[id.PrincipalID]string{me: a.rt.DisplayName()}
+		names := map[id.PrincipalID]string{me: a.rt.displayNameLocked()}
 		for _, c := range st.space.MemberCards(0) {
 			if c.Name != "" {
 				names[c.Principal] = c.Name

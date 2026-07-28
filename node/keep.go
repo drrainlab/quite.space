@@ -158,7 +158,7 @@ func (a *APIServer) handleShelf(w http.ResponseWriter, r *http.Request) {
 	if err := a.rt.withSpace(tid, func(st *spaceState) error {
 		sp := st.space
 		me := a.rt.Principal.ID
-		names := map[id.PrincipalID]string{me: a.rt.DisplayName()}
+		names := map[id.PrincipalID]string{me: a.rt.displayNameLocked()}
 		for _, c := range sp.MemberCards(0) {
 			if c.Name != "" {
 				names[c.Principal] = c.Name

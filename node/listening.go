@@ -238,7 +238,7 @@ func (a *APIServer) handleListeningSession(w http.ResponseWriter, r *http.Reques
 		rec, _ := st.space.State.AppInstanceByID(iid)
 
 		me := a.rt.Principal.ID
-		names := map[id.PrincipalID]string{me: a.rt.DisplayName()}
+		names := map[id.PrincipalID]string{me: a.rt.displayNameLocked()}
 		for _, c := range st.space.MemberCards(0) {
 			if c.Name != "" {
 				names[c.Principal] = c.Name

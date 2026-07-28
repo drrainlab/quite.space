@@ -511,7 +511,7 @@ func (a *APIServer) publicationJSON(tid id.TerminalID, docID [16]byte) (map[stri
 			return errors.New("unknown publication")
 		}
 		me := a.rt.Principal.ID
-		names := map[id.PrincipalID]string{me: a.rt.DisplayName()}
+		names := map[id.PrincipalID]string{me: a.rt.displayNameLocked()}
 		for _, c := range sp.MemberCards(0) {
 			if c.Name != "" {
 				names[c.Principal] = c.Name

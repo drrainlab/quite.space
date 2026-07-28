@@ -645,7 +645,21 @@ func (r *Runtime) SetPresence(tid id.TerminalID, state string, ttlSeconds uint64
 }
 
 // DisplayName is this node's own self-declared name (first manifest label).
+//
+// It locks, because SetName swaps the r.Self.Manifest POINTER under r.mu
+// (Participant.Rename copies the manifest and replaces it), and a pointer
+// read racing a pointer write is a data race however harmless it looks.
+// Call sites already inside a withSpace scope use displayNameLocked instead
+// — sync.Mutex is not reentrant, and this is the same locked/*Locked split
+// as AssetStatus/assetStatusLocked.
 func (r *Runtime) DisplayName() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.displayNameLocked()
+}
+
+// displayNameLocked is DisplayName for callers already holding r.mu.
+func (r *Runtime) displayNameLocked() string {
 	if len(r.Self.Manifest.DeclaredLabels) > 0 {
 		return r.Self.Manifest.DeclaredLabels[0]
 	}
