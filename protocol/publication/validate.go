@@ -51,6 +51,22 @@ func Validate(doc *Document, assetOK func(hexID string) bool) error {
 		}
 	}
 
+	// Atmosphere carries up to two assets of its own. They resolve through
+	// exactly the same index as a cover image — an atmosphere asset that was
+	// not uploaded into this space is refused here rather than becoming a
+	// post that renders for its author and is blank for everybody else.
+	if err := doc.Atmosphere.Validate(assetOK); err != nil {
+		return err
+	}
+	total := 0
+	for _, e := range doc.RawExtra {
+		total += len(e.Raw)
+	}
+	if total > MaxRawExtraBytes {
+		return fmt.Errorf("publication: %d bytes of unknown fields, at most %d",
+			total, MaxRawExtraBytes)
+	}
+
 	v := &treeValidator{assetOK: assetOK, seen: map[string]bool{}}
 	for i := range doc.Blocks {
 		if err := v.walk(&doc.Blocks[i], 1); err != nil {

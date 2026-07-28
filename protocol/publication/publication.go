@@ -71,6 +71,38 @@ type Document struct {
 	Discussion     string
 	Visibility     string // visibility_intent: space | public-intent
 	Blocks         []Block
+	// Atmosphere is the environment this post is meant to be read in
+	// (post.atmosphere.v1). Optional; absent means an ordinary post.
+	Atmosphere *Atmosphere
+	// RawExtra holds document-level keys this build does not understand,
+	// verbatim, so an editor cannot silently delete what a newer client
+	// wrote. See the note on Extra below.
+	RawExtra []Extra
+}
+
+// Extra is one unknown document-level key, kept byte-for-byte.
+//
+// Block props already survived an edit round-trip (they are stored raw and
+// re-encoded verbatim); document-level keys did NOT — Encode wrote only the
+// keys it knew, so any editor built on an older client silently stripped
+// whatever a newer one had added. That is a forward-compatibility hole
+// independent of atmosphere; atmosphere is simply the first field big enough
+// for anyone to notice it.
+//
+// Four invariants, each with a test:
+//
+//   - A retained key is never one this build knows. Guaranteed on decode by
+//     the switch default, and on encode by filtering against maxKnownDocKey.
+//   - Re-serialisation stays strictly ascending, which the codec enforces on
+//     read. Retained keys are always above the known range, so appending them
+//     in order preserves it.
+//   - A key that a later build learns is encoded ONCE, from its typed field —
+//     never also from here.
+//   - The total is bounded, or RawExtra becomes an amplification vector
+//     inside the 512 KiB document budget.
+type Extra struct {
+	Key uint64
+	Raw []byte // one canonical CBOR item
 }
 
 // Block is one node of the tree. Props stays RAW on the wire; known types
@@ -94,7 +126,19 @@ const (
 	docKeyDiscussion = 9
 	docKeyVisibility = 10
 	docKeyBlocks     = 11
+	docKeyAtmosphere = 12
+
+	// maxKnownDocKey is the highest key this build understands. ADR-009 makes
+	// the wire-key table append-only, so anything above this was added by a
+	// newer version and anything at or below it we either know or must not
+	// pretend to preserve.
+	maxKnownDocKey = docKeyAtmosphere
 )
+
+// MaxRawExtraBytes bounds what an unknown-key passenger may weigh. Without a
+// bound, forward compatibility becomes a way to smuggle 512 KiB of anything
+// through a validator that cannot inspect it.
+const MaxRawExtraBytes = 16 << 10
 
 const (
 	blKeyID       = 1
@@ -127,6 +171,11 @@ func (doc *Document) Encode() []byte {
 	if len(doc.Blocks) > 0 {
 		n++
 	}
+	if doc.Atmosphere != nil {
+		n++
+	}
+	extra := doc.retainableExtra()
+	n += len(extra)
 	buf := codec.AppendMap(nil, n)
 	buf = codec.AppendUint(buf, docKeyID)
 	buf = codec.AppendBytes(buf, doc.DocumentID[:])
@@ -173,7 +222,46 @@ func (doc *Document) Encode() []byte {
 			buf = doc.Blocks[i].encode(buf)
 		}
 	}
+	if doc.Atmosphere != nil {
+		buf = codec.AppendUint(buf, docKeyAtmosphere)
+		buf = doc.Atmosphere.encode(buf)
+	}
+	// Last, and only keys above the known range: ADR-009's table is
+	// append-only, so everything we do not recognise was added later and
+	// therefore sorts after everything we do. Ascending order holds by
+	// construction rather than by a sort we would have to trust.
+	for _, e := range extra {
+		buf = codec.AppendUint(buf, e.Key)
+		buf = append(buf, e.Raw...)
+	}
 	return buf
+}
+
+// retainableExtra filters what may be written back out: strictly above the
+// known range, in ascending order, within budget.
+//
+// The filter is what makes the "encoded once" invariant hold. When a later
+// build learns key 13, that key stops being retainable here and starts being
+// written from its typed field — never both.
+func (doc *Document) retainableExtra() []Extra {
+	if len(doc.RawExtra) == 0 {
+		return nil
+	}
+	out := make([]Extra, 0, len(doc.RawExtra))
+	var last uint64
+	var total int
+	for _, e := range doc.RawExtra {
+		if e.Key <= maxKnownDocKey || e.Key <= last || len(e.Raw) == 0 {
+			continue
+		}
+		total += len(e.Raw)
+		if total > MaxRawExtraBytes {
+			break
+		}
+		out = append(out, e)
+		last = e.Key
+	}
+	return out
 }
 
 func (b *Block) encode(buf []byte) []byte {
@@ -276,8 +364,21 @@ func decodeDocument(d *codec.Decoder) (*Document, error) {
 				}
 				doc.Blocks = append(doc.Blocks, bl)
 			}
+		case docKeyAtmosphere:
+			doc.Atmosphere, er = decodeAtmosphere(d)
 		default:
-			er = d.SkipItem()
+			// Must-ignore (ADR-009) — but ignore is not the same as forget.
+			// Keep the bytes so an edit round-trip through this build does
+			// not silently delete what a newer one wrote.
+			if k > maxKnownDocKey {
+				var raw []byte
+				raw, er = d.ReadRawItem()
+				if er == nil {
+					doc.RawExtra = append(doc.RawExtra, Extra{Key: k, Raw: raw})
+				}
+			} else {
+				er = d.SkipItem()
+			}
 		}
 		if er != nil {
 			return nil, er
