@@ -119,6 +119,14 @@
     display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
   }
   header b { color: var(--acc); letter-spacing: 1px; }
+  /* The quite.space mark (docs/brand): the glyph rides with the wordmark as
+     one unit. Sized for the header line; the source PNG is 256px so retina
+     stays crisp. */
+  header b.brand { display: inline-flex; align-items: center; gap: 8px; }
+  .brand-mark { width: 30px; height: 30px; }
+  .brand-hero { width: 128px; height: 128px; display: block; margin: 0 auto 4px; }
+  #dlgWelcome #obStep1 { text-align: center; }
+  #dlgWelcome #obStep1 .row { justify-content: center; }
   header .hspace { flex: 1; }
   header .dim { color: var(--dim); font-size: 12px; }
   main { flex: 1; display: flex; min-height: 0; }
