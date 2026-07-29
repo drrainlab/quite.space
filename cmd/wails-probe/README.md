@@ -43,7 +43,17 @@ observation: MediaRecorder DEFAULTS to `audio/mp4` (AAC) despite claiming
 webm/opus support — the app requests webm/opus explicitly (pickVoiceMIME)
 and that path hand-verified working, so the claim is honest when asked.
 
-### Linux (WebKitGTK) — builds and launches; BLOCKED on finding №2. Windows (WebView2) — pending.
+### Linux (WebKitGTK) — safe gates green from the .deb; blob bodies crash (finding №2, remedied app-side). Windows (WebView2) — pending.
+
+Headless container run of the arm64 .deb (Debian 12, xvfb, 2026-07-29):
+api, range-206, body-raw-1k/64k/2m, **multipart-workaround** (the app's
+actual upload path, byte-exact), canvas-export (JPEG), dialog-css and
+tray all PASS; recorder-types fails only because the container has no
+GStreamer codecs (retest on a real desktop); media-seekable needs the
+same; then the hazard batch hits finding №2 and the run ends — by
+design, after every safe verdict has been posted. The upstream issue
+text with the minimal reproduction lives in
+`upstream-issue-blob-body.md` beside this file.
 
 Two DS-0 findings from the first Linux build (2026-07-29, via
 `bundle-debian.sh`):
@@ -63,34 +73,32 @@ builds the default GTK4 path, so both variants stay watched.
 Expectation to check first on Windows runs: whether request bodies
 survive the WebView2 scheme handler. Linux is answered — see finding №2.
 
-## Finding №2 — ANY request body crashes the process (Linux, both toolkits)
+## Finding №2 — BLOB-backed request bodies SIGSEGV the process (Linux)
 
-Where macOS silently drops blob-backed bodies (finding №1), Linux is
-stricter and worse: the first request carrying a body — a plain-string
-JSON POST is enough — dies with
+The Linux twin of finding №1, isolated by a standalone bisection (a
+40-line app posting one body kind at a time):
 
-    SIGSEGV addr=0x28, inside C.webkit_uri_scheme_request_get_http_body
-    (internal/assetserver/webview, invoked on the GTK main thread)
+    plain-string body                      arrives intact
+    raw Uint8Array body (2 MiB)            arrives intact
+    Blob body (15 bytes)                   SIGSEGV
+    FormData containing a Blob             SIGSEGV
 
-Reproduced on v3.0.0-alpha2.119 (the LATEST published alpha) across the
-whole matrix, headless xvfb runs from the .deb / a direct build:
+The crash is `addr=0x28` inside `C.webkit_uri_scheme_request_get_http_body`
+(already on the GTK main thread — this is on top of the #5631 fix), and
+it reproduces identically on v3.0.0-alpha2.119 across gtk3/webkit2gtk-4.1
+2.48 (Debian 12, amd64 + arm64) and default gtk4/webkitgtk-6.0 2.52.5
+(Debian 13, arm64). So the platform split for the SAME poison is: macOS
+delivers blob-backed bodies EMPTY, Linux dies. Upstream issue material —
+matrix + minimal repro drafted; focused issue, then a generic fix PR per
+the contribution policy.
 
-    gtk3 tag  · webkit2gtk-4.1 2.48 · Debian 12 · amd64 (Rosetta)   crash
-    gtk3 tag  · webkit2gtk-4.1 2.48 · Debian 12 · arm64 (native)    crash
-    default   · webkitgtk-6.0 2.52.5 · GTK 4.18 · Debian 13 · arm64 crash
-
-GETs are unaffected (the full embedded UI loads, Range/206 works, the
-tray gate passes) — the crash fires exactly when a body stream exists.
-Vanilla Wails apps drive logic through bindings and rarely POST to the
-AssetServer, which is presumably why this survives in the alpha; our
-ADR-011 architecture (HTTP API through the AssetServer) hits it on the
-first command. Until fixed upstream this is a LINUX SHELL BLOCKER: per
-the contribution policy the next step is a focused upstream issue with
-this matrix, then a generic fix PR; a thin pinned fork only if
-unavoidable. Recorded fallback for DS-3 if upstream stalls: on Linux
-route API fetches to the node's loopback TCP listener (browser mode
-inside the shell) while assets stay on the AssetServer — sacrifices the
-no-TCP purity on one platform, not the architecture.
+**The app is NOT blocked**: the finding-№1 remedy already routes every
+upload through `postMultipart` (arrayBuffer → hand-framed raw bytes),
+and raw bytes are exactly what Linux handles fine. The probe crashed
+only because its own G3/G3c gates deliberately exercise the broken path
+— those now run LAST (hazard batch), after every safe verdict has been
+posted, so a Linux run yields the full safe checklist and then records
+the fatal gate as the run's end.
 
 Container-lab caveats for whoever reruns this (real desktops unaffected):
 WebKit's bubblewrap sandbox needs namespace privileges Docker denies by

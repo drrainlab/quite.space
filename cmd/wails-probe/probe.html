@@ -44,19 +44,23 @@ function put(gate, verdict, detail) {
     body: `gate=${gate} verdict=${verdict} detail=${detail}` }).catch(() => {});
 }
 
+// Safe gates push their promises here; the blob-carrying gates fire only
+// after every one of these settles (see the tail of the auto gates).
+const SAFE = [];
+
 // G1 — the REAL api.Handler(), through the AssetServer, no TCP anywhere.
-(async () => {
+SAFE.push((async () => {
   try {
     const r = await fetch('/api/status', { headers: { 'X-QP-Token': 'probe-token' } });
     const j = await r.json();
     put('api', r.ok && j.fingerprint ? 'pass' : 'fail',
         r.ok ? `status ok, fingerprint ${String(j.fingerprint).slice(0, 8)}…` : `http ${r.status}`);
   } catch (e) { put('api', 'fail', String(e)); }
-})();
+})());
 
 // G2 — Range/206. The fetch checks the protocol; the audio element's
 // seekable ranges check that the WebView's media stack uses it.
-(async () => {
+SAFE.push((async () => {
   try {
     const r = await fetch('/probe/tone.wav', { headers: { Range: 'bytes=100-199' } });
     const ok = r.status === 206 && /bytes 100-199\//.test(r.headers.get('Content-Range') || '');
@@ -69,10 +73,14 @@ function put(gate, verdict, detail) {
     put('media-seekable', s.length > 0 && s.end(0) > 1 ? 'pass' : 'fail',
         s.length ? `seekable 0..${s.end(0).toFixed(2)}s` : 'no seekable ranges');
   }, { once: true });
-})();
+})());
 
 // G3 — multipart streaming, 2 MiB through MaxBytesReader + MultipartReader.
-(async () => {
+// HAZARD gate (runs last): the body is blob-backed, and on Linux that
+// SIGSEGVs the whole process inside webkit_uri_scheme_request_get_http_body
+// (finding №2) — fired early it would kill the checklist mid-run. On macOS
+// it merely arrives empty (finding №1) and the gate records the FAIL.
+async function gateBlobMultipart() {
   try {
     const fd = new FormData();
     fd.append('meta', new Blob(['{"probe":true}'], { type: 'application/json' }));
@@ -85,11 +93,12 @@ function put(gate, verdict, detail) {
         j ? `parts ${j.parts}, bytes ${j.bytes}`
           : `http ${r.status}, body: ${raw.slice(0, 90)}`);
   } catch (e) { put('multipart', 'fail', 'fetch threw: ' + String(e)); }
-})();
+}
 
-// G3b — WHERE does the post body die? Raw bodies at three sizes plus a tiny
-// multipart, so the verdict names the boundary instead of guessing at it.
-(async () => {
+// G3b — WHERE does the post body die? Raw bodies at three sizes, so the
+// verdict names the boundary instead of guessing at it. (The FormData
+// variants live in the hazard batch below.)
+SAFE.push((async () => {
   const cases = [
     ['raw-1k',   new Uint8Array(1024)],
     ['raw-64k',  new Uint8Array(64 * 1024)],
@@ -103,23 +112,19 @@ function put(gate, verdict, detail) {
           `sent ${body.length}, server read ${j.bytes}, content-length ${j.content_length}`);
     } catch (e) { put('body-' + name, 'fail', String(e)); }
   }
-  try {
-    const fd = new FormData();
-    fd.append('a', 'tiny');
-    const r = await fetch('/probe/echo-size', { method: 'POST', body: fd });
-    const j = JSON.parse(await r.text());
-    put('body-tiny-multipart', j.bytes > 0 ? 'pass' : 'fail',
-        `server read ${j.bytes} bytes of a small FormData`);
-  } catch (e) { put('body-tiny-multipart', 'fail', String(e)); }
-})();
+})());
 
 // G3c — the deciding cut: a TINY blob part vs a LARGE string part. If the
 // tiny blob dies while the large string lives, the boundary is "blob-backed
 // request bodies", the known WKWebView custom-scheme limitation — not size.
-(async () => {
+// HAZARD gate (runs last) for the same reason as G3: on Linux the blob
+// probes below are process-fatal, and each one that survives still posts
+// its own verdict before the next fires.
+async function gateBlobCut() {
   const probes = [
-    ['fd-tiny-blob',    (() => { const f = new FormData(); f.append('b', new Blob(['hello'])); return f; })()],
+    ['body-tiny-multipart', (() => { const f = new FormData(); f.append('a', 'tiny'); return f; })()],
     ['fd-large-string', (() => { const f = new FormData(); f.append('s', 'x'.repeat(512 * 1024)); return f; })()],
+    ['fd-tiny-blob',    (() => { const f = new FormData(); f.append('b', new Blob(['hello'])); return f; })()],
     ['raw-blob-body',   new Blob([new Uint8Array(1024)])],
   ];
   for (const [name, body] of probes) {
@@ -129,14 +134,14 @@ function put(gate, verdict, detail) {
       put(name, j.bytes > 0 ? 'pass' : 'fail', `server read ${j.bytes} bytes`);
     } catch (e) { put(name, 'fail', String(e)); }
   }
-})();
+}
 
 // G3d — THE REMEDY the shell will use: read the blob first, send bytes.
 // Raw byte bodies pass (G3b), so the upload path in the shell becomes
 // "await file.arrayBuffer()" and a manually-framed multipart body. This gate
 // proves the exact bytes survive, so DS-3 inherits a verified fix and not a
 // hope. Cost: the file is held in memory — bounded by MaxAsset (64 MiB).
-(async () => {
+SAFE.push((async () => {
   try {
     const blob = new Blob([new Uint8Array(1024 * 1024)]);
     const bytes = new Uint8Array(await blob.arrayBuffer());
@@ -154,7 +159,7 @@ function put(gate, verdict, detail) {
     put('multipart-workaround', j.parts === 1 && j.bytes === bytes.length ? 'pass' : 'fail',
         `arrayBuffer + framed multipart: parts ${j.parts}, bytes ${j.bytes}`);
   } catch (e) { put('multipart-workaround', 'fail', String(e)); }
-})();
+})());
 
 // G4 — recording support, capability half (no permission needed). The
 // button below does the real getUserMedia half.
@@ -189,6 +194,13 @@ function put(gate, verdict, detail) {
   put('dialog-css', dlgOK && bf ? 'pass' : 'fail',
       `dialog ${dlgOK}, backdrop-filter ${bf}`);
 })();
+
+// The hazard batch: blob-backed bodies, deliberately last. Ordered, not
+// parallel, so a fatal probe still leaves every earlier verdict on stdout.
+Promise.allSettled(SAFE).then(() => setTimeout(async () => {
+  await gateBlobMultipart();
+  await gateBlobCut();
+}, 1500));
 
 // Buttoned gates.
 async function gateMic() {
