@@ -2461,13 +2461,59 @@ async function sendAttachment() {
   refreshSpace();
 }
 
+// postMultipart frames the multipart body BY HAND and sends raw bytes.
+//
+// Not an optimisation — a survival requirement inside the desktop shell:
+// WKWebView's custom-scheme handler drops any request body that is BACKED BY
+// A BLOB (measured in cmd/wails-probe: a five-byte Blob inside FormData
+// arrives empty, a 512KiB FormData of strings arrives fine). Every upload
+// here is FormData with a File, and a File IS a Blob — so in the shell every
+// upload silently sent nothing. Raw Uint8Array bodies survive, and a
+// hand-framed multipart is a perfectly ordinary multipart to the server, so
+// this ONE code path serves browser and shell alike; no capability forks.
+//
+// The cost is honesty about memory: each part is read fully before sending,
+// bounded by the asset cap (64 MiB) that the server enforces anyway.
+//
+// parts: [{ name, data: Blob|string, filename?, type? }]
+async function postMultipart(url, parts) {
+  const enc = new TextEncoder();
+  const boundary = '----qs' + Array.from(crypto.getRandomValues(new Uint8Array(12)),
+    b => b.toString(16).padStart(2, '0')).join('');
+  const chunks = [];
+  for (const p of parts) {
+    const type = p.type || (p.data && p.data.type) || 'application/octet-stream';
+    const disp = p.filename
+      ? `form-data; name="${p.name}"; filename="${p.filename.replace(/"/g, '')}"`
+      : `form-data; name="${p.name}"`;
+    chunks.push(enc.encode(
+      `--${boundary}\r\nContent-Disposition: ${disp}\r\nContent-Type: ${type}\r\n\r\n`));
+    chunks.push(typeof p.data === 'string'
+      ? enc.encode(p.data)
+      : new Uint8Array(await p.data.arrayBuffer()));
+    chunks.push(enc.encode('\r\n'));
+  }
+  chunks.push(enc.encode(`--${boundary}--\r\n`));
+  const body = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
+  let off = 0;
+  for (const c of chunks) { body.set(c, off); off += c.length; }
+  return fetch(url, {
+    method: 'POST',
+    headers: {
+      'X-QP-Token': token,
+      'Content-Type': 'multipart/form-data; boundary=' + boundary,
+    },
+    body,
+  });
+}
+
 async function postBlock(meta, preview, file) {
-  const fd = new FormData();
-  fd.append('metadata', new Blob([JSON.stringify(meta)], { type: 'application/json' }));
-  if (preview) fd.append('preview', preview, 'preview.webp');
-  if (file) fd.append('file', file, meta.filename || 'file');
-  const resp = await fetch(`/api/spaces/${current}/blocks`,
-    { method: 'POST', headers: { 'X-QP-Token': token }, body: fd });
+  const parts = [
+    { name: 'metadata', data: JSON.stringify(meta), type: 'application/json' },
+  ];
+  if (preview) parts.push({ name: 'preview', data: preview, filename: 'preview.webp' });
+  if (file) parts.push({ name: 'file', data: file, filename: meta.filename || 'file' });
+  const resp = await postMultipart(`/api/spaces/${current}/blocks`, parts);
   if (!resp.ok) { alert((await resp.json()).error || resp.status); throw new Error('post failed'); }
 }
 

@@ -604,15 +604,15 @@ function renderCompCover() {
 // uploadAssetFile sends one file to the space's asset store; the node emits a
 // block.attached.v1 carrier so every replica can index + decrypt it.
 async function uploadAssetFile(file) {
-  const fd = new FormData();
-  fd.append('metadata', new Blob([JSON.stringify({
-    filename: file.name, media_type: file.type || 'application/octet-stream',
-    size: file.size,
-  })], { type: 'application/json' }));
-  fd.append('file', file);
-  const r = await fetch(`/api/spaces/${current}/assets`, {
-    method: 'POST', headers: { 'X-QP-Token': token }, body: fd,
-  });
+  // Hand-framed multipart via postMultipart — see the note there: FormData
+  // with a Blob arrives EMPTY inside the desktop shell (WKWebView drops
+  // blob-backed bodies), and this path is identical for the browser.
+  const r = await postMultipart(`/api/spaces/${current}/assets`, [
+    { name: 'metadata', type: 'application/json',
+      data: JSON.stringify({ filename: file.name,
+        media_type: file.type || 'application/octet-stream', size: file.size }) },
+    { name: 'file', data: file, filename: file.name },
+  ]);
   const j = await r.json();
   if (!r.ok) throw new Error(j.error || 'upload failed');
   return j; // { asset_id, media_type, size, filename }

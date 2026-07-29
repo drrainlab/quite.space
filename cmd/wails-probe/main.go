@@ -98,16 +98,6 @@ func main() {
 		Assets:      application.AssetOptions{Handler: logged},
 	})
 
-	// Gate: tray. Creating one and attaching a menu is the whole check —
-	// platforms without tray support fail loudly here.
-	tray := app.SystemTray.New()
-	tray.SetLabel("QS probe")
-	trayMenu := app.NewMenu()
-	trayMenu.Add("Show probe").OnClick(func(_ *application.Context) { app.Show() })
-	trayMenu.Add("Quit").OnClick(func(_ *application.Context) { app.Quit() })
-	tray.SetMenu(trayMenu)
-	report("tray", true, "system tray created with menu")
-
 	win := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:  "Wails Probe — DS-0",
 		Width:  980,
@@ -137,6 +127,24 @@ func main() {
 		appWin.Hide()
 		e.Cancel()
 	})
+
+	// Gate: tray. Creating one and attaching a menu is the whole check —
+	// platforms without tray support fail loudly here. Built AFTER the
+	// windows because its items show them EXPLICITLY: hand-testing found
+	// that app.Show() does not unhide hidden windows in this alpha, so a
+	// tray that relied on it could never bring the app back — the exact
+	// restore path DS-3's hide-to-tray lifecycle depends on.
+	tray := app.SystemTray.New()
+	tray.SetLabel("QS probe")
+	trayMenu := app.NewMenu()
+	trayMenu.Add("Show probe").OnClick(func(_ *application.Context) {
+		win.Show()
+		appWin.Show()
+		win.Focus()
+	})
+	trayMenu.Add("Quit").OnClick(func(_ *application.Context) { app.Quit() })
+	tray.SetMenu(trayMenu)
+	report("tray", true, "system tray created with menu; items restore windows explicitly")
 
 	if err := app.Run(); err != nil {
 		log.Fatalf("probe: %v", err)
