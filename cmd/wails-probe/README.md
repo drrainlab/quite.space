@@ -43,7 +43,7 @@ observation: MediaRecorder DEFAULTS to `audio/mp4` (AAC) despite claiming
 webm/opus support — the app requests webm/opus explicitly (pickVoiceMIME)
 and that path hand-verified working, so the claim is honest when asked.
 
-### Linux (WebKitGTK) — builds; run pending. Windows (WebView2) — pending.
+### Linux (WebKitGTK) — builds and launches; BLOCKED on finding №2. Windows (WebView2) — pending.
 
 Two DS-0 findings from the first Linux build (2026-07-29, via
 `bundle-debian.sh`):
@@ -60,10 +60,43 @@ Two DS-0 findings from the first Linux build (2026-07-29, via
 install with `sudo apt install ./<pkg>.deb`). CI (ubuntu-24.04, GTK 4.14)
 builds the default GTK4 path, so both variants stay watched.
 
-Expectation to check first on Linux and Windows runs: whether blob-backed
-bodies survive their scheme handlers (finding №1 may be WebKit-specific —
-though WebKitGTK shares the WebKit lineage, its scheme-handler plumbing
-is separate).
+Expectation to check first on Windows runs: whether request bodies
+survive the WebView2 scheme handler. Linux is answered — see finding №2.
+
+## Finding №2 — ANY request body crashes the process (Linux, both toolkits)
+
+Where macOS silently drops blob-backed bodies (finding №1), Linux is
+stricter and worse: the first request carrying a body — a plain-string
+JSON POST is enough — dies with
+
+    SIGSEGV addr=0x28, inside C.webkit_uri_scheme_request_get_http_body
+    (internal/assetserver/webview, invoked on the GTK main thread)
+
+Reproduced on v3.0.0-alpha2.119 (the LATEST published alpha) across the
+whole matrix, headless xvfb runs from the .deb / a direct build:
+
+    gtk3 tag  · webkit2gtk-4.1 2.48 · Debian 12 · amd64 (Rosetta)   crash
+    gtk3 tag  · webkit2gtk-4.1 2.48 · Debian 12 · arm64 (native)    crash
+    default   · webkitgtk-6.0 2.52.5 · GTK 4.18 · Debian 13 · arm64 crash
+
+GETs are unaffected (the full embedded UI loads, Range/206 works, the
+tray gate passes) — the crash fires exactly when a body stream exists.
+Vanilla Wails apps drive logic through bindings and rarely POST to the
+AssetServer, which is presumably why this survives in the alpha; our
+ADR-011 architecture (HTTP API through the AssetServer) hits it on the
+first command. Until fixed upstream this is a LINUX SHELL BLOCKER: per
+the contribution policy the next step is a focused upstream issue with
+this matrix, then a generic fix PR; a thin pinned fork only if
+unavoidable. Recorded fallback for DS-3 if upstream stalls: on Linux
+route API fetches to the node's loopback TCP listener (browser mode
+inside the shell) while assets stay on the AssetServer — sacrifices the
+no-TCP purity on one platform, not the architecture.
+
+Container-lab caveats for whoever reruns this (real desktops unaffected):
+WebKit's bubblewrap sandbox needs namespace privileges Docker denies by
+default (plain container → bwrap/dbus-proxy SIGTRAP before any page
+load; `--privileged` lets it run), and headless runs need xvfb + xauth +
+dbus-x11.
 
 ## Finding №1 — blob-backed request bodies are dropped (macOS)
 
