@@ -49,7 +49,14 @@ var probeAssets embed.FS
 const probePassphrase = "wails-probe-passphrase"
 
 func main() {
-	dataDir := filepath.Join(os.TempDir(), "qp-wails-probe")
+	// A stable probe-only data dir: hand testing spans reboots, and macOS
+	// clears /tmp on boot. Deliberately NOT node.DefaultDataDir() — the probe
+	// must never open a person's real data.
+	home, err := os.UserHomeDir()
+	if err != nil {
+		log.Fatalf("probe: home dir: %v", err)
+	}
+	dataDir := filepath.Join(home, ".qp-probe-data")
 	rt, err := node.Open(dataDir, []byte(probePassphrase), "probe")
 	if err != nil {
 		log.Fatalf("probe: node.Open: %v", err)
@@ -115,6 +122,20 @@ func main() {
 		win.Hide()
 		e.Cancel()
 		report("close-is-hide", true, "window close intercepted, app still running")
+	})
+
+	// The REAL application, as a second window off the same handler: this is
+	// what a human tests — spaces, posts, atmosphere, voice — inside the
+	// shell rather than a browser. Same lifecycle rule as the probe window.
+	appWin := app.Window.NewWithOptions(application.WebviewWindowOptions{
+		Title:  "Quiet Spaces (probe shell)",
+		Width:  1240,
+		Height: 820,
+		URL:    "/?token=probe-token",
+	})
+	appWin.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
+		appWin.Hide()
+		e.Cancel()
 	})
 
 	if err := app.Run(); err != nil {
