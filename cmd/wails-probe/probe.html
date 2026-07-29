@@ -1,0 +1,228 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Wails Probe — DS-0</title>
+<style>
+  :root { color-scheme: dark; }
+  body { font: 14px/1.5 ui-monospace, monospace; background: #0d0a10; color: #e8e2f0;
+         margin: 0; padding: 20px 24px; }
+  h1 { font-size: 16px; letter-spacing: .06em; }
+  table { border-collapse: collapse; width: 100%; max-width: 860px; }
+  td, th { text-align: left; padding: 6px 10px; border-bottom: 1px solid #2a2433; }
+  .pass { color: #7be0a8; } .fail { color: #e07b7b; } .manual { color: #d0a36f; }
+  button { font: inherit; background: #241d2e; color: inherit; border: 1px solid #3a3145;
+           border-radius: 6px; padding: 4px 12px; cursor: pointer; }
+  .note { opacity: .65; font-size: 12px; }
+  dialog { background: #1a1522; color: inherit; border: 1px solid #3a3145; border-radius: 10px; }
+  dialog::backdrop { background: rgba(0,0,0,.6); backdrop-filter: blur(4px); }
+</style>
+<h1>Quiet Spaces — Wails compatibility probe</h1>
+<p class="note">Automatic gates run on load. Buttoned gates need a human —
+their instructions are beside them. Verdicts mirror to stdout as
+<code>PROBE gate=… verdict=…</code>.</p>
+<table id="t"><tr><th>gate</th><th>verdict</th><th>detail</th></tr></table>
+<p>
+  <button onclick="gateMic()">▶ mic + MediaRecorder (grants a permission prompt)</button>
+  <button onclick="gateDialog()">▶ dialog + backdrop</button>
+  <button onclick="gateSeek()">▶ audible seek test</button>
+  <button onclick="window.open('/?token=probe-token')">open the real UI</button>
+</p>
+<audio id="tone" controls src="/probe/tone.wav" style="width:340px"></audio>
+
+<script>
+'use strict';
+const results = [];
+function put(gate, verdict, detail) {
+  results.push({ gate, verdict, detail });
+  const tr = document.createElement('tr');
+  tr.innerHTML = `<td></td><td class="${verdict}"></td><td></td>`;
+  tr.children[0].textContent = gate;
+  tr.children[1].textContent = verdict;
+  tr.children[2].textContent = detail;
+  document.getElementById('t').appendChild(tr);
+  // Mirror to stdout through the Go side, one line per verdict.
+  fetch('/probe/report', { method: 'POST',
+    body: `gate=${gate} verdict=${verdict} detail=${detail}` }).catch(() => {});
+}
+
+// G1 — the REAL api.Handler(), through the AssetServer, no TCP anywhere.
+(async () => {
+  try {
+    const r = await fetch('/api/status', { headers: { 'X-QP-Token': 'probe-token' } });
+    const j = await r.json();
+    put('api', r.ok && j.fingerprint ? 'pass' : 'fail',
+        r.ok ? `status ok, fingerprint ${String(j.fingerprint).slice(0, 8)}…` : `http ${r.status}`);
+  } catch (e) { put('api', 'fail', String(e)); }
+})();
+
+// G2 — Range/206. The fetch checks the protocol; the audio element's
+// seekable ranges check that the WebView's media stack uses it.
+(async () => {
+  try {
+    const r = await fetch('/probe/tone.wav', { headers: { Range: 'bytes=100-199' } });
+    const ok = r.status === 206 && /bytes 100-199\//.test(r.headers.get('Content-Range') || '');
+    put('range-206', ok ? 'pass' : 'fail',
+        `status ${r.status}, Content-Range ${r.headers.get('Content-Range')}`);
+  } catch (e) { put('range-206', 'fail', String(e)); }
+  const a = document.getElementById('tone');
+  a.addEventListener('loadedmetadata', () => {
+    const s = a.seekable;
+    put('media-seekable', s.length > 0 && s.end(0) > 1 ? 'pass' : 'fail',
+        s.length ? `seekable 0..${s.end(0).toFixed(2)}s` : 'no seekable ranges');
+  }, { once: true });
+})();
+
+// G3 — multipart streaming, 2 MiB through MaxBytesReader + MultipartReader.
+(async () => {
+  try {
+    const fd = new FormData();
+    fd.append('meta', new Blob(['{"probe":true}'], { type: 'application/json' }));
+    fd.append('file', new Blob([new Uint8Array(2 * 1024 * 1024)]), 'blob.bin');
+    const r = await fetch('/probe/upload', { method: 'POST', body: fd });
+    const raw = await r.text();
+    let j = null;
+    try { j = JSON.parse(raw); } catch (_) { /* keep raw for the verdict */ }
+    put('multipart', j && j.parts === 2 && j.bytes >= 2 * 1024 * 1024 ? 'pass' : 'fail',
+        j ? `parts ${j.parts}, bytes ${j.bytes}`
+          : `http ${r.status}, body: ${raw.slice(0, 90)}`);
+  } catch (e) { put('multipart', 'fail', 'fetch threw: ' + String(e)); }
+})();
+
+// G3b — WHERE does the post body die? Raw bodies at three sizes plus a tiny
+// multipart, so the verdict names the boundary instead of guessing at it.
+(async () => {
+  const cases = [
+    ['raw-1k',   new Uint8Array(1024)],
+    ['raw-64k',  new Uint8Array(64 * 1024)],
+    ['raw-2m',   new Uint8Array(2 * 1024 * 1024)],
+  ];
+  for (const [name, body] of cases) {
+    try {
+      const r = await fetch('/probe/echo-size', { method: 'POST', body });
+      const j = JSON.parse(await r.text());
+      put('body-' + name, j.bytes === body.length ? 'pass' : 'fail',
+          `sent ${body.length}, server read ${j.bytes}, content-length ${j.content_length}`);
+    } catch (e) { put('body-' + name, 'fail', String(e)); }
+  }
+  try {
+    const fd = new FormData();
+    fd.append('a', 'tiny');
+    const r = await fetch('/probe/echo-size', { method: 'POST', body: fd });
+    const j = JSON.parse(await r.text());
+    put('body-tiny-multipart', j.bytes > 0 ? 'pass' : 'fail',
+        `server read ${j.bytes} bytes of a small FormData`);
+  } catch (e) { put('body-tiny-multipart', 'fail', String(e)); }
+})();
+
+// G3c — the deciding cut: a TINY blob part vs a LARGE string part. If the
+// tiny blob dies while the large string lives, the boundary is "blob-backed
+// request bodies", the known WKWebView custom-scheme limitation — not size.
+(async () => {
+  const probes = [
+    ['fd-tiny-blob',    (() => { const f = new FormData(); f.append('b', new Blob(['hello'])); return f; })()],
+    ['fd-large-string', (() => { const f = new FormData(); f.append('s', 'x'.repeat(512 * 1024)); return f; })()],
+    ['raw-blob-body',   new Blob([new Uint8Array(1024)])],
+  ];
+  for (const [name, body] of probes) {
+    try {
+      const r = await fetch('/probe/echo-size', { method: 'POST', body });
+      const j = JSON.parse(await r.text());
+      put(name, j.bytes > 0 ? 'pass' : 'fail', `server read ${j.bytes} bytes`);
+    } catch (e) { put(name, 'fail', String(e)); }
+  }
+})();
+
+// G3d — THE REMEDY the shell will use: read the blob first, send bytes.
+// Raw byte bodies pass (G3b), so the upload path in the shell becomes
+// "await file.arrayBuffer()" and a manually-framed multipart body. This gate
+// proves the exact bytes survive, so DS-3 inherits a verified fix and not a
+// hope. Cost: the file is held in memory — bounded by MaxAsset (64 MiB).
+(async () => {
+  try {
+    const blob = new Blob([new Uint8Array(1024 * 1024)]);
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    const boundary = '----qsprobe' + Math.random().toString(16).slice(2);
+    const enc = new TextEncoder();
+    const head = enc.encode(
+      `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="b.bin"\r\n` +
+      `Content-Type: application/octet-stream\r\n\r\n`);
+    const tail = enc.encode(`\r\n--${boundary}--\r\n`);
+    const body = new Uint8Array(head.length + bytes.length + tail.length);
+    body.set(head, 0); body.set(bytes, head.length); body.set(tail, head.length + bytes.length);
+    const r = await fetch('/probe/upload', { method: 'POST', body,
+      headers: { 'Content-Type': 'multipart/form-data; boundary=' + boundary } });
+    const j = JSON.parse(await r.text());
+    put('multipart-workaround', j.parts === 1 && j.bytes === bytes.length ? 'pass' : 'fail',
+        `arrayBuffer + framed multipart: parts ${j.parts}, bytes ${j.bytes}`);
+  } catch (e) { put('multipart-workaround', 'fail', String(e)); }
+})();
+
+// G4 — recording support, capability half (no permission needed). The
+// button below does the real getUserMedia half.
+(() => {
+  if (typeof MediaRecorder === 'undefined') {
+    put('recorder-types', 'fail', 'MediaRecorder is undefined'); return;
+  }
+  const types = ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/mp4', 'audio/aac'];
+  const ok = types.filter(t => MediaRecorder.isTypeSupported(t));
+  put('recorder-types', ok.length ? 'pass' : 'fail',
+      ok.length ? 'supported: ' + ok.join(', ') : 'no supported audio container');
+})();
+
+// G5 — canvas export, webp preferred, jpeg acceptable (the thumb pipeline).
+(() => {
+  const c = document.createElement('canvas');
+  c.width = c.height = 32;
+  c.getContext('2d').fillRect(0, 0, 32, 32);
+  c.toBlob(b1 => {
+    if (b1 && b1.type === 'image/webp') { put('canvas-export', 'pass', 'webp'); return; }
+    c.toBlob(b2 => {
+      put('canvas-export', b2 ? 'pass' : 'fail', b2 ? b2.type + ' (webp unavailable)' : 'toBlob null');
+    }, 'image/jpeg', 0.9);
+  }, 'image/webp', 0.9);
+})();
+
+// G6 — capability sniff for the styling the app already relies on.
+(() => {
+  const dlgOK = typeof HTMLDialogElement !== 'undefined';
+  const bf = CSS.supports('backdrop-filter', 'blur(4px)') ||
+             CSS.supports('-webkit-backdrop-filter', 'blur(4px)');
+  put('dialog-css', dlgOK && bf ? 'pass' : 'fail',
+      `dialog ${dlgOK}, backdrop-filter ${bf}`);
+})();
+
+// Buttoned gates.
+async function gateMic() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const rec = new MediaRecorder(stream);
+    const chunks = [];
+    rec.ondataavailable = e => chunks.push(e.data);
+    rec.onstop = () => {
+      stream.getTracks().forEach(t => t.stop());
+      const size = chunks.reduce((a, b) => a + b.size, 0);
+      put('mic-record', size > 0 ? 'pass' : 'fail', `captured ${size} bytes as ${rec.mimeType}`);
+    };
+    rec.start();
+    setTimeout(() => rec.stop(), 800);
+  } catch (e) { put('mic-record', 'fail', String(e)); }
+}
+function gateDialog() {
+  const d = document.createElement('dialog');
+  d.innerHTML = '<p>modal over a blurred backdrop</p><button>close</button>';
+  d.querySelector('button').onclick = () => { d.close(); d.remove(); };
+  document.body.appendChild(d);
+  try { d.showModal(); put('dialog-modal', 'pass', 'showModal with ::backdrop'); }
+  catch (e) { put('dialog-modal', 'fail', String(e)); }
+}
+function gateSeek() {
+  const a = document.getElementById('tone');
+  a.currentTime = 1.2;
+  a.play().then(() => {
+    setTimeout(() => {
+      put('media-seek-play', a.currentTime > 1.1 ? 'pass' : 'fail',
+          `position after seek+play: ${a.currentTime.toFixed(2)}s`);
+      a.pause();
+    }, 300);
+  }).catch(e => put('media-seek-play', 'fail', String(e)));
+}
+</script>
