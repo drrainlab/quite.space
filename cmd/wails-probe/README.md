@@ -43,14 +43,27 @@ observation: MediaRecorder DEFAULTS to `audio/mp4` (AAC) despite claiming
 webm/opus support — the app requests webm/opus explicitly (pickVoiceMIME)
 and that path hand-verified working, so the claim is honest when asked.
 
-### Linux (WebKitGTK) — pending. Windows (WebView2) — pending.
+### Linux (WebKitGTK) — builds; run pending. Windows (WebView2) — pending.
 
-CI runs both (`.github/workflows/wails-probe.yml`): the BUILD is the hard
-gate on all three platforms; the RUN is best-effort under an unattended
-session (xvfb on Linux) with the `PROBE` log uploaded as an artifact.
+Two DS-0 findings from the first Linux build (2026-07-29, via
+`bundle-debian.sh`):
 
-Expectation to check first on both: whether blob-backed bodies survive their
-scheme handlers (finding №1 may be WebKit-specific).
+- This alpha's DEFAULT Linux path is **GTK4 + webkitgtk-6.0** — not the
+  GTK3 + webkit2gtk-4.1 the original CI dependency list assumed. The
+  complete GTK3 variant lives behind `-tags gtk3`.
+- The GTK4 path requires **GTK >= 4.10** (`GtkFileDialog` in
+  linux_cgo.h) — newer than Debian 12's 4.8. So: default build → Debian
+  13 / Ubuntu 23.10+; `-tags gtk3` build → Debian 12+ / Ubuntu 22.04+.
+
+`bundle-debian.sh` builds the gtk3 variant into
+`dist/quiet-spaces-probe_<ver>_<arch>.deb` (Docker, `ARCH=amd64` default;
+install with `sudo apt install ./<pkg>.deb`). CI (ubuntu-24.04, GTK 4.14)
+builds the default GTK4 path, so both variants stay watched.
+
+Expectation to check first on Linux and Windows runs: whether blob-backed
+bodies survive their scheme handlers (finding №1 may be WebKit-specific —
+though WebKitGTK shares the WebKit lineage, its scheme-handler plumbing
+is separate).
 
 ## Finding №1 — blob-backed request bodies are dropped (macOS)
 

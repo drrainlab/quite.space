@@ -52,7 +52,9 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev xvfb
+          # This alpha's default Linux path is GTK4 + webkitgtk-6.0;
+          # GTK3 + webkit2gtk-4.1 lives behind `-tags gtk3` (DS-0 finding).
+          sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev xvfb
 
       - name: build (the hard gate)
         run: go build -o probe${{ runner.os == 'Windows' && '.exe' || '' }} .
