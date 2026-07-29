@@ -43,6 +43,17 @@ import (
 //go:embed probe.html
 var probeAssets embed.FS
 
+// The brand marks, embedded so the binary is self-contained: the mono glyph
+// is a TEMPLATE image (shape = alpha channel; macOS recolors it to match the
+// menubar), the colored glyph feeds the about box. The dock icon cannot come
+// from here — that is the bundle's .icns, built by bundle-macos.sh.
+//
+//go:embed assets/tray-template.png
+var trayIcon []byte
+
+//go:embed assets/app-icon.png
+var appIcon []byte
+
 // The probe's own node. A throwaway data dir and a fixed passphrase: the
 // point is that the FULL runtime — scrypt unlock, log replay, the 57-route
 // mux — lives inside the shell process, exactly as DS-3 will run it.
@@ -95,6 +106,7 @@ func main() {
 	app := application.New(application.Options{
 		Name:        "Quiet Spaces — Wails Probe",
 		Description: "DS-0 permanent compatibility canary",
+		Icon:        appIcon,
 		Assets:      application.AssetOptions{Handler: logged},
 	})
 
@@ -135,7 +147,7 @@ func main() {
 	// tray that relied on it could never bring the app back — the exact
 	// restore path DS-3's hide-to-tray lifecycle depends on.
 	tray := app.SystemTray.New()
-	tray.SetLabel("QS probe")
+	tray.SetTemplateIcon(trayIcon)
 	trayMenu := app.NewMenu()
 	trayMenu.Add("Show probe").OnClick(func(_ *application.Context) {
 		win.Show()
