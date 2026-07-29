@@ -31,10 +31,17 @@ only deliberately, and re-run the checklist on every bump.
 | recorder-types               | pass | `audio/webm;codecs=opus` AND `audio/mp4` |
 | canvas-export                | pass | JPEG (webp unavailable on WebKit — expected) |
 | dialog-css                   | pass | `<dialog>` + backdrop-filter |
-| tray                         | pass | system tray + menu created |
-| close-is-hide                | manual | hook installed; verify by closing the window |
-| mic-record                   | manual | button (permission prompt) |
-| bundles                      | pending | DS-4 territory |
+| tray                         | pass | created; items must Show() windows EXPLICITLY (app.Show() does not unhide) |
+| close-is-hide                | pass | hand-verified: close hides, tray restores, tray Quit exits |
+| mic-record                   | pass | hand-verified: permission prompt shown, 15584 bytes captured |
+| voice-in-app                 | pass | hand-verified: a voice message records inside the shell |
+| uploads-in-app               | pass | hand-verified after the postMultipart fix: cover image, atmosphere audio, chat attachment |
+| bundles                      | pending | DS-4 territory (local unsigned .app works via bundle-macos.sh) |
+
+macOS hand-run, 2026-07-30: every gate above is green. One recorded
+observation: MediaRecorder DEFAULTS to `audio/mp4` (AAC) despite claiming
+webm/opus support — the app requests webm/opus explicitly (pickVoiceMIME)
+and that path hand-verified working, so the claim is honest when asked.
 
 ### Linux (WebKitGTK) — pending. Windows (WebView2) — pending.
 
