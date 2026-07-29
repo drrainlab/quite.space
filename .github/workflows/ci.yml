@@ -1,0 +1,47 @@
+# Root gates — the non-desktop tree stays CGO-free and green.
+#
+# This is deliberately the plan's exact list (DS-4): the CGO_ENABLED=0 build
+# is not an optimisation flag, it is ADR-011 — one pure-Go binary that also
+# runs headless on a Pi. The nested cmd/wails-probe module is invisible to
+# ./... by construction, which is what keeps this job honest.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  root:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+      # node is needed by clients/web-ui tests: the scene lint and the
+      # photosensitivity sweep shell out to it (they skip politely when it
+      # is absent, and CI must NOT take that skip).
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: build (CGO_ENABLED=0)
+        run: CGO_ENABLED=0 go build ./...
+      - name: vet
+        run: go vet ./...
+      - name: test
+        run: go test ./...
+
+  race:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: test -race
+        run: go test -race ./...

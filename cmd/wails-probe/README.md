@@ -38,6 +38,10 @@ only deliberately, and re-run the checklist on every bump.
 
 ### Linux (WebKitGTK) — pending. Windows (WebView2) — pending.
 
+CI runs both (`.github/workflows/wails-probe.yml`): the BUILD is the hard
+gate on all three platforms; the RUN is best-effort under an unattended
+session (xvfb on Linux) with the `PROBE` log uploaded as an artifact.
+
 Expectation to check first on both: whether blob-backed bodies survive their
 scheme handlers (finding №1 may be WebKit-specific).
 
