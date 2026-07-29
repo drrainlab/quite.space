@@ -127,7 +127,7 @@
   /* The full lockup in the header. This export carries a REAL alpha channel
      (corner alpha = 0, measured), so no blend-mode compensation is needed —
      the nebula composites natively on both themes. */
-  .brand-lockup { height: 44px; margin: -5px 0; }
+  .brand-lockup { height: 28px; }
   .brand-hero { width: 128px; height: 128px; display: block; margin: 0 auto 4px; }
   #dlgWelcome #obStep1 { text-align: center; }
   #dlgWelcome #obStep1 .row { justify-content: center; }
