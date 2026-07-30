@@ -357,9 +357,15 @@ func Open(dataDir string, passphrase []byte, displayName string) (rt *Runtime, e
 			}
 		}
 	}
+	// Restore both halves of the join saga AND the intent to act on them:
+	// a durable journal whose doors nobody watches is the same bug wearing
+	// a different coat (QL-0, ADR-012 invariant 7).
+	r.restoreSagaLocked()
 	if err := r.saveKeystore(); err != nil {
 		return nil, err
 	}
+	r.ensurePassPolling()
+	r.resumeJoinPolling()
 	// Resume background relay sync if a relay was configured.
 	if s := r.GetSettings(); s.Relay != "" {
 		r.applyRelaySync(s.Relay, relayInterval(s))

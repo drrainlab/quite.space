@@ -682,3 +682,22 @@ func relayCollectHint(cap []byte) []byte {
 	h.Write(cap)
 	return h.Sum(nil)[:16]
 }
+
+// DecodePassFrame parses and VERIFIES a signed pass frame on its own —
+// no bearer secret, because an owner reloading its own journal never needs
+// one. The space id IS the verification key (ADR-001), so a frame that came
+// back from disk is checked exactly as one that came off the wire: a plain
+// file is not a reason to trust bytes.
+func DecodePassFrame(frame []byte) (*Pass, error) {
+	p, sig, err := decodePassFrame(frame)
+	if err != nil {
+		return nil, err
+	}
+	if !ed25519.Verify(ed25519.PublicKey(p.Space[:]), p.signingBody(), sig) {
+		return nil, errors.New("terminals: pass signature invalid")
+	}
+	if p.Profile != PassProfileMember {
+		return nil, errors.New("terminals: unsupported pass profile")
+	}
+	return p, nil
+}

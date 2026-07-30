@@ -158,6 +158,11 @@ type Keystore struct {
 	// Restart must never reset ProjectionSeq — readers would reject the
 	// regression forever.
 	PublicPublish map[id.TerminalID]PublicPublishState
+	// Passes and Joins are the two halves of the join saga on disk — the
+	// owner's acceptance journal and the guest's pending entrance. See
+	// passes.go for why they live here rather than in a plain file.
+	Passes []PassRecord
+	Joins  []JoinRecord
 }
 
 // PublicPublishState is the publisher-side durable projection counter.
@@ -244,10 +249,12 @@ const (
 	ksKeySelfMan   = 9
 	ksKeySettings  = 10
 	ksKeyPubPub    = 11 // PA-0 projection-publisher state (append-only, ADR-009)
+	ksKeyPasses    = 12 // QL-0 owner join-saga journal
+	ksKeyJoins     = 13 // QL-0 guest join-saga journal
 )
 
 func (k *Keystore) encode() []byte {
-	buf := codec.AppendMap(nil, 11)
+	buf := codec.AppendMap(nil, 13)
 	buf = codec.AppendUint(buf, ksKeyPrincipal)
 	buf = codec.AppendBytes(buf, k.PrincipalSeed)
 	buf = codec.AppendUint(buf, ksKeyDevice)
@@ -311,6 +318,10 @@ func (k *Keystore) encode() []byte {
 		buf = codec.AppendUint(buf, pp.st.ProjectionSeq)
 		buf = codec.AppendBytes(buf, pp.st.LastContentDigest[:])
 	}
+	buf = codec.AppendUint(buf, ksKeyPasses)
+	buf = appendPassRecords(buf, k.Passes)
+	buf = codec.AppendUint(buf, ksKeyJoins)
+	buf = appendJoinRecords(buf, k.Joins)
 	return buf
 }
 
@@ -638,6 +649,10 @@ func decodeKeystore(data []byte) (*Keystore, error) {
 				copy(st.LastContentDigest[:], digB)
 				k.PublicPublish[tid] = st
 			}
+		case ksKeyPasses:
+			k.Passes, er = readPassRecords(d)
+		case ksKeyJoins:
+			k.Joins, er = readJoinRecords(d)
 		default:
 			er = d.SkipItem()
 		}
