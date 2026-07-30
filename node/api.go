@@ -106,6 +106,7 @@ func (a *APIServer) Handler() http.Handler {
 	mux.HandleFunc("POST /api/spaces/{id}/policy", a.auth(a.handleRevisePolicy))
 	mux.HandleFunc("POST /api/spaces/{id}/mirror", a.auth(a.handleSetMirror))
 	// The door: who is waiting, and the host's answer.
+	mux.HandleFunc("PUT /api/spaces/{id}/name", a.auth(a.handleSetLocalTitle))
 	mux.HandleFunc("GET /api/entry-requests", a.auth(a.handleEntryRequests))
 	mux.HandleFunc("POST /api/entry-requests/{req}/decide", a.auth(a.handleDecideEntry))
 	// QuietRank (AT-0): device-local attention layer.
@@ -403,10 +404,10 @@ func (a *APIServer) handleCreateSpace(w http.ResponseWriter, r *http.Request) {
 		Join       string `json:"join"`       // "" | "open"
 		Publish    string `json:"publish"`    // "" (all) | "curated"
 	}](r)
-	if err != nil || strings.TrimSpace(body.Title) == "" {
-		httpErr(w, http.StatusBadRequest, errors.New("title required"))
-		return
-	}
+	// An empty title is a CHOICE, not a missing value: the space will be
+	// called after whoever is in it. Requiring a name here forced people to
+	// invent one before they knew what the place was.
+	unnamed := strings.TrimSpace(body.Title) == ""
 	arch := body.Archetype
 	if arch == "" {
 		arch = "campfire"
@@ -441,6 +442,14 @@ func (a *APIServer) handleCreateSpace(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		httpErr(w, http.StatusBadRequest, err)
 		return
+	}
+	if unnamed {
+		// Record that nobody named it, so the list projects who is in it
+		// rather than showing an empty title.
+		if err := a.rt.MarkUnnamed(tid); err != nil {
+			httpErr(w, http.StatusInternalServerError, err)
+			return
+		}
 	}
 	writeJSON(w, map[string]string{"id": tid.Hex()})
 }

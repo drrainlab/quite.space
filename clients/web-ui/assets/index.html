@@ -235,6 +235,8 @@
 <!-- Enter with a pass (UI-2): an explicit async state machine. Pending never
      means access — the space opens only after the owner's device confirms. -->
 <!-- PA-1: owner-only Access sheet for public spaces (badge click). -->
+<div id="doorStrip" class="door-strip" hidden></div>
+
 <dialog id="dlgAccess" class="sheet">
   <h3>Access</h3>
   <div class="settings-sec">
@@ -304,7 +306,9 @@
       <button data-m="pass" onclick="joinSetMode('pass')">With a pass</button>
     </div>
     <div id="joinLinkPane">
-      <p class="hint">Five words someone read out to you:</p>
+      <p class="hint">Five words someone read out to you. A personal link is
+        spent by opening it; a shared one stays open until it expires — which
+        it is will be shown before you decide.</p>
       <input id="joinWords" placeholder="quiet://moss.ember.tide.wren.slate" autocomplete="off"
              oninput="qlOnWordsInput()" onkeydown="if(event.key==='Enter'){event.preventDefault();enterWithLink()}">
       <p class="hint" id="joinWordsHint"></p>
@@ -719,7 +723,55 @@
        says so, right where the choice is made. -->
   <div class="ql-block">
     <p class="hint">Hand someone a way in — five words they can read out loud.
-      Works once, lasts ten minutes.</p>
+      <b>These words open a new place.</b> They do not lead to any room you
+      already have; to let somebody into one of those, use invite from
+      inside it.</p>
+    <div class="list">
+      <div class="list-row">
+        <span class="lr-label">Name it
+          <span class="lr-sub">Leave this empty and the place will be called
+            after whoever is in it.</span>
+        </span>
+        <input type="text" id="qlTitle" placeholder="optional">
+      </div>
+    </div>
+    <!-- Two doors, and the explanation under each says DEVICES, because a
+         verified person is not something this protocol can prove. Promising
+         "one person" would promise a thing no signature backs. -->
+    <div class="segmented" id="qlKind">
+      <button data-v="just-us" class="sel" onclick="qlSetKind('just-us')">Just us</button>
+      <button data-v="a-few" onclick="qlSetKind('a-few')">A few people</button>
+    </div>
+    <p class="hint" id="qlKindNote">One device can enter, then the link closes.</p>
+    <div class="list" id="qlGroupOpts" hidden>
+      <div class="list-row">
+        <span class="lr-label">How many</span>
+        <select id="qlMaxUses">
+          <option value="2">2 devices</option>
+          <option value="3" selected>3 devices</option>
+          <option value="5">5 devices</option>
+          <option value="10">10 devices</option>
+        </select>
+      </div>
+      <div class="list-row">
+        <span class="lr-label">How long the words last</span>
+        <select id="qlTtl">
+          <option value="1">1 hour</option>
+          <option value="24" selected>24 hours</option>
+          <option value="168">a week</option>
+        </select>
+      </div>
+      <div class="list-row">
+        <span class="lr-label">Who decides
+          <span class="lr-sub">Letting them in yourself means nobody enters
+            until you say so.</span>
+        </span>
+        <div class="segmented" id="qlApproval">
+          <button data-v="" class="sel" onclick="qlSetApproval('')">They walk straight in</button>
+          <button data-v="host" onclick="qlSetApproval('host')">Let them in myself</button>
+        </div>
+      </div>
+    </div>
     <div class="row"><button onclick="mintQuickLink()" id="qlMintBtn">Make a quick link</button></div>
     <div id="qlOut" style="display:none">
       <p class="ql-phrase" id="qlPhrase"></p>

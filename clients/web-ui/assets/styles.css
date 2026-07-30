@@ -333,6 +333,31 @@
   .asset-retry:hover { border-color: var(--acc); }
   /* A catalog card's status. Deliberately quiet: it reports what this node
      happens to know, which is usually "nothing yet". */
+  /* Somebody is at the door. Quiet, not alarming — a person waiting is
+     news, not an error. */
+  .door-strip {
+    /* Above the composer, not under the header: at the top it covered the
+       view switcher and the post button, and a person waiting is not worth
+       taking controls away for. */
+    position: fixed; left: 50%; transform: translateX(-50%); bottom: 84px;
+    z-index: 60; display: flex; gap: 10px; align-items: center;
+    padding: 8px 14px; font-size: 12px;
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: var(--radius-md);
+  }
+  .door-strip b { color: var(--acc); }
+  .door-strip button {
+    font-size: 11px; padding: 2px 10px; cursor: pointer;
+    background: none; color: var(--fg);
+    border: 1px solid var(--line); border-radius: var(--radius-sm);
+  }
+  .door-strip button:hover { border-color: var(--acc); }
+  .rename-input {
+    font: inherit; color: var(--fg); background: none;
+    border: none; border-bottom: 1px solid var(--acc);
+    padding: 0; min-width: 12ch;
+  }
+  .rename-note { font-size: 11px; margin: 2px 0 0; }
   .card-status {
     margin-left: 10px; font-size: 11px; font-family: var(--font-mono);
     color: var(--dim); align-self: center;

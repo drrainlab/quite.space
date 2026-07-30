@@ -17,6 +17,7 @@
 package node
 
 import (
+	"net/http"
 	"strings"
 	"time"
 
@@ -200,4 +201,38 @@ func (r *Runtime) CreateSpaceUnnamed() (id.TerminalID, error) {
 	meta.Unnamed = true
 	r.ks.Spaces[tid] = meta
 	return tid, r.saveKeystore()
+}
+
+// handleSetLocalTitle names a space for this device.
+func (a *APIServer) handleSetLocalTitle(w http.ResponseWriter, r *http.Request) {
+	tid, err := a.spaceID(r)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	body, err := readBody[struct {
+		Name string `json:"name"`
+	}](r)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := a.rt.SetLocalTitle(tid, body.Name); err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, map[string]string{"name": body.Name})
+}
+
+// MarkUnnamed records that a space was created without a name on purpose.
+func (r *Runtime) MarkUnnamed(tid id.TerminalID) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	meta, ok := r.ks.Spaces[tid]
+	if !ok {
+		return errUnknownSpace
+	}
+	meta.Unnamed = true
+	r.ks.Spaces[tid] = meta
+	return r.saveKeystore()
 }

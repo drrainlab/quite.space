@@ -454,6 +454,47 @@ let authDead = false; // wrong/missing token → stop polling, keep the console 
 // is shown verbatim; a projection is built HERE, from a key and the people,
 // so it reads in the reader's own language instead of arriving as English
 // from the node.
+// Renaming a space names it for THIS DEVICE. Not for the space, and not
+// for the person across from you — a private space's manifest cannot be
+// revised, so a shared name is not something we can offer without lying
+// about it. The copy under the input says exactly that.
+function startRename(sp) {
+  const el = document.getElementById('convTitle');
+  if (!el || el.querySelector('input')) return;
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = spaceName(sp);
+  input.className = 'rename-input';
+  const note = document.createElement('div');
+  note.className = 'hint rename-note';
+  note.textContent = t('space.local_name_note');
+  const others = document.createElement('div');
+  others.className = 'hint rename-note';
+  others.textContent = "They'll still see it however it is on their side.";
+
+  const commit = async (save) => {
+    if (save) {
+      try {
+        await api(`/api/spaces/${sp.id}/name`,
+          { method: 'PUT', body: JSON.stringify({ name: input.value.trim() }) });
+      } catch (err) { alert(err.message); }
+    }
+    note.remove(); others.remove();
+    await refresh();
+  };
+  input.onkeydown = (e) => {
+    if (e.key === 'Enter') commit(true);
+    if (e.key === 'Escape') commit(false);
+  };
+  input.onblur = () => commit(true);
+  el.textContent = '';
+  el.appendChild(input);
+  el.parentNode.appendChild(note);
+  el.parentNode.appendChild(others);
+  input.focus();
+  input.select();
+}
+
 function spaceName(sp) {
   const d = sp && sp.display;
   if (d) {
@@ -474,6 +515,9 @@ async function refresh() {
   if (authDead) return;
   try {
     status = await api('/api/status');
+    // Somebody may be waiting at a door. Folded into the refresh that was
+    // happening anyway rather than a poll of its own.
+    if (typeof refreshDoor === 'function') refreshDoor();
     document.body.classList.toggle('protocol', PROTOCOL);
     document.getElementById('protoToggle').textContent = PROTOCOL ? t('protocol.on') : t('protocol.toggle');
 
@@ -916,8 +960,13 @@ async function refreshSpace() {
   applyTheme(char);
   loadSpaceAppearance(current);
   // Conversation header: title + invite (owned private) + info toggle.
-  document.getElementById('convTitle').textContent =
-    sp ? (spaceName(sp)) : '';
+  const convTitleEl = document.getElementById('convTitle');
+  convTitleEl.textContent = sp ? spaceName(sp) : '';
+  // Click to rename — owner only, and local only. The note under the input
+  // says so; nothing here touches the space itself.
+  convTitleEl.style.cursor = sp?.owned ? 'text' : '';
+  convTitleEl.title = sp?.owned ? 'Rename — for this device only' : '';
+  convTitleEl.onclick = sp?.owned ? () => startRename(sp) : null;
   document.getElementById('inviteBtn').style.display = (sp?.owned && !sp?.visibility) ? '' : 'none';
   document.getElementById('customizeBtn').style.display = sp?.owned ? '' : 'none';
   document.getElementById('resPalBtn').style.display = sp?.owned ? '' : 'none';
@@ -1814,7 +1863,9 @@ function wizStep(n) {
 
 async function wizCreate() {
   const title = document.getElementById('wTitle').value.trim();
-  if (!title) { alert('name the place'); return; }
+  // An empty name is allowed: the place will be called after whoever
+  // is in it. Forcing a name made people invent one before they knew
+  // what the place was.
   const rituals = [...document.querySelectorAll('#ritualList input:checked')].map(i => i.value);
   const presence = document.getElementById('wPresence').value
     .split(',').map(s => s.trim().replaceAll(' ', '_')).filter(Boolean);

@@ -24,13 +24,40 @@ async function qlBusy(btn, fn) {
 /** The words currently on screen. Held only to copy them; never stored. */
 let qlCurrent = null;
 
-/** Mint a link into this node's line, creating the line on first use. */
+// The link's kind, chosen here and described in DEVICES — see the markup
+// for why that word and not "people".
+let qlKind = 'just-us';
+let qlApproval = '';
+
+function qlSetKind(kind) {
+  qlKind = kind;
+  document.querySelectorAll('#qlKind button').forEach((b) =>
+    b.classList.toggle('sel', b.dataset.v === kind));
+  const group = kind === 'a-few';
+  document.getElementById('qlGroupOpts').hidden = !group;
+  document.getElementById('qlKindNote').textContent = group
+    ? 'Several devices can enter with these words, until they expire.'
+    : 'One device can enter, then the link closes.';
+}
+
+function qlSetApproval(mode) {
+  qlApproval = mode;
+  document.querySelectorAll('#qlApproval button').forEach((b) =>
+    b.classList.toggle('sel', b.dataset.v === mode));
+}
+
 async function mintQuickLink() {
   const btn = document.getElementById('qlMintBtn');
   await qlBusy(btn, async () => {
     try {
+      const body = { title: document.getElementById('qlTitle').value.trim() };
+      if (qlKind === 'a-few') {
+        body.max_uses = Number(document.getElementById('qlMaxUses').value);
+        body.ttl_hours = Number(document.getElementById('qlTtl').value);
+        body.approval = qlApproval;
+      }
       /** @type {QuickLinkInfo} */
-      const info = await api('/api/quicklinks', { method: 'POST', body: JSON.stringify({}) });
+      const info = await api('/api/quicklinks', { method: 'POST', body: JSON.stringify(body) });
       qlCurrent = info;
       document.getElementById('qlPhrase').textContent = info.phrase;
       document.getElementById('qlLink').textContent = info.link;
@@ -59,7 +86,7 @@ function qlTickExpiry() {
     return;
   }
   const m = Math.floor(left / 60), s = left % 60;
-  el.textContent = `Good for ${m}:${String(s).padStart(2, '0')}, and only once.`;
+  el.textContent = `Good for ${m}:${String(s).padStart(2, '0')}.`;
   if (!qlExpiryTimer) qlExpiryTimer = setInterval(qlTickExpiry, 1000);
 }
 
@@ -145,6 +172,18 @@ async function qlOnWordsInput() {
  * joining are separate on the node for a reason, and the UI keeps that seam:
  * nobody should be signed into a space because they pasted something.
  */
+// qlIntentLine says what kind of door this was, now that we know. A
+// personal link is already spent; a shared one is still open, and pretending
+// otherwise in either direction would be a lie the guest could act on.
+function qlIntentLine(p) {
+  const many = (p.max_uses || 1) > 1;
+  if (!many) return 'These words are spent. This device remembers the way in.';
+  const until = p.expires_at
+    ? ' until ' + new Date(p.expires_at * 1000).toLocaleString()
+    : '';
+  return `Shared words — they stay open${until}. Up to ${p.max_uses} devices may be let in.`;
+}
+
 async function enterWithLink() {
   const el = /** @type {HTMLInputElement} */ (document.getElementById('joinWords'));
   const btn = document.getElementById('joinLinkBtn');
@@ -171,14 +210,21 @@ async function enterWithLink() {
     '<p class="hint">This link claims to be from:</p>' +
     `<p class="ql-from">${esc(p.from || 'someone who left no name')}</p>` +
     '<p class="hint">into the space</p>' +
-    `<p class="ql-space">${esc(p.space || 'untitled')}</p>` +
+    `<p class="ql-space">${esc(p.space || 'a place with no name yet')}</p>` +
+    // The FIRST moment the kind of door is knowable is now — the guest
+    // could not have been told before resolving, so the button never
+    // claimed. Say it here.
+    `<p class="hint">${qlIntentLine(p)}</p>` +
     // This used to say the host must accept you. They do not: the owner's
     // device admits a valid request automatically and unattended. Saying
     // otherwise described a security model the code does not implement —
     // and a person deciding whether to enter deserves the real one. When
     // host approval ships, the sentence comes back for links that ask for
     // it, and will then be true.
-    '<p class="hint">Nothing has been signed yet. Opening this link takes you straight into the space.</p>' +
+    `<p class="hint">Nothing has been signed yet. ${
+      p.approval === 'host'
+        ? 'Entering sends a request. Somebody has to let you in.'
+        : 'Entering takes you straight into the space.'}</p>` +
     '</div>';
   box.style.display = '';
   btn.textContent = 'Enter';
@@ -190,7 +236,44 @@ async function enterWithLink() {
 
 if (typeof window !== 'undefined') {
   Object.assign(window, {
-    mintQuickLink, qlCopy, qlWithdraw, qlLoadIssued,
+    mintQuickLink, qlCopy, qlWithdraw, qlLoadIssued, qlSetKind, qlSetApproval,
+    refreshDoor, decideDoor,
     joinSetMode, enterWithLink, qlOnWordsInput,
   });
+}
+
+// ---- the door: people waiting for you to decide ----
+
+// Someone knocking is the only place a pending entry is ever visible, and
+// accepting them leaves no trace elsewhere — so this shows both who is
+// waiting and, briefly, who was just let in.
+async function refreshDoor() {
+  const strip = document.getElementById('doorStrip');
+  if (!strip) return;
+  let rows = [];
+  try {
+    rows = await api('/api/entry-requests');
+  } catch { strip.hidden = true; return; }
+  const waiting = (rows || []).filter((r) => r.state === 'pending');
+  if (!waiting.length) { strip.hidden = true; strip.innerHTML = ''; return; }
+
+  const r = waiting[0];
+  const who = esc(r.name || 'somebody');
+  strip.innerHTML =
+    `<span><b>${who}</b> is at the door</span>` +
+    (waiting.length > 1 ? `<span class="hint">+${waiting.length - 1} more</span>` : '') +
+    `<button id="doorYes">let in</button>` +
+    `<button id="doorNo">not now</button>`;
+  strip.hidden = false;
+  document.getElementById('doorYes').onclick = () => decideDoor(r.request_id, true);
+  document.getElementById('doorNo').onclick = () => decideDoor(r.request_id, false);
+}
+
+async function decideDoor(reqID, admit) {
+  try {
+    await api(`/api/entry-requests/${encodeURIComponent(reqID)}/decide`,
+      { method: 'POST', body: JSON.stringify({ admit }) });
+  } catch (err) { alert(err.message); }
+  refreshDoor();
+  if (typeof refresh === 'function') refresh();
 }
