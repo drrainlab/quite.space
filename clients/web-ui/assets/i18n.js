@@ -113,6 +113,17 @@ const I18N = {
     'share.recent.empty': 'Places you send to will show up here.',
     'share.ai.empty': 'Set up an AI provider in Settings to send things to it.',
 
+    // Forwarding, seen (SHARE-1). The claim line is the sentence the whole
+    // wave turns on and it is never softened.
+    'conv.forward': 'forward',
+    'share.quote.anon': 'somebody wrote',
+    'share.quote.claim': ({ sender, author }) =>
+      `${sender} says this came from ${author}. Their signature did not travel — this is ${sender}'s word for it.`,
+    'share.quote.claim_anon': ({ sender }) =>
+      `${sender} says this came from somewhere else. Nothing here proves who wrote it.`,
+    'share.result.ok': ({ name }) => `Sent to ${name}`,
+    'share.result.no': ({ name, why }) => `Not sent to ${name} — ${why}`,
+
     // conversation
     'conv.member': 'member',
     'conv.you': 'You',

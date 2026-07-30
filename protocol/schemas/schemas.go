@@ -84,6 +84,18 @@ type TextMessage struct {
 	Text     string
 	ReplyTo  *id.EventID
 	Mentions []id.PrincipalID
+	// Origin says this message is a QUOTATION of another one (SHARE-1).
+	//
+	// It is deliberately the smallest thing that is still true. It carries
+	// no source space id, no participant list, no relay, no other
+	// recipient and no capability to the original — any of those would turn
+	// a quotation out of a closed space into a correlation nobody consented
+	// to. What it does carry are CLAIMS by the sender, because that is all
+	// a quotation can be: the original's payload is sealed under its own
+	// space's epoch and its signature covers that ciphertext, so it cannot
+	// be verified anywhere else. Forwarding is quotation, not transmission
+	// of a signed statement.
+	Origin *ShareOrigin
 	// ProducedModel names the model behind an AI-authored message (AI-0).
 	// It is a CLAIM by the signer, exactly like every other self-declared
 	// field — but without it a log of answers from three different models
@@ -103,6 +115,33 @@ const MaxMentions = 16
 
 // MaxModelLen bounds the declared model string.
 const MaxModelLen = 64
+
+// Quotation bounds. A share is a quotation, not a re-publication: past this
+// the quote is cut on a rune boundary and says so, which keeps the whole
+// payload small enough to cross a radio link.
+const (
+	MaxQuoteLen  = 1024
+	MaxShareName = 64
+)
+
+// ShareOrigin is the provenance of a quoted message. Every string here is
+// something the SENDER says; nothing in it is checkable by the reader.
+type ShareOrigin struct {
+	// AuthorLabel is who the sender says wrote it. Empty renders as
+	// "somebody" — offered as a choice, never as an editable field, because
+	// an editable attribution is a forgery tool.
+	AuthorLabel string
+	// SourceLabel is the space it came from. OFF BY DEFAULT EVERYWHERE,
+	// including public sources: the name discloses that YOU are in that
+	// space regardless of whether the space itself is public.
+	SourceLabel string
+	// OriginalAt is the original's author clock — advisory everywhere else
+	// in this codebase, and no more trustworthy here.
+	OriginalAt uint64
+	// Truncated says the quote was cut, so a reader is never shown a
+	// shortened sentence as if it were the whole one.
+	Truncated bool
+}
 
 func (t *TextMessage) Encode() ([]byte, error) {
 	if t.Text == "" || len(t.Text) > MaxTextLen {
@@ -124,6 +163,13 @@ func (t *TextMessage) Encode() ([]byte, error) {
 	if t.ProducedModel != "" {
 		n++
 	}
+	if t.Origin != nil {
+		n++
+		if len(t.Origin.AuthorLabel) > MaxShareName ||
+			len(t.Origin.SourceLabel) > MaxShareName {
+			return nil, errors.New("schemas: share label too long")
+		}
+	}
 	buf := codec.AppendMap(nil, n)
 	buf = codec.AppendUint(buf, 1)
 	buf = codec.AppendText(buf, t.Text)
@@ -138,9 +184,20 @@ func (t *TextMessage) Encode() ([]byte, error) {
 			buf = codec.AppendBytes(buf, t.Mentions[i][:])
 		}
 	}
-	// Key 5, not 4: 4 is reserved for the SHARE wave's provenance, which is
-	// a different concern arriving in a different gate. Append-only either
-	// way — a decoder that knows neither skips both.
+	if o := t.Origin; o != nil {
+		buf = codec.AppendUint(buf, 4)
+		buf = codec.AppendMap(buf, 4)
+		buf = codec.AppendUint(buf, 1)
+		buf = codec.AppendText(buf, o.AuthorLabel)
+		buf = codec.AppendUint(buf, 2)
+		buf = codec.AppendText(buf, o.SourceLabel)
+		buf = codec.AppendUint(buf, 3)
+		buf = codec.AppendUint(buf, o.OriginalAt)
+		buf = codec.AppendUint(buf, 4)
+		buf = codec.AppendBool(buf, o.Truncated)
+	}
+	// Key 5 is the model claim (AI-0); 4 is this wave's provenance. Both
+	// append-only — a decoder that knows neither skips both.
 	if t.ProducedModel != "" {
 		buf = codec.AppendUint(buf, 5)
 		buf = codec.AppendText(buf, t.ProducedModel)
@@ -198,6 +255,40 @@ func DecodeTextMessage(payload []byte) (*TextMessage, error) {
 				copy(p[:], b)
 				t.Mentions = append(t.Mentions, p)
 			}
+		case 4:
+			var o ShareOrigin
+			m2, er := d.ReadMapHeader()
+			if er != nil {
+				return nil, er
+			}
+			for {
+				k2, ok2, e2 := m2.Next()
+				if e2 != nil {
+					return nil, e2
+				}
+				if !ok2 {
+					break
+				}
+				switch k2 {
+				case 1:
+					o.AuthorLabel, e2 = d.ReadText()
+				case 2:
+					o.SourceLabel, e2 = d.ReadText()
+				case 3:
+					o.OriginalAt, e2 = d.ReadUint()
+				case 4:
+					o.Truncated, e2 = d.ReadBool()
+				default:
+					e2 = d.SkipItem()
+				}
+				if e2 != nil {
+					return nil, e2
+				}
+			}
+			if len(o.AuthorLabel) > MaxShareName || len(o.SourceLabel) > MaxShareName {
+				return nil, errors.New("schemas: share label too long")
+			}
+			t.Origin = &o
 		case 5:
 			t.ProducedModel, err = d.ReadText()
 			if err == nil && len(t.ProducedModel) > MaxModelLen {

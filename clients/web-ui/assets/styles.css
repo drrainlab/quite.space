@@ -652,6 +652,13 @@
     min-width: 18px; height: 18px; border-radius: 999px; padding: 0 5px;
     display: inline-grid; place-items: center; }
 
+  /* --- a quotation (SHARE-1) --- */
+  .quoted { border-left: 2px solid var(--line); padding: 2px 0 2px 10px; }
+  .quoted-head { color: var(--muted); font-size: 11px; }
+  .quoted-body { white-space: pre-wrap; margin: 2px 0; }
+  /* The claim line is dim but never hidden: it is what the card MEANS. */
+  .quoted-claim { color: var(--dim); font-size: 11px; font-style: italic; }
+
   /* --- the share picker (SHARE-0) --- */
   #dlgShare { width: min(520px, calc(100% - 24px)); }
   #dlgShare textarea { width: 100%; margin-top: 8px; }

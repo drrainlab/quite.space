@@ -63,6 +63,10 @@ type TextContent struct {
 	ReplyTo  *id.EventID
 	Mentions []id.PrincipalID
 	Revised  bool
+	// Origin is the quotation's provenance when this message is a share
+	// (SHARE-1). Every field in it is the SENDER's claim: the original was
+	// sealed under another space's epoch and cannot be verified here.
+	Origin *schemas.ShareOrigin
 	// Model is the signer's claim about what produced the text, carried
 	// only for machine-authored messages (AI-0). Without it, a log of
 	// answers from three models is unattributable — the member card cannot
@@ -225,7 +229,7 @@ func (s *State) Apply(env *signal.Envelope, eid id.EventID) {
 		}
 		s.installEntry(eid, env, KindText, EntryContent{Text: &TextContent{
 			Text: m.Text, ReplyTo: m.ReplyTo, Mentions: m.Mentions,
-			Model: m.ProducedModel}})
+			Model: m.ProducedModel, Origin: m.Origin}})
 	case schemas.MessageRevised:
 		m, err := schemas.DecodeTextMessage(env.Payload)
 		if err != nil || m.ReplyTo == nil {

@@ -317,6 +317,31 @@ type assetResp struct {
 	Reason     string `json:"reason,omitempty"`
 }
 
+// sharedResp is a quotation's provenance, all of it self-declared.
+type sharedResp struct {
+	Author     string `json:"author,omitempty"`
+	Source     string `json:"source,omitempty"`
+	OriginalAt uint64 `json:"original_at,omitempty"`
+	Truncated  bool   `json:"truncated,omitempty"`
+	Quote      string `json:"quote"`
+}
+
+// quotedLines pulls the quotation back out of the composed text: the lines
+// the node prefixed with "> ", minus the header line it also wrote.
+func quotedLines(text string) string {
+	var out []string
+	for i, line := range strings.Split(text, "\n") {
+		if !strings.HasPrefix(line, "> ") {
+			continue
+		}
+		if i == 0 {
+			continue // the "who · where · when" header
+		}
+		out = append(out, strings.TrimPrefix(line, "> "))
+	}
+	return strings.TrimSpace(strings.Join(out, "\n"))
+}
+
 type entryResp struct {
 	ID     string `json:"id"`
 	Author string `json:"author"`
@@ -331,7 +356,11 @@ type entryResp struct {
 	// message. Shown ONLY alongside a non-human authorship mark, so it can
 	// never read as a fact about a person's own words.
 	Model string `json:"model,omitempty"`
-	Clock      uint64 `json:"clock"`
+	// Shared is the quotation's provenance. Every field is a CLAIM by the
+	// sender — the original's signature does not travel — and the renderer
+	// says so beside it (SHARE-1).
+	Shared *sharedResp `json:"shared,omitempty"`
+	Clock  uint64      `json:"clock"`
 	// CreatedAt is the AUTHOR's wall clock from the signed envelope —
 	// advisory, it can lie. Display only; never trust it for local policy.
 	CreatedAt uint64 `json:"created_at,omitempty"`
@@ -394,16 +423,34 @@ func (a *APIServer) handleEntries(w http.ResponseWriter, r *http.Request) {
 		// Resolve author principals to human display names (self-declared
 		// claims from member manifests) — the honest projection that keeps
 		// principal:hex out of the human path.
+		// TWO maps, because a principal is no longer one voice. The local
+		// assistant is an Agent Terminal controlled by YOUR principal
+		// (AI-0), so a single map keyed by principal let its card rename
+		// you — a message you forwarded read "Quite AI says this came
+		// from alice". Which name is right depends on who WROTE the event,
+		// not only on whose principal signs for it.
 		names := map[id.PrincipalID]string{me: a.rt.displayNameLocked()}
+		machineNames := map[id.PrincipalID]string{}
 		for _, c := range st.space.MemberCards(0) {
-			if c.Name != "" {
-				names[c.Principal] = c.Name
+			if c.Name == "" {
+				continue
 			}
+			if c.Agency == "ai_agent" || c.Kind == "agent" || c.Kind == "bot" {
+				machineNames[c.Principal] = c.Name
+				continue
+			}
+			names[c.Principal] = c.Name
 		}
 		entries := st.space.State.Entries()
 		out = make([]entryResp, 0, len(entries))
 		for i := range entries {
-			resp := a.projectEntry(tid, st.space, &entries[i], me, names)
+			who := names
+			if entries[i].ProducedBy != signal.AuthorshipHuman {
+				if n, ok := machineNames[entries[i].Author]; ok {
+					who = map[id.PrincipalID]string{entries[i].Author: n}
+				}
+			}
+			resp := a.projectEntry(tid, st.space, &entries[i], me, who)
 			resp.Kept, _ = st.space.State.KeepState(entries[i].ID, me)
 			resp.KeepCount = st.space.State.KeepCount(entries[i].ID)
 			out = append(out, resp)
@@ -456,6 +503,16 @@ func (a *APIServer) projectEntry(tid id.TerminalID, sp *terminals.Space,
 	switch {
 	case e.Content.Text != nil:
 		resp.Text = e.Content.Text.Text
+		if o := e.Content.Text.Origin; o != nil {
+			resp.Shared = &sharedResp{
+				Author: o.AuthorLabel, Source: o.SourceLabel,
+				OriginalAt: o.OriginalAt, Truncated: o.Truncated,
+				// The quoted lines are carried in the composed text with a
+				// "> " marker, so a client that ignores this object still
+				// shows the quotation. This one renders from HERE.
+				Quote: quotedLines(e.Content.Text.Text),
+			}
+		}
 		// Only when something other than a person signed it: a model name
 		// beside a human's words would be a claim about them.
 		if e.ProducedBy != signal.AuthorshipHuman {

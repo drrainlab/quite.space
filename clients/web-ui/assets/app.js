@@ -1307,6 +1307,42 @@ async function say(e) {
   return false;
 }
 
+// forwardEntry asks where, then sends one independent copy to each place.
+// The picker is the Navigator; the sending is the node's.
+async function forwardEntry(e) {
+  const source = current;
+  const chosen = await SHARE.pick({ source });
+  if (!chosen) return;
+  try {
+    const r = await api('/api/share', {
+      method: 'POST',
+      body: JSON.stringify({
+        source_space: source, event: e.id, targets: chosen.targets,
+        comment: chosen.comment,
+        // Naming the author is the point of a quotation. Naming the SPACE
+        // is not, and stays off unless somebody asks for it.
+        name_author: true, name_source: false,
+      }),
+    });
+    reportShare(r.results || []);
+  } catch (err) {
+    // A SOURCE refusal is one sentence about the whole act, not a list.
+    alert(err.message);
+  }
+}
+
+// reportShare says what happened to EACH destination. Never a single
+// "sent": partial success is the normal case, not an error path.
+function reportShare(results) {
+  const lines = results.map(r => {
+    const where = (spacesCache.find(s => s.id === r.space) || {});
+    const name = where.id ? spaceName(where) : r.space.slice(0, 8);
+    return r.ok ? t('share.result.ok', { name })
+                : t('share.result.no', { name, why: r.error || '' });
+  });
+  alert(lines.join('\n'));
+}
+
 // ---- presence picker ----
 //
 // A native <select> would be less code, but its popup is drawn by the
@@ -2013,6 +2049,17 @@ function renderEntry(log, e, fresh, grouped) {
     rp.onclick = () => startReply(e);
     acts.appendChild(rp);
   }
+  // Forward. Hidden where the node would refuse anyway, so the affordance
+  // never promises something the gates will take back: a space that keeps
+  // its past to itself, and kinds this build cannot quote yet.
+  const sp = currentSpace();
+  const SHAREABLE_KINDS = ['text', 'link'];
+  if (sp && sp.character?.memory !== 'private_history' && SHAREABLE_KINDS.includes(e.kind)) {
+    const fw = document.createElement('span');
+    fw.textContent = '→ ' + t('conv.forward');
+    fw.onclick = () => forwardEntry(e);
+    acts.appendChild(fw);
+  }
   const mk = document.createElement('span');
   mk.textContent = t('conv.save_card');
   mk.onclick = () => makeCardFrom(e);
@@ -2272,10 +2319,46 @@ function renderVideo(e) {
 }
 
 function renderBody(e) {
+  // A quotation renders from its OWN provenance and ignores the composed
+  // text: the node built both from one read, and reading the structured
+  // form means a client is never guessing which of the two is authoritative.
+  if (e.shared) return renderQuoted(e);
   const r = FEED_RENDERERS[e.kind];
   if (r) return r(e);
   const wrap = document.createElement('div');
   wrap.appendChild(textNode('unknownblk', e.fallback || ('unsupported block: ' + e.schema)));
+  return wrap;
+}
+
+// renderQuoted draws a forwarded message: the quotation, who the SENDER
+// says wrote it, and — plainly — that this is their word and not proof.
+function renderQuoted(e) {
+  const s = e.shared;
+  const wrap = document.createElement('div');
+  wrap.className = 'quoted';
+  const head = document.createElement('div');
+  head.className = 'quoted-head';
+  const bits = [];
+  if (s.author) bits.push(s.author);
+  if (s.source) bits.push(s.source);
+  if (s.original_at) bits.push(new Date(s.original_at * 1000).toLocaleDateString());
+  head.textContent = bits.length ? bits.join(' · ') : t('share.quote.anon');
+  wrap.appendChild(head);
+
+  const body = document.createElement('div');
+  body.className = 'quoted-body';
+  body.textContent = s.quote + (s.truncated ? ' …' : '');
+  wrap.appendChild(body);
+
+  // The sentence this whole wave turns on. A quotation cannot be verified:
+  // the original was sealed under another space's epoch and its signature
+  // covers that ciphertext, so the attribution is the sender's claim.
+  const claim = document.createElement('div');
+  claim.className = 'quoted-claim';
+  claim.textContent = s.author
+    ? t('share.quote.claim', { sender: e.author_name || t('conv.member'), author: s.author })
+    : t('share.quote.claim_anon', { sender: e.author_name || t('conv.member') });
+  wrap.appendChild(claim);
   return wrap;
 }
 

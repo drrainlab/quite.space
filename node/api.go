@@ -105,6 +105,9 @@ func (a *APIServer) Handler() http.Handler {
 	mux.HandleFunc("POST /api/spaces/{id}/join", a.auth(a.handlePublicJoin))
 	mux.HandleFunc("POST /api/spaces/{id}/policy", a.auth(a.handleRevisePolicy))
 	mux.HandleFunc("POST /api/spaces/{id}/mirror", a.auth(a.handleSetMirror))
+	// Sending a message somewhere else (SHARE-1). One act, one copy per
+	// target, each sealed with that space's own epoch.
+	mux.HandleFunc("POST /api/share", a.auth(a.handleShare))
 	// The local assistant (AI-0): an ordinary Agent Terminal in a space
 	// that never leaves this device.
 	mux.HandleFunc("GET /api/ai", a.auth(a.handleAI))
