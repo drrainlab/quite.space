@@ -327,3 +327,34 @@ func TestThePromptWindowIsBoundedAndInOrder(t *testing.T) {
 // ---- helpers ----
 
 func now() uint64 { return uint64(time.Now().Unix()) }
+
+// A local-only space has no delivery to track: nothing carries its events
+// anywhere. Found live — a copy shared into the assistant's space reported
+// "carrying it over lan", a route the node will never take (SHARE-2).
+func TestALocalOnlySpaceHasNoDeliveryToTrack(t *testing.T) {
+	rt := openRuntime(t, t.TempDir(), "alice")
+	defer rt.Close()
+	ai, err := rt.EnsureAISpace()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ordinary, err := rt.CreateSpace("an ordinary room")
+	if err != nil {
+		t.Fatal(err)
+	}
+	local, err := rt.Say(ai, "a question", SayOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := rt.Say(ordinary, "something that could travel", SayOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := rt.Delivery(local); ok {
+		t.Fatal("the assistant's space claims a delivery it will never make")
+	}
+	// And the ordinary one still is, so this is not vacuous.
+	if _, ok := rt.Delivery(out); !ok {
+		t.Fatal("an ordinary space stopped being tracked")
+	}
+}

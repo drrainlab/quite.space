@@ -123,6 +123,17 @@ const I18N = {
       `${sender} says this came from somewhere else. Nothing here proves who wrote it.`,
     'share.result.ok': ({ name }) => `Sent to ${name}`,
     'share.result.no': ({ name, why }) => `Not sent to ${name} — ${why}`,
+    // Delivery, in the ledger's own honest vocabulary. Nothing here ever
+    // says "delivered": a transport can prove at most that a relay ACCEPTED
+    // something, and an untracked id gets no line at all.
+    'share.wait.connectivity': 'waiting — nothing is switched on to carry it',
+    'share.wait.faster_link': 'waiting — this needs a bigger link than the one that is on',
+    'share.wait.custody': 'a gateway is holding it',
+    'share.proof.relay': 'accepted by a relay — that is not delivery',
+    'share.state.settled': 'handed on',
+    // "carrying" implied motion the ledger has not seen. State is pending
+    // with a route CHOSEN, which is a queue — say that and nothing more.
+    'share.state.queued': ({ route }) => `queued for ${route}`,
 
     // conversation
     'conv.member': 'member',

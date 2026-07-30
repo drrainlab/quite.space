@@ -1324,23 +1324,14 @@ async function forwardEntry(e) {
         name_author: true, name_source: false,
       }),
     });
-    reportShare(r.results || []);
+    SHARE.report(r.results || []);
+    await refreshSpace();
   } catch (err) {
-    // A SOURCE refusal is one sentence about the whole act, not a list.
+    // A SOURCE refusal is one sentence about the whole act, not a list:
+    // nothing was written anywhere, so there is nothing per-destination
+    // to report.
     alert(err.message);
   }
-}
-
-// reportShare says what happened to EACH destination. Never a single
-// "sent": partial success is the normal case, not an error path.
-function reportShare(results) {
-  const lines = results.map(r => {
-    const where = (spacesCache.find(s => s.id === r.space) || {});
-    const name = where.id ? spaceName(where) : r.space.slice(0, 8);
-    return r.ok ? t('share.result.ok', { name })
-                : t('share.result.no', { name, why: r.error || '' });
-  });
-  alert(lines.join('\n'));
 }
 
 // ---- presence picker ----

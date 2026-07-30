@@ -108,6 +108,10 @@ func (a *APIServer) Handler() http.Handler {
 	// Sending a message somewhere else (SHARE-1). One act, one copy per
 	// target, each sealed with that space's own epoch.
 	mux.HandleFunc("POST /api/share", a.auth(a.handleShare))
+	// What happened to it afterwards (SHARE-2). Runtime.Delivery has been
+	// unreachable since RB-1; one act with three destinations has three
+	// answers, and "sent" is not one of them.
+	mux.HandleFunc("GET /api/deliveries", a.auth(a.handleDeliveries))
 	// The local assistant (AI-0): an ordinary Agent Terminal in a space
 	// that never leaves this device.
 	mux.HandleFunc("GET /api/ai", a.auth(a.handleAI))

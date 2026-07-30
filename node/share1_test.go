@@ -380,3 +380,25 @@ func TestTheAssistantDoesNotRenameYou(t *testing.T) {
 		t.Fatalf("the quotation attributes alice's words to %q", o.AuthorLabel)
 	}
 }
+
+// The delivery projection is honest about what it does NOT know: an id the
+// ledger is not tracking is reported as untracked, never as "pending". A
+// person reads pending as a promise still outstanding.
+func TestAnUntrackedEventIsNotPending(t *testing.T) {
+	rt := openRuntime(t, t.TempDir(), "alice")
+	defer rt.Close()
+	var never id.EventID
+	never[0] = 0xEE
+	if _, ok := rt.Delivery(never); ok {
+		t.Fatal("the ledger claims to know an event that never existed")
+	}
+	// And a real one IS tracked, so the test above is not vacuous.
+	src, _ := rt.CreateSpace("source")
+	eid, err := rt.Say(src, "something", SayOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := rt.Delivery(eid); !ok {
+		t.Fatal("a message this node just wrote is not tracked at all")
+	}
+}

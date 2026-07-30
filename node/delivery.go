@@ -334,5 +334,13 @@ func (r *Runtime) trackOutbound(eid id.EventID, tid id.TerminalID, size int,
 	if r.ledger == nil {
 		return
 	}
+	// A local-only space has no delivery to track: nothing carries its
+	// events anywhere, so an intent here would sit unsettled forever and
+	// the projection would offer a route the node will never take. Found
+	// live — a copy shared into the assistant's space reported
+	// "carrying it over lan" (AI-0, SHARE-2).
+	if r.ks.Spaces[tid].LocalOnly {
+		return
+	}
 	_, _ = r.ledger.Enqueue(eid, tid, size, now)
 }

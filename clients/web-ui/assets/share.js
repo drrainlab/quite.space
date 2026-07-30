@@ -89,7 +89,86 @@ const SHARE = (() => {
     close({ targets, comment });
   }
 
-  return { pick, send, cancel: () => close(null) };
+  // ---- what happened afterwards (SHARE-2) ----
+  //
+  // One row per destination, always. "Sent" as a single word would be a
+  // claim about the whole act, and the whole act is exactly what does not
+  // have one outcome — partial success is the normal case here, not an
+  // error path.
+  //
+  // The delivery line beneath each row is the ordinary ledger state, and it
+  // never says "delivered": a transport can prove at most that a relay
+  // ACCEPTED something (ADR-007), and an id the ledger is not tracking
+  // renders no line at all rather than an invented "pending".
+
+  /** @type {any[]} */
+  let lastResults = [];
+  let pollTimer = null;
+
+  /** @param {any[]} results */
+  function report(results) {
+    lastResults = results || [];
+    const d = /** @type {HTMLDialogElement} */(document.getElementById('dlgShareResult'));
+    const list = document.getElementById('shareResultList');
+    list.innerHTML = '';
+    for (const r of lastResults) {
+      const row = document.createElement('div');
+      row.className = 'share-result' + (r.ok ? '' : ' warn');
+      row.dataset.copy = r.copy || '';
+      const head = document.createElement('div');
+      head.textContent = r.ok
+        ? t('share.result.ok', { name: labelOf(r.space) })
+        : t('share.result.no', { name: labelOf(r.space), why: r.error || '' });
+      row.appendChild(head);
+      const line = document.createElement('div');
+      line.className = 'share-delivery hint';
+      row.appendChild(line);
+      list.appendChild(row);
+    }
+    d.showModal();
+    pollDelivery();
+    clearInterval(pollTimer);
+    // Slow on purpose: this is a state that changes when a transport
+    // changes, not a live feed.
+    pollTimer = setInterval(pollDelivery, 4000);
+  }
+
+  async function pollDelivery() {
+    const ids = lastResults.filter(r => r.ok && r.copy).map(r => r.copy);
+    if (!ids.length) return;
+    let rows = [];
+    try {
+      rows = (await api('/api/deliveries?ids=' + ids.join(','))).deliveries || [];
+    } catch { return; }
+    const by = {};
+    for (const x of rows) by[x.event] = x;
+    document.querySelectorAll('#shareResultList .share-result').forEach(el => {
+      const d = by[/** @type {HTMLElement} */(el).dataset.copy || ''];
+      const line = el.querySelector('.share-delivery');
+      line.textContent = d ? deliveryLine(d) : '';
+    });
+  }
+
+  /** Turn a ledger state into a sentence that promises exactly what it can. */
+  function deliveryLine(d) {
+    // Not tracked is not pending. Say nothing rather than something false.
+    if (!d.tracked) return '';
+    if (d.waiting === 'connectivity') return t('share.wait.connectivity');
+    if (d.waiting === 'faster_link') return t('share.wait.faster_link');
+    if (d.state === 'in_custody') return t('share.wait.custody');
+    if (d.proof === 'accepted_by_relay') return t('share.proof.relay');
+    if (d.state === 'settled') return t('share.state.settled');
+    if (d.route) return t('share.state.queued', { route: d.route });
+    return '';
+  }
+
+  function closeReport() {
+    clearInterval(pollTimer); pollTimer = null;
+    const d = /** @type {HTMLDialogElement} */(document.getElementById('dlgShareResult'));
+    if (d && d.open) d.close();
+  }
+
+  return { pick, send, cancel: () => close(null), report, closeReport };
 })();
 
 if (typeof window !== 'undefined') window.SHARE = SHARE;

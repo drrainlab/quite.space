@@ -129,6 +129,14 @@
       <button id="shareSend" onclick="SHARE.send()" disabled>Send</button>
     </div>
   </dialog>
+  <!-- One row per destination, always (SHARE-2). -->
+  <dialog id="dlgShareResult">
+    <h3>Where it went</h3>
+    <div id="shareResultList"></div>
+    <div class="row-end">
+      <button onclick="SHARE.closeReport()">Close</button>
+    </div>
+  </dialog>
   <!-- A catalog is a place you look INSIDE, so it gets a screen with a
        trail rather than opening as an ordinary room (CAT-0a). -->
   <div id="catalogScreen" style="display:none">

@@ -652,6 +652,14 @@
     min-width: 18px; height: 18px; border-radius: 999px; padding: 0 5px;
     display: inline-grid; place-items: center; }
 
+  /* --- where it went (SHARE-2) --- */
+  #dlgShareResult { width: min(460px, calc(100% - 24px)); }
+  .share-result { padding: 8px 10px; border-radius: var(--radius-md);
+    background: var(--surface-raised); margin-bottom: 6px; }
+  .share-result.warn { color: var(--warn, #e0a); }
+  .share-delivery { margin-top: 2px; }
+  .share-delivery:empty { display: none; }
+
   /* --- a quotation (SHARE-1) --- */
   .quoted { border-left: 2px solid var(--line); padding: 2px 0 2px 10px; }
   .quoted-head { color: var(--muted); font-size: 11px; }
