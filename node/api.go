@@ -104,6 +104,7 @@ func (a *APIServer) Handler() http.Handler {
 	mux.HandleFunc("GET /api/spaces/{id}/link", a.auth(a.handlePublicLink))
 	mux.HandleFunc("POST /api/spaces/{id}/join", a.auth(a.handlePublicJoin))
 	mux.HandleFunc("POST /api/spaces/{id}/policy", a.auth(a.handleRevisePolicy))
+	mux.HandleFunc("POST /api/spaces/{id}/mirror", a.auth(a.handleSetMirror))
 	// QuietRank (AT-0): device-local attention layer.
 	mux.HandleFunc("GET /api/signals", a.auth(a.handleSignals))
 	mux.HandleFunc("POST /api/signals/{id}/seen", a.auth(a.handleSignalSeen))
@@ -319,6 +320,10 @@ type spaceResp struct {
 	CanWrite        bool   `json:"can_write"`
 	Frozen          bool   `json:"frozen,omitempty"`
 	IgnoredByPolicy uint64 `json:"ignored_by_policy,omitempty"`
+	// PH-3 availability roles this node has volunteered for. Neither confers
+	// any authority over the space.
+	Mirror bool `json:"mirror,omitempty"`
+	Seed   bool `json:"seed,omitempty"`
 }
 
 func (a *APIServer) handleSpaces(w http.ResponseWriter, r *http.Request) {
@@ -348,7 +353,9 @@ func (a *APIServer) handleSpaces(w http.ResponseWriter, r *http.Request) {
 				resp.Frozen = pol.Frozen
 			}
 			resp.IgnoredByPolicy = st.space.PolicyStats.IgnoredTotal
-			resp.Role = a.rt.ks.Spaces[s.ID].Role
+			meta := a.rt.ks.Spaces[s.ID]
+			resp.Role = meta.Role
+			resp.Mirror, resp.Seed = meta.Mirror, meta.Seed
 			resp.CanWrite = a.rt.canWrite(st) == nil
 			return nil
 		})

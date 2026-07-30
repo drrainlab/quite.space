@@ -369,3 +369,15 @@ func (r *Runtime) fetchLoop(key AssetKey, ref *schemas.AssetRef, st *spaceState)
 	}
 	return ReasonTimeout
 }
+
+// assetRefsLocked lists the asset ids indexed for one space. Caller holds
+// r.mu. Used by the mirror status to count custody actually held.
+func (r *Runtime) assetRefsLocked(space id.TerminalID) []string {
+	var out []string
+	for k := range r.assetIdx.refs {
+		if k.Space == space {
+			out = append(out, k.Asset)
+		}
+	}
+	return out
+}

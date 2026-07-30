@@ -189,6 +189,17 @@ type SpaceMeta struct {
 	// Role marks this replica's local stance: "" (member/owner) or
 	// RoleReader (public-space read replica; never auto-publishes anything).
 	Role string
+	// Mirror means this node volunteers to keep the space REACHABLE: it
+	// republishes the owner's signed envelope verbatim and takes custody of
+	// the media it references. It confers no authority — a mirror has no
+	// space key and can alter nothing (PH-3).
+	Mirror bool
+	// Seed means this node answers other readers' media requests with blobs
+	// it ALREADY holds, and never fetches anything in order to be able to
+	// answer. Default off, deliberately: seeding makes "I read this space"
+	// observable to strangers, which is a consent question rather than a
+	// performance setting. Mirror implies Seed; Seed does not imply Mirror.
+	Seed bool
 }
 
 // RoleReader marks a public-space read replica in SpaceMeta.Role.
@@ -267,7 +278,7 @@ func (k *Keystore) encode() []byte {
 	buf = codec.AppendUint(buf, ksKeySpaces)
 	buf = codec.AppendArray(buf, len(k.Spaces))
 	for _, sm := range sortedSpaces(k.Spaces) {
-		buf = codec.AppendArray(buf, 9)
+		buf = codec.AppendArray(buf, 11)
 		buf = codec.AppendBytes(buf, sm.id[:])
 		buf = codec.AppendText(buf, sm.meta.Title)
 		buf = codec.AppendBool(buf, sm.meta.Owned)
@@ -282,6 +293,8 @@ func (k *Keystore) encode() []byte {
 		buf = codec.AppendBytes(buf, sm.meta.AppearanceFrame)
 		buf = codec.AppendText(buf, sm.meta.Visibility)
 		buf = codec.AppendText(buf, sm.meta.Role)
+		buf = codec.AppendBool(buf, sm.meta.Mirror)
+		buf = codec.AppendBool(buf, sm.meta.Seed)
 	}
 	buf = codec.AppendUint(buf, ksKeyName)
 	buf = codec.AppendText(buf, k.DisplayName)
@@ -565,6 +578,16 @@ func decodeKeystore(data []byte) (*Keystore, error) {
 				}
 				if acount >= 9 {
 					if meta.Role, er = d.ReadText(); er != nil {
+						return nil, er
+					}
+				}
+				if acount >= 10 {
+					if meta.Mirror, er = d.ReadBool(); er != nil {
+						return nil, er
+					}
+				}
+				if acount >= 11 {
+					if meta.Seed, er = d.ReadBool(); er != nil {
 						return nil, er
 					}
 				}

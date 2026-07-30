@@ -103,6 +103,8 @@ func (r *Runtime) relaySyncOnce(addr string) {
 		pub     bool // owned public space → projection publisher
 		reader  bool // reader replica → projection consumer
 		contrib bool // joined community member / curator → ingress uplink
+		mirror  bool // volunteers to keep the space reachable (PH-3)
+		seed    bool // answers wants from blobs already held (PH-3, opt-in)
 	}
 	spaces := make([]spaceLen, 0, len(r.spaces))
 	for tid, st := range r.spaces {
@@ -115,6 +117,11 @@ func (r *Runtime) relaySyncOnce(addr string) {
 			// A joined community member or activated curator: reads via
 			// projections like everyone else, uplinks via ingress.
 			contrib: !meta.Owned && meta.Role == "" && pol.IsPublic(),
+			mirror:  meta.Mirror && pol.IsPublic(),
+			// Mirroring implies seeding: a node keeping a space alive that
+			// refused to hand out the media it holds would be keeping half
+			// a space alive.
+			seed: (meta.Seed || meta.Mirror) && pol.IsPublic(),
 		})
 	}
 	r.mu.Unlock()
@@ -207,6 +214,18 @@ func (r *Runtime) relaySyncOnce(addr string) {
 			// Contributor uplink and/or media wants ride the ingress.
 			if err := r.pushPublicIngress(addr, sp.tid); err != nil {
 				lastErr = err.Error()
+			}
+			// Keep the space reachable, and hand out what we hold. Neither
+			// touches anyone else's mailbox: keepalive Puts, seeding Fetches.
+			if sp.mirror {
+				if err := r.mirrorKeepalive(addr, sp.tid); err != nil {
+					lastErr = err.Error()
+				}
+			}
+			if sp.seed {
+				if err := r.seedForSpace(addr, sp.tid); err != nil {
+					lastErr = err.Error()
+				}
 			}
 		}
 	}
