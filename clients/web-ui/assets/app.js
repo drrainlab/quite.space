@@ -450,6 +450,26 @@ function connectionSummary(status) {
 }
 
 let authDead = false; // wrong/missing token → stop polling, keep the console quiet
+// spaceName renders what a space asks to be called. A name somebody chose
+// is shown verbatim; a projection is built HERE, from a key and the people,
+// so it reads in the reader's own language instead of arriving as English
+// from the node.
+function spaceName(sp) {
+  const d = sp && sp.display;
+  if (d) {
+    if (d.text) return d.text;
+    if (d.key === 'space.with_one' || d.key === 'space.with_many') {
+      const names = d.names || [];
+      if (names.length) {
+        return t(d.key, { names, more: 0 });
+      }
+    } else if (d.key) {
+      return t(d.key);
+    }
+  }
+  return (sp && (sp.display_title || sp.title)) || t('conv.member');
+}
+
 async function refresh() {
   if (authDead) return;
   try {
@@ -533,7 +553,7 @@ async function refresh() {
       // display_title, not title: an unnamed line reads as the other person
       // on each side, which one shared title could never do. The node
       // projects it; the real title is still what the space is called.
-      const title = s.display_title || s.title || t('conv.member');
+      const title = spaceName(s);
       const an = ARCHETYPES[s.character?.archetype]?.name || '';
       const bits = [];
       if (an) bits.push(esc(an));
@@ -897,7 +917,7 @@ async function refreshSpace() {
   loadSpaceAppearance(current);
   // Conversation header: title + invite (owned private) + info toggle.
   document.getElementById('convTitle').textContent =
-    sp ? (sp.display_title || sp.title || t('conv.member')) : '';
+    sp ? (spaceName(sp)) : '';
   document.getElementById('inviteBtn').style.display = (sp?.owned && !sp?.visibility) ? '' : 'none';
   document.getElementById('customizeBtn').style.display = sp?.owned ? '' : 'none';
   document.getElementById('resPalBtn').style.display = sp?.owned ? '' : 'none';

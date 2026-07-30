@@ -300,12 +300,23 @@ func characterOf(c terminals.Character) characterResp {
 	}
 }
 
+// displayResp mirrors node.SpaceDisplay on the wire.
+type displayResp struct {
+	Text  string   `json:"text,omitempty"`
+	Key   string   `json:"key,omitempty"`
+	Names []string `json:"names,omitempty"`
+}
+
 type spaceResp struct {
 	ID    string `json:"id"`
 	Title string `json:"title"`
 	// DisplayTitle is what to show in a list. Usually the title; for an
 	// unnamed line between two people, the other person. See lineDisplayTitle.
-	DisplayTitle  string        `json:"display_title"`
+	DisplayTitle string `json:"display_title"`
+	// Display is the structured form: either a name somebody chose, or a
+	// key plus the people here, so the interface can say it in the
+	// reader's language rather than receiving English from Go.
+	Display       displayResp   `json:"display"`
 	Owned         bool          `json:"owned"`
 	Events        int           `json:"events"`
 	Messages      int           `json:"messages"`
@@ -332,6 +343,8 @@ func (a *APIServer) handleSpaces(w http.ResponseWriter, r *http.Request) {
 	for _, s := range spaces {
 		resp := spaceResp{
 			ID: s.ID.Hex(), Title: s.Title, DisplayTitle: s.DisplayTitle, Owned: s.Owned,
+			Display: displayResp{Text: s.Display.Text, Key: s.Display.Key,
+				Names: s.Display.Names},
 			Events: s.Events, Messages: s.Messages,
 			Undecryptable: s.Undecryptable, Peers: s.Peers,
 		}

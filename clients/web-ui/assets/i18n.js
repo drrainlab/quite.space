@@ -103,6 +103,16 @@ const I18N = {
     'pass.need_relay': 'Set a relay in Settings first — that\'s where the entry request waits.',
 
     // join by pass (async state machine)
+    // A space nobody named says who is in it. These are projections, not
+    // titles: the node sends a key and the people, so the sentence is
+    // built in the reader's own language.
+    'space.waiting': 'waiting for someone',
+    'space.someone_arrived': 'someone arrived',
+    'space.with_one': ({ names }) => names[0],
+    'space.with_many': ({ names, more }) =>
+      more > 0 ? `${names.join(', ')} and ${more} more`
+               : names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1],
+    'space.local_name_note': 'This name stays on this device.',
     'join.title': 'Enter with a pass',
     'join.paste': 'Paste the pass link someone shared with you:',
     'join.enter': 'Request entry',

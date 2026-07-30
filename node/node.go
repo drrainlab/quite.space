@@ -373,6 +373,24 @@ func Open(dataDir string, passphrase []byte, displayName string) (rt *Runtime, e
 	return r, nil
 }
 
+// manifestTitleOf distinguishes the three cases the old manifestTitle
+// flattened into one empty string:
+//
+//	decode fails             → ("", false)  we do not know
+//	decode ok, no labels     → ("", false)  malformed or pre-character
+//	decode ok, labels[0]==""  → ("", true)   DELIBERATELY unnamed
+//
+// Only the third is a space nobody named. Treating the first two as
+// "unnamed" would project a member list over a space whose title we simply
+// failed to read.
+func manifestTitleOf(frame []byte) (string, bool) {
+	m, err := manifest.Decode(frame)
+	if err != nil || len(m.DeclaredLabels) == 0 {
+		return "", false
+	}
+	return m.DeclaredLabels[0], true
+}
+
 // manifestTitle extracts the first declared label from a manifest frame.
 func manifestTitle(frame []byte) string {
 	m, err := manifest.Decode(frame)
@@ -901,6 +919,10 @@ func (r *Runtime) spaceForTest(tid id.TerminalID) (*terminals.Space, bool) {
 type SpaceInfo struct {
 	ID    id.TerminalID
 	Title string
+	// Display is the structured answer to "what is this space called" —
+	// either a name somebody chose or a projection the interface renders in
+	// the reader's own language (QL-3).
+	Display SpaceDisplay
 	// DisplayTitle is what to put in a list, which is not always the title.
 	// A line between two people reads better as the other person's name than
 	// as "my line" — and it reads that way on BOTH sides, which a stored
@@ -927,12 +949,19 @@ func (r *Runtime) Spaces() []SpaceInfo {
 		}
 		out = append(out, SpaceInfo{
 			ID: tid, Title: meta.Title, Owned: meta.Owned,
-			DisplayTitle:  lineDisplayTitle(meta.Title, st.space, r.Principal.ID),
+			Display: displayFor(spaceNaming{
+				Title: meta.Title, LocalTitle: meta.LocalTitle,
+				Unnamed: meta.Unnamed,
+			}, st.space, r.Principal.ID),
 			Events:        events,
 			Messages:      len(st.space.State.Messages()),
 			Undecryptable: st.space.Undecryptable,
 			Peers:         len(st.conns),
 		})
+		// DisplayTitle stays as the English rendering: it is what sorts the
+		// list (one order per process, not one per locale) and what any
+		// client that cannot translate will read.
+		out[len(out)-1].DisplayTitle = englishDisplay(out[len(out)-1].Display)
 	}
 	// Deterministic order: r.spaces is a map, so without this the list would
 	// reshuffle on every poll ("jumping"). Title first, id as a stable

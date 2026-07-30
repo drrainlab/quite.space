@@ -194,6 +194,17 @@ type SpaceMeta struct {
 	// Role marks this replica's local stance: "" (member/owner) or
 	// RoleReader (public-space read replica; never auto-publishes anything).
 	Role string
+	// Unnamed means nobody named this space: the manifest's first declared
+	// label is deliberately empty. That is a different and quieter fact
+	// than "we could not read the manifest", which is why the reader
+	// distinguishes them (manifestTitleOf).
+	Unnamed bool
+	// LocalTitle is a name THIS DEVICE chose, for itself. It never travels:
+	// a private space's manifest is creation-immutable (ValidateRevision
+	// refuses revisions), and no in-log event carries a revised space
+	// manifest — so a shared name is not something this wave can offer
+	// without lying about it.
+	LocalTitle string
 	// Mirror means this node volunteers to keep the space REACHABLE: it
 	// republishes the owner's signed envelope verbatim and takes custody of
 	// the media it references. It confers no authority — a mirror has no
@@ -285,7 +296,7 @@ func (k *Keystore) encode() []byte {
 	buf = codec.AppendUint(buf, ksKeySpaces)
 	buf = codec.AppendArray(buf, len(k.Spaces))
 	for _, sm := range sortedSpaces(k.Spaces) {
-		buf = codec.AppendArray(buf, 11)
+		buf = codec.AppendArray(buf, 13)
 		buf = codec.AppendBytes(buf, sm.id[:])
 		buf = codec.AppendText(buf, sm.meta.Title)
 		buf = codec.AppendBool(buf, sm.meta.Owned)
@@ -302,6 +313,8 @@ func (k *Keystore) encode() []byte {
 		buf = codec.AppendText(buf, sm.meta.Role)
 		buf = codec.AppendBool(buf, sm.meta.Mirror)
 		buf = codec.AppendBool(buf, sm.meta.Seed)
+		buf = codec.AppendBool(buf, sm.meta.Unnamed)
+		buf = codec.AppendText(buf, sm.meta.LocalTitle)
 	}
 	buf = codec.AppendUint(buf, ksKeyName)
 	buf = codec.AppendText(buf, k.DisplayName)
@@ -599,6 +612,26 @@ func decodeKeystore(data []byte) (*Keystore, error) {
 				}
 				if acount >= 11 {
 					if meta.Seed, er = d.ReadBool(); er != nil {
+						return nil, er
+					}
+				}
+				if acount >= 12 {
+					if meta.Unnamed, er = d.ReadBool(); er != nil {
+						return nil, er
+					}
+				}
+				if acount >= 13 {
+					if meta.LocalTitle, er = d.ReadText(); er != nil {
+						return nil, er
+					}
+				}
+				// Anything a NEWER build appended: skip it rather than
+				// stopping mid-record. Without this, every future field
+				// makes this build fail to open a keystore it could
+				// otherwise have used — which is how the previous two
+				// waves each became one-way upgrades.
+				for i := 13; i < acount; i++ {
+					if er = d.SkipItem(); er != nil {
 						return nil, er
 					}
 				}
