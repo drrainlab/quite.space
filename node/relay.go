@@ -280,17 +280,35 @@ func (r *Runtime) relayWantsLocked(tid id.TerminalID) [][]byte {
 // peer's own relay inbox — the response half of relay media fetch. Blind: the
 // relay still sees only an opaque hint and ciphertext. Bounded by the bundle
 // budget; the requester re-asks for whatever did not fit.
-func (r *Runtime) answerWants(client *relay.Client, tid id.TerminalID, wanter []byte, wants [][]byte) {
-	if len(wanter) != id.Size || len(wants) == 0 {
+// answerWants delivers held blobs to whoever asked for them. replyBox is
+// PH-1's address: a mailbox the requester alone can drain. When it is
+// absent we fall back to deriving the requester's inbox from its device id —
+// correct for PRIVATE spaces, where membership already gates the derivation.
+// For a public space there is no safe fallback: both ids travel in the
+// clear, so an inbox derived from them is an inbox anyone can empty. A
+// public request without a reply box therefore gets no answer, and saying
+// that plainly is better than delivering into a box we know is open.
+func (r *Runtime) answerWants(client *relay.Client, tid id.TerminalID, wanter []byte, wants [][]byte, replyBox []byte, public bool) {
+	if len(wants) == 0 {
 		return
 	}
-	var dev id.DeviceID
-	copy(dev[:], wanter)
-	if dev == r.Device.ID {
-		return // never answer our own request
-	}
 	now := uint64(time.Now().Unix())
-	hint := relay.HintFor(tid, dev, relay.Bucket(now))
+	var hint []byte
+	switch {
+	case len(replyBox) == relay.HintLen:
+		hint = replyBox
+	case public:
+		return // no safe address; the requester re-asks with a reply box
+	case len(wanter) == id.Size:
+		var dev id.DeviceID
+		copy(dev[:], wanter)
+		if dev == r.Device.ID {
+			return // never answer our own request
+		}
+		hint = relay.HintFor(tid, dev, relay.Bucket(now))
+	default:
+		return
+	}
 	expires := now + uint64(DefaultRelayTTL/time.Second)
 
 	// The relay carries each item as one CBOR byte string, capped by
@@ -376,15 +394,18 @@ func (r *Runtime) PullFromRelay(addr string) (applied int, err error) {
 
 	now := uint64(time.Now().Unix())
 	self := r.Device.ID
-	var hints [][]byte
+	var caps [][]byte
 	for _, tid := range tids {
 		b := relay.Bucket(now)
-		hints = append(hints, relay.HintFor(tid, self, b))
+		caps = append(caps, relay.CapFor(tid, self, b))
 		if b > 0 {
-			hints = append(hints, relay.HintFor(tid, self, b-1))
+			caps = append(caps, relay.CapFor(tid, self, b-1))
 		}
 	}
-	items, err := client.Collect(hints)
+	// PH-1 reply boxes: media answers for public spaces come back here, to
+	// an address nobody else can drain.
+	caps = append(caps, r.replyBoxCaps(tids, relay.Bucket(now))...)
+	items, err := client.Collect(caps)
 	if err != nil {
 		return 0, err
 	}
@@ -405,7 +426,7 @@ func (r *Runtime) PullFromRelay(addr string) (applied int, err error) {
 		// on-demand media over the relay). Runs without r.mu — it does network
 		// I/O.
 		if len(parts.Wants) > 0 {
-			r.answerWants(client, terminal, parts.Wanter, parts.Wants)
+			r.answerWants(client, terminal, parts.Wanter, parts.Wants, parts.ReplyBox, false)
 		}
 		r.mu.Lock()
 		st, ok := r.spaces[terminal]
@@ -439,4 +460,43 @@ func (r *Runtime) PullFromRelay(addr string) (applied int, err error) {
 		r.mu.Unlock()
 	}
 	return applied, nil
+}
+
+// replyBoxCapLocked returns this space's current media reply capability,
+// minting or rotating it when the relay bucket turns. Caller holds r.mu.
+func (r *Runtime) replyBoxCapLocked(tid id.TerminalID, bucket uint64) []byte {
+	if r.replyBoxes == nil {
+		r.replyBoxes = map[id.TerminalID]*replyBox{}
+	}
+	if b, ok := r.replyBoxes[tid]; ok && b.bucket == bucket {
+		return b.cap
+	}
+	c, err := relay.NewReplyCap()
+	if err != nil {
+		return nil // no entropy: fall back to no reply box rather than a weak one
+	}
+	var prev []byte
+	if b, ok := r.replyBoxes[tid]; ok {
+		prev = b.cap // an answer may already be sitting in the old box
+	}
+	r.replyBoxes[tid] = &replyBox{cap: c, prev: prev, bucket: bucket}
+	return c
+}
+
+// replyBoxCaps lists the drain capabilities to collect answers from: the
+// current bucket and the previous one, since an answer may have been posted
+// just before a rotation.
+func (r *Runtime) replyBoxCaps(tids []id.TerminalID, bucket uint64) [][]byte {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var caps [][]byte
+	for _, tid := range tids {
+		if b, ok := r.replyBoxes[tid]; ok {
+			caps = append(caps, b.cap)
+			if len(b.prev) > 0 {
+				caps = append(caps, b.prev)
+			}
+		}
+	}
+	return caps
 }

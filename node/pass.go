@@ -184,17 +184,17 @@ func (r *Runtime) ensurePassPolling() {
 
 func (r *Runtime) pollPassRequests(addr string) {
 	r.passes.mu.Lock()
-	var hints [][]byte
+	var caps [][]byte
 	recs := make([]*passRecord, 0, len(r.passes.byID))
 	for _, rec := range r.passes.byID {
 		if rec.revoked {
 			continue
 		}
-		hints = append(hints, terminals.ReqHint(rec.pass.Rendezvous))
+		caps = append(caps, terminals.ReqCap(rec.pass.Rendezvous))
 		recs = append(recs, rec)
 	}
 	r.passes.mu.Unlock()
-	if len(hints) == 0 {
+	if len(caps) == 0 {
 		return
 	}
 	client, err := relay.DialClient(addr)
@@ -202,7 +202,7 @@ func (r *Runtime) pollPassRequests(addr string) {
 		return
 	}
 	defer client.Close()
-	items, err := client.Collect(hints)
+	items, err := client.Collect(caps)
 	if err != nil {
 		return
 	}
@@ -372,7 +372,7 @@ func (r *Runtime) pollJoinResponse(at *joinAttempt) {
 		if err != nil {
 			continue
 		}
-		items, err := client.Collect([][]byte{terminals.RespHint(at.pass.Rendezvous, at.requestID)})
+		items, err := client.Collect([][]byte{terminals.RespCap(at.pass.Rendezvous, at.requestID)})
 		client.Close()
 		if err != nil || len(items) == 0 {
 			continue

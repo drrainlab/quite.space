@@ -31,6 +31,7 @@ const (
 	keyBlobs    = 4 // encrypted asset blobs (manifests and chunks)
 	keyWants    = 5 // requested blob hashes (relay media fetch)
 	keyWanter   = 6 // requester device id — where to send the response
+	keyReplyBox = 7 // PH-1: the mailbox HINT to answer into (see below)
 )
 
 // Encode serializes frames for one terminal (same bytes as the file form —
@@ -51,6 +52,18 @@ func EncodeWithBlobs(terminal id.TerminalID, frames [][]byte, blobs [][]byte) []
 // sender's device id, so a holder knows which inbox to push the response to.
 // Both empty = a plain frames/blobs bundle (byte-identical to EncodeWithBlobs).
 func EncodeWithWants(terminal id.TerminalID, frames, blobs, wants [][]byte, wanter []byte) []byte {
+	return EncodeWithReplyBox(terminal, frames, blobs, wants, wanter, nil)
+}
+
+// EncodeWithReplyBox adds PH-1's reply box: the HINT of a mailbox the
+// requester alone can drain. A holder needs only the address to deliver an
+// answer, and cannot use it to take one — which is what stops a stranger
+// (or the relay) from intercepting media in flight.
+//
+// It also carries less than the device id it replaces: a bundle sitting in a
+// publicly fetchable ingress shard used to name the reader who asked, to
+// anyone who cared to look. A per-request random address names nobody.
+func EncodeWithReplyBox(terminal id.TerminalID, frames, blobs, wants [][]byte, wanter, replyBox []byte) []byte {
 	n := 3
 	if len(blobs) > 0 {
 		n++
@@ -59,6 +72,9 @@ func EncodeWithWants(terminal id.TerminalID, frames, blobs, wants [][]byte, want
 		n++
 	}
 	if len(wanter) > 0 {
+		n++
+	}
+	if len(replyBox) > 0 {
 		n++
 	}
 	buf := []byte(magic)
@@ -89,6 +105,10 @@ func EncodeWithWants(terminal id.TerminalID, frames, blobs, wants [][]byte, want
 	if len(wanter) > 0 {
 		buf = codec.AppendUint(buf, keyWanter)
 		buf = codec.AppendBytes(buf, wanter)
+	}
+	if len(replyBox) > 0 {
+		buf = codec.AppendUint(buf, keyReplyBox)
+		buf = codec.AppendBytes(buf, replyBox)
 	}
 	return buf
 }
@@ -125,6 +145,9 @@ type Parts struct {
 	Blobs    [][]byte
 	Wants    [][]byte
 	Wanter   []byte
+	// ReplyBox is the mailbox hint to answer into (PH-1). When set, a holder
+	// MUST use it instead of deriving an inbox from Wanter.
+	ReplyBox []byte
 }
 
 // DecodeFull returns the terminal, frames, and carried asset blobs. Frames and
@@ -217,6 +240,12 @@ func DecodeParts(data []byte) (Parts, error) {
 				return p, e
 			}
 			p.Wanter = append([]byte(nil), b...)
+		case keyReplyBox:
+			b, e := d.ReadBytes()
+			if e != nil {
+				return p, e
+			}
+			p.ReplyBox = append([]byte(nil), b...)
 		default:
 			if err := d.SkipItem(); err != nil {
 				return p, err

@@ -123,6 +123,22 @@ type Runtime struct {
 	// (media on-demand when there is no direct peer). The auto-sync push rides
 	// these to peers as a request; a holder answers into our inbox. r.mu-guarded.
 	relayWants map[id.TerminalID]map[id.Hash]struct{}
+
+	// replyBoxes are PH-1 media reply capabilities, one per space, rotated
+	// with the relay bucket. DELIBERATELY NOT PERSISTED: losing one costs a
+	// single re-ask, while writing a drain secret into the keystore would buy
+	// nothing and widen what a stolen keystore hands over. r.mu-guarded.
+	replyBoxes map[id.TerminalID]*replyBox
+}
+
+// replyBox is the address a media answer comes back to. We mint the
+// capability, publish only its HINT in the want bundle, and drain the box
+// ourselves — so a holder can deliver into it and nobody, including the
+// relay, can take from it.
+type replyBox struct {
+	cap    []byte
+	prev   []byte // the box we were advertising before the last rotation
+	bucket uint64
 }
 
 // maxCarried bounds the delivery-route projection (a UI hint, not state).

@@ -29,7 +29,7 @@ func testServer() (*Server, *connState) {
 
 func TestCollectIsRateLimited(t *testing.T) {
 	s, cs := testServer()
-	m := &Msg{Type: msgCollect, Hints: [][]byte{make([]byte, HintLen)}}
+	m := &Msg{Type: msgCollectCap, Caps: [][]byte{make([]byte, CapLen)}}
 	// One under the limit still passes.
 	if r := handleN(s, cs, m, s.limits.collectRatePerMin()); r.Type == msgError {
 		t.Fatalf("refused inside the limit: %s", r.Reason)
@@ -41,11 +41,11 @@ func TestCollectIsRateLimited(t *testing.T) {
 
 func TestCollectHintCountIsCapped(t *testing.T) {
 	s, cs := testServer()
-	hints := make([][]byte, s.limits.collectMaxHints()+1)
-	for i := range hints {
-		hints[i] = make([]byte, HintLen)
+	caps := make([][]byte, s.limits.collectMaxHints()+1)
+	for i := range caps {
+		caps[i] = make([]byte, CapLen)
 	}
-	r := s.handle(&Msg{Type: msgCollect, Hints: hints}, cs)
+	r := s.handle(&Msg{Type: msgCollectCap, Caps: caps}, cs)
 	if r.Type != msgError || !strings.Contains(r.Reason, "hints") {
 		t.Fatalf("unbounded hint list accepted: %+v", r)
 	}
@@ -55,16 +55,16 @@ func TestCollectReplyIsByteBounded(t *testing.T) {
 	s, cs := testServer()
 	// Four hints, each holding well over the reply budget on its own.
 	big := make([]byte, 1<<20)
-	var hints [][]byte
-	for h := range 4 {
-		hint := make([]byte, HintLen)
-		hint[0] = byte(h)
-		hints = append(hints, hint)
+	var caps [][]byte
+	for c := range 4 {
+		cap := make([]byte, CapLen)
+		cap[0] = byte(c)
+		caps = append(caps, cap)
 		for range 16 {
-			s.store.Put(Item{DestinationHint: string(hint), Ciphertext: big})
+			s.store.Put(Item{DestinationHint: string(CollectHint(cap)), Ciphertext: big})
 		}
 	}
-	r := s.handle(&Msg{Type: msgCollect, Hints: hints}, cs)
+	r := s.handle(&Msg{Type: msgCollectCap, Caps: caps}, cs)
 	if r.Type != msgItems {
 		t.Fatalf("unexpected reply: %+v", r)
 	}

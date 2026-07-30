@@ -11,6 +11,8 @@
 package relay
 
 import (
+	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
@@ -22,16 +24,49 @@ import (
 // HintLen is the rotating hint size in bytes.
 const HintLen = 16
 
-// Hint derives the relay mailbox hint for a terminal in a time bucket.
+// CapLen is the size of a collect capability.
+const CapLen = 32
+
+// CollectHint is the whole of PH-1, in one line: a mailbox is ADDRESSED by
+// the hash of the capability that drains it.
+//
+//	hint = SHA256("qp-relay-collect-v1:" ‖ cap)[:HintLen]
+//
+// Put, Replace and Fetch still address the 16-byte hint, so every WRITER
+// path is untouched — anyone who should be able to leave something in a
+// mailbox still can. Only draining changes: the collector sends the cap and
+// the relay derives the hint itself. The relay compares nothing, verifies
+// no signature, knows no accounts, and still cannot tell one mailbox class
+// from another. One SHA-256 is the entire enforcement.
+//
+// The property this buys: you must be able to DERIVE a hint, not merely to
+// have OBSERVED one. That is what separates the owner of a mailbox from
+// everyone who can see its address go past — and for a public space, the
+// address is derivable from the space id, which is the read capability
+// itself. Before this, "can read the space" implied "can empty its
+// mailboxes".
+func CollectHint(cap []byte) []byte {
+	h := sha256.New()
+	h.Write([]byte("qp-relay-collect-v1:"))
+	h.Write(cap)
+	return h.Sum(nil)[:HintLen]
+}
+
+// Cap derives the collect capability for a terminal's shared mailbox.
 // The label differs from LAN discovery hints so the two cannot be joined.
-func Hint(terminal id.TerminalID, bucket uint64) []byte {
+func Cap(terminal id.TerminalID, bucket uint64) []byte {
 	h := sha256.New()
 	h.Write([]byte("qp-relay-hint-v0:"))
 	h.Write(terminal[:])
 	var b [8]byte
 	binary.BigEndian.PutUint64(b[:], bucket)
 	h.Write(b[:])
-	return h.Sum(nil)[:HintLen]
+	return h.Sum(nil)
+}
+
+// Hint is where Cap's mailbox lives.
+func Hint(terminal id.TerminalID, bucket uint64) []byte {
+	return CollectHint(Cap(terminal, bucket))
 }
 
 // HintFor derives a PER-RECIPIENT mailbox hint: the box where one device
@@ -42,7 +77,13 @@ func Hint(terminal id.TerminalID, bucket uint64) []byte {
 // relay concurrently (e.g. a 2 s auto-sync cadence) without eating each
 // other's mail. The relay stays blind: it still sees only opaque 16-byte
 // hints and cannot tell a per-recipient box from a per-terminal one.
-func HintFor(terminal id.TerminalID, recipient id.DeviceID, bucket uint64) []byte {
+// Honest limit, unchanged by PH-1: this capability is derivable by anyone
+// who knows the space id AND the device id, so it protects a PRIVATE
+// space's inbox (where membership is the gate) and would protect nothing in
+// a public one, where both ids travel in the clear. Public spaces therefore
+// do not use this path at all — media answers there go to a reply box whose
+// capability is random and known only to the device that asked (ReplyCap).
+func CapFor(terminal id.TerminalID, recipient id.DeviceID, bucket uint64) []byte {
 	h := sha256.New()
 	h.Write([]byte("qp-relay-inbox-v0:"))
 	h.Write(terminal[:])
@@ -50,7 +91,25 @@ func HintFor(terminal id.TerminalID, recipient id.DeviceID, bucket uint64) []byt
 	var b [8]byte
 	binary.BigEndian.PutUint64(b[:], bucket)
 	h.Write(b[:])
-	return h.Sum(nil)[:HintLen]
+	return h.Sum(nil)
+}
+
+// HintFor is where CapFor's inbox lives.
+func HintFor(terminal id.TerminalID, recipient id.DeviceID, bucket uint64) []byte {
+	return CollectHint(CapFor(terminal, recipient, bucket))
+}
+
+// NewReplyCap mints a fresh reply-box capability: CapLen random bytes, kept
+// by the device that asks for media and shared with nobody. The holder of a
+// wanted blob learns only the HINT (from the want bundle) and can therefore
+// deliver into the box without ever being able to empty it — which is the
+// difference between answering a request and intercepting one.
+func NewReplyCap() ([]byte, error) {
+	c := make([]byte, CapLen)
+	if _, err := rand.Read(c); err != nil {
+		return nil, err
+	}
+	return c, nil
 }
 
 // Bucket returns the hint rotation bucket (6-hour windows, shared with LAN
@@ -87,8 +146,25 @@ func IngressShard(dev id.DeviceID) byte {
 	return d[0] % IngressShards
 }
 
+// CapPublicIngress is the owner's drain capability for one ingress shard.
+// The root is derived from the space SEED (PH-2), which only the owner
+// holds, so contributors cannot compute it — they learn the resulting HINT
+// from the signed projection instead. That asymmetry is the point: everyone
+// may leave a contribution, only the owner may take one.
+func CapPublicIngress(root [32]byte, bucket uint64, shard byte) []byte {
+	h := hmac.New(sha256.New, root[:])
+	h.Write([]byte("qp-relay-pub-in-v1:"))
+	var b [8]byte
+	binary.BigEndian.PutUint64(b[:], bucket)
+	h.Write(b[:])
+	h.Write([]byte{shard})
+	return h.Sum(nil)
+}
+
 // HintPublicIngress is one shard of the participants→owner mailbox
-// (append-only Put with short TTL; the owner Fetches all shards).
+// (append-only Put with short TTL). PRE-PH-2 derivation, kept while the
+// projection has no committed hints to publish: derivable from the space id
+// alone, which is exactly why PH-2 replaces it.
 func HintPublicIngress(space id.TerminalID, bucket uint64, shard byte) []byte {
 	h := sha256.New()
 	h.Write([]byte("qp-relay-pub-in-v0:"))
@@ -97,7 +173,19 @@ func HintPublicIngress(space id.TerminalID, bucket uint64, shard byte) []byte {
 	binary.BigEndian.PutUint64(b[:], bucket)
 	h.Write(b[:])
 	h.Write([]byte{shard})
-	return h.Sum(nil)[:HintLen]
+	return CollectHint(h.Sum(nil))
+}
+
+// CapPublicIngressLegacy matches HintPublicIngress until PH-2 lands.
+func CapPublicIngressLegacy(space id.TerminalID, bucket uint64, shard byte) []byte {
+	h := sha256.New()
+	h.Write([]byte("qp-relay-pub-in-v0:"))
+	h.Write(space[:])
+	var b [8]byte
+	binary.BigEndian.PutUint64(b[:], bucket)
+	h.Write(b[:])
+	h.Write([]byte{shard})
+	return h.Sum(nil)
 }
 
 // Message types.
@@ -120,6 +208,11 @@ const (
 	msgFetch      = 8
 	msgFetchItems = 9
 	msgReplace    = 10
+	// PH-1: draining requires a CAPABILITY, not merely knowledge of a hint.
+	// msgCollect (3) is refused outright rather than silently answering with
+	// an empty mailbox — an old client deserves a diagnosable error, and a
+	// silent empty drain is indistinguishable from "nothing was waiting".
+	msgCollectCap = 11
 )
 
 // Message key table v0 (append-only, ADR-009).
@@ -132,6 +225,7 @@ const (
 	keyItems   = 6
 	keyReason  = 7
 	keyNow     = 8 // relay wall time, unix milliseconds
+	keyCaps    = 9 // PH-1 collect capabilities
 )
 
 // Msg is one relay protocol message.
@@ -143,7 +237,8 @@ type Msg struct {
 	Hints   [][]byte
 	Items   [][]byte
 	Reason  string
-	Now     uint64 // unix ms (msgTimeOK)
+	Now     uint64   // unix ms (msgTimeOK)
+	Caps    [][]byte // PH-1: collect capabilities (msgCollectCap)
 }
 
 // Encode serializes a message.
@@ -168,6 +263,9 @@ func (m *Msg) Encode() []byte {
 		n++
 	}
 	if m.Now != 0 {
+		n++
+	}
+	if len(m.Caps) > 0 {
 		n++
 	}
 	buf := codec.AppendMap(nil, n)
@@ -206,6 +304,13 @@ func (m *Msg) Encode() []byte {
 	if m.Now != 0 {
 		buf = codec.AppendUint(buf, keyNow)
 		buf = codec.AppendUint(buf, m.Now)
+	}
+	if len(m.Caps) > 0 {
+		buf = codec.AppendUint(buf, keyCaps)
+		buf = codec.AppendArray(buf, len(m.Caps))
+		for _, c := range m.Caps {
+			buf = codec.AppendBytes(buf, c)
+		}
 	}
 	return buf
 }
@@ -253,6 +358,19 @@ func DecodeMsg(data []byte) (*Msg, error) {
 					return nil, e
 				}
 				m.Hints = append(m.Hints, append([]byte(nil), h...))
+			}
+		case keyCaps:
+			var cnt int
+			cnt, er = d.ReadArray()
+			if er != nil {
+				return nil, er
+			}
+			for range cnt {
+				c, e := d.ReadBytes()
+				if e != nil {
+					return nil, e
+				}
+				m.Caps = append(m.Caps, append([]byte(nil), c...))
 			}
 		case keyItems:
 			var cnt int

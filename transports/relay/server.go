@@ -235,19 +235,27 @@ func (s *Server) handle(m *Msg, cs *connState) *Msg {
 		// (ADR-008): the expiry is echoed so the sender knows the deadline.
 		return &Msg{Type: msgPutOK, Expires: expires}
 	case msgCollect:
+		// PH-1: knowing a hint is no longer enough to empty a mailbox. Refuse
+		// loudly rather than answering "nothing here" — an empty drain and a
+		// rejected drain must never look the same to an old client.
+		return &Msg{Type: msgError, Reason: "collect requires a capability"}
+	case msgCollectCap:
 		// Draining is destructive, so it gets the same shape of bounds Fetch
 		// has had since PA-0: rate, hint count, reply bytes. Without the byte
 		// budget one collect could be asked to move the entire store.
 		if !spend(&cs.collects, &cs.collectWindow, s.limits.collectRatePerMin()) {
 			return &Msg{Type: msgError, Reason: "rate limited"}
 		}
-		if len(m.Hints) > s.limits.collectMaxHints() {
+		if len(m.Caps) > s.limits.collectMaxHints() {
 			return &Msg{Type: msgError, Reason: "too many hints"}
 		}
 		budget := s.limits.collectMaxBytes()
 		var items [][]byte
-		for _, h := range m.Hints {
-			got := s.store.CollectBudget(string(h), now, budget)
+		for _, c := range m.Caps {
+			if len(c) != CapLen {
+				return &Msg{Type: msgError, Reason: "malformed capability"}
+			}
+			got := s.store.CollectBudget(string(CollectHint(c)), now, budget)
 			for _, it := range got {
 				budget -= len(it)
 			}
@@ -399,8 +407,11 @@ func (c *Client) Time() (nowMS uint64, rtt time.Duration, err error) {
 }
 
 // Collect fetches (and removes) everything stored under the given hints.
-func (c *Client) Collect(hints [][]byte) ([][]byte, error) {
-	reply, err := c.roundTrip(&Msg{Type: msgCollect, Hints: hints}, 10*time.Second)
+// Collect drains the mailboxes these CAPABILITIES address (PH-1). The
+// caller proves it may empty a box by holding the preimage of the box's
+// address; hints alone no longer open anything.
+func (c *Client) Collect(caps [][]byte) ([][]byte, error) {
+	reply, err := c.roundTrip(&Msg{Type: msgCollectCap, Caps: caps}, 10*time.Second)
 	if err != nil {
 		return nil, err
 	}

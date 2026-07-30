@@ -603,16 +603,29 @@ func splitSealed(sealed []byte) (enc, ct []byte, err error) {
 
 // ---- Rendezvous hints (relay dead-drop addresses) ----
 
+// ReqCap is the OWNER's drain capability for the request dead-drop, and
+// ReqHint is the address newcomers write to. Both come from the rendezvous
+// secret, which only pass holders have — so the capability protects the
+// drop from strangers exactly as the pass protects the space.
+func ReqCap(rendezvous [16]byte) []byte {
+	h := sha256.Sum256(append([]byte("qs.pass.req.v1"), rendezvous[:]...))
+	return h[:]
+}
+
 // ReqHint is where the newcomer drops its sealed request.
 func ReqHint(rendezvous [16]byte) []byte {
-	h := sha256.Sum256(append([]byte("qs.pass.req.v1"), rendezvous[:]...))
-	return h[:16]
+	return relayCollectHint(ReqCap(rendezvous))
+}
+
+// RespCap is the NEWCOMER's drain capability for its own acceptance.
+func RespCap(rendezvous [16]byte, reqID [32]byte) []byte {
+	h := sha256.Sum256(append(append([]byte("qs.pass.resp.v1"), rendezvous[:]...), reqID[:]...))
+	return h[:]
 }
 
 // RespHint is where the owner drops the sealed acceptance for one request.
 func RespHint(rendezvous [16]byte, reqID [32]byte) []byte {
-	h := sha256.Sum256(append(append([]byte("qs.pass.resp.v1"), rendezvous[:]...), reqID[:]...))
-	return h[:16]
+	return relayCollectHint(RespCap(rendezvous, reqID))
 }
 
 // FreshNonce returns 16 random bytes for request_id derivation.
@@ -658,4 +671,14 @@ func (s *Space) AcceptIntoSpace(self *Participant, device id.DeviceID, xpub [32]
 		return 0, epochKey, nil, err
 	}
 	return epochN, epochKey, append([]byte(nil), s.ManifestFrame...), nil
+}
+
+// relayCollectHint mirrors relay.CollectHint. terminals must not import
+// transports, so the derivation is restated here and pinned by a test that
+// compares the two.
+func relayCollectHint(cap []byte) []byte {
+	h := sha256.New()
+	h.Write([]byte("qp-relay-collect-v1:"))
+	h.Write(cap)
+	return h.Sum(nil)[:16]
 }

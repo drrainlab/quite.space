@@ -279,7 +279,7 @@ func (r *Runtime) ResolveQuickLink(words string) (QuickLinkPreview, error) {
 	// Collect, not Fetch: it removes what it reads, which is what makes a
 	// quick link single-use without the relay knowing that is what it is
 	// enforcing.
-	items, err := client.Collect([][]byte{tok.Hint()})
+	items, err := client.Collect([][]byte{tok.Cap()})
 	if err != nil {
 		return QuickLinkPreview{}, fmt.Errorf("node: the relay could not be asked: %w", err)
 	}

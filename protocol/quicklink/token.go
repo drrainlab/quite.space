@@ -165,8 +165,25 @@ func Parse(s string) (Token, error) {
 // would make honest fetches expensive and a fast key would make guessing
 // cheap.
 func (t Token) Hint() []byte {
+	return CollectHint(t.Cap())
+}
+
+// Cap is the drain capability for this link's mailbox: the same fast digest,
+// untruncated. Only a holder of the token secret can compute it, which is
+// what stops a passer-by who saw the hint from emptying the box.
+func (t Token) Cap() []byte {
 	h := sha256.Sum256(append([]byte("qs.quicklink.hint.v1"), t.Secret[:]...))
-	return h[:16]
+	return h[:]
+}
+
+// CollectHint mirrors the relay's address derivation. It lives here rather
+// than importing transports/relay because protocol packages never depend on
+// transports; the relay's PH-1 test pins the two against each other.
+func CollectHint(cap []byte) []byte {
+	h := sha256.New()
+	h.Write([]byte("qp-relay-collect-v1:"))
+	h.Write(cap)
+	return h.Sum(nil)[:16]
 }
 
 // KDFSalt is the salt for the slow key derivation, bound to the hint so that

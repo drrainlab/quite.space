@@ -278,11 +278,20 @@ func (r *Runtime) pushPublicIngress(addr string, tid id.TerminalID) error {
 	frames := st.space.UnackedLocalFrames()
 	wants := r.relayWantsLocked(tid)
 	self := r.Device.ID
+	now0 := uint64(time.Now().Unix())
+	// Mint (or reuse) the box this space's media answers come back to. Only
+	// its HINT travels; the capability never leaves this process.
+	var box []byte
+	if len(wants) > 0 {
+		if c := r.replyBoxCapLocked(tid, relay.Bucket(now0)); c != nil {
+			box = relay.CollectHint(c)
+		}
+	}
 	r.mu.Unlock()
 	if len(frames) == 0 && len(wants) == 0 {
 		return nil
 	}
-	body := bundle.EncodeWithWants(tid, frames, nil, wants, self[:])
+	body := bundle.EncodeWithReplyBox(tid, frames, nil, wants, self[:], box)
 	if err := r.relayGate(); err != nil {
 		return err
 	}
@@ -320,14 +329,14 @@ func (r *Runtime) collectPublicIngress(addr string, tid id.TerminalID) (int, err
 	defer client.Close()
 	now := uint64(time.Now().Unix())
 	b := relay.Bucket(now)
-	var hints [][]byte
+	var caps [][]byte
 	for sh := byte(0); sh < relay.IngressShards; sh++ {
-		hints = append(hints, relay.HintPublicIngress(tid, b, sh))
+		caps = append(caps, relay.CapPublicIngressLegacy(tid, b, sh))
 		if b > 0 {
-			hints = append(hints, relay.HintPublicIngress(tid, b-1, sh))
+			caps = append(caps, relay.CapPublicIngressLegacy(tid, b-1, sh))
 		}
 	}
-	items, err := client.Collect(hints)
+	items, err := client.Collect(caps)
 	if err != nil {
 		return 0, err
 	}
@@ -377,7 +386,7 @@ func (r *Runtime) collectPublicIngress(addr string, tid id.TerminalID) (int, err
 		// projection's Exclude filter keeps the publication unprojected.
 		r.requestIncompleteAssets(tid, parts.Frames)
 		if len(parts.Wants) > 0 {
-			r.answerWants(client, tid, parts.Wanter, parts.Wants)
+			r.answerWants(client, tid, parts.Wanter, parts.Wants, parts.ReplyBox, true)
 		}
 	}
 	return applied, nil
