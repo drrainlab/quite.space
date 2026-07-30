@@ -228,7 +228,13 @@ func (r *Runtime) resumeJoinPolling() {
 	r.passes.mu.Lock()
 	pending := make([]*joinAttempt, 0, len(r.joins))
 	for _, at := range r.joins {
-		if at.state == JoinWaiting {
+		// BOTH waiting states, and the second one is the whole point:
+		// somebody parked at a door waits for a PERSON, which is the
+		// wait most likely to outlive a restart. Resuming only
+		// JoinWaiting restored the record and then let it sit there
+		// while an answer the host had already given expired on the
+		// relay unread.
+		if at.state == JoinWaiting || at.state == JoinWaitingHost {
 			pending = append(pending, at)
 		}
 	}

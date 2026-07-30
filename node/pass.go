@@ -507,7 +507,7 @@ func (r *Runtime) pollJoinResponse(at *joinAttempt) {
 		// return silently, leaving the spinner turning forever.
 		if uint64(time.Now().Unix()) > at.collectUntil {
 			r.passes.mu.Lock()
-			if at.state == JoinWaiting {
+			if at.state == JoinWaiting || at.state == JoinWaitingHost {
 				at.state = JoinExpiredWaiting
 			}
 			r.passes.mu.Unlock()
@@ -566,14 +566,15 @@ func (r *Runtime) adoptAccepted(at *joinAttempt, acc *terminals.Accepted) error 
 	keys = append(keys, crypto.EpochKey{N: acc.EpochN, Key: acc.EpochKey})
 	s.RestoreEpochs(keys)
 	r.Self.ResumeChain(s)
-	title := "joined space"
-	if m := manifestTitle(acc.ManifestFrame); m != "" {
-		title = m
-	}
-	// Keep the manifest with the meta: the character (archetype, mood,
-	// memory policy) must survive restarts on joined replicas too.
+	// "joined space" used to stand here, and it was the same mistake as
+	// "my line": a literal nobody chose, shown as if somebody had. A guest
+	// arriving at an unnamed place must fall into the same projection the
+	// owner sees — who is in here — so the two sides read alike (QL-3).
+	title, known := manifestTitleOf(acc.ManifestFrame)
+	// known && empty is a DECISION not to name it; unreadable is merely
+	// silence, and an empty title already projects.
 	r.ks.Spaces[at.space] = storage.SpaceMeta{Title: title,
-		ManifestFrame: acc.ManifestFrame}
+		Unnamed: known && title == "", ManifestFrame: acc.ManifestFrame}
 	r.attach(at.space, s)
 	if _, _, err := r.Self.PublishManifest(s); err != nil {
 		return err

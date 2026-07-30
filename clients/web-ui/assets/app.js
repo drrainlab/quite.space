@@ -1570,7 +1570,12 @@ async function renameSelf() {
 let inviteSpace = null;
 function openInvite(s) {
   inviteSpace = s.id;
-  document.getElementById('invSpace').textContent = s.title || s.id.slice(0,12);
+  // display_title FIRST, not title: it already carries the precedence
+  // (a name this device chose, then the manifest, then who is here), and
+  // it is the only one that never shows a sentinel — a legacy line whose
+  // stored title is literally "my line" reads as the person in it.
+  document.getElementById('invSpace').textContent =
+    s.display_title || s.title || s.id.slice(0, 12);
   document.getElementById('invOut').textContent = '';
   document.getElementById('qrBox').innerHTML = '';
   dlgInvite.showModal();
@@ -1678,7 +1683,8 @@ async function revokeCurrentPass() {
 
 function openInviteFromPass() {
   dlgPass.close();
-  openInvite({ id: passSpace, title: currentSpace()?.title });
+  const sp = currentSpace();
+  openInvite({ id: passSpace, title: sp?.title, display_title: sp?.display_title });
 }
 
 

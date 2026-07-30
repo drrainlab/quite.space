@@ -668,13 +668,12 @@ func (r *Runtime) JoinInvite(inviteB64 string) (id.TerminalID, error) {
 	s.EnablePrivate(r.Device)
 	s.RestoreEpochs(keys)
 	r.Self.ResumeChain(s)
-	title := "joined space"
-	if m := manifestTitle(manifestFrame); m != "" {
-		title = m
-	}
+	// Same rule as the pass path: no invented title (see adoptAccepted).
+	title, known := manifestTitleOf(manifestFrame)
 	// Keep the manifest with the meta (like the pass path): character and
 	// policy must survive restarts on joined replicas too (I1).
-	r.ks.Spaces[spaceID] = storage.SpaceMeta{Title: title, ManifestFrame: manifestFrame}
+	r.ks.Spaces[spaceID] = storage.SpaceMeta{Title: title,
+		Unnamed: known && title == "", ManifestFrame: manifestFrame}
 	r.attach(spaceID, s)
 	if _, _, err := r.Self.PublishManifest(s); err != nil {
 		return id.TerminalID{}, err
