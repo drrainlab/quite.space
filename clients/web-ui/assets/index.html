@@ -117,6 +117,18 @@
     </div>
     <input type="file" id="fileInput" style="display:none" onchange="onFilePicked(this.files[0])">
   </div>
+  <!-- The share picker IS the Navigator in selection mode (SHARE-0). -->
+  <dialog id="dlgShare">
+    <h3>Forward</h3>
+    <div id="shareAbout" class="hint"></div>
+    <div id="sharePicker" class="share-picker"></div>
+    <div id="sharePicked" class="hint share-picked"></div>
+    <textarea id="shareComment" rows="2"></textarea>
+    <div class="row-end">
+      <button class="btn-plain" onclick="SHARE.cancel()">Cancel</button>
+      <button id="shareSend" onclick="SHARE.send()" disabled>Send</button>
+    </div>
+  </dialog>
   <!-- A catalog is a place you look INSIDE, so it gets a screen with a
        trail rather than opening as an ordinary room (CAT-0a). -->
   <div id="catalogScreen" style="display:none">
@@ -925,6 +937,7 @@
 <script src="gateway.js"></script>
 <script src="navigator.js"></script>
 <script src="catalog.js"></script>
+<script src="share.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

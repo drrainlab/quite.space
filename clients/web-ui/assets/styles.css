@@ -652,6 +652,20 @@
     min-width: 18px; height: 18px; border-radius: 999px; padding: 0 5px;
     display: inline-grid; place-items: center; }
 
+  /* --- the share picker (SHARE-0) --- */
+  #dlgShare { width: min(520px, calc(100% - 24px)); }
+  #dlgShare textarea { width: 100%; margin-top: 8px; }
+  .share-picker { max-height: 46vh; overflow-y: auto; margin-top: 8px;
+    border: 1px solid var(--line); border-radius: var(--radius-md); padding: 6px; }
+  .share-picked { margin-top: 6px; }
+  .row-end { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+  /* The tick is a column of its own so rows do not jump as they are chosen. */
+  .nav-tick { flex: 0 0 auto; width: 16px; text-align: center; color: var(--acc); }
+  .space.picked { background: color-mix(in srgb, var(--acc) 18%, transparent); }
+  /* A place you cannot write to is shown and explained, not hidden. */
+  .space.nav-closed { opacity: .45; cursor: default; }
+  .space.nav-closed:hover { background: transparent; }
+
   /* --- the catalog walker (CAT-0a) --- */
   #catalogScreen { flex: 1; overflow-y: auto; padding: 14px 18px 24px; }
   .cat-crumbs { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }

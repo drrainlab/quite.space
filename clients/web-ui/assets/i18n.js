@@ -36,6 +36,8 @@ const I18N = {
     'nav.sec.spaces': 'Spaces',
     'nav.sec.people': 'People',
     'nav.sec.catalogs': 'Catalogs',
+    'nav.sec.recent': 'Recent',
+    'nav.sec.ai': 'AI',
     'nav.more': 'more',
     'nav.pin': 'Pin',
     'nav.unpin': 'Unpin',
@@ -94,6 +96,22 @@ const I18N = {
     'cat.unreachable': ({ why }) => `Could not open that: ${why}`,
     'cat.paste': 'Open a catalog\n\nA catalog is an ordinary public space whose posts are ' +
       'space-cards — anyone can run one. Paste a catalog link:',
+
+    // The share picker (SHARE-0). It CHOOSES; carrying the message is a
+    // separate gate, and the words here promise nothing more.
+    'share.search': 'Search people, spaces and AI',
+    'share.sec.recent': 'Recent',
+    'share.sec.ai': 'AI',
+    'share.send': 'Send',
+    'share.send_to': ({ count }) => `Send to ${count}`,
+    'share.comment': 'Add a comment…',
+    'share.comment.ai': 'What should the AI do with this?',
+    'share.picked': ({ names }) => `Selected: ${names}`,
+    'share.about': ({ space }) => `From ${space}`,
+    // Said where the choice is made rather than as a refusal afterwards.
+    'share.closed': 'you cannot write here',
+    'share.recent.empty': 'Places you send to will show up here.',
+    'share.ai.empty': 'Set up an AI provider in Settings to send things to it.',
 
     // conversation
     'conv.member': 'member',

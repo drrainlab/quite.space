@@ -25,19 +25,31 @@
 const NAV = (() => {
   /** @type {NavState} */
   let state = { version: 0, pins: [], groups: [], catalogs: [], recent: [], collapsed: [] };
-  /** @type {HTMLElement|null} */
-  let root = null;
+  /**
+   * A VIEW is one place the Navigator is drawn. There are two: the sidebar,
+   * and the share picker. They are the same code with a different section
+   * list and one flag — which is the whole reason the Navigator existed
+   * before sharing did. A second list would drift from this one by the
+   * second week.
+   * @typedef {{root:HTMLElement, sections:string[], select:boolean,
+   *            query:string, picked:Set<string>, onPick?:()=>void}} View
+   */
+  /** @type {View[]} */
+  let views = [];
   /** @type {any[]} */
   let spaces = [];
   let currentId = '';
-  let query = '';
   // Interaction locks. While any of these is true a poll must not reconcile:
   // the browser owns the drag, and a menu or an inline input is a thing
   // somebody is looking at.
   let dragging = false, menuOpen = false, editing = false;
   let pendingPaint = false;
 
-  const SECTIONS = ['pinned', 'groups', 'spaces', 'people', 'catalogs'];
+  const SIDEBAR_SECTIONS = ['pinned', 'groups', 'spaces', 'people', 'catalogs'];
+  // The picker offers where a message can GO, so: no catalogs (a catalog is
+  // for finding places, not for putting things in), and Recent first,
+  // because the last few destinations are most of the answer.
+  const PICKER_SECTIONS = ['recent', 'pinned', 'groups', 'spaces', 'people', 'ai'];
 
   // ---- state plumbing ----
 
@@ -73,7 +85,7 @@ const NAV = (() => {
         if (String(err && err.message).includes('changed since')) await load();
         else console.warn('navigator: ' + (err && err.message));
       }
-      paint();
+      paintAll();
     });
     return writing;
   }
@@ -151,19 +163,26 @@ const NAV = (() => {
   /**
    * A live row. Its signature is everything the row SHOWS, so an unrelated
    * message elsewhere repaints nothing.
-   * @param {any} sp @param {string} section @param {string} owner
+   * @param {View} v @param {any} sp @param {string} section @param {string} owner
    */
-  function spaceRow(sp, section, owner) {
+  function spaceRow(v, sp, section, owner) {
     const key = section + (owner ? '/' + owner : '') + '/' + sp.id;
     const name = spaceName(sp);
+    const picked = v.select && v.picked.has(sp.id);
+    // A place you cannot write to is not a destination — and saying so
+    // where the choice is made beats refusing after somebody has decided.
+    const closed = v.select && sp.can_write === false;
     const sig = [name, sp.events, sp.undecryptable || 0, sp.owned ? 1 : 0,
-      sp.frozen ? 1 : 0, sp.id === currentId ? 1 : 0, LOCALE].join('');
+      sp.frozen ? 1 : 0, sp.id === currentId ? 1 : 0,
+      picked ? 1 : 0, closed ? 1 : 0, v.select ? 1 : 0, LOCALE].join('');
     return {
       key, sig, build: () => {
         const d = document.createElement('div');
         d.dataset.navKey = key; d.dataset.navSig = sig;
-        d.className = 'space' + (sp.id === currentId ? ' active' : '');
-        d.setAttribute('role', 'button');
+        d.className = 'space' + (!v.select && sp.id === currentId ? ' active' : '') +
+          (picked ? ' picked' : '') + (closed ? ' nav-closed' : '');
+        d.setAttribute('role', v.select ? 'checkbox' : 'button');
+        if (v.select) d.setAttribute('aria-checked', String(picked));
         d.tabIndex = 0;
         const an = ARCHETYPES[sp.character?.archetype]?.name || '';
         const bits = [];
@@ -171,13 +190,23 @@ const NAV = (() => {
         bits.push(esc(t('spaces.activity.events', { count: sp.events })));
         if (sp.undecryptable) bits.push(`<span class="undec">${sp.undecryptable}✦</span>`);
         d.innerHTML =
-          (section === 'pinned' || owner ? '<span class="nav-grip" title="drag to reorder">⠿</span>' : '') +
+          (v.select ? `<span class="nav-tick">${picked ? '✓' : ''}</span>` : '') +
+          (!v.select && (section === 'pinned' || owner)
+            ? '<span class="nav-grip" title="drag to reorder">⠿</span>' : '') +
           `<span class="space-av"><span class="glyph g24">${glyphSVG(sp.id, sp.ai ? 'bot' : 'space', 24)}</span></span>` +
           `<span class="space-main"><span class="space-top">` +
             `<span class="t">${esc(name)}</span>` +
             (sp.owned ? `<span class="owner-tag">${esc(t('spaces.owner'))}</span>` : '') +
-          `</span><span class="m">${bits.join(' · ')}</span></span>` +
-          `<button class="nav-more" aria-label="${esc(t('nav.more'))}">⋯</button>`;
+          `</span><span class="m">${closed ? esc(t('share.closed')) : bits.join(' · ')}</span></span>` +
+          (v.select ? '' : `<button class="nav-more" aria-label="${esc(t('nav.more'))}">⋯</button>`);
+        if (v.select) {
+          d.onclick = () => { if (!closed) togglePick(v, sp.id); };
+          d.onkeydown = (e) => {
+            if (e.key !== 'Enter' && e.key !== ' ') return;
+            e.preventDefault(); if (!closed) togglePick(v, sp.id);
+          };
+          return d;
+        }
         d.onclick = (e) => {
           if (/** @type {HTMLElement} */(e.target).closest('.nav-more, .nav-grip')) return;
           NAV.onOpen(sp.id);
@@ -197,14 +226,15 @@ const NAV = (() => {
    * should still be there. So it says what it is and offers one action.
    * @param {NavRef} ref @param {string} section @param {string} owner
    */
-  function danglingRow(ref, section, owner) {
+  function danglingRow(v, ref, section, owner) {
     const key = section + (owner ? '/' + owner : '') + '/' + ref.terminal;
     const sig = 'gone' + (ref.label || '') + '' + LOCALE;
     return {
       key, sig, build: () => {
         const d = document.createElement('div');
         d.dataset.navKey = key; d.dataset.navSig = sig;
-        d.className = 'space nav-dangling';
+        // Never selectable: you cannot send anything to a space you left.
+        d.className = 'space nav-dangling' + (v.select ? ' nav-closed' : '');
         d.innerHTML =
           `<span class="space-av"><span class="glyph g24">${glyphSVG(ref.terminal, 'space', 24)}</span></span>` +
           `<span class="space-main"><span class="space-top">` +
@@ -226,8 +256,8 @@ const NAV = (() => {
    * dead end this replaces.
    * @param {NavRef} ref
    */
-  function catalogRow(ref) {
-    const base = refRow(ref, 'catalogs', '');
+  function catalogRow(v, ref) {
+    const base = refRow(v, ref, 'catalogs', '');
     return {
       key: base.key, sig: base.sig + '|cat', build: () => {
         const el = base.build();
@@ -241,9 +271,9 @@ const NAV = (() => {
   }
 
   /** @param {NavRef} ref @param {string} section @param {string} owner */
-  function refRow(ref, section, owner) {
+  function refRow(v, ref, section, owner) {
     const sp = spaceOf(ref.terminal);
-    return sp ? spaceRow(sp, section, owner) : danglingRow(ref, section, owner);
+    return sp ? spaceRow(v, sp, section, owner) : danglingRow(v, ref, section, owner);
   }
 
   // ---- mutations ----
@@ -253,7 +283,7 @@ const NAV = (() => {
   function togglePin(tid) {
     if (isPinned(tid)) state.pins = state.pins.filter(p => p.terminal !== tid);
     else state.pins.push({ terminal: tid, label: refName({ terminal: tid }) });
-    paint(); save();
+    paintAll(); save();
   }
 
   function removeRef(tid, section, owner) {
@@ -263,14 +293,14 @@ const NAV = (() => {
       const g = state.groups.find(x => x.id === owner);
       if (g) g.children = g.children.filter(c => c.terminal !== tid);
     }
-    paint(); save();
+    paintAll(); save();
   }
 
   function addToGroup(tid, gid) {
     const g = state.groups.find(x => x.id === gid);
     if (!g || g.children.some(c => c.terminal === tid)) return;
     g.children.push({ terminal: tid, label: refName({ terminal: tid }) });
-    paint(); save();
+    paintAll(); save();
   }
 
   function newGroup(firstMember) {
@@ -283,7 +313,7 @@ const NAV = (() => {
       id: gid, title: clean,
       children: firstMember ? [{ terminal: firstMember, label: refName({ terminal: firstMember }) }] : [],
     });
-    paint(); save();
+    paintAll(); save();
   }
 
   function renameGroup(gid) {
@@ -294,7 +324,7 @@ const NAV = (() => {
     const clean = title.trim();
     if (!clean) return;
     g.title = clean;
-    paint(); save();
+    paintAll(); save();
   }
 
   function deleteGroup(gid) {
@@ -303,7 +333,7 @@ const NAV = (() => {
     // Say what is actually being destroyed: the list, not the rooms.
     if (!confirm(t('nav.group.delete_confirm', { title: g.title }))) return;
     state.groups = state.groups.filter(x => x.id !== gid);
-    paint(); save();
+    paintAll(); save();
   }
 
   /** @param {string} listId @param {number} from @param {number} to */
@@ -312,7 +342,7 @@ const NAV = (() => {
     if (!list || from === to || from < 0 || from >= list.length) return;
     const [item] = list.splice(from, 1);
     list.splice(to > from ? to - 1 : to, 0, item);
-    paint(); save();
+    paintAll(); save();
   }
 
   function moveGroup(gid, delta) {
@@ -321,20 +351,20 @@ const NAV = (() => {
     if (i < 0 || j < 0 || j >= state.groups.length) return;
     const [g] = state.groups.splice(i, 1);
     state.groups.splice(j, 0, g);
-    paint(); save();
+    paintAll(); save();
   }
 
   function toggleSection(id) {
     state.collapsed = state.collapsed.includes(id)
       ? state.collapsed.filter(x => x !== id) : state.collapsed.concat(id);
-    paint(); save();
+    paintAll(); save();
   }
 
   function toggleGroup(gid) {
     const g = state.groups.find(x => x.id === gid);
     if (!g) return;
     g.collapsed = !g.collapsed;
-    paint(); save();
+    paintAll(); save();
   }
 
   /**
@@ -346,8 +376,16 @@ const NAV = (() => {
     const target = list === 'catalogs' ? state.catalogs : state.pins;
     if (target.some(r => r.terminal === tid)) return;
     target.push({ terminal: tid, label: label || refName({ terminal: tid }) });
-    paint();
+    paintAll();
     await save();
+  }
+
+  /** @param {View} v @param {string} tid */
+  function togglePick(v, tid) {
+    if (v.picked.has(tid)) v.picked.delete(tid);
+    else v.picked.add(tid);
+    paintView(v);
+    if (v.onPick) v.onPick();
   }
 
   /** Remember where things were sent, for the share picker (SHARE-0). */
@@ -382,7 +420,7 @@ const NAV = (() => {
       dragging = false; row.draggable = false;
       row.parentElement?.querySelectorAll('.drop-above')
         .forEach(n => n.classList.remove('drop-above'));
-      if (pendingPaint) { pendingPaint = false; paint(); }
+      if (pendingPaint) { pendingPaint = false; paintAll(); }
     });
     row.addEventListener('dragover', (e) => {
       e.preventDefault(); row.classList.add('drop-above');
@@ -417,7 +455,7 @@ const NAV = (() => {
   function closeMenus() {
     document.querySelectorAll('.nav-menu').forEach(n => n.remove());
     menuOpen = false;
-    if (pendingPaint) { pendingPaint = false; paint(); }
+    if (pendingPaint) { pendingPaint = false; paintAll(); }
   }
 
   /** @param {HTMLElement} anchor @param {{label:string,run:()=>void}[]} items */
@@ -471,24 +509,29 @@ const NAV = (() => {
 
   // ---- the static chrome, built ONCE ----
 
-  function mount(el) {
-    root = el;
-    root.innerHTML = '';
+  /**
+   * Build one view's chrome, ONCE. Nothing here is rebuilt by a paint: the
+   * search field keeps its text, caret and focus across every tick because
+   * it is never touched again.
+   * @param {View} v
+   */
+  function buildChrome(v) {
+    v.root.innerHTML = '';
     const search = document.createElement('input');
-    search.id = 'navSearch';
     search.className = 'nav-search';
     search.type = 'search';
     search.autocomplete = 'off';
-    search.placeholder = t('nav.search');
+    search.placeholder = v.select ? t('share.search') : t('nav.search');
+    if (!v.select) search.id = 'navSearch';
     // Filtering is synchronous over cached data. It must never wait on the
     // poll — especially once the shell's tick slows down.
-    search.oninput = () => { query = search.value.trim().toLowerCase(); paint(); };
+    search.oninput = () => { v.query = search.value.trim().toLowerCase(); paintView(v); };
     search.onkeydown = (e) => {
-      if (e.key === 'Escape') { search.value = ''; query = ''; paint(); search.blur(); }
+      if (e.key === 'Escape') { search.value = ''; v.query = ''; paintView(v); search.blur(); }
     };
-    root.appendChild(search);
+    v.root.appendChild(search);
 
-    for (const id of SECTIONS) {
+    for (const id of v.sections) {
       const sec = document.createElement('div');
       sec.className = 'nav-sec';
       sec.dataset.sec = id;
@@ -496,8 +539,8 @@ const NAV = (() => {
       head.className = 'nav-sec-head';
       head.innerHTML = `<span class="nav-caret">▾</span><span class="nav-sec-t"></span>` +
         `<span class="nav-count"></span>`;
-      head.onclick = () => toggleSection(id);
-      if (id === 'groups') {
+      head.onclick = () => { if (v.select) toggleLocal(v, id); else toggleSection(id); };
+      if (id === 'groups' && !v.select) {
         const add = document.createElement('button');
         add.className = 'nav-sec-add';
         add.textContent = '+';
@@ -507,8 +550,28 @@ const NAV = (() => {
       const body = document.createElement('div');
       body.className = 'nav-sec-body';
       sec.append(head, body);
-      root.appendChild(sec);
+      v.root.appendChild(sec);
     }
+    return search;
+  }
+
+  // A picker's collapse is a passing preference, not part of somebody's
+  // arrangement — so it lives on the view and is never persisted.
+  /** @param {View} v @param {string} id */
+  function toggleLocal(v, id) {
+    v.localCollapsed = v.localCollapsed || new Set();
+    if (v.localCollapsed.has(id)) v.localCollapsed.delete(id);
+    else v.localCollapsed.add(id);
+    paintView(v);
+  }
+
+  function mount(el) {
+    /** @type {View} */
+    const v = { root: el, sections: SIDEBAR_SECTIONS, select: false,
+      query: '', picked: new Set() };
+    views = views.filter(x => x.select);
+    views.unshift(v);
+    const search = buildChrome(v);
 
     // "/" focuses search from anywhere that is not already a text field.
     //
@@ -522,7 +585,31 @@ const NAV = (() => {
       e.preventDefault(); search.focus();
     });
 
-    load().then(paint);
+    load().then(paintAll);
+  }
+
+  /**
+   * Draw the Navigator somewhere else, in selection mode. The share picker
+   * is this and nothing more.
+   * @param {HTMLElement} el @param {()=>void} onPick
+   */
+  function mountPicker(el, onPick) {
+    /** @type {View} */
+    const v = { root: el, sections: PICKER_SECTIONS, select: true,
+      query: '', picked: new Set(), onPick };
+    views = views.filter(x => !x.select);
+    views.push(v);
+    const search = buildChrome(v);
+    paintView(v);
+    return {
+      view: v,
+      focus: () => search.focus(),
+      picked: () => Array.from(v.picked),
+      clear: () => { v.picked.clear(); paintView(v); },
+      // Drop the view AND its rows: a closed picker holding a stale list
+      // would flash it on the way back in.
+      destroy: () => { views = views.filter(x => x !== v); v.root.innerHTML = ''; },
+    };
   }
 
   // ---- painting ----
@@ -534,29 +621,37 @@ const NAV = (() => {
     spaces = nextSpaces || [];
     currentId = nextCurrent || '';
     if (busy()) { pendingPaint = true; return; }
-    paint();
+    paintAll();
   }
 
-  function paint() {
-    if (!root) return;
-    const q = query;
-    /** @type {Record<string, {rows:any[], note?:string}>} */
+  function paintAll() { for (const v of views) paintView(v); }
+
+  /** @param {View} v */
+  function paintView(v) {
+    if (!v.root) return;
+    const q = v.query;
+    // The AI is not a person and not an ordinary room, so it gets its own
+    // line rather than hiding among the spaces.
+    const ai = spaces.filter(s => s.ai && matches(s, q));
+    /** @type {Record<string, {rows:any[]}>} */
     const content = {
-      pinned: { rows: state.pins.filter(r => refMatches(r, q)).map(r => refRow(r, 'pinned', '')) },
+      recent: { rows: state.recent.filter(r => refMatches(r, q)).map(r => refRow(v, r, 'recent', '')) },
+      pinned: { rows: state.pins.filter(r => refMatches(r, q)).map(r => refRow(v, r, 'pinned', '')) },
       groups: { rows: [] },
-      spaces: { rows: spaces.filter(s => !s.dyad && matches(s, q)).map(s => spaceRow(s, 'spaces', '')) },
-      people: { rows: spaces.filter(s => s.dyad && matches(s, q)).map(s => spaceRow(s, 'people', '')) },
-      catalogs: { rows: state.catalogs.filter(r => refMatches(r, q)).map(r => catalogRow(r)) },
+      spaces: { rows: spaces.filter(s => !s.dyad && !s.ai && matches(s, q)).map(s => spaceRow(v, s, 'spaces', '')) },
+      people: { rows: spaces.filter(s => s.dyad && matches(s, q)).map(s => spaceRow(v, s, 'people', '')) },
+      ai: { rows: ai.map(s => spaceRow(v, s, 'ai', '')) },
+      catalogs: { rows: state.catalogs.filter(r => refMatches(r, q)).map(r => catalogRow(v, r)) },
     };
 
-    for (const id of SECTIONS) {
-      const sec = /** @type {HTMLElement} */(root.querySelector(`.nav-sec[data-sec="${id}"]`));
+    for (const id of v.sections) {
+      const sec = /** @type {HTMLElement} */(v.root.querySelector(`.nav-sec[data-sec="${id}"]`));
       const head = /** @type {HTMLElement} */(sec.querySelector('.nav-sec-head'));
       const body = /** @type {HTMLElement} */(sec.querySelector('.nav-sec-body'));
       /** @type {HTMLElement} */(head.querySelector('.nav-sec-t')).textContent = t('nav.sec.' + id);
 
-      if (id === 'groups') { paintGroups(body, q); }
-      else { paintSection(body, id, content[id].rows); }
+      if (id === 'groups') { paintGroups(v, body, q); }
+      else { reconcile(body, content[id].rows); }
 
       const n = id === 'groups' ? state.groups.length : content[id].rows.length;
       /** @type {HTMLElement} */(head.querySelector('.nav-count')).textContent = n ? String(n) : '';
@@ -565,20 +660,18 @@ const NAV = (() => {
       sec.classList.toggle('nav-empty', n === 0);
       // While searching, anything with a match opens — and the stored
       // collapse state is not touched, so clearing the query restores it.
-      const open = q ? n > 0 : !state.collapsed.includes(id);
+      const collapsed = v.select
+        ? (v.localCollapsed && v.localCollapsed.has(id))
+        : state.collapsed.includes(id);
+      const open = q ? n > 0 : !collapsed;
       sec.classList.toggle('nav-collapsed', !open);
     }
 
-    paintEmptyStates();
+    paintEmptyStates(v);
   }
 
-  /** @param {HTMLElement} body @param {string} id @param {any[]} rows */
-  function paintSection(body, id, rows) {
-    reconcile(body, rows);
-  }
-
-  /** @param {HTMLElement} body @param {string} q */
-  function paintGroups(body, q) {
+  /** @param {View} v @param {HTMLElement} body @param {string} q */
+  function paintGroups(v, body, q) {
     // Each group is its own titled sub-list with its own body, so a drag
     // inside one group cannot reorder another.
     const wanted = new Set(state.groups.map(g => 'grp:' + g.id));
@@ -604,6 +697,7 @@ const NAV = (() => {
       }
       /** @type {HTMLElement} */(box.querySelector('.nav-group-t')).textContent = g.title;
       const more = /** @type {HTMLElement} */(box.querySelector('.nav-more'));
+      more.hidden = v.select;
       more.onclick = (e) => {
         e.stopPropagation();
         openMenu(more, [
@@ -614,7 +708,7 @@ const NAV = (() => {
         ]);
       };
       const gbody = /** @type {HTMLElement} */(box.querySelector('.nav-group-body'));
-      const rows = g.children.filter(r => refMatches(r, q)).map(r => refRow(r, 'groups', g.id));
+      const rows = g.children.filter(r => refMatches(r, q)).map(r => refRow(v, r, 'groups', g.id));
       reconcile(gbody, rows);
       box.classList.toggle('nav-collapsed', q ? rows.length === 0 : !!g.collapsed);
       if (box === cursor) cursor = cursor.nextElementSibling;
@@ -622,23 +716,23 @@ const NAV = (() => {
     }
   }
 
-  function paintEmptyStates() {
-    if (!root) return;
+  /** @param {View} v */
+  function paintEmptyStates(v) {
+    if (!v.root) return;
     const note = (secId, text) => {
-      const body = /** @type {HTMLElement} */(root.querySelector(`.nav-sec[data-sec="${secId}"] .nav-sec-body`));
+      const body = /** @type {HTMLElement|null} */(
+        v.root.querySelector(`.nav-sec[data-sec="${secId}"] .nav-sec-body`));
+      if (!body) return;
       let n = /** @type {HTMLElement|null} */(body.querySelector('.nav-note'));
       if (!text) { if (n) n.remove(); return; }
       if (!n) { n = document.createElement('div'); n.className = 'nav-note'; body.appendChild(n); }
       n.textContent = text;
       body.appendChild(n); // keep it last
     };
-    if (query) {
-      const any = root.querySelectorAll('.nav-sec-body .space').length;
+    for (const id of v.sections) note(id, '');
+    if (v.query) {
+      const any = v.root.querySelectorAll('.nav-sec-body .space').length;
       note('spaces', any ? '' : t('nav.search.none'));
-      note('people', '');
-      note('pinned', '');
-      note('groups', '');
-      note('catalogs', '');
       return;
     }
     note('pinned', state.pins.length ? '' : t('nav.pinned.empty'));
@@ -646,10 +740,14 @@ const NAV = (() => {
     note('people', spaces.some(s => s.dyad) ? '' : t('nav.people.empty'));
     note('catalogs', state.catalogs.length ? '' : t('nav.catalogs.empty'));
     note('spaces', spaces.length ? '' : t('spaces.empty.body'));
+    note('recent', state.recent.length ? '' : t('share.recent.empty'));
+    // No assistant yet is a different sentence from an empty list: it is
+    // something a person can act on, and it says where to go.
+    note('ai', spaces.some(s => s.ai) ? '' : t('share.ai.empty'));
   }
 
   return {
-    mount, render, busy, addRef,
+    mount, mountPicker, render, busy, addRef,
     /** @type {(id:string)=>void} */
     onOpen: () => {},
     noteRecent,
