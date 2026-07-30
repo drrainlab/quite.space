@@ -105,6 +105,10 @@ func (a *APIServer) Handler() http.Handler {
 	mux.HandleFunc("POST /api/spaces/{id}/join", a.auth(a.handlePublicJoin))
 	mux.HandleFunc("POST /api/spaces/{id}/policy", a.auth(a.handleRevisePolicy))
 	mux.HandleFunc("POST /api/spaces/{id}/mirror", a.auth(a.handleSetMirror))
+	// The Navigator (NAV-0): how this device arranges what it already has.
+	// Whole-document PUT with a base version — see node/navigator.go.
+	mux.HandleFunc("GET /api/navigator", a.auth(a.handleNavigator))
+	mux.HandleFunc("PUT /api/navigator", a.auth(a.handleSetNavigator))
 	// The door: who is waiting, and the host's answer.
 	mux.HandleFunc("PUT /api/spaces/{id}/name", a.auth(a.handleSetLocalTitle))
 	mux.HandleFunc("GET /api/entry-requests", a.auth(a.handleEntryRequests))
@@ -320,7 +324,10 @@ type spaceResp struct {
 	// Display is the structured form: either a name somebody chose, or a
 	// key plus the people here, so the interface can say it in the
 	// reader's language rather than receiving English from Go.
-	Display       displayResp   `json:"display"`
+	Display displayResp `json:"display"`
+	// Dyad: exactly one other person here. The Navigator's People section
+	// reads THIS, never display.key — see node/display.go isDisplayDyad.
+	Dyad          bool          `json:"dyad,omitempty"`
 	Owned         bool          `json:"owned"`
 	Events        int           `json:"events"`
 	Messages      int           `json:"messages"`
@@ -349,6 +356,7 @@ func (a *APIServer) handleSpaces(w http.ResponseWriter, r *http.Request) {
 			ID: s.ID.Hex(), Title: s.Title, DisplayTitle: s.DisplayTitle, Owned: s.Owned,
 			Display: displayResp{Text: s.Display.Text, Key: s.Display.Key,
 				Names: s.Display.Names},
+			Dyad:   s.Dyad,
 			Events: s.Events, Messages: s.Messages,
 			Undecryptable: s.Undecryptable, Peers: s.Peers,
 		}

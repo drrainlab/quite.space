@@ -928,6 +928,11 @@ type SpaceInfo struct {
 	// either a name somebody chose or a projection the interface renders in
 	// the reader's own language (QL-3).
 	Display SpaceDisplay
+	// Dyad says this space holds exactly one other person, which is what
+	// the Navigator's People section means. It is computed STRUCTURALLY,
+	// never read off Display: a chosen name outranks the projection, so a
+	// rename would otherwise move somebody out of People (NAV-0).
+	Dyad bool
 	// DisplayTitle is what to put in a list, which is not always the title.
 	// A line between two people reads better as the other person's name than
 	// as "my line" — and it reads that way on BOTH sides, which a stored
@@ -952,12 +957,14 @@ func (r *Runtime) Spaces() []SpaceInfo {
 			// Reader replicas hold projection frames, not a canonical log.
 			events = n
 		}
+		cards := memberLikes(st.space)
 		out = append(out, SpaceInfo{
 			ID: tid, Title: meta.Title, Owned: meta.Owned,
 			Display: displayFor(spaceNaming{
 				Title: meta.Title, LocalTitle: meta.LocalTitle,
 				Unnamed: meta.Unnamed,
 			}, st.space, r.Principal.ID),
+			Dyad: isDisplayDyad(cards, r.Principal.ID),
 			Events:        events,
 			Messages:      len(st.space.State.Messages()),
 			Undecryptable: st.space.Undecryptable,

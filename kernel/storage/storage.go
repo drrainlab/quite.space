@@ -163,6 +163,9 @@ type Keystore struct {
 	// passes.go for why they live here rather than in a plain file.
 	Passes []PassRecord
 	Joins  []JoinRecord
+	// Navigator is how THIS DEVICE arranges what it already has: pins,
+	// groups, order, collapse. Links only — see navigator.go.
+	Navigator NavState
 }
 
 // PublicPublishState is the publisher-side durable projection counter.
@@ -262,10 +265,18 @@ const (
 	ksKeyPubPub    = 11 // PA-0 projection-publisher state (append-only, ADR-009)
 	ksKeyPasses    = 12 // QL-0 owner join-saga journal
 	ksKeyJoins     = 13 // QL-0 guest join-saga journal
+	ksKeyNavigator = 14 // NAV-0 device-local Navigator arrangement
 )
 
+// ksMapArity is how many top-level pairs encode() writes, and it MUST equal
+// the number of keys above. It used to be a bare literal inside encode(),
+// which is a poor place for a number that bricks every keystore when it is
+// wrong: too few and the trailing pair goes unread, so Done() fails and
+// nobody can open their data again. Named here, next to the keys it counts.
+const ksMapArity = 14
+
 func (k *Keystore) encode() []byte {
-	buf := codec.AppendMap(nil, 13)
+	buf := codec.AppendMap(nil, ksMapArity)
 	buf = codec.AppendUint(buf, ksKeyPrincipal)
 	buf = codec.AppendBytes(buf, k.PrincipalSeed)
 	buf = codec.AppendUint(buf, ksKeyDevice)
@@ -335,6 +346,8 @@ func (k *Keystore) encode() []byte {
 	buf = appendPassRecords(buf, k.Passes)
 	buf = codec.AppendUint(buf, ksKeyJoins)
 	buf = appendJoinRecords(buf, k.Joins)
+	buf = codec.AppendUint(buf, ksKeyNavigator)
+	buf = appendNavState(buf, k.Navigator)
 	return buf
 }
 
@@ -686,6 +699,8 @@ func decodeKeystore(data []byte) (*Keystore, error) {
 			k.Passes, er = readPassRecords(d)
 		case ksKeyJoins:
 			k.Joins, er = readJoinRecords(d)
+		case ksKeyNavigator:
+			k.Navigator, er = readNavState(d)
 		default:
 			er = d.SkipItem()
 		}

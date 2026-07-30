@@ -50,6 +50,55 @@ type memberLike struct {
 // more" rather than growing without limit.
 const maxShownNames = 3
 
+// peerCount is the one place the "who else is here" count is derived, so
+// the People section and the name projection can never disagree.
+//
+// Dedup is by CLAIMED principal, falling back to terminal identity when a
+// card claims none — a person carrying a laptop and a phone is one person.
+// The claim is self-declared (see the note on projectDisplay), so this is
+// admissible for DISPLAY and for nothing else: enforcement counts devices,
+// per the QL wave.
+func peerCount(cards []memberLike, me id.PrincipalID) (names []string, unnamed int) {
+	seenP := map[id.PrincipalID]bool{me: true}
+	var zero id.PrincipalID
+	for _, c := range cards {
+		if c.principal == zero {
+			// No principal claimed: the terminal is the only identity we
+			// have, and MemberCards already yields one card per terminal,
+			// so there is nothing to collapse.
+			if c.name == "" {
+				unnamed++
+			} else {
+				names = append(names, c.name)
+			}
+			continue
+		}
+		if seenP[c.principal] {
+			continue
+		}
+		seenP[c.principal] = true
+		if c.name == "" {
+			unnamed++
+			continue
+		}
+		names = append(names, c.name)
+	}
+	return names, unnamed
+}
+
+// isDisplayDyad answers "is this a conversation with exactly one other
+// person" — the People section's rule, and the ONLY correct source for it.
+//
+// It must not be inferred from SpaceDisplay.Key: displayFor puts a chosen
+// name ahead of the projection, so renaming your line with Anna to
+// "Anna - work" would silently move the row out of People and into Spaces.
+// Classification is structural; naming is presentation; they are not the
+// same question.
+func isDisplayDyad(cards []memberLike, me id.PrincipalID) bool {
+	names, unnamed := peerCount(cards, me)
+	return len(names)+unnamed == 1
+}
+
 // projectDisplay is the whole rule, in one place.
 //
 // Dedup is by PRINCIPAL, not terminal. MemberCards returns one card per
@@ -64,20 +113,7 @@ const maxShownNames = 3
 // cosmetically collapsed name — so this is fine for DISPLAY and would not
 // be fine for counting entrants. See the pass path, which counts devices.
 func projectDisplay(cards []memberLike, me id.PrincipalID) SpaceDisplay {
-	seen := map[id.PrincipalID]bool{me: true}
-	var names []string
-	unnamed := 0
-	for _, c := range cards {
-		if seen[c.principal] {
-			continue
-		}
-		seen[c.principal] = true
-		if c.name == "" {
-			unnamed++
-			continue
-		}
-		names = append(names, c.name)
-	}
+	names, unnamed := peerCount(cards, me)
 	switch {
 	case len(names) == 0 && unnamed == 0:
 		return SpaceDisplay{Key: "space.waiting"}
@@ -113,12 +149,21 @@ func displayFor(meta spaceNaming, sp *terminals.Space, me id.PrincipalID) SpaceD
 	if sp == nil {
 		return SpaceDisplay{Key: "space.waiting"}
 	}
+	return projectDisplay(memberLikes(sp), me)
+}
+
+// memberLikes narrows the member cards to what both the projection and the
+// dyad test need. Nil-safe: a space that is not open yet has nobody in it.
+func memberLikes(sp *terminals.Space) []memberLike {
+	if sp == nil {
+		return nil
+	}
 	raw := sp.MemberCards(uint64(time.Now().Unix()))
 	cards := make([]memberLike, 0, len(raw))
 	for _, c := range raw {
 		cards = append(cards, memberLike{principal: c.Principal, name: c.Name})
 	}
-	return projectDisplay(cards, me)
+	return cards
 }
 
 // spaceNaming is the naming slice of SpaceMeta, so displayFor can be tested
