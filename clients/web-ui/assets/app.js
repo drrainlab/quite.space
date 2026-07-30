@@ -529,7 +529,7 @@ async function refresh() {
     // settling on "relay", the text length changed, and the whole header
     // twitched in rhythm with the poll. A chip that reports a steady state
     // must not itself be unsteady.
-    let chipText, chipCls, pulseMs = 0;
+    let chipText, chipCls, pulseMs = 0, chipWhy = '';
     if (PROTOCOL) {
       const lan = status.lan;
       chipText = lan.listening ? `LAN :${lan.port} · ${lan.peers} peers` : 'LAN off';
@@ -554,6 +554,10 @@ async function refresh() {
           } else if (rs.active) {
             chipText = 'relay · issue';
             chipCls = 'conn-chip off';
+            // "issue" on its own is the kind of sentence this app keeps
+            // removing: it reports that something is wrong and gives no
+            // way to learn what. The relay already knows — carry it.
+            chipWhy = rs.last_error || '';
           }
         } catch (e) { /* relay status optional */ }
       }
@@ -563,10 +567,12 @@ async function refresh() {
     // One write, and only when something actually changed: a chip repainted
     // with identical content still restarts its CSS animation, which reads
     // as a stutter in the breathing.
-    if (connChipSig !== chipText + '|' + chipCls + '|' + pulseMs) {
-      connChipSig = chipText + '|' + chipCls + '|' + pulseMs;
+    if (connChipSig !== chipText + '|' + chipCls + '|' + pulseMs + '|' + chipWhy) {
+      connChipSig = chipText + '|' + chipCls + '|' + pulseMs + '|' + chipWhy;
       cText.textContent = chipText;
       conn.className = chipCls;
+      if (chipWhy) conn.title = chipWhy;
+      else conn.removeAttribute('title');
       if (pulseMs) conn.style.setProperty('--sync-pulse', pulseMs + 'ms');
       else conn.style.removeProperty('--sync-pulse');
     }
@@ -738,6 +744,15 @@ async function renderRelayPublicPanel() {
   box.innerHTML = '';
   try {
     const rs = await api('/api/relay/status');
+    // The last failure, in words, above the per-space rows. A hover title
+    // is not readable on a touch screen, and this is the one place an
+    // operator goes to ask "what is wrong with my relay".
+    if (rs.last_error) {
+      const bad = document.createElement('p');
+      bad.className = 'hint warn';
+      bad.textContent = 'last sync error: ' + rs.last_error;
+      box.appendChild(bad);
+    }
     const rows = rs.public || [];
     if (!rows.length) return;
     const h = document.createElement('p');
