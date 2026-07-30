@@ -579,6 +579,13 @@ func (a *APIServer) handleListPublications(w http.ResponseWriter, r *http.Reques
 				// step, and the client already knows how to read this one.
 				"atmosphere": atmosphereToJSON(p.Document.Atmosphere),
 			})
+			// A space-card's whole point is its target, and the list has no
+			// blocks — so a catalog level would need one extra fetch per row
+			// just to learn where each row goes. Carry it here instead
+			// (CAT-0a). Absent for every other kind, so nothing else grows.
+			if p.Document.Kind == "space" {
+				out[len(out)-1]["link"] = spaceCardTarget(p.Document)
+			}
 		}
 		return nil
 	}); err != nil {
@@ -586,6 +593,23 @@ func (a *APIServer) handleListPublications(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, map[string]any{"publications": out})
+}
+
+// spaceCardTarget reads a space-card's share link: the first link block's
+// text. One definition, so the list and the article cannot disagree.
+func spaceCardTarget(doc *publication.Document) string {
+	if doc == nil {
+		return ""
+	}
+	for _, b := range doc.Blocks {
+		if b.Type != "link" {
+			continue
+		}
+		if tp, err := publication.ParseTextProps(b.RawProps); err == nil && tp.Text != "" {
+			return tp.Text
+		}
+	}
+	return ""
 }
 
 func (a *APIServer) docIDParam(r *http.Request) ([16]byte, error) {

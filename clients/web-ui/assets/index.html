@@ -117,6 +117,16 @@
     </div>
     <input type="file" id="fileInput" style="display:none" onchange="onFilePicked(this.files[0])">
   </div>
+  <!-- A catalog is a place you look INSIDE, so it gets a screen with a
+       trail rather than opening as an ordinary room (CAT-0a). -->
+  <div id="catalogScreen" style="display:none">
+    <div class="sig-bar">
+      <button class="btn-plain" onclick="CAT.back()">← back</button>
+      <div id="catCrumbs" class="cat-crumbs"></div>
+    </div>
+    <div id="catNote" class="nav-note" hidden></div>
+    <div id="catList"></div>
+  </div>
   <!-- QuietRank: a cross-space inbox, not a fourth tab inside one space. -->
   <div id="signalsScreen" style="display:none">
     <div class="sig-bar">
@@ -914,6 +924,7 @@
 <script src="audiopass.js"></script>
 <script src="gateway.js"></script>
 <script src="navigator.js"></script>
+<script src="catalog.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

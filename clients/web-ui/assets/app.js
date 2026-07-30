@@ -793,19 +793,15 @@ async function openDiscover() {
     // A dead end used to live here: an alert naming a settings field, with
     // no way to act from where the person actually is. A catalog is just a
     // public space, so asking for its link is the whole of it.
-    const pasted = prompt(
-      'Open a catalog\n\nA catalog is an ordinary public space whose posts are ' +
-      'space-cards — anyone can run one. Paste a catalog link:');
+    const pasted = prompt(t('cat.paste'));
     if (!pasted || !pasted.trim()) return;
     localStorage.setItem('qp.catalog', pasted.trim());
     return openDiscover();
   }
-  try {
-    const r = await api('/api/public/open', { method: 'POST', body: JSON.stringify({ link }) });
-    current = r.id;
-    await refresh();
-    if (typeof switchView === 'function') switchView('posts');
-  } catch (e) { alert(e.message); }
+  // Discover and the Catalogs section are ONE loader and ONE renderer: a
+  // catalog is a place you look inside, and opening it as an ordinary room
+  // is the dead end this replaces (CAT-0a).
+  await CAT.openRoot(link, t('cat.root'));
 }
 
 // spaceCardLink extracts a space-card's target: the first link block's URL.
@@ -822,10 +818,10 @@ function spaceCardLink(doc) {
 // out relay traffic and tell the world which catalogs someone browses.
 // A card we know nothing about says exactly that.
 function spaceCardStatus(link) {
-  let share = (link || '').trim();
-  if (share.startsWith('qs:')) share = share.slice(3);
-  // A share link carries "space:<hex>"; match it against spaces we hold.
-  const m = /space:([0-9a-f]{8,})/i.exec(share);
+  // A share link is BASE64 of "<relay>\n space:<hex>" — this used to regex
+  // the encoded form for a plaintext id, so it never matched and every card
+  // read "not checked", including ones this node owns. Decode first.
+  const m = /space:([0-9a-f]{8,})/i.exec(decodeShare(link));
   if (!m) return { known: false, text: 'not checked' };
   const idHex = m[1].toLowerCase();
   const sp = (spacesCache || []).find((s) => s.id.toLowerCase().startsWith(idHex.slice(0, 16)));
@@ -836,6 +832,18 @@ function spaceCardStatus(link) {
   else if (sp.owned) bits.push('yours');
   else bits.push('opened before');
   return { known: true, text: bits.join(' · ') };
+}
+
+// decodeShare unwraps a "qs:" share link to the plain "<relay>\nspace:<hex>"
+// it carries. Tolerant on purpose: a card can hold anything, and a link we
+// cannot read is simply one we know nothing about.
+function decodeShare(link) {
+  let share = (link || '').trim();
+  if (share.startsWith('qs:')) share = share.slice(3);
+  try {
+    const b64 = share.replace(/-/g, '+').replace(/_/g, '/');
+    return atob(b64 + '='.repeat((4 - b64.length % 4) % 4));
+  } catch { return share; }
 }
 
 // openSpaceCard opens the space referenced by a space-card document: the

@@ -57,15 +57,25 @@ const NAV = (() => {
   // save() is optimistic: the local mutation has already painted, and this
   // only makes it durable. A 409 means another window moved first — the only
   // honest answer is to take their arrangement rather than clobber it.
-  async function save() {
-    try {
-      state = normalize(await api('/api/navigator',
-        { method: 'PUT', body: JSON.stringify(state) }));
-    } catch (err) {
-      if (String(err && err.message).includes('changed since')) await load();
-      else console.warn('navigator: ' + (err && err.message));
-    }
-    paint();
+  //
+  // Writes are SERIALISED through one chain. The base version exists to
+  // catch another window; it should never fire on this one, and it did:
+  // two clicks in quick succession sent two PUTs from the same version, the
+  // second lost the race and its change was thrown away with it. A queue is
+  // the fix — the guard stays for the case it is actually for.
+  let writing = Promise.resolve();
+  function save() {
+    writing = writing.then(async () => {
+      try {
+        state = normalize(await api('/api/navigator',
+          { method: 'PUT', body: JSON.stringify(state) }));
+      } catch (err) {
+        if (String(err && err.message).includes('changed since')) await load();
+        else console.warn('navigator: ' + (err && err.message));
+      }
+      paint();
+    });
+    return writing;
   }
 
   // ---- the reconciler ----
@@ -210,6 +220,26 @@ const NAV = (() => {
     };
   }
 
+  /**
+   * A saved catalog. It opens the WALKER rather than the space: a catalog
+   * is a place you look inside, and opening it as an ordinary room is the
+   * dead end this replaces.
+   * @param {NavRef} ref
+   */
+  function catalogRow(ref) {
+    const base = refRow(ref, 'catalogs', '');
+    return {
+      key: base.key, sig: base.sig + '|cat', build: () => {
+        const el = base.build();
+        el.onclick = (e) => {
+          if (/** @type {HTMLElement} */(e.target).closest('.nav-more')) return;
+          CAT.enter('', refName(ref), ref.terminal);
+        };
+        return el;
+      },
+    };
+  }
+
   /** @param {NavRef} ref @param {string} section @param {string} owner */
   function refRow(ref, section, owner) {
     const sp = spaceOf(ref.terminal);
@@ -305,6 +335,19 @@ const NAV = (() => {
     if (!g) return;
     g.collapsed = !g.collapsed;
     paint(); save();
+  }
+
+  /**
+   * Put a terminal into the panel. The one entry point for anything outside
+   * this file — the catalog walker uses it, and so will the share picker.
+   * @param {string} tid @param {string} label @param {'pins'|'catalogs'} list
+   */
+  async function addRef(tid, label, list) {
+    const target = list === 'catalogs' ? state.catalogs : state.pins;
+    if (target.some(r => r.terminal === tid)) return;
+    target.push({ terminal: tid, label: label || refName({ terminal: tid }) });
+    paint();
+    await save();
   }
 
   /** Remember where things were sent, for the share picker (SHARE-0). */
@@ -503,7 +546,7 @@ const NAV = (() => {
       groups: { rows: [] },
       spaces: { rows: spaces.filter(s => !s.dyad && matches(s, q)).map(s => spaceRow(s, 'spaces', '')) },
       people: { rows: spaces.filter(s => s.dyad && matches(s, q)).map(s => spaceRow(s, 'people', '')) },
-      catalogs: { rows: state.catalogs.filter(r => refMatches(r, q)).map(r => refRow(r, 'catalogs', '')) },
+      catalogs: { rows: state.catalogs.filter(r => refMatches(r, q)).map(r => catalogRow(r)) },
     };
 
     for (const id of SECTIONS) {
@@ -606,7 +649,7 @@ const NAV = (() => {
   }
 
   return {
-    mount, render, busy,
+    mount, render, busy, addRef,
     /** @type {(id:string)=>void} */
     onOpen: () => {},
     noteRecent,

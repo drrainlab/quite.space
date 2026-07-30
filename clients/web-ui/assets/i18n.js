@@ -74,6 +74,27 @@ const I18N = {
     'ai.thinking': 'Asked. Waiting for the provider…',
     'ai.failed': ({ why }) => `No answer: ${why}. Ask again when you like.`,
 
+    // Catalogs (CAT-0a). A catalog is a public space of space-cards, and
+    // every uncertainty about an entry is stated rather than guessed.
+    'cat.root': 'Catalog',
+    'cat.loading': 'Looking…',
+    'cat.empty': 'Nothing here yet.',
+    'cat.untitled': 'untitled',
+    'cat.look_inside': 'look inside',
+    'cat.open_space': 'open',
+    'cat.add': 'add to Navigator',
+    'cat.added': 'added',
+    'cat.claims_catalog': 'says: catalog',
+    // The whole rule in one tooltip: nothing but opening it can settle this.
+    'cat.claims_catalog_why':
+      'The author of this card says the target is a catalog. Nothing checked that — ' +
+      'looking inside is what settles it.',
+    'cat.cycle': ({ title }) =>
+      `"${title}" is already on the path you walked to get here. Use the trail above to go back to it.`,
+    'cat.unreachable': ({ why }) => `Could not open that: ${why}`,
+    'cat.paste': 'Open a catalog\n\nA catalog is an ordinary public space whose posts are ' +
+      'space-cards — anyone can run one. Paste a catalog link:',
+
     // conversation
     'conv.member': 'member',
     'conv.you': 'You',
