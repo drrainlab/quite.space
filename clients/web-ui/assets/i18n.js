@@ -29,6 +29,39 @@ const I18N = {
     'spaces.activity.events': ({ count }) => `${count} ${plural(count, 'moment', 'moments')}`,
     'spaces.unread': ({ count }) => `${count} new`,
 
+    // Navigator (NAV-1). Sections a person arranged, not a list we sorted.
+    'nav.search': 'Search',
+    'nav.sec.pinned': 'Pinned',
+    'nav.sec.groups': 'Groups',
+    'nav.sec.spaces': 'Spaces',
+    'nav.sec.people': 'People',
+    'nav.sec.catalogs': 'Catalogs',
+    'nav.more': 'more',
+    'nav.pin': 'Pin',
+    'nav.unpin': 'Unpin',
+    'nav.add_to': ({ title }) => `Add to ${title}`,
+    'nav.remove_from_group': 'Remove from this group',
+    'nav.remove': 'remove',
+    'nav.move_up': 'Move up',
+    'nav.move_down': 'Move down',
+    'nav.move_top': 'Move to top',
+    'nav.group.new': 'New group…',
+    'nav.group.name': 'Name this group',
+    'nav.group.rename': 'Rename…',
+    'nav.group.delete': 'Delete group',
+    // Say what is actually destroyed. A group is a list of links, so
+    // deleting one loses the list and nothing that was in it.
+    'nav.group.delete_confirm': ({ title }) =>
+      `Delete the group "${title}"? The spaces in it stay exactly where they are.`,
+    'nav.gone': 'not in this space any more',
+    'nav.pinned.empty': 'Pin what you come back to.',
+    'nav.groups.empty': 'Make a group to gather what belongs together.',
+    // Not "no people": say the rule, so the section is not a mystery.
+    'nav.people.empty': 'Somebody appears here when you share a space with exactly one other person.',
+    'nav.catalogs.empty': 'Catalogs you open will be listed here.',
+    // The boundary, stated where somebody hits it rather than in docs.
+    'nav.search.none': 'Nothing by that name. Navigator searches names, not what was said inside.',
+
     // conversation
     'conv.member': 'member',
     'conv.you': 'You',

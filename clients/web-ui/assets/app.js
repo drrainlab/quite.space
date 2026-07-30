@@ -586,39 +586,12 @@ async function refresh() {
       : (mesh.err ? `disconnected: ${mesh.err}` : 'not connected');
 
     spacesCache = await api('/api/spaces');
-    const box = document.getElementById('spaces');
-    box.innerHTML = '';
-    if (spacesCache.length === 0) {
-      const empty = document.createElement('div');
-      empty.className = 'empty-spaces';
-      empty.innerHTML = `<div class="et">${esc(t('spaces.empty.title'))}</div>` +
-        `<div class="eb">${esc(t('spaces.empty.body'))}</div>`;
-      box.appendChild(empty);
-    }
-    for (const s of spacesCache) {
-      const d = document.createElement('div');
-      d.className = 'space' + (s.id === current ? ' active' : '');
-      d.setAttribute('role', 'button');
-      d.tabIndex = 0;
-      // display_title, not title: an unnamed line reads as the other person
-      // on each side, which one shared title could never do. The node
-      // projects it; the real title is still what the space is called.
-      const title = spaceName(s);
-      const an = ARCHETYPES[s.character?.archetype]?.name || '';
-      const bits = [];
-      if (an) bits.push(esc(an));
-      bits.push(esc(t('spaces.activity.events', { count: s.events })));
-      if (s.undecryptable) bits.push(`<span class="undec">${s.undecryptable}✦</span>`);
-      d.innerHTML =
-        `<span class="space-av"><span class="glyph g24">${glyphSVG(s.id, 'space', 24)}</span></span>` +
-        `<span class="space-main"><span class="space-top">` +
-          `<span class="t">${esc(title)}</span>` +
-          (s.owned ? `<span class="owner-tag">${esc(t('spaces.owner'))}</span>` : '') +
-        `</span><span class="m">${bits.join(' · ')}</span></span>`;
-      d.onclick = () => { current = s.id; refresh(); };
-      d.onkeydown = (e) => { if (e.key === 'Enter') { current = s.id; refresh(); } };
-      box.appendChild(d);
-    }
+    // The sidebar is the Navigator's (NAV-1). It reconciles rather than
+    // rebuilding, so a poll never costs somebody their search text, their
+    // scroll position, an expanded group or a drag in progress.
+    NAV.render(spacesCache, current);
+    // Selection policy stays here: it belongs to the shell, not to the
+    // panel that draws the choices.
     if (!current && spacesCache.length) { current = spacesCache[0].id; }
     if (current) await refreshSpace();
   } catch (e) {
@@ -2991,6 +2964,8 @@ function checkPassDeepLink() {
   document.getElementById('joinPass').value = decodeURIComponent(m[1]);
 }
 
+NAV.mount(document.getElementById('nav'));
+NAV.onOpen = (id) => { current = id; refresh(); };
 checkOnboarding();
 checkPassDeepLink();
 refresh();
