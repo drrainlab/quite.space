@@ -108,18 +108,37 @@ func (s *Store) Fetch(hint string, now uint64, maxBytes int) [][]byte {
 
 // Collect hands over everything for a hint and forgets it (store-and-forward).
 func (s *Store) Collect(hint string, now uint64) [][]byte {
+	return s.CollectBudget(hint, now, 0)
+}
+
+// CollectBudget is Collect bounded by maxBytes (0 = unbounded). What does
+// not fit STAYS — a drain that cannot carry everything must not destroy the
+// remainder, or a byte cap would become a deletion tool. Oldest first, so a
+// bounded drain still makes forward progress across calls.
+func (s *Store) CollectBudget(hint string, now uint64, maxBytes int) [][]byte {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	items := s.items[hint]
-	delete(s.items, hint)
-	s.total -= len(items)
 	var out [][]byte
+	var kept []Item
+	total := 0
 	for _, it := range items {
 		if it.ExpiresAt != 0 && now >= it.ExpiresAt {
-			continue // expired in place; never delivered
+			continue // expired in place; never delivered, never kept
+		}
+		if maxBytes > 0 && total+len(it.Ciphertext) > maxBytes && len(out) > 0 {
+			kept = append(kept, it)
+			continue
 		}
 		out = append(out, it.Ciphertext)
+		total += len(it.Ciphertext)
 	}
+	if len(kept) == 0 {
+		delete(s.items, hint)
+	} else {
+		s.items[hint] = kept
+	}
+	s.total -= len(items) - len(kept)
 	return out
 }
 

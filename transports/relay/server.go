@@ -17,9 +17,19 @@ type ServerLimits struct {
 	MaxTTL       time.Duration
 	// PA-0 fetch bounds: hints per fetch request, bytes per fetch reply,
 	// fetches per connection per minute. Zero values take the defaults.
-	FetchMaxHints    int
-	FetchMaxBytes    int
-	FetchRatePerMin  int
+	FetchMaxHints   int
+	FetchMaxBytes   int
+	FetchRatePerMin int
+	// PH-0 drain and write bounds. Fetch was bounded from the start; Collect,
+	// Replace and Put were not — and every one of them is reachable by anyone
+	// who can COMPUTE a hint, which for a public space is anyone holding the
+	// link. Reads and writes keep separate budgets on purpose: a busy
+	// publisher must still be able to read, and a busy reader must still be
+	// able to publish. Zero values take the defaults.
+	CollectMaxHints   int
+	CollectMaxBytes   int
+	CollectRatePerMin int
+	WriteRatePerMin   int
 }
 
 // DefaultLimits are conservative community-node settings.
@@ -27,6 +37,8 @@ func DefaultLimits() ServerLimits {
 	return ServerLimits{
 		MaxItemBytes: 16 << 20, PerHint: 64, MaxTTL: 7 * 24 * time.Hour,
 		FetchMaxHints: 64, FetchMaxBytes: 8 << 20, FetchRatePerMin: 60,
+		CollectMaxHints: 64, CollectMaxBytes: 8 << 20, CollectRatePerMin: 60,
+		WriteRatePerMin: 240,
 	}
 }
 
@@ -49,6 +61,36 @@ func (l ServerLimits) fetchRatePerMin() int {
 		return 60
 	}
 	return l.FetchRatePerMin
+}
+
+func (l ServerLimits) collectMaxHints() int {
+	if l.CollectMaxHints <= 0 {
+		return 64
+	}
+	return l.CollectMaxHints
+}
+
+func (l ServerLimits) collectMaxBytes() int {
+	if l.CollectMaxBytes <= 0 {
+		return 8 << 20
+	}
+	return l.CollectMaxBytes
+}
+
+func (l ServerLimits) collectRatePerMin() int {
+	if l.CollectRatePerMin <= 0 {
+		return 60
+	}
+	return l.CollectRatePerMin
+}
+
+// writeRatePerMin covers Put and Replace together: they are the same
+// resource (someone else's mailbox) reached by two verbs.
+func (l ServerLimits) writeRatePerMin() int {
+	if l.WriteRatePerMin <= 0 {
+		return 240
+	}
+	return l.WriteRatePerMin
 }
 
 // Server is a running relay.
@@ -109,10 +151,29 @@ func (s *Server) WipeForTest(hint []byte) {
 	s.store.Collect(string(hint), 0)
 }
 
-// connState is per-connection abuse accounting (PA-0 fetch rate limit).
+// connState is per-connection abuse accounting: a sliding one-minute window
+// per resource class (PA-0 fetch; PH-0 collect and writes). Zero value is a
+// usable state — the windows start on first use.
 type connState struct {
 	fetches     int
 	fetchWindow time.Time
+
+	collects      int
+	collectWindow time.Time
+
+	writes      int
+	writeWindow time.Time
+}
+
+// spend counts one use in a one-minute window and reports whether the
+// caller is still inside its budget.
+func spend(count *int, window *time.Time, limit int) bool {
+	now := time.Now()
+	if window.IsZero() || now.Sub(*window) > time.Minute {
+		*window, *count = now, 0
+	}
+	*count++
+	return *count <= limit
 }
 
 func (s *Server) serve(c *lan.Conn) {
@@ -154,6 +215,9 @@ func (s *Server) handle(m *Msg, cs *connState) *Msg {
 		if len(m.Hint) != HintLen || len(m.Body) == 0 {
 			return &Msg{Type: msgError, Reason: "malformed put"}
 		}
+		if !spend(&cs.writes, &cs.writeWindow, s.limits.writeRatePerMin()) {
+			return &Msg{Type: msgError, Reason: "rate limited"}
+		}
 		expires := m.Expires
 		maxExpiry := now + uint64(s.limits.MaxTTL/time.Second)
 		if expires == 0 || expires > maxExpiry {
@@ -171,9 +235,26 @@ func (s *Server) handle(m *Msg, cs *connState) *Msg {
 		// (ADR-008): the expiry is echoed so the sender knows the deadline.
 		return &Msg{Type: msgPutOK, Expires: expires}
 	case msgCollect:
+		// Draining is destructive, so it gets the same shape of bounds Fetch
+		// has had since PA-0: rate, hint count, reply bytes. Without the byte
+		// budget one collect could be asked to move the entire store.
+		if !spend(&cs.collects, &cs.collectWindow, s.limits.collectRatePerMin()) {
+			return &Msg{Type: msgError, Reason: "rate limited"}
+		}
+		if len(m.Hints) > s.limits.collectMaxHints() {
+			return &Msg{Type: msgError, Reason: "too many hints"}
+		}
+		budget := s.limits.collectMaxBytes()
 		var items [][]byte
 		for _, h := range m.Hints {
-			items = append(items, s.store.Collect(string(h), now)...)
+			got := s.store.CollectBudget(string(h), now, budget)
+			for _, it := range got {
+				budget -= len(it)
+			}
+			items = append(items, got...)
+			if budget <= 0 {
+				break
+			}
 		}
 		if items == nil {
 			items = [][]byte{}
@@ -186,6 +267,9 @@ func (s *Server) handle(m *Msg, cs *connState) *Msg {
 	case msgReplace:
 		if len(m.Hint) != HintLen || len(m.Body) == 0 {
 			return &Msg{Type: msgError, Reason: "malformed replace"}
+		}
+		if !spend(&cs.writes, &cs.writeWindow, s.limits.writeRatePerMin()) {
+			return &Msg{Type: msgError, Reason: "rate limited"}
 		}
 		expires := m.Expires
 		maxExpiry := now + uint64(s.limits.MaxTTL/time.Second)

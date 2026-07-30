@@ -6,7 +6,9 @@
 package terminals_test
 
 import (
+	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -224,5 +226,37 @@ func TestProjectionRefusals(t *testing.T) {
 	other := terminals.Replica(id.TerminalID{42})
 	if _, err := other.InstallPublicProjection(env); err == nil {
 		t.Fatal("projection installed into the wrong space")
+	}
+}
+
+// PH-0: the wire ceiling is not negotiable. A caller may ask for a larger
+// soft budget — the DEFAULT was 6 MiB for months — but the envelope travels
+// as one CBOR byte string the relay reads under a 1 MiB item cap, so an
+// oversize projection used to be handed over and silently dropped, leaving
+// the publisher with a timeout and no explanation. It must be a sentence.
+func TestOversizeProjectionIsNamedNotSilent(t *testing.T) {
+	s, owner := buildPublicSpace(t, 4)
+	base := uint64(time.Now().Unix())
+	body := strings.Repeat("x", (16<<10)-16) // just under MaxTextLen
+	for i := range 80 {
+		if _, err := human.Say(owner, s, fmt.Sprintf("%d %s", i, body),
+			human.SayOptions{}, base+uint64(i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	lim := terminals.DefaultProjectionLimits()
+	lim.MaxBytes = 100 << 20 // a caller who trusts a soft limit too far
+	_, _, err := s.BuildPublicProjection(1, owner.Device.ID, base, lim)
+	if err == nil {
+		t.Fatal("an oversize projection was built without complaint")
+	}
+	if !errors.Is(err, terminals.ErrProjectionTooLarge) {
+		t.Fatalf("wrong error, a publisher cannot act on this: %v", err)
+	}
+	// And with the real defaults the same space publishes fine: aging is
+	// what keeps it under the ceiling.
+	if _, _, err := s.BuildPublicProjection(1, owner.Device.ID, base,
+		terminals.DefaultProjectionLimits()); err != nil {
+		t.Fatalf("default limits must still produce a publishable projection: %v", err)
 	}
 }

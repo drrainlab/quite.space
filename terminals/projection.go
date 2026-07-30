@@ -14,6 +14,7 @@ package terminals
 
 import (
 	"errors"
+	"fmt"
 	"sort"
 	"time"
 
@@ -39,9 +40,27 @@ type PublicProjectionLimits struct {
 	Exclude func(env *signal.Envelope, eid id.EventID) bool
 }
 
+// MaxProjectionBytes is the real ceiling, and it is not a taste question.
+// The envelope travels as ONE CBOR byte string inside a relay message, and
+// codec.MaxItemLen bounds any single string at 1 MiB on the READ side. A
+// larger projection encodes fine, then the relay's DecodeMsg rejects the
+// packet and drops it silently — the publisher sees a timeout and no space
+// ever says why it stopped publishing. 768 KiB matches the item budget the
+// media path already uses and leaves room for message framing.
+const MaxProjectionBytes = 768 << 10
+
+// ErrProjectionTooLarge means the space cannot be published as one bounded
+// snapshot: even after aging out every prunable frame, the structural
+// remainder does not fit. Callers should surface it verbatim — it is a real
+// state of the space, not a transient failure.
+var ErrProjectionTooLarge = errors.New(
+	"terminals: public projection exceeds the relay item limit")
+
 // DefaultProjectionLimits fit comfortably under the relay item cap.
 func DefaultProjectionLimits() PublicProjectionLimits {
-	return PublicProjectionLimits{MaxFrames: 2000, MaxBytes: 6 << 20, MaxAge: 30 * 24 * time.Hour}
+	return PublicProjectionLimits{
+		MaxFrames: 2000, MaxBytes: MaxProjectionBytes, MaxAge: 30 * 24 * time.Hour,
+	}
 }
 
 // prunable reports whether a schema is an "ordinary feed entry" the bounds
@@ -183,6 +202,15 @@ func (s *Space) BuildPublicProjection(seq uint64, publisher id.DeviceID,
 	wire, err := env.Sign(s.priv)
 	if err != nil {
 		return nil, [32]byte{}, err
+	}
+	// The last word on size, because MaxBytes cannot be it: aging only drops
+	// PRUNABLE frames, and a space can hold more unprunable content
+	// (publications, apps, keeps, membership) than one envelope may carry.
+	// Say so here rather than handing the relay a packet it will silently
+	// drop — a publisher deserves a sentence, not a timeout.
+	if len(wire) > MaxProjectionBytes {
+		return nil, [32]byte{}, fmt.Errorf("%w: %d bytes over a %d limit",
+			ErrProjectionTooLarge, len(wire), MaxProjectionBytes)
 	}
 	return wire, env.ContentDigest(), nil
 }
