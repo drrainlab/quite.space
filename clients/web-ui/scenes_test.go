@@ -202,3 +202,24 @@ func TestSceneFramesStayUnderTheFlashThreshold(t *testing.T) {
 	}
 	t.Logf("%s", out)
 }
+
+// PH-4: what a reader is told when media does not arrive. This asserts
+// sentences rather than mechanics on purpose — "failed" and "no online
+// source" describe the same bytes and mean opposite things to a person, and
+// only one of them is true. The hash-mismatch case must stay the exception:
+// those bytes really are wrong and waiting will not fix them.
+func TestMediaAvailabilityWording(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not available")
+	}
+	script := filepath.Join("..", "..", "scripts", "availability", "wording.cjs")
+	if _, err := os.Stat(script); err != nil {
+		t.Fatalf("the wording harness is missing: %v", err)
+	}
+	out, err := exec.Command(node, script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wording contract violated: %v\n%s", err, out)
+	}
+	t.Logf("%s", out)
+}

@@ -37,6 +37,13 @@ const (
 	ReasonStorageLimit FetchReason = "storage_limit"
 	ReasonUnsupported  FetchReason = "unsupported_manifest"
 	ReasonNoPeers      FetchReason = "no_peers"
+	// ReasonNoSource: a relay IS configured, the want WAS published, and no
+	// byte ever came back. Distinct from a timeout, which means bytes were
+	// moving and then stopped, and from no_peers, which means this node was
+	// never asking anyone. To a person these are three different sentences —
+	// "nobody online has this", "the transfer stalled", "you are offline" —
+	// and only the middle one used to exist.
+	ReasonNoSource FetchReason = "no_source"
 	// ReasonCancelled: the node is shutting down. Distinct from a timeout,
 	// because nothing was wrong with the fetch — we stopped waiting.
 	ReasonCancelled FetchReason = "cancelled"
@@ -69,6 +76,9 @@ type FetchStatus struct {
 	Available int
 	Total     int
 	SizeBytes uint64
+	// Waiting is how long this fetch has been asking with nothing to show
+	// for it. The UI uses it to stop claiming progress it cannot see.
+	Waiting time.Duration
 }
 
 type assetIndex struct {
@@ -85,6 +95,10 @@ type assetIndex struct {
 	// fetching marks assets with an active coordinator goroutine.
 	fetching map[AssetKey]bool
 	failed   map[AssetKey]FetchReason
+	// silent records when a still-running fetch first found nobody. It is a
+	// provisional state, not a verdict: the loop keeps asking, and any byte
+	// that arrives clears the entry.
+	silent map[AssetKey]time.Time
 }
 
 func newAssetIndex() *assetIndex {
@@ -95,6 +109,7 @@ func newAssetIndex() *assetIndex {
 		refOrder:      map[id.TerminalID][]AssetKey{},
 		fetching:      map[AssetKey]bool{},
 		failed:        map[AssetKey]FetchReason{},
+		silent:        map[AssetKey]time.Time{},
 	}
 }
 
@@ -161,10 +176,28 @@ func (r *Runtime) onBlockEvent(space id.TerminalID) func(env *signal.Envelope, e
 }
 
 // onBlobStored reindexes chunks when a fetched manifest arrives.
+// clearFetchSilence forgets a provisional "no source" the moment anything
+// arrives: a late answer must not leave a stale sentence on screen.
+func (r *Runtime) clearFetchSilence(key AssetKey) {
+	delete(r.assetIdx.silent, key)
+}
+
 func (r *Runtime) onBlobStored(h id.Hash) {
 	if key, ok := r.assetIdx.manifestOwner[h]; ok {
 		if ref, ok := r.assetIdx.refs[key]; ok {
 			r.indexManifestChunks(key.Space, ref)
+		}
+		r.clearFetchSilence(key)
+	}
+	// Any chunk arriving is proof someone is answering: a fetch that had
+	// been reported sourceless is simply in progress again.
+	for key, ref := range r.assetIdx.refs {
+		if ref.ManifestWireID != nil && *ref.ManifestWireID == h {
+			r.clearFetchSilence(key)
+			continue
+		}
+		if _, ok := r.assetIdx.silent[key]; ok {
+			r.clearFetchSilence(key)
 		}
 	}
 }
@@ -225,6 +258,13 @@ func (r *Runtime) assetStatusLocked(key AssetKey) (FetchStatus, error) {
 		out.State = assets.StateFailed
 		out.Reason = reason
 	}
+	// A fetch still running but finding nobody reports the truth NOW, while
+	// staying in the fetching state — it has not given up, so calling it
+	// failed would be a lie in the other direction.
+	if since, ok := r.assetIdx.silent[key]; ok && out.State == assets.StateFetching {
+		out.Reason = ReasonNoSource
+		out.Waiting = time.Since(since)
+	}
 	return out, nil
 }
 
@@ -273,6 +313,11 @@ func (r *Runtime) fetchLoop(key AssetKey, ref *schemas.AssetRef, st *spaceState)
 	relayAddr := r.GetSettings().Relay
 	// Track hashes we asked for over the relay so we can stop asking on exit.
 	registered := map[id.Hash]struct{}{}
+	// Progress is what separates a stall from a silence: if a single byte
+	// ever arrived, someone answered us and the fetch is merely incomplete.
+	started := time.Now()
+	progressed := false
+	lastMissing := -1
 	defer func() {
 		if len(registered) == 0 {
 			return
@@ -295,6 +340,10 @@ func (r *Runtime) fetchLoop(key AssetKey, ref *schemas.AssetRef, st *spaceState)
 			want = []id.Hash{*ref.ManifestWireID}
 		} else if len(res.MissingChunks) > 0 {
 			want = res.MissingChunks
+			if lastMissing >= 0 && len(want) < lastMissing {
+				progressed = true
+			}
+			lastMissing = len(want)
 		} else {
 			r.mu.Unlock()
 			return ReasonNone // complete
@@ -329,6 +378,13 @@ func (r *Runtime) fetchLoop(key AssetKey, ref *schemas.AssetRef, st *spaceState)
 			}
 			r.addRelayWants(key.Space, want)
 			registered = wantSet
+			// Report a provisional verdict long before the deadline. The
+			// fetch keeps running — a holder may still come online — but a
+			// person staring at a spinner deserves a true sentence within
+			// seconds rather than two silent minutes.
+			if !progressed && time.Since(started) > noSourceAfter {
+				r.noteFetchSilence(key)
+			}
 			if !r.sleepOrStop(600 * time.Millisecond) {
 				return ReasonCancelled
 			}
@@ -367,7 +423,31 @@ func (r *Runtime) fetchLoop(key AssetKey, ref *schemas.AssetRef, st *spaceState)
 			_ = start
 		}
 	}
+	// Nothing ever arrived: this was silence, not a stall.
+	if !progressed {
+		return ReasonNoSource
+	}
 	return ReasonTimeout
+}
+
+// noSourceAfter is how long a fetch may find nothing before the interface
+// is allowed to say so. Short enough that a person is not left guessing,
+// long enough that an ordinary relay round trip is not called a failure.
+const noSourceAfter = 20 * time.Second
+
+// noteFetchSilence records a provisional "no source" WITHOUT ending the
+// fetch: the loop keeps asking, and a late answer clears it. Saying "not
+// available right now" and being wrong a moment later is honest; saying
+// nothing for two minutes is not.
+func (r *Runtime) noteFetchSilence(key AssetKey) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.assetIdx.failed == nil {
+		r.assetIdx.failed = map[AssetKey]FetchReason{}
+	}
+	if _, ended := r.assetIdx.failed[key]; !ended {
+		r.assetIdx.silent[key] = time.Now()
+	}
 }
 
 // assetRefsLocked lists the asset ids indexed for one space. Caller holds

@@ -311,6 +311,26 @@
     cursor: pointer; display: block; margin-top: 4px; }
   .entry .asset-note { font-size: 11px; color: var(--dim); cursor: pointer; }
   .entry .asset-note:hover { color: var(--acc); }
+  /* An absent file is not an error. It reads in the ordinary dim voice —
+     no red, no warning glyph — because nothing is wrong: nobody who has
+     the bytes is online at this moment. */
+  .asset-unavailable {
+    font-size: 11px; color: var(--dim); cursor: default;
+    font-family: var(--font-mono);
+  }
+  .asset-unavailable:hover { color: var(--dim); }
+  .media-unavailable {
+    padding: 10px 12px; margin: 6px 0;
+    border: 1px dashed var(--line); border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--bg) 92%, transparent);
+  }
+  .asset-retry {
+    margin-left: 8px; padding: 1px 8px; font-size: 11px;
+    font-family: var(--font-mono); cursor: pointer;
+    color: var(--acc); background: none;
+    border: 1px solid var(--line); border-radius: var(--radius-sm);
+  }
+  .asset-retry:hover { border-color: var(--acc); }
   .entry .filecard, .entry .linkcard {
     border: 1px solid var(--line); border-radius: 4px; padding: 8px 10px;
     margin-top: 4px; display: inline-block; max-width: 360px; }

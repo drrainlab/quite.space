@@ -1850,6 +1850,26 @@ function textNode(cls, s) {
   return el;
 }
 
+// The sentence a reader sees when a file has no online holder. It says
+// "right now" in every word it can: nothing here is deleted, gone, or
+// broken — the only true statement is that nobody is currently answering.
+const UNAVAILABLE_TEXT = 'media temporarily unavailable — no online source';
+
+function retryLink(assetId) {
+  const b = document.createElement('button');
+  b.className = 'asset-retry';
+  b.textContent = 'try again';
+  b.onclick = async (ev) => {
+    ev.stopPropagation();
+    b.textContent = 'asking…';
+    try {
+      await api(`/api/spaces/${current}/assets/${assetId}/fetch`, { method: 'POST' });
+    } catch (_) { /* the note already says what is true */ }
+    refreshSpace();
+  };
+  return b;
+}
+
 function assetNote(e) {
   const a = e.asset;
   const n = document.createElement('div');
@@ -1858,9 +1878,26 @@ function assetNote(e) {
   if (a.state === 'complete') {
     n.textContent = `⬇ open original · ${fmtBytes(a.size)}`;
     n.onclick = () => window.open(`/api/spaces/${current}/assets/${a.id}?token=${token}`, '_blank');
+  } else if (a.state === 'fetching' && a.reason === 'no_source') {
+    // Still asking, but nobody online is answering. Say that, rather than
+    // animating a progress bar that is not progressing.
+    n.className = 'asset-note asset-unavailable';
+    n.textContent = UNAVAILABLE_TEXT;
+    n.appendChild(retryLink(a.id));
   } else if (a.state === 'fetching') {
     n.textContent = `fetching… ${a.total - a.missing}/${a.total}`;
     n.appendChild(makeWaterfall());
+  } else if (a.state === 'failed' && a.reason === 'integrity_error') {
+    // The one terminal failure here, and it must not be dressed up as a
+    // network problem: these bytes did not match their hash, so they are
+    // not the file they claim to be and no amount of waiting fixes that.
+    n.className = 'asset-note asset-unavailable';
+    n.textContent = 'this file did not match its hash — not shown';
+  } else if (a.state === 'failed' &&
+             (a.reason === 'no_source' || a.reason === 'no_peers')) {
+    n.className = 'asset-note asset-unavailable';
+    n.textContent = UNAVAILABLE_TEXT;
+    n.appendChild(retryLink(a.id));
   } else {
     n.textContent = `⬇ fetch original · ${fmtBytes(a.size)} · not local yet`;
     n.onclick = async () => {
@@ -1883,27 +1920,36 @@ const _mediaObserver = ('IntersectionObserver' in window)
         if (!ent.isIntersecting) continue;
         _mediaObserver.unobserve(ent.target);
         const m = ent.target._autoMedia;
-        if (m) autoFetchAsset(m.assetId, m.onReady);
+        if (m) autoFetchAsset(m.assetId, m.onReady, m.onUnavailable);
       }
     }, { rootMargin: '300px' })
   : null;
 
-function observeMedia(el, assetId, onReady) {
+function observeMedia(el, assetId, onReady, onUnavailable) {
   if (!assetId) return;
-  el._autoMedia = { assetId, onReady };
+  el._autoMedia = { assetId, onReady, onUnavailable };
   if (_mediaObserver) _mediaObserver.observe(el);
-  else autoFetchAsset(assetId, onReady); // no observer support: fetch eagerly
+  else autoFetchAsset(assetId, onReady, onUnavailable); // no observer: fetch eagerly
 }
 
 // autoFetchAsset drives the relay fetch to completion, polling the idempotent
 // /fetch endpoint (RequestAsset dedups in-flight). Bails if the user navigates.
-async function autoFetchAsset(assetId, onReady) {
+async function autoFetchAsset(assetId, onReady, onUnavailable) {
   const sp = current;
+  let toldUnavailable = false;
   try {
     for (let i = 0; i < 90; i++) {
       const r = await api(`/api/spaces/${sp}/assets/${assetId}/fetch`, { method: 'POST' });
       if (r.state === 'complete') { onReady && onReady(); return; }
-      if (r.state === 'failed') return;
+      if (r.state === 'failed') { onUnavailable && onUnavailable(r.reason); return; }
+      // The node reports "no source" while still asking. Surface it the
+      // first time it says so — a person should not have to wait out the
+      // whole deadline to learn that nobody is answering — and keep polling,
+      // because a holder may still come online.
+      if (r.reason === 'no_source' && !toldUnavailable) {
+        toldUnavailable = true;
+        onUnavailable && onUnavailable(r.reason);
+      }
       await new Promise((res) => setTimeout(res, 1200));
       if (current !== sp) return; // moved to another space; stop
     }
@@ -1917,15 +1963,33 @@ async function autoFetchAsset(assetId, onReady) {
 function assetURL(assetId) {
   return `/api/spaces/${current}/assets/${assetId}?token=${token}`;
 }
+// A media element whose bytes never arrive renders as nothing at all — an
+// empty rectangle that looks like a layout bug rather than an absence. When
+// there is no online source, put the sentence where the picture would be.
+function markUnavailable(el, reason) {
+  if (!el || el._qsUnavailable) return;
+  el._qsUnavailable = true;
+  const note = document.createElement('div');
+  note.className = 'asset-unavailable media-unavailable';
+  note.textContent = reason === 'integrity_error'
+    ? 'this file did not match its hash — not shown'
+    : UNAVAILABLE_TEXT;
+  if (el.parentNode) el.parentNode.insertBefore(note, el.nextSibling);
+}
+
 function autoMediaSrc(el, assetId) {
   const base = assetURL(assetId);
   el.src = base;
-  observeMedia(el, assetId, () => { el.src = base + '&v=' + Date.now(); });
+  observeMedia(el, assetId,
+    () => { el.src = base + '&v=' + Date.now(); },
+    (reason) => markUnavailable(el, reason));
 }
 function autoMediaBg(el, assetId) {
   const base = assetURL(assetId);
   el.style.backgroundImage = `url("${base}")`;
-  observeMedia(el, assetId, () => { el.style.backgroundImage = `url("${base}&v=${Date.now()}")`; });
+  observeMedia(el, assetId,
+    () => { el.style.backgroundImage = `url("${base}&v=${Date.now()}")`; },
+    (reason) => markUnavailable(el, reason));
 }
 
 // makeWaterfall: a tiny ASCII "waterfall" with a flowing gradient, to sit next

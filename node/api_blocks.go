@@ -294,7 +294,11 @@ func (a *APIServer) handleFetchAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	st, _ := a.rt.AssetStatus(tid, aid)
-	writeJSON(w, map[string]any{"state": st.State, "missing": st.Missing, "total": st.Total})
+	// The reason travels with the state: without it the client can only
+	// spin, and a spinner that never resolves is the interface lying by
+	// omission.
+	writeJSON(w, map[string]any{"state": st.State, "missing": st.Missing,
+		"total": st.Total, "reason": st.Reason})
 }
 
 // ---- Entries feed ----
