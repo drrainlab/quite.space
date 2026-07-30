@@ -9,28 +9,45 @@ import (
 	"github.com/drrainlab/quiet_places/terminals"
 )
 
-// originOf reads the provenance off the newest message in a space.
+// Both helpers read through withSpace, which takes r.mu — the SAME lock
+// the relay sync goroutine holds while it applies incoming frames.
+//
+// They used to reach past it via spaceForTest and read State.Entries()
+// directly. That is fine in a single-runtime test where nothing else is
+// writing, and it is a data race the moment a real relay sync is running:
+// the wave's end-to-end test found exactly that. A test helper that reads
+// shared state has the same obligations as the code it is testing.
+
+// originOf reads the provenance off the newest quotation in a space.
 func originOf(t *testing.T, rt *Runtime, tid id.TerminalID) (*schemas.ShareOrigin, string) {
 	t.Helper()
-	sp, _ := rt.spaceForTest(tid)
-	entries := sp.State.Entries()
-	for i := len(entries) - 1; i >= 0; i-- {
-		if c := entries[i].Content.Text; c != nil && c.Origin != nil {
-			return c.Origin, c.Text
+	var origin *schemas.ShareOrigin
+	var text string
+	_ = rt.withSpace(tid, func(st *spaceState) error {
+		entries := st.space.State.Entries()
+		for i := len(entries) - 1; i >= 0; i-- {
+			if c := entries[i].Content.Text; c != nil && c.Origin != nil {
+				cp := *c.Origin
+				origin, text = &cp, c.Text
+				return nil
+			}
 		}
-	}
-	return nil, ""
+		return nil
+	})
+	return origin, text
 }
 
 func textsOf(t *testing.T, rt *Runtime, tid id.TerminalID) []string {
 	t.Helper()
-	sp, _ := rt.spaceForTest(tid)
 	var out []string
-	for _, e := range sp.State.Entries() {
-		if e.Content.Text != nil {
-			out = append(out, e.Content.Text.Text)
+	_ = rt.withSpace(tid, func(st *spaceState) error {
+		for _, e := range st.space.State.Entries() {
+			if e.Content.Text != nil {
+				out = append(out, e.Content.Text.Text)
+			}
 		}
-	}
+		return nil
+	})
 	return out
 }
 
