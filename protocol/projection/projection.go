@@ -31,7 +31,15 @@ import (
 
 // FormatVersion gates the checkpoint wire contract (NOT any internal
 // struct layout).
-const FormatVersion = 1
+//
+// v2 (PH-2) adds IngressHints. Note that this envelope is NOT
+// must-ignore-safe like the rest of the protocol: Verify reconstructs the
+// signed body by RE-ENCODING the decoded struct, so a v1 reader handed a v2
+// envelope would drop the unknown key, re-encode a shorter body, and report
+// "invalid space signature" — a security-shaped error for what is only a
+// version skew. The version check below turns that into an honest sentence
+// instead. Adding a signed field therefore always costs a version bump.
+const FormatVersion = 2
 
 // magic distinguishes projection envelopes from bundles and CBOR frames.
 const magic = "QPP1"
@@ -58,7 +66,14 @@ type Envelope struct {
 	CutPoints       []CutPoint
 	Frames          [][]byte // dependency-closed, deterministic order
 	AssetManifests  [][]byte // asset manifest blobs (media bytes NEVER ride)
-	Signature       []byte
+	// IngressHints (v2) are the mailbox addresses contributors and readers
+	// push to — 8 shards across the current and next bucket. Publishing them
+	// is what lets the owner keep the DRAIN capability private (PH-1): the
+	// address is public, the key to empty it is not. They are inside the
+	// signed body and the content digest on purpose — an uncommitted hint is
+	// a squatter's invitation to redirect a space's contributions.
+	IngressHints [][]byte
+	Signature    []byte
 }
 
 // Envelope key table v1 (append-only, ADR-009).
@@ -75,11 +90,15 @@ const (
 	keyFrames    = 10
 	keyAssets    = 11
 	keySignature = 12
+	keyIngress   = 13 // v2
 )
 
 func (e *Envelope) encodeBody(withSig bool) []byte {
 	n := 10
 	if len(e.AssetManifests) > 0 {
+		n++
+	}
+	if len(e.IngressHints) > 0 {
 		n++
 	}
 	if withSig {
@@ -127,6 +146,15 @@ func (e *Envelope) encodeBody(withSig bool) []byte {
 		buf = codec.AppendUint(buf, keySignature)
 		buf = codec.AppendBytes(buf, e.Signature)
 	}
+	// Key 13 comes after key 12: canonical CBOR demands strictly ascending
+	// map keys, and the decoder enforces it.
+	if len(e.IngressHints) > 0 {
+		buf = codec.AppendUint(buf, keyIngress)
+		buf = codec.AppendArray(buf, len(e.IngressHints))
+		for _, h := range e.IngressHints {
+			buf = codec.AppendBytes(buf, h)
+		}
+	}
 	return buf
 }
 
@@ -162,6 +190,13 @@ func (e *Envelope) ContentDigest() [32]byte {
 	for _, a := range e.AssetManifests {
 		d := sha256.Sum256(a)
 		h.Write(d[:])
+	}
+	// Bound by the digest, so a rotated ingress address bumps Seq — twice a
+	// day with no new content, which is correct and cheap. A hint that could
+	// change without changing the digest would be a hint readers could not
+	// trust.
+	for _, hint := range e.IngressHints {
+		h.Write(hint)
 	}
 	var out [32]byte
 	copy(out[:], h.Sum(nil))
@@ -272,6 +307,18 @@ func Decode(data []byte) (*Envelope, error) {
 					return nil, e3
 				}
 				e.AssetManifests = append(e.AssetManifests, append([]byte(nil), a...))
+			}
+		case keyIngress:
+			cnt, e2 := d.ReadArray()
+			if e2 != nil {
+				return nil, e2
+			}
+			for range cnt {
+				hint, e3 := d.ReadBytes()
+				if e3 != nil {
+					return nil, e3
+				}
+				e.IngressHints = append(e.IngressHints, append([]byte(nil), hint...))
 			}
 		case keySignature:
 			var b []byte

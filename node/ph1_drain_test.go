@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/drrainlab/quiet_places/protocol/id"
+	"github.com/drrainlab/quiet_places/terminals"
 	"github.com/drrainlab/quiet_places/transports/bundle"
 	"github.com/drrainlab/quiet_places/transports/relay"
 )
@@ -140,4 +141,99 @@ func TestPublicWantWithoutAReplyBoxIsNotAnswered(t *testing.T) {
 	if len(got) != 0 {
 		t.Fatal("a public answer landed in a device-derived inbox anyone could drain")
 	}
+}
+
+// PH-2's payoff: the ingress address is published, but the capability to
+// DRAIN it is derived from the space key. A stranger holding the link — and
+// therefore holding the address itself — still cannot take a contribution.
+func TestStrangerCannotDrainIngressAfterCommitment(t *testing.T) {
+	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+
+	owner := openRuntime(t, t.TempDir(), "owner")
+	defer owner.Close()
+	tid, err := owner.CreateSpaceWithOptions("Open Community", CreateOptions{
+		Policy: terminals.SpacePolicy{
+			Visibility: terminals.VisibilityPublic,
+			Join:       terminals.JoinOpen,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := owner.SetSettings(Settings{Relay: addr}); err != nil {
+		t.Fatal(err)
+	}
+	if err := owner.publishPublicProjection(addr, tid); err != nil {
+		t.Fatal(err)
+	}
+
+	// A contributor learns the address from the signed projection and leaves
+	// something there.
+	joiner := openRuntime(t, t.TempDir(), "joiner")
+	defer joiner.Close()
+	if err := joiner.SetSettings(Settings{Relay: addr}); err != nil {
+		t.Fatal(err)
+	}
+	if err := joiner.OpenPublicSpace(tid, addr); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, 20*time.Second, "joiner never saw the projection", func() bool {
+		_ = joiner.fetchPublicProjection(addr, tid)
+		return msgCount(joiner, tid) >= 0 && len(joinerHints(joiner, tid)) > 0
+	})
+	if err := joiner.JoinPublicSpace(tid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := joiner.Say(tid, "a contribution", SayOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := joiner.pushPublicIngress(addr, tid); err != nil {
+		t.Fatal(err)
+	}
+
+	// The stranger knows the space id and — from the projection it can fetch
+	// like anyone — the exact ingress addresses. It still drains nothing.
+	stranger, err := relay.DialClient(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stranger.Close()
+	b := relay.Bucket(uint64(time.Now().Unix()))
+	var guesses [][]byte
+	for _, bk := range []uint64{b, b + 1} {
+		for sh := byte(0); sh < relay.IngressShards; sh++ {
+			guesses = append(guesses,
+				relay.CapPublicIngressLegacy(tid, bk, sh),
+				relay.CapPublicIngress([32]byte{}, bk, sh))
+		}
+	}
+	if got, err := stranger.Collect(guesses); err == nil && len(got) > 0 {
+		t.Fatalf("a stranger drained %d ingress items", len(got))
+	}
+
+	// The owner, holding the space key, still receives it.
+	n, err := owner.collectPublicIngress(addr, tid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n == 0 {
+		t.Fatal("the owner could not collect its own ingress")
+	}
+}
+
+// joinerHints exposes the ingress addresses a replica learned from the
+// projection — the whole point of PH-2 is that they arrive rather than
+// being derived.
+func joinerHints(r *Runtime, tid id.TerminalID) [][]byte {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if st, ok := r.spaces[tid]; ok {
+		return st.ingressHints
+	}
+	return nil
 }

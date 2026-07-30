@@ -189,6 +189,15 @@ type spaceState struct {
 	// rejected remembers ingress frames that failed admission so a
 	// re-pushed copy is dropped cheaply (PA-1.3). Lazily created.
 	rejected *rejectedRing
+
+	// The last projection this replica verified and installed, kept VERBATIM
+	// (PH-2/PH-3): a mirror republishes the owner's exact signed bytes, which
+	// cannot be reconstructed from the decoded struct without the space key.
+	// ingressHints is where this space says contributions go — published by
+	// the owner, never derived locally.
+	projWire     []byte
+	projSeq      uint64
+	ingressHints [][]byte
 }
 
 // Open unlocks the data root and reconstructs the node: identity from the

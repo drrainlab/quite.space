@@ -13,6 +13,8 @@
 package terminals
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"sort"
@@ -38,6 +40,10 @@ type PublicProjectionLimits struct {
 	// author chain in the log stays contiguous; the projection store is
 	// gap-tolerant, so later frames still materialize for readers.
 	Exclude func(env *signal.Envelope, eid id.EventID) bool
+	// IngressHints are the mailbox addresses this projection advertises for
+	// contributions and media wants (PH-2). Supplied by the caller, which
+	// owns the relay's bucket clock; terminals only signs what it is given.
+	IngressHints [][]byte
 }
 
 // MaxProjectionBytes is the real ceiling, and it is not a taste question.
@@ -48,6 +54,22 @@ type PublicProjectionLimits struct {
 // ever says why it stopped publishing. 768 KiB matches the item budget the
 // media path already uses and leaves room for message framing.
 const MaxProjectionBytes = 768 << 10
+
+// IngressRoot derives the secret behind a space's ingress mailbox
+// addresses. It comes from the space's own private key, so exactly one
+// party can compute it — the controller — and nothing extra has to be
+// stored or rotated. The addresses it produces are published in the signed
+// projection; the root itself never leaves this process.
+func (s *Space) IngressRoot() ([32]byte, bool) {
+	if len(s.priv) == 0 {
+		return [32]byte{}, false
+	}
+	h := hmac.New(sha256.New, s.priv)
+	h.Write([]byte("qp-ingress-root-v1"))
+	var out [32]byte
+	copy(out[:], h.Sum(nil))
+	return out, true
+}
 
 // ErrProjectionTooLarge means the space cannot be published as one bounded
 // snapshot: even after aging out every prunable frame, the structural
@@ -167,6 +189,7 @@ func (s *Space) BuildPublicProjection(seq uint64, publisher id.DeviceID,
 		PublishedAt:     nowUnix,
 		PublisherDevice: publisher,
 		ManifestFrame:   s.ManifestFrame,
+		IngressHints:    lim.IngressHints,
 	}
 	cuts := map[id.DeviceID]projection.CutPoint{}
 	oldest := uint64(0)

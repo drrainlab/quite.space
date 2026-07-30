@@ -7,6 +7,7 @@ package node
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -91,6 +92,7 @@ func (r *Runtime) fetchPublicProjectionWith(client *relay.Client, tid id.Termina
 		return err
 	}
 	var best *projection.Envelope
+	var bestWire []byte
 	for _, item := range items {
 		env, err := projection.Decode(item)
 		if err != nil || env.SpaceID != tid {
@@ -100,7 +102,7 @@ func (r *Runtime) fetchPublicProjectionWith(client *relay.Client, tid id.Termina
 			continue
 		}
 		if best == nil || env.Seq > best.Seq {
-			best = env
+			best, bestWire = env, item
 		}
 	}
 	if best == nil {
@@ -130,6 +132,14 @@ func (r *Runtime) fetchPublicProjectionWith(client *relay.Client, tid id.Termina
 	if _, err := st.space.InstallPublicProjection(best); err != nil {
 		return err
 	}
+	// Retain the envelope VERBATIM. A mirror must republish the owner's exact
+	// signed bytes — re-encoding a decoded envelope is not an option, since
+	// only the space key can produce a valid signature. Also remember where
+	// this space says contributions go (PH-2): the address is the publisher's
+	// to choose, and deriving it locally is exactly what PH-1 took away.
+	st.projWire = append([]byte(nil), bestWire...)
+	st.projSeq = best.Seq
+	st.ingressHints = best.IngressHints
 	// Accept: remember the publisher's seq + digest, repair the meta cache
 	// (title, visibility) from the now-verified manifest.
 	r.ks.PublicPublish[tid] = storage.PublicPublishState{
@@ -279,6 +289,11 @@ func (r *Runtime) pushPublicIngress(addr string, tid id.TerminalID) error {
 	wants := r.relayWantsLocked(tid)
 	self := r.Device.ID
 	now0 := uint64(time.Now().Unix())
+	// The address comes from the publisher's signed projection (PH-2). An
+	// owner publishing its own space derives it directly; everyone else must
+	// have installed a projection first, which they have by definition — a
+	// want only exists for an asset a projected frame referenced.
+	hint := r.ingressHintLocked(st, tid, self, relay.Bucket(now0))
 	// Mint (or reuse) the box this space's media answers come back to. Only
 	// its HINT travels; the capability never leaves this process.
 	var box []byte
@@ -300,10 +315,26 @@ func (r *Runtime) pushPublicIngress(addr string, tid id.TerminalID) error {
 		return err
 	}
 	defer client.Close()
+	if hint == nil {
+		// No address yet — the usual cause is a restart, which keeps the
+		// durable pending set but not the in-memory projection. Fetch one and
+		// re-resolve rather than failing: the contribution is legitimate and
+		// the address is one round trip away.
+		if err := r.fetchPublicProjectionWith(client, tid); err != nil {
+			return fmt.Errorf("node: no ingress address and none could be fetched: %w", err)
+		}
+		r.mu.Lock()
+		if st, ok := r.spaces[tid]; ok {
+			hint = r.ingressHintLocked(st, tid, self, relay.Bucket(now0))
+		}
+		r.mu.Unlock()
+		if hint == nil {
+			return errors.New("node: this space publishes no ingress address")
+		}
+	}
 	now := uint64(time.Now().Unix())
 	// Short TTL: ingress is consumed by the owner within a bucket or
 	// re-pushed; stale bundles must not linger against relay quotas.
-	hint := relay.HintPublicIngress(tid, relay.Bucket(now), relay.IngressShard(self))
 	_, err = client.Put(hint, now+6*3600, body)
 	return err
 }
@@ -314,9 +345,14 @@ func (r *Runtime) pushPublicIngress(addr string, tid id.TerminalID) error {
 // starts custody fetches for newly referenced assets (PA-0.4D).
 func (r *Runtime) collectPublicIngress(addr string, tid id.TerminalID) (int, error) {
 	r.mu.Lock()
-	if st, ok := r.spaces[tid]; ok && st.space.Policy().Frozen {
-		r.mu.Unlock()
-		return 0, nil // TRUE freeze: ingress is not read at all
+	var root [32]byte
+	var haveRoot bool
+	if st, ok := r.spaces[tid]; ok {
+		if st.space.Policy().Frozen {
+			r.mu.Unlock()
+			return 0, nil // TRUE freeze: ingress is not read at all
+		}
+		root, haveRoot = st.space.IngressRoot()
 	}
 	r.mu.Unlock()
 	if err := r.relayGate(); err != nil {
@@ -330,10 +366,18 @@ func (r *Runtime) collectPublicIngress(addr string, tid id.TerminalID) (int, err
 	now := uint64(time.Now().Unix())
 	b := relay.Bucket(now)
 	var caps [][]byte
-	for sh := byte(0); sh < relay.IngressShards; sh++ {
-		caps = append(caps, relay.CapPublicIngressLegacy(tid, b, sh))
+	if haveRoot {
+		// Current, previous and next bucket: a contributor may be running a
+		// slightly fast or slightly stale clock, and losing a contribution to
+		// a rounding edge would be indistinguishable from censorship.
+		buckets := []uint64{b, b + 1}
 		if b > 0 {
-			caps = append(caps, relay.CapPublicIngressLegacy(tid, b-1, sh))
+			buckets = append(buckets, b-1)
+		}
+		for _, bk := range buckets {
+			for sh := byte(0); sh < relay.IngressShards; sh++ {
+				caps = append(caps, relay.CapPublicIngress(root, bk, sh))
+			}
 		}
 	}
 	items, err := client.Collect(caps)
@@ -664,6 +708,18 @@ func (r *Runtime) publishPublicProjectionForce(addr string, tid id.TerminalID, f
 	}
 	lim := terminals.DefaultProjectionLimits()
 	lim.Exclude = r.assetIncompleteExclude(tid) // custody gate (0.4D)
+	// PH-2: advertise where contributions and media wants should go. Two
+	// buckets so a reader holding a slightly stale projection still lands in
+	// a shard we drain; the drain capability itself stays here.
+	if root, ok := st.space.IngressRoot(); ok {
+		b := relay.Bucket(now)
+		for _, bk := range []uint64{b, b + 1} {
+			for sh := byte(0); sh < relay.IngressShards; sh++ {
+				lim.IngressHints = append(lim.IngressHints,
+					relay.CollectHint(relay.CapPublicIngress(root, bk, sh)))
+			}
+		}
+	}
 	wire, digest, err := st.space.BuildPublicProjection(seq, r.Device.ID, now, lim)
 	if err != nil {
 		r.mu.Unlock()
@@ -703,4 +759,23 @@ func (r *Runtime) publishPublicProjectionForce(addr string, tid id.TerminalID, f
 	expires := now + uint64(DefaultRelayTTL/time.Second)
 	_, err = client.Replace(relay.HintPublicOutbox(tid, relay.Bucket(now)), expires, wire)
 	return err == nil, err
+}
+
+// ingressHintLocked picks this device's ingress address for a bucket. The
+// owner derives it from its own root; everyone else reads it from the
+// installed projection, because after PH-1 the address is the publisher's
+// to choose and a locally derived one would simply be a mailbox nobody
+// drains. Caller holds r.mu.
+func (r *Runtime) ingressHintLocked(st *spaceState, tid id.TerminalID,
+	self id.DeviceID, bucket uint64) []byte {
+
+	shard := relay.IngressShard(self)
+	if root, ok := st.space.IngressRoot(); ok {
+		return relay.CollectHint(relay.CapPublicIngress(root, bucket, shard))
+	}
+	// Published layout: [current bucket × 8 shards][next bucket × 8 shards].
+	if len(st.ingressHints) >= relay.IngressShards {
+		return st.ingressHints[int(shard)]
+	}
+	return nil
 }

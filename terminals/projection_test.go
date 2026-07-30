@@ -6,6 +6,7 @@
 package terminals_test
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"strings"
@@ -258,5 +259,82 @@ func TestOversizeProjectionIsNamedNotSilent(t *testing.T) {
 	if _, _, err := s.BuildPublicProjection(1, owner.Device.ID, base,
 		terminals.DefaultProjectionLimits()); err != nil {
 		t.Fatalf("default limits must still produce a publishable projection: %v", err)
+	}
+}
+
+// PH-2: the ingress address a space advertises is INSIDE the signature and
+// the content digest. An uncommitted hint would be a squatter's invitation:
+// swap it in transit and a space's contributions go to a mailbox its owner
+// never drains, with nothing to detect the swap.
+func TestIngressHintsAreSignedAndDigested(t *testing.T) {
+	s, owner := buildPublicSpace(t, 3)
+	lim := terminals.DefaultProjectionLimits()
+	root, ok := s.IngressRoot()
+	if !ok {
+		t.Fatal("controller replica must have an ingress root")
+	}
+	lim.IngressHints = [][]byte{[]byte("aaaaaaaaaaaaaaaa"), []byte("bbbbbbbbbbbbbbbb")}
+	now := uint64(time.Now().Unix())
+	wire, digest, err := s.BuildPublicProjection(1, owner.Device.ID, now, lim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, err := projection.Decode(wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(env.IngressHints) != 2 {
+		t.Fatalf("hints did not survive the wire: %d", len(env.IngressHints))
+	}
+	if projection.Verify(env) != nil {
+		t.Fatal("a freshly signed envelope failed verification")
+	}
+	// Tamper: the signature must reject it.
+	env.IngressHints[0] = []byte("cccccccccccccccc")
+	if projection.Verify(env) == nil {
+		t.Fatal("a redirected ingress address passed verification")
+	}
+	// And a different address is different CONTENT, so the publisher bumps
+	// Seq rather than silently serving two meanings of one number.
+	lim2 := terminals.DefaultProjectionLimits()
+	lim2.IngressHints = [][]byte{[]byte("cccccccccccccccc")}
+	_, digest2, err := s.BuildPublicProjection(1, owner.Device.ID, now, lim2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if digest == digest2 {
+		t.Fatal("the content digest ignores the ingress address")
+	}
+	// The root is the owner's alone: it comes from the space key, which a
+	// reader replica does not have.
+	reader := terminals.Replica(s.ID)
+	if _, ok := reader.IngressRoot(); ok {
+		t.Fatal("a replica without the space key derived an ingress root")
+	}
+	_ = root
+}
+
+// A v1 envelope must be refused as a VERSION problem, not as a broken
+// signature — the difference between "upgrade me" and "you are under attack".
+func TestOldFormatIsRefusedAsAVersionNotASignature(t *testing.T) {
+	s, owner := buildPublicSpace(t, 2)
+	wire, _, err := s.BuildPublicProjection(1, owner.Device.ID,
+		uint64(time.Now().Unix()), terminals.DefaultProjectionLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Rewrite the format field to 1 the way an older publisher would have.
+	i := bytes.Index(wire, []byte{0x03, 0x02}) // keyFormat=3, value=2
+	if i < 0 {
+		t.Skip("format field not found in this encoding")
+	}
+	old := append([]byte(nil), wire...)
+	old[i+1] = 0x01
+	_, err = projection.Decode(old)
+	if err == nil {
+		t.Fatal("a v1 envelope decoded under v2")
+	}
+	if !strings.Contains(err.Error(), "version") {
+		t.Fatalf("a version skew reported as something else: %v", err)
 	}
 }
