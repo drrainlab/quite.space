@@ -105,6 +105,9 @@ func (a *APIServer) Handler() http.Handler {
 	mux.HandleFunc("POST /api/spaces/{id}/join", a.auth(a.handlePublicJoin))
 	mux.HandleFunc("POST /api/spaces/{id}/policy", a.auth(a.handleRevisePolicy))
 	mux.HandleFunc("POST /api/spaces/{id}/mirror", a.auth(a.handleSetMirror))
+	// The door: who is waiting, and the host's answer.
+	mux.HandleFunc("GET /api/entry-requests", a.auth(a.handleEntryRequests))
+	mux.HandleFunc("POST /api/entry-requests/{req}/decide", a.auth(a.handleDecideEntry))
 	// QuietRank (AT-0): device-local attention layer.
 	mux.HandleFunc("GET /api/signals", a.auth(a.handleSignals))
 	mux.HandleFunc("POST /api/signals/{id}/seen", a.auth(a.handleSignalSeen))

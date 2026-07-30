@@ -294,6 +294,16 @@ func (r *Runtime) acceptOne(client *relay.Client, recs []*passRecord, sealed []b
 			r.mu.Unlock()
 		}
 
+		// A link that asks a person to decide parks the request instead of
+		// admitting it. NOTHING is consumed here: a use is spent on an
+		// admission, so declining costs the host nothing and a pending
+		// request can still fail honestly at accept time with "the pass ran
+		// out while this was waiting".
+		if !done && !alreadyMember && rec.approval == "host" {
+			r.parkAtTheDoor(client, rec, req, now)
+			return
+		}
+
 		if !done && !alreadyMember {
 			r.passes.mu.Lock()
 			// Validate at the moment of reservation (the owner's clock is
@@ -372,6 +382,15 @@ const (
 	// a refusal too: nobody said no, time simply ran out.
 	JoinExpiredWaiting JoinState = "expired_while_waiting"
 
+	// JoinWaitingHost: their device has SEEN the request and a person now
+	// has to decide. Different from waiting_for_owner, which only says
+	// nothing has come back — we do not even know whether they are online.
+	JoinWaitingHost JoinState = "waiting_for_host"
+	// JoinDeclined: somebody decided. This must never render as an error,
+	// a timeout or "unknown" — that is the whole reason a decline is a
+	// sealed message rather than silence.
+	JoinDeclined JoinState = "declined"
+
 	JoinWaiting  JoinState = "waiting_for_owner"
 	JoinReady    JoinState = "ready"
 	JoinExpired  JoinState = "expired"
@@ -386,6 +405,9 @@ type joinAttempt struct {
 	relayAddr string
 	space     id.TerminalID
 	state     JoinState
+	// reason is the host's own words, shown verbatim. Empty unless they
+	// wrote something.
+	reason    string
 	startedAt uint64
 	// collectUntil outlives the pass on purpose: expiry forbids a NEW
 	// request, never the collection of a decision already made. A host who
@@ -464,7 +486,9 @@ func (r *Runtime) JoinStatus(reqIDShort string) (JoinState, string) {
 	if at.state == JoinReady {
 		return JoinReady, at.space.Hex()
 	}
-	return at.state, ""
+	// A declined guest gets the host's own words rather than a code they
+	// have to interpret.
+	return at.state, at.reason
 }
 
 func (r *Runtime) pollJoinResponse(at *joinAttempt) {
@@ -500,6 +524,16 @@ func (r *Runtime) pollJoinResponse(at *joinAttempt) {
 			continue
 		}
 		for _, sealed := range items {
+			// A DECISION may arrive instead of an acceptance. Try that
+			// first: it is the cheaper parse, and "a person said no" is the
+			// more urgent news to stop waiting on.
+			if dec, derr := terminals.OpenDecision(at.space, at.requestID,
+				r.Device.X25519Priv(), sealed); derr == nil {
+				if final := r.applyDecision(at, dec); final {
+					return
+				}
+				continue
+			}
 			acc, err := terminals.OpenAccepted(at.space, at.requestID, r.Device.X25519Priv(), sealed)
 			if err != nil {
 				continue

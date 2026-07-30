@@ -480,6 +480,9 @@ func (r *Runtime) WithdrawQuickLink(hint string) error {
 		return err
 	}
 	_ = space // the pass registry is keyed by pass id alone
+	// Whoever is waiting at this door is told the door is gone, rather
+	// than left to time out against a link that no longer exists.
+	r.declinePendingForPass(passID, "the link was withdrawn")
 	return r.RevokePass(passID)
 }
 
