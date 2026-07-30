@@ -191,6 +191,12 @@ func (r *Runtime) InviteToSpace(space id.TerminalID, o QuickLinkOptions) (QuickL
 	if space == (id.TerminalID{}) {
 		return QuickLinkInfo{}, errors.New("node: name the space to invite into")
 	}
+	r.mu.Lock()
+	local := r.ks.Spaces[space].LocalOnly
+	r.mu.Unlock()
+	if local {
+		return QuickLinkInfo{}, ErrLocalOnly
+	}
 	return r.mintLink(space, o)
 }
 

@@ -76,14 +76,16 @@ func (r *Runtime) StartLAN(listenAddr, announceAddr string) error {
 			return
 		}
 		now := uint64(time.Now().Unix())
-		r.mu.Lock()
 		match := false
-		for tid := range r.spaces {
+		// Same list as the announcer's: never let a local-only space be the
+		// reason this node dials somebody.
+		for _, tid := range r.announcedSpaces() {
 			if lan.MatchHint(a, tid, now) {
 				match = true
 				break
 			}
 		}
+		r.mu.Lock()
 		already := dialed[a.Addr]
 		if match && !already {
 			dialed[a.Addr] = true
@@ -113,14 +115,34 @@ func (r *Runtime) StartLAN(listenAddr, announceAddr string) error {
 	return nil
 }
 
+// announcedSpaces is which spaces this node is willing to tell the LAN it
+// holds. It is one function, used by the announcer AND by the inbound
+// matcher, so "which spaces are visible on the network" has exactly one
+// answer and a test can read it.
+//
+// A local-only space is absent: an announcement is how the LAN learns this
+// device holds something, which for the assistant's space would be telling
+// the network about a conversation that never leaves the machine (AI-0).
+func (r *Runtime) announcedSpaces() []id.TerminalID {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]id.TerminalID, 0, len(r.spaces))
+	for tid := range r.spaces {
+		if r.ks.Spaces[tid].LocalOnly {
+			continue
+		}
+		out = append(out, tid)
+	}
+	return out
+}
+
 func (r *Runtime) announceOnce(announceAddr string, port int, nonce uint64) {
 	now := uint64(time.Now().Unix())
-	r.mu.Lock()
-	hints := make([][]byte, 0, len(r.spaces))
-	for tid := range r.spaces {
+	visible := r.announcedSpaces()
+	hints := make([][]byte, 0, len(visible))
+	for _, tid := range visible {
 		hints = append(hints, lan.Hint(tid, lan.Bucket(now)))
 	}
-	r.mu.Unlock()
 	if len(hints) == 0 {
 		return
 	}

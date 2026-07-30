@@ -62,6 +62,18 @@ const I18N = {
     // The boundary, stated where somebody hits it rather than in docs.
     'nav.search.none': 'Nothing by that name. Navigator searches names, not what was said inside.',
 
+    // The personal assistant (AI-0). Every one of these says where the
+    // words go, because that is the fact a person needs before typing.
+    'ai.window.remote': ({ provider, model }) =>
+      `Quite AI sees the last 20 messages of this space and nothing else. ` +
+      `Every question re-sends that window to ${provider} · ${model} over the internet.`,
+    'ai.window.local': ({ model }) =>
+      `Quite AI sees the last 20 messages of this space and nothing else. ` +
+      `Every question goes to ${model} on this machine. Nothing leaves the device.`,
+    'ai.unconfigured': 'Set up an AI provider in Settings — this space has nowhere to send a question yet.',
+    'ai.thinking': 'Asked. Waiting for the provider…',
+    'ai.failed': ({ why }) => `No answer: ${why}. Ask again when you like.`,
+
     // conversation
     'conv.member': 'member',
     'conv.you': 'You',

@@ -528,6 +528,9 @@ func (r *Runtime) RevisePolicy(tid id.TerminalID, d PolicyDelta) error {
 		return errors.New("node: unknown space")
 	}
 	meta := r.ks.Spaces[tid]
+	if meta.LocalOnly {
+		return ErrLocalOnly
+	}
 	if !meta.Owned {
 		return errors.New("node: only the owner revises policy")
 	}

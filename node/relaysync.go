@@ -110,6 +110,12 @@ func (r *Runtime) relaySyncOnce(addr string) {
 	spaces := make([]spaceLen, 0, len(r.spaces))
 	for tid, st := range r.spaces {
 		meta := r.ks.Spaces[tid]
+		// Local-only: no push, no projection, no ingress, no mirroring.
+		// Dropping it HERE rather than at each call site is deliberate —
+		// this is the one list every relay action is driven from (AI-0).
+		if meta.LocalOnly {
+			continue
+		}
 		pol := st.space.Policy()
 		spaces = append(spaces, spaceLen{
 			tid: tid, n: st.space.Log.Len(),

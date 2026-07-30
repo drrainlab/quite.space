@@ -88,6 +88,10 @@ func (r *Runtime) MintPass(tid id.TerminalID, maxUses, ttlHours uint64, relayAdd
 		ttlHours = 24
 	}
 	r.mu.Lock()
+	if r.ks.Spaces[tid].LocalOnly {
+		r.mu.Unlock()
+		return PassInfo{}, ErrLocalOnly
+	}
 	st, ok := r.spaces[tid]
 	if !ok {
 		r.mu.Unlock()

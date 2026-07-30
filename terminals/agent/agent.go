@@ -16,6 +16,45 @@ import (
 	"github.com/drrainlab/quiet_places/terminals"
 )
 
+// Template is the manifest for a PERSONAL assistant (AI-0) — a machine
+// actor somebody runs on their own device, distinct from the summarizer
+// stub below.
+//
+// It exists as its own terminal because a human participant cannot pretend
+// to be one: Participant.allowedAuthorship switches on the EMITTING
+// participant's manifest, and a human one permits only human authorship.
+// There is no flag on a space that changes that, and there should not be —
+// "who wrote this" is a property of the writer, not of the room.
+//
+// AutonomyAssistive (A1), not delegated: it answers when it is asked and
+// has no trigger of its own, and A2 would be a claim the code cannot back.
+// No PresencePublish: an assistant does not announce that it is around,
+// because it is not around in any sense a person means.
+func Template(label string) manifest.Manifest {
+	return manifest.Manifest{
+		Kind:           manifest.KindAgent,
+		DeclaredLabels: []string{label},
+		IOMode:         manifest.IODuplex,
+		Capabilities:   []string{capability.SignalPublish, capability.SignalReceive},
+		AgencyMode:     manifest.AgencyAIAgent,
+		AIPresent:      true,
+		Autonomy:       manifest.AutonomyAssistive,
+	}
+}
+
+// Say publishes an answer, marked machine-authored and naming the model
+// that produced it. Both marks are the signer's own claims; what makes them
+// worth something is that the signer is a different key from the person's.
+func Say(p *terminals.Participant, s *terminals.Space, text, model string,
+	at uint64) (eventlog.Applied, error) {
+
+	payload, err := (&schemas.TextMessage{Text: text, ProducedModel: model}).Encode()
+	if err != nil {
+		return eventlog.Applied{}, err
+	}
+	return p.Emit(s, schemas.MessageText, payload, signal.AuthorshipAIAgent, at)
+}
+
 // NewSummarizer creates the agent terminal: delegated autonomy (A2), scoped
 // to reading and publishing in its space; no membership or permission
 // capabilities exist in its manifest at all.

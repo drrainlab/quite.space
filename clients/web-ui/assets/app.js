@@ -518,6 +518,7 @@ async function refresh() {
     // Somebody may be waiting at a door. Folded into the refresh that was
     // happening anyway rather than a poll of its own.
     if (typeof refreshDoor === 'function') refreshDoor();
+    refreshAI();
     document.body.classList.toggle('protocol', PROTOCOL);
     document.getElementById('protoToggle').textContent = PROTOCOL ? t('protocol.on') : t('protocol.toggle');
 
@@ -607,6 +608,35 @@ async function refresh() {
 }
 
 function currentSpace() { return spacesCache.find(s => s.id === current); }
+
+// The assistant's own strip: what it is, where a question goes, and what
+// went wrong if anything did.
+//
+// The provider sentence is not decoration and is not hidden in Settings.
+// Every question re-sends a window of this space to a third party, and the
+// only place that fact is useful is next to the box you type it into.
+let aiState = null;
+async function refreshAI() {
+  const bar = document.getElementById('aiBar');
+  if (!bar) return;
+  const sp = currentSpace();
+  if (!sp || !sp.ai) { bar.hidden = true; return; }
+  try { aiState = await api('/api/ai'); } catch { bar.hidden = true; return; }
+  const where = aiState.local
+    ? t('ai.window.local', { model: aiState.model })
+    : t('ai.window.remote', { provider: aiState.provider, model: aiState.model });
+  let line = aiState.configured ? where : t('ai.unconfigured');
+  bar.className = 'ai-bar';
+  if (aiState.pending) { line = t('ai.thinking'); bar.className = 'ai-bar pending'; }
+  else if (aiState.last_error) {
+    // A provider failure is a device-local diagnostic, never an event: the
+    // log records what happened between participants.
+    line = t('ai.failed', { why: aiState.last_error });
+    bar.className = 'ai-bar warn';
+  }
+  bar.textContent = line;
+  bar.hidden = false;
+}
 
 // PA-0: the public-access surface of the open space — badge, share link,
 // and the honest composer state for readers.
@@ -1246,6 +1276,17 @@ async function say(e) {
   const body = { text: inp.value, mentions };
   if (replyTarget) body.reply_to = replyTarget.id;
   try {
+    // In the assistant's space a message is a QUESTION: the node emits it
+    // as your event and then asks the provider. Sending it the ordinary way
+    // would put it in the log and wait for an answer that never came.
+    if (currentSpace()?.ai) {
+      await api('/api/ai/ask', { method: 'POST', body: JSON.stringify({ text: inp.value }) });
+      inp.value = '';
+      cancelReply();
+      await refreshSpace();
+      refreshAI();
+      return false;
+    }
     await api(`/api/spaces/${current}/messages`, {
       method: 'POST',
       body: JSON.stringify(body),

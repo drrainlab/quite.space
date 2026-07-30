@@ -105,6 +105,10 @@ func (a *APIServer) Handler() http.Handler {
 	mux.HandleFunc("POST /api/spaces/{id}/join", a.auth(a.handlePublicJoin))
 	mux.HandleFunc("POST /api/spaces/{id}/policy", a.auth(a.handleRevisePolicy))
 	mux.HandleFunc("POST /api/spaces/{id}/mirror", a.auth(a.handleSetMirror))
+	// The local assistant (AI-0): an ordinary Agent Terminal in a space
+	// that never leaves this device.
+	mux.HandleFunc("GET /api/ai", a.auth(a.handleAI))
+	mux.HandleFunc("POST /api/ai/ask", a.auth(a.handleAsk))
 	// The Navigator (NAV-0): how this device arranges what it already has.
 	// Whole-document PUT with a base version — see node/navigator.go.
 	mux.HandleFunc("GET /api/navigator", a.auth(a.handleNavigator))
@@ -327,7 +331,10 @@ type spaceResp struct {
 	Display displayResp `json:"display"`
 	// Dyad: exactly one other person here. The Navigator's People section
 	// reads THIS, never display.key — see node/display.go isDisplayDyad.
-	Dyad          bool          `json:"dyad,omitempty"`
+	Dyad bool `json:"dyad,omitempty"`
+	// AI marks the local assistant's space, so the Navigator draws it as
+	// what it is rather than as a person or an ordinary room (AI-0).
+	AI            bool          `json:"ai,omitempty"`
 	Owned         bool          `json:"owned"`
 	Events        int           `json:"events"`
 	Messages      int           `json:"messages"`
@@ -350,6 +357,7 @@ type spaceResp struct {
 
 func (a *APIServer) handleSpaces(w http.ResponseWriter, r *http.Request) {
 	spaces := a.rt.Spaces()
+	aiSpace := a.rt.AI().Space
 	out := make([]spaceResp, 0, len(spaces))
 	for _, s := range spaces {
 		resp := spaceResp{
@@ -357,6 +365,7 @@ func (a *APIServer) handleSpaces(w http.ResponseWriter, r *http.Request) {
 			Display: displayResp{Text: s.Display.Text, Key: s.Display.Key,
 				Names: s.Display.Names},
 			Dyad:   s.Dyad,
+			AI:     aiSpace != "" && s.ID.Hex() == aiSpace,
 			Events: s.Events, Messages: s.Messages,
 			Undecryptable: s.Undecryptable, Peers: s.Peers,
 		}

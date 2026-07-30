@@ -84,6 +84,14 @@ type TextMessage struct {
 	Text     string
 	ReplyTo  *id.EventID
 	Mentions []id.PrincipalID
+	// ProducedModel names the model behind an AI-authored message (AI-0).
+	// It is a CLAIM by the signer, exactly like every other self-declared
+	// field — but without it a log of answers from three different models
+	// is unattributable, and the member card cannot help: v0 manifests
+	// never declare a model, so MemberCard.ModelDeclared is false and the
+	// card correctly says it does not know. Written only when authorship is
+	// not human; ignored by any reader that predates it.
+	ProducedModel string
 }
 
 // MaxTextLen bounds a chat message payload.
@@ -93,6 +101,9 @@ const MaxTextLen = 16 * 1024
 // not broadcast to a roster).
 const MaxMentions = 16
 
+// MaxModelLen bounds the declared model string.
+const MaxModelLen = 64
+
 func (t *TextMessage) Encode() ([]byte, error) {
 	if t.Text == "" || len(t.Text) > MaxTextLen {
 		return nil, errors.New("schemas: text empty or too long")
@@ -100,11 +111,17 @@ func (t *TextMessage) Encode() ([]byte, error) {
 	if len(t.Mentions) > MaxMentions {
 		return nil, errors.New("schemas: too many mentions")
 	}
+	if len(t.ProducedModel) > MaxModelLen {
+		return nil, errors.New("schemas: model name too long")
+	}
 	n := 1
 	if t.ReplyTo != nil {
 		n++
 	}
 	if len(t.Mentions) > 0 {
+		n++
+	}
+	if t.ProducedModel != "" {
 		n++
 	}
 	buf := codec.AppendMap(nil, n)
@@ -120,6 +137,13 @@ func (t *TextMessage) Encode() ([]byte, error) {
 		for i := range t.Mentions {
 			buf = codec.AppendBytes(buf, t.Mentions[i][:])
 		}
+	}
+	// Key 5, not 4: 4 is reserved for the SHARE wave's provenance, which is
+	// a different concern arriving in a different gate. Append-only either
+	// way — a decoder that knows neither skips both.
+	if t.ProducedModel != "" {
+		buf = codec.AppendUint(buf, 5)
+		buf = codec.AppendText(buf, t.ProducedModel)
 	}
 	return buf, nil
 }
@@ -173,6 +197,11 @@ func DecodeTextMessage(payload []byte) (*TextMessage, error) {
 				var p id.PrincipalID
 				copy(p[:], b)
 				t.Mentions = append(t.Mentions, p)
+			}
+		case 5:
+			t.ProducedModel, err = d.ReadText()
+			if err == nil && len(t.ProducedModel) > MaxModelLen {
+				return nil, errors.New("schemas: model name too long")
 			}
 		default:
 			err = d.SkipItem()

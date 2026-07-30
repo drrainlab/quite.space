@@ -63,6 +63,11 @@ type TextContent struct {
 	ReplyTo  *id.EventID
 	Mentions []id.PrincipalID
 	Revised  bool
+	// Model is the signer's claim about what produced the text, carried
+	// only for machine-authored messages (AI-0). Without it, a log of
+	// answers from three models is unattributable — the member card cannot
+	// help, because a v0 manifest declares no model and honestly says so.
+	Model string
 }
 
 // UnknownContent keeps a future block visible and honest.
@@ -219,7 +224,8 @@ func (s *State) Apply(env *signal.Envelope, eid id.EventID) {
 			return
 		}
 		s.installEntry(eid, env, KindText, EntryContent{Text: &TextContent{
-			Text: m.Text, ReplyTo: m.ReplyTo, Mentions: m.Mentions}})
+			Text: m.Text, ReplyTo: m.ReplyTo, Mentions: m.Mentions,
+			Model: m.ProducedModel}})
 	case schemas.MessageRevised:
 		m, err := schemas.DecodeTextMessage(env.Payload)
 		if err != nil || m.ReplyTo == nil {

@@ -47,6 +47,15 @@ type Runtime struct {
 	joins     map[string]*joinAttempt
 	llmClient *llm.Client // nil → default; injectable for tests
 
+	// agent is the local assistant's participant (AI-0). Its own terminal
+	// and device keys, the person's principal as controller.
+	agent *terminals.Participant
+	// aiPending and aiError are DEVICE-LOCAL. A provider failure is a
+	// diagnostic like a delivery state, not something that happened
+	// between participants, so it never becomes an event.
+	aiPending string
+	aiError   string
+
 	// attention is the QuietRank state (lazily loaded, device-local).
 	attention *attentionState
 
@@ -304,6 +313,11 @@ func Open(dataDir string, passphrase []byte, displayName string) (rt *Runtime, e
 		}
 		r.ks.SelfManifestFrame = self.ManifestFrame
 	}
+	// The assistant, if this device has one. Before the spaces are opened,
+	// so its chain is resumed with the person's (AI-0).
+	if err := r.loadAgentLocked(); err != nil {
+		return nil, err
+	}
 
 	// Reopen every known space: keys first, then the log, so the replay
 	// can decrypt (terminals.AttachLog contract). The block hook is set
@@ -346,6 +360,12 @@ func Open(dataDir string, passphrase []byte, displayName string) (rt *Runtime, e
 		s.AttachLog(log, replayed)
 		if !reader {
 			r.Self.ResumeChain(s)
+			// The assistant writes with its own device, so it keeps its own
+			// chain. Forgetting to resume it forks the log on the first
+			// answer after a restart and quarantines the agent forever.
+			if r.agent != nil {
+				r.agent.ResumeChain(s)
+			}
 		}
 		r.attach(tid, s)
 		if !reader {

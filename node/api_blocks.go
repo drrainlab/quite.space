@@ -21,6 +21,7 @@ import (
 	"github.com/drrainlab/quiet_places/kernel/reducers"
 	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/protocol/schemas"
+	"github.com/drrainlab/quiet_places/protocol/signal"
 	"github.com/drrainlab/quiet_places/terminals"
 )
 
@@ -326,6 +327,10 @@ type entryResp struct {
 	AuthorName string `json:"author_name"`
 	Mine       bool   `json:"mine"`
 	ProducedBy string `json:"produced_by"`
+	// Model is the signer's claim about what produced a machine-authored
+	// message. Shown ONLY alongside a non-human authorship mark, so it can
+	// never read as a fact about a person's own words.
+	Model string `json:"model,omitempty"`
 	Clock      uint64 `json:"clock"`
 	// CreatedAt is the AUTHOR's wall clock from the signed envelope —
 	// advisory, it can lie. Display only; never trust it for local policy.
@@ -419,8 +424,14 @@ func (a *APIServer) projectEntry(tid id.TerminalID, sp *terminals.Space,
 	resp := entryResp{
 		ID: e.ID.Hex(), Author: e.Author.String(), AuthorFull: e.Author.Hex(),
 		AuthorName: names[e.Author],
-		Mine:       e.Author == me, ProducedBy: e.ProducedBy.String(),
-		Clock: e.Clock, CreatedAt: e.CreatedAt, Kind: string(e.Kind),
+		// "mine" now asks TWO things, because the assistant is controlled by
+		// this principal but is not this person: my principal controls the
+		// signer, AND a human wrote it. Those were never the same statement
+		// — they only looked identical while every terminal was a person's
+		// own (AI-0).
+		Mine:       e.Author == me && e.ProducedBy == signal.AuthorshipHuman,
+		ProducedBy: e.ProducedBy.String(),
+		Clock:      e.Clock, CreatedAt: e.CreatedAt, Kind: string(e.Kind),
 	}
 	if sp != nil {
 		resp.Resonance = a.projectResonance(sp, e.ID, me, names)
@@ -445,6 +456,11 @@ func (a *APIServer) projectEntry(tid id.TerminalID, sp *terminals.Space,
 	switch {
 	case e.Content.Text != nil:
 		resp.Text = e.Content.Text.Text
+		// Only when something other than a person signed it: a model name
+		// beside a human's words would be a claim about them.
+		if e.ProducedBy != signal.AuthorshipHuman {
+			resp.Model = e.Content.Text.Model
+		}
 		resp.Revised = e.Content.Text.Revised
 		resp.Fallback = e.Content.Text.Text
 		if rt := e.Content.Text.ReplyTo; rt != nil {

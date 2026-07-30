@@ -166,6 +166,8 @@ type Keystore struct {
 	// Navigator is how THIS DEVICE arranges what it already has: pins,
 	// groups, order, collapse. Links only — see navigator.go.
 	Navigator NavState
+	// Agent is the local assistant's own identity and its space (AI-0).
+	Agent AgentRecord
 }
 
 // PublicPublishState is the publisher-side durable projection counter.
@@ -219,6 +221,12 @@ type SpaceMeta struct {
 	// observable to strangers, which is a consent question rather than a
 	// performance setting. Mirror implies Seed; Seed does not imply Mirror.
 	Seed bool
+	// LocalOnly marks a space that must never leave this device: not
+	// announced on the LAN, never pushed to a relay, never mirrored, never
+	// published, and never the target of an invite (AI-0). It is a NETWORK
+	// INVARIANT rather than a display preference, which is why it is
+	// checked at every egress rather than in the screen that shows it.
+	LocalOnly bool
 }
 
 // RoleReader marks a public-space read replica in SpaceMeta.Role.
@@ -266,6 +274,7 @@ const (
 	ksKeyPasses    = 12 // QL-0 owner join-saga journal
 	ksKeyJoins     = 13 // QL-0 guest join-saga journal
 	ksKeyNavigator = 14 // NAV-0 device-local Navigator arrangement
+	ksKeyAgent     = 15 // AI-0 the local Agent Terminal and its space
 )
 
 // ksMapArity is how many top-level pairs encode() writes, and it MUST equal
@@ -273,7 +282,7 @@ const (
 // which is a poor place for a number that bricks every keystore when it is
 // wrong: too few and the trailing pair goes unread, so Done() fails and
 // nobody can open their data again. Named here, next to the keys it counts.
-const ksMapArity = 14
+const ksMapArity = 15
 
 func (k *Keystore) encode() []byte {
 	buf := codec.AppendMap(nil, ksMapArity)
@@ -307,7 +316,7 @@ func (k *Keystore) encode() []byte {
 	buf = codec.AppendUint(buf, ksKeySpaces)
 	buf = codec.AppendArray(buf, len(k.Spaces))
 	for _, sm := range sortedSpaces(k.Spaces) {
-		buf = codec.AppendArray(buf, 13)
+		buf = codec.AppendArray(buf, 14)
 		buf = codec.AppendBytes(buf, sm.id[:])
 		buf = codec.AppendText(buf, sm.meta.Title)
 		buf = codec.AppendBool(buf, sm.meta.Owned)
@@ -326,6 +335,7 @@ func (k *Keystore) encode() []byte {
 		buf = codec.AppendBool(buf, sm.meta.Seed)
 		buf = codec.AppendBool(buf, sm.meta.Unnamed)
 		buf = codec.AppendText(buf, sm.meta.LocalTitle)
+		buf = codec.AppendBool(buf, sm.meta.LocalOnly)
 	}
 	buf = codec.AppendUint(buf, ksKeyName)
 	buf = codec.AppendText(buf, k.DisplayName)
@@ -348,6 +358,8 @@ func (k *Keystore) encode() []byte {
 	buf = appendJoinRecords(buf, k.Joins)
 	buf = codec.AppendUint(buf, ksKeyNavigator)
 	buf = appendNavState(buf, k.Navigator)
+	buf = codec.AppendUint(buf, ksKeyAgent)
+	buf = appendAgentRecord(buf, k.Agent)
 	return buf
 }
 
@@ -638,12 +650,17 @@ func decodeKeystore(data []byte) (*Keystore, error) {
 						return nil, er
 					}
 				}
+				if acount >= 14 {
+					if meta.LocalOnly, er = d.ReadBool(); er != nil {
+						return nil, er
+					}
+				}
 				// Anything a NEWER build appended: skip it rather than
 				// stopping mid-record. Without this, every future field
 				// makes this build fail to open a keystore it could
 				// otherwise have used — which is how the previous two
 				// waves each became one-way upgrades.
-				for i := 13; i < acount; i++ {
+				for i := 14; i < acount; i++ {
 					if er = d.SkipItem(); er != nil {
 						return nil, er
 					}
@@ -701,6 +718,8 @@ func decodeKeystore(data []byte) (*Keystore, error) {
 			k.Joins, er = readJoinRecords(d)
 		case ksKeyNavigator:
 			k.Navigator, er = readNavState(d)
+		case ksKeyAgent:
+			k.Agent, er = readAgentRecord(d)
 		default:
 			er = d.SkipItem()
 		}

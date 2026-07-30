@@ -359,16 +359,31 @@ func (r *Runtime) answerWants(client *relay.Client, tid id.TerminalID, wanter []
 // PullFromRelay collects bundles for every known space (current and
 // previous hint buckets) and absorbs them. Idempotent: duplicates are
 // no-ops in the event log.
+// relayMailboxSpaces is which spaces this node will derive a relay address
+// for. It exists as one function because the leak it guards is not "the
+// relay was given something" but "the relay was ASKED about an address":
+// a mailbox poll tells the relay the hint exists even when it is empty.
+//
+// A local-only space is absent, so no hint is derived and no mailbox is
+// polled — the relay never learns the address at all (AI-0).
+func (r *Runtime) relayMailboxSpaces() []id.TerminalID {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]id.TerminalID, 0, len(r.spaces))
+	for tid := range r.spaces {
+		if r.ks.Spaces[tid].LocalOnly {
+			continue
+		}
+		out = append(out, tid)
+	}
+	return out
+}
+
 func (r *Runtime) PullFromRelay(addr string) (applied int, err error) {
 	if err := r.relayGate(); err != nil {
 		return 0, err
 	}
-	r.mu.Lock()
-	all := make([]id.TerminalID, 0, len(r.spaces))
-	for tid := range r.spaces {
-		all = append(all, tid)
-	}
-	r.mu.Unlock()
+	all := r.relayMailboxSpaces()
 	// The connection may exist because ANOTHER space permits the relay.
 	// That does not make this one's traffic fair game: a space set to
 	// Meshtastic only must have no mailbox polled and no hint derived, or

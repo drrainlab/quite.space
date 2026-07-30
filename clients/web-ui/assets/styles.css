@@ -652,6 +652,12 @@
     min-width: 18px; height: 18px; border-radius: 999px; padding: 0 5px;
     display: inline-grid; place-items: center; }
 
+  /* --- the assistant's strip (AI-0) --- */
+  .ai-bar { margin: 0 12px 6px; padding: 6px 10px; border-radius: var(--radius-md);
+    background: var(--surface-raised); color: var(--dim); font-size: 12px; }
+  .ai-bar.pending { color: var(--fg); }
+  .ai-bar.warn { color: var(--warn, #e0a); }
+
   /* --- Navigator (NAV-1) --- */
   /* #sidebar is the scroller and is NEVER replaced, so scroll position and
      focus survive every poll. Only section bodies are reconciled. */
