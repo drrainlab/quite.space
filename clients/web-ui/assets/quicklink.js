@@ -172,10 +172,16 @@ async function enterWithLink() {
     `<p class="ql-from">${esc(p.from || 'someone who left no name')}</p>` +
     '<p class="hint">into the space</p>' +
     `<p class="ql-space">${esc(p.space || 'untitled')}</p>` +
-    '<p class="hint">Nothing has been signed yet. Entering sends a request they must accept.</p>' +
+    // This used to say the host must accept you. They do not: the owner's
+    // device admits a valid request automatically and unattended. Saying
+    // otherwise described a security model the code does not implement —
+    // and a person deciding whether to enter deserves the real one. When
+    // host approval ships, the sentence comes back for links that ask for
+    // it, and will then be true.
+    '<p class="hint">Nothing has been signed yet. Opening this link takes you straight into the space.</p>' +
     '</div>';
   box.style.display = '';
-  btn.textContent = 'Request entry';
+  btn.textContent = 'Enter';
   btn.onclick = () => {
     document.getElementById('joinPass').value = p.pass_link;
     requestEntry();
