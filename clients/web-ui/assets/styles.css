@@ -706,7 +706,42 @@
   /* #sidebar is the scroller and is NEVER replaced, so scroll position and
      focus survive every poll. Only section bodies are reconciled. */
   #nav { display: flex; flex-direction: column; gap: 2px; }
-  .nav-search { width: 100%; margin-bottom: 6px; }
+  /* The search field is part of the interface, not the browser's idea of
+     one. There is no base `input` rule in this sheet — each field styles
+     itself — so a bare .nav-search inherited the user agent's white box
+     and sat in the dark panel like a hole. */
+  .nav-search-wrap { position: relative; display: flex; align-items: center;
+    margin-bottom: 8px; }
+  /* Our own magnifier, in currentColor, so it follows every theme. */
+  .nav-search-wrap::before {
+    content: '⌕'; position: absolute; left: 9px; color: var(--muted);
+    font-size: 15px; line-height: 1; pointer-events: none;
+  }
+  .nav-search {
+    flex: 1; min-width: 0; font: inherit; margin: 0;
+    background: var(--bg); color: var(--fg);
+    border: 1px solid var(--line); border-radius: var(--radius-md);
+    padding: 7px 30px 7px 26px; min-height: var(--tap);
+    -webkit-appearance: none; appearance: none;
+    /* Border and ring only. A background transition makes the field lag
+       visibly behind every other surface when the theme flips. */
+    transition: border-color .12s ease, box-shadow .12s ease;
+  }
+  .nav-search::placeholder { color: var(--muted); }
+  .nav-search:hover { border-color: color-mix(in srgb, var(--acc) 30%, var(--line)); }
+  /* A soft ring rather than the global focus outline: this field is inside
+     a dense list and a hard 2px box reads as an error state. */
+  .nav-search:focus, .nav-search:focus-visible {
+    outline: none; border-color: var(--acc);
+    background: var(--panel);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--acc) 18%, transparent);
+  }
+  .nav-search-clear {
+    position: absolute; right: 4px; min-height: 0; padding: 0 7px;
+    background: transparent; border: 0; color: var(--muted);
+    font-size: 17px; line-height: 1;
+  }
+  .nav-search-clear:hover { color: var(--fg); background: transparent; }
   .nav-sec { display: flex; flex-direction: column; }
   .nav-sec-head { display: flex; align-items: center; gap: 6px; cursor: pointer;
     padding: 6px 8px; min-height: var(--tap); color: var(--muted);

@@ -31,6 +31,7 @@ const I18N = {
 
     // Navigator (NAV-1). Sections a person arranged, not a list we sorted.
     'nav.search': 'Search',
+    'nav.search.clear': 'clear the search',
     'nav.sec.pinned': 'Pinned',
     'nav.sec.groups': 'Groups',
     'nav.sec.spaces': 'Spaces',

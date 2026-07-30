@@ -517,19 +517,40 @@ const NAV = (() => {
    */
   function buildChrome(v) {
     v.root.innerHTML = '';
+    // The field lives in a small wrapper so the magnifier and the clear
+    // button can be OURS: both inherit the theme, where the browser's own
+    // search chrome does not and showed up as a white box on a dark panel.
+    const wrap = document.createElement('div');
+    wrap.className = 'nav-search-wrap';
     const search = document.createElement('input');
     search.className = 'nav-search';
-    search.type = 'search';
+    // type=text, not search: the native widget brings a cancel button that
+    // cannot be themed, and we render our own below.
+    search.type = 'text';
     search.autocomplete = 'off';
+    search.spellcheck = false;
     search.placeholder = v.select ? t('share.search') : t('nav.search');
     if (!v.select) search.id = 'navSearch';
+    const clear = document.createElement('button');
+    clear.className = 'nav-search-clear';
+    clear.type = 'button';
+    clear.textContent = '×';
+    clear.setAttribute('aria-label', t('nav.search.clear'));
+    clear.hidden = true;
+    const apply = () => {
+      v.query = search.value.trim().toLowerCase();
+      clear.hidden = search.value === '';
+      paintView(v);
+    };
     // Filtering is synchronous over cached data. It must never wait on the
     // poll — especially once the shell's tick slows down.
-    search.oninput = () => { v.query = search.value.trim().toLowerCase(); paintView(v); };
+    search.oninput = apply;
     search.onkeydown = (e) => {
-      if (e.key === 'Escape') { search.value = ''; v.query = ''; paintView(v); search.blur(); }
+      if (e.key === 'Escape') { search.value = ''; apply(); search.blur(); }
     };
-    v.root.appendChild(search);
+    clear.onclick = () => { search.value = ''; apply(); search.focus(); };
+    wrap.append(search, clear);
+    v.root.appendChild(wrap);
 
     for (const id of v.sections) {
       const sec = document.createElement('div');
