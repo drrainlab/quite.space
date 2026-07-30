@@ -220,10 +220,23 @@ function renderArticle(p, mode) {
   if (doc.kind === 'space') {
     const link = spaceCardLink(doc);
     if (link) {
+      const row = document.createElement('div');
+      row.className = 'row';
       const open = document.createElement('button');
       open.className = 'btn-filled'; open.textContent = 'Open space';
       open.onclick = () => openSpaceCard(link);
-      box.appendChild(open);
+      row.appendChild(open);
+      // Say only what this node already knows. An unopened card reads "not
+      // checked" rather than a green dot we did not earn.
+      const st = document.createElement('span');
+      st.className = 'card-status';
+      const s = spaceCardStatus(link);
+      st.textContent = s.text;
+      st.title = s.known
+        ? 'From what this node already holds — nothing was probed to show it.'
+        : 'This node has not opened this space. Opening one is your choice, so nothing is checked in advance.';
+      row.appendChild(st);
+      box.appendChild(row);
     }
   }
   for (const b of doc.blocks || []) {

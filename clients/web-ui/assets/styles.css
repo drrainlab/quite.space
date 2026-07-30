@@ -331,6 +331,12 @@
     border: 1px solid var(--line); border-radius: var(--radius-sm);
   }
   .asset-retry:hover { border-color: var(--acc); }
+  /* A catalog card's status. Deliberately quiet: it reports what this node
+     happens to know, which is usually "nothing yet". */
+  .card-status {
+    margin-left: 10px; font-size: 11px; font-family: var(--font-mono);
+    color: var(--dim); align-self: center;
+  }
   .entry .filecard, .entry .linkcard {
     border: 1px solid var(--line); border-radius: 4px; padding: 8px 10px;
     margin-top: 4px; display: inline-block; max-width: 360px; }

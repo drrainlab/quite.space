@@ -274,6 +274,24 @@
     </div>
     <p class="hint" id="accFreezeHint">Freeze pauses ALL publication — including yours. Readers see an honest “frozen” state; contributors keep drafts locally until you unfreeze.</p>
   </div>
+  <div class="settings-sec" id="accAvail" hidden>
+    <p class="hint">Availability</p>
+    <div class="list">
+      <div class="list-row">
+        <span class="lr-label">Keep this space reachable
+          <span class="lr-sub">Republish what the owner signed and hold its media, so the space survives their being offline. You gain no say over it: this node has no key and can change nothing.</span>
+        </span>
+        <button class="btn-plain" id="accMirrorBtn" onclick="toggleMirror()">Mirror</button>
+      </div>
+      <div class="list-row">
+        <span class="lr-label">Share media you already have
+          <span class="lr-sub">Answer other readers with files already downloaded. Never downloads anything extra — but it does tell others you have the file, and therefore that you read this space.</span>
+        </span>
+        <button class="btn-plain" id="accSeedBtn" onclick="toggleSeed()">Off</button>
+      </div>
+    </div>
+    <p class="hint" id="accMirrorState"></p>
+  </div>
   <p class="hint" id="accMsg" style="margin-left:4px"></p>
   <div class="row" style="justify-content:flex-end"><button class="btn-filled" onclick="dlgAccess.close()">Done</button></div>
 </dialog>

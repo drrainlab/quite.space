@@ -597,9 +597,11 @@ function renderPublicSurface(sp) {
     ? 'Publication is paused by the owner. Everything already published stays readable.'
     : 'Anyone who obtains this link can read the space. Access cannot currently be revoked.';
   badge.style.display = '';
-  // The badge doubles as the owner's Access sheet entry point (PA-1).
-  badge.style.cursor = sp.owned ? 'pointer' : '';
-  badge.onclick = sp.owned ? () => openAccess(sp) : null;
+  // The badge opens the Access sheet: policy for an owner, availability for
+  // everyone else (PH-3 — keeping a space alive is not owning it).
+  const canOpenAccess = sp.owned || pub;
+  badge.style.cursor = canOpenAccess ? 'pointer' : '';
+  badge.onclick = canOpenAccess ? () => openAccess(sp) : null;
   share.style.display = '';
   if (sp.frozen) {
     // Frozen overrides everything below: read-only for all, honestly.
@@ -702,8 +704,15 @@ function saveCatalog() {
 async function openDiscover() {
   const link = catalogLink();
   if (!link) {
-    alert('No catalog configured yet. Paste a catalog link in Settings → Relay → Catalog.');
-    return;
+    // A dead end used to live here: an alert naming a settings field, with
+    // no way to act from where the person actually is. A catalog is just a
+    // public space, so asking for its link is the whole of it.
+    const pasted = prompt(
+      'Open a catalog\n\nA catalog is an ordinary public space whose posts are ' +
+      'space-cards — anyone can run one. Paste a catalog link:');
+    if (!pasted || !pasted.trim()) return;
+    localStorage.setItem('qp.catalog', pasted.trim());
+    return openDiscover();
   }
   try {
     const r = await api('/api/public/open', { method: 'POST', body: JSON.stringify({ link }) });
@@ -719,6 +728,28 @@ function spaceCardLink(doc) {
     if (b.type === 'link' && b.props?.text) return b.props.text;
   }
   return '';
+}
+
+// spaceCardStatus describes a catalog card using ONLY what this node
+// already knows. It deliberately does not probe: opening a card is a
+// person's act, and quietly fetching every advertised space would both fan
+// out relay traffic and tell the world which catalogs someone browses.
+// A card we know nothing about says exactly that.
+function spaceCardStatus(link) {
+  let share = (link || '').trim();
+  if (share.startsWith('qs:')) share = share.slice(3);
+  // A share link carries "space:<hex>"; match it against spaces we hold.
+  const m = /space:([0-9a-f]{8,})/i.exec(share);
+  if (!m) return { known: false, text: 'not checked' };
+  const idHex = m[1].toLowerCase();
+  const sp = (spacesCache || []).find((s) => s.id.toLowerCase().startsWith(idHex.slice(0, 16)));
+  if (!sp) return { known: false, text: 'not checked' };
+  const bits = [];
+  if (sp.frozen) bits.push('FROZEN');
+  if (sp.mirror) bits.push('you mirror this');
+  else if (sp.owned) bits.push('yours');
+  else bits.push('opened before');
+  return { known: true, text: bits.join(' · ') };
 }
 
 // openSpaceCard opens the space referenced by a space-card document: the
@@ -739,6 +770,26 @@ async function openSpaceCard(link) {
 let accessSpace = null;
 function openAccess(sp) {
   accessSpace = sp.id;
+  // Owner controls and availability controls are different powers, so the
+  // sheet shows one or the other rather than greying half of itself out.
+  const ownerSections = document.querySelectorAll('#dlgAccess .settings-sec:not(#accAvail)');
+  ownerSections.forEach((el) => { el.hidden = !sp.owned; });
+  const avail = document.getElementById('accAvail');
+  avail.hidden = !!sp.owned;
+  if (!sp.owned) {
+    document.getElementById('accMirrorBtn').textContent = sp.mirror ? 'Mirroring' : 'Mirror';
+    document.getElementById('accMirrorBtn').classList.toggle('sel', !!sp.mirror);
+    document.getElementById('accSeedBtn').textContent =
+      (sp.seed || sp.mirror) ? 'On' : 'Off';
+    document.getElementById('accSeedBtn').classList.toggle('sel', !!(sp.seed || sp.mirror));
+    const state = document.getElementById('accMirrorState');
+    state.textContent = sp.mirror
+      ? 'This node keeps a copy. The space is not yours — nothing you do here changes it.'
+      : '';
+    document.getElementById('accMsg').textContent = '';
+    dlgAccess.showModal();
+    return;
+  }
   document.querySelectorAll('#accVis button').forEach(b =>
     b.classList.toggle('sel', b.dataset.v === sp.visibility));
   const mode = sp.publish === 'curated' ? 'curated' : 'all';
@@ -787,6 +838,35 @@ async function reviseAccess(delta) {
     const sp = spacesCache.find(s => s.id === accessSpace);
     if (sp) openAccess(sp); // re-sync the sheet controls
   } catch (e) { msg.textContent = e.message; }
+}
+
+// Mirroring and seeding are this node's own decisions: they change what we
+// do, never what the space is, so they take a different route from policy.
+async function setAvailability(delta) {
+  if (!accessSpace) return;
+  const msg = document.getElementById('accMsg');
+  try {
+    await api(`/api/spaces/${accessSpace}/mirror`, {
+      method: 'POST', body: JSON.stringify(delta) });
+    await refresh();
+    const sp = spacesCache.find((s) => s.id === accessSpace);
+    if (sp) openAccess(sp);
+  } catch (e) { msg.textContent = e.message; }
+}
+
+function toggleMirror() {
+  const sp = spacesCache.find((s) => s.id === accessSpace);
+  setAvailability({ mirror: !(sp && sp.mirror) });
+}
+
+function toggleSeed() {
+  const sp = spacesCache.find((s) => s.id === accessSpace);
+  if (sp && sp.mirror) {
+    document.getElementById('accMsg').textContent =
+      'mirroring already shares what it holds — stop mirroring to turn this off';
+    return;
+  }
+  setAvailability({ seed: !(sp && sp.seed) });
 }
 
 function setAccessVis(v) { reviseAccess({ visibility: v }); }
