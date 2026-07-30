@@ -6,6 +6,7 @@
 package node
 
 import (
+	"errors"
 	"net/http"
 	"sync"
 	"time"
@@ -207,13 +208,23 @@ func (r *Runtime) relaySyncOnce(addr string) {
 			if err := r.fetchPublicProjection(addr, sp.tid); err != nil {
 				// "no projection yet" is routine for a fresh space — only
 				// surface real transport errors.
-				if err.Error() != "node: no projection available at the relay" {
+				if !errors.Is(err, ErrNoProjection) {
 					lastErr = err.Error()
 				}
 			}
 			// Contributor uplink and/or media wants ride the ingress.
+			//
+			// The SAME routine condition arrives here wrapped, so it needs
+			// the same judgement: a contributor whose publisher is offline
+			// keeps its pending set durably and delivers when they return.
+			// That is the design working, not a transport fault, and it
+			// must not paint the connection light red. What IS worth
+			// saying — "N of your contributions are waiting" — belongs to
+			// that space's row, not to the relay.
 			if err := r.pushPublicIngress(addr, sp.tid); err != nil {
-				lastErr = err.Error()
+				if !errors.Is(err, ErrNoProjection) {
+					lastErr = err.Error()
+				}
 			}
 			// Keep the space reachable, and hand out what we hold. Neither
 			// touches anyone else's mailbox: keepalive Puts, seeding Fetches.
@@ -268,14 +279,20 @@ type RelaySyncStatus struct {
 // whether the space is frozen — so an operator can tell "quiet" from
 // "stuck" at a glance.
 type PublicSpaceStatus struct {
-	SpaceID      string `json:"space_id"`
-	Title        string `json:"title"`
-	Role         string `json:"role"` // publisher | reader | contributor
-	Visibility   string `json:"visibility"`
-	Frozen       bool   `json:"frozen,omitempty"`
-	Seq          uint64 `json:"seq,omitempty"`
-	AgoPublish   int    `json:"seconds_since_publish,omitempty"`
-	IgnoredTotal uint64 `json:"ignored_total,omitempty"`
+	SpaceID    string `json:"space_id"`
+	Title      string `json:"title"`
+	Role       string `json:"role"` // publisher | reader | contributor
+	Visibility string `json:"visibility"`
+	Frozen     bool   `json:"frozen,omitempty"`
+	Seq        uint64 `json:"seq,omitempty"`
+	// PendingUplink is how many of THIS node's own frames are still
+	// waiting to reach the publisher. It exists because the condition that
+	// produces it — the publisher being offline — is deliberately NOT a
+	// relay error: silence about it would be the opposite mistake to the
+	// red light it replaces.
+	PendingUplink int    `json:"pending_uplink,omitempty"`
+	AgoPublish    int    `json:"seconds_since_publish,omitempty"`
+	IgnoredTotal  uint64 `json:"ignored_total,omitempty"`
 }
 
 // RelaySync reports the background loop state.
@@ -341,6 +358,9 @@ func (r *Runtime) publicSpaceStatusesLocked() []PublicSpaceStatus {
 			Seq:          r.ks.PublicPublish[tid].ProjectionSeq,
 			IgnoredTotal: st.space.PolicyStats.IgnoredTotal,
 		})
+		if role != "publisher" {
+			out[len(out)-1].PendingUplink = len(st.space.UnackedLocalFrames())
+		}
 	}
 	return out
 }

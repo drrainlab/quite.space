@@ -765,6 +765,10 @@ async function renderRelayPublicPanel() {
       if (s.role === 'publisher' && s.seconds_since_publish != null)
         parts.push(`published ${s.seconds_since_publish}s ago`);
       if (s.frozen) parts.push('FROZEN');
+      // Say what is actually waiting, and why it is not an error: the
+      // publisher being away is how this is designed to behave.
+      if (s.pending_uplink)
+        parts.push(`${s.pending_uplink} waiting for the publisher`);
       if (s.ignored_total) parts.push(`${s.ignored_total} ignored`);
       row.innerHTML = `<span class="rp-title">${esc(s.title || s.space_id.slice(0, 8))}</span>` +
         `<span class="rp-meta">${esc(parts.join(' · '))}</span>`;

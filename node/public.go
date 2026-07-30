@@ -106,7 +106,7 @@ func (r *Runtime) fetchPublicProjectionWith(client *relay.Client, tid id.Termina
 		}
 	}
 	if best == nil {
-		return errors.New("node: no projection available at the relay")
+		return ErrNoProjection
 	}
 
 	r.mu.Lock()
@@ -271,6 +271,16 @@ func (r *Runtime) activateContributorLocked(tid id.TerminalID, st *spaceState) e
 // media wants (readers and contributors alike — wants need no membership).
 // The cumulative bundle is byte-stable between changes, so the relay's
 // content-idempotent Put keeps exactly one slot however often we retry.
+// ErrNoProjection is "the owner has not published this space yet, or
+// their outbox has aged out of the relay's RAM". It is ROUTINE — a
+// contributor whose counterpart is offline is not a broken relay — and it
+// used to be recognised by comparing err.Error() to a literal. That worked
+// on the one path that compared it and silently failed on the path that
+// wrapped it with %w, which is how a normal quiet afternoon started
+// showing "relay - issue" to somebody whose messages were all arriving.
+// A sentinel travels through wrapping; a string does not.
+var ErrNoProjection = errors.New("node: no projection available at the relay")
+
 func (r *Runtime) pushPublicIngress(addr string, tid id.TerminalID) error {
 	r.mu.Lock()
 	st, ok := r.spaces[tid]
