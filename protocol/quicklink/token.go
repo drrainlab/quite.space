@@ -158,23 +158,58 @@ func Parse(s string) (Token, error) {
 	return t, nil
 }
 
+// A link is one of two kinds of door, and the guest has to know WHICH
+// before it can choose how to read it — a personal door is collected once,
+// a shared one is fetched without being emptied. But the kind lives inside
+// the sealed payload, so deciding from it would be circular.
+//
+// Resolve it in the ADDRESS instead. The same secret derives two mailboxes
+// under different labels; a link lives at exactly one. The guest tries the
+// shared address first (a non-destructive read, so a wrong guess costs
+// nothing) and falls back to collecting the personal one.
+//
+// This deliberately adds NO bit to the token: the five words, the 55 bits,
+// the frozen list and the exact secret↔words inverse are all untouched, and
+// there is no version to bump. Flipping the intended kind simply addresses
+// an empty mailbox — the property a flag inside the token would have had to
+// be bound into the hint to achieve anyway.
+const (
+	// DoorPersonal is spent by the first person who opens it.
+	DoorPersonal = "single"
+	// DoorShared stays readable until it expires; how many devices are
+	// actually admitted is decided by the owner, not by the door.
+	DoorShared = "shared"
+)
+
 // Hint is where the relay stores this link's payload: a fast hash, because
 // the relay must be able to index it and an attacker learns nothing from a
 // hint alone that the ciphertext does not already tell them. The SLOW
 // derivation is Key's job, and the two must never be confused — a slow hint
 // would make honest fetches expensive and a fast key would make guessing
 // cheap.
-func (t Token) Hint() []byte {
-	return CollectHint(t.Cap())
+func (t Token) Hint() []byte { return t.HintFor(DoorPersonal) }
+
+// HintFor is the address of this link's mailbox for one kind of door.
+func (t Token) HintFor(door string) []byte {
+	return CollectHint(t.CapFor(door))
 }
 
 // Cap is the drain capability for this link's mailbox: the same fast digest,
 // untruncated. Only a holder of the token secret can compute it, which is
 // what stops a passer-by who saw the hint from emptying the box.
-func (t Token) Cap() []byte {
-	h := sha256.Sum256(append([]byte("qs.quicklink.hint.v1"), t.Secret[:]...))
-	return h[:]
+func (t Token) Cap() []byte { return t.CapFor(DoorPersonal) }
+
+// CapFor derives the capability for one kind of door.
+func CapForSecret(secret [7]byte, door string) []byte {
+	h := sha256.New()
+	h.Write([]byte("qs.quicklink.hint.v1"))
+	h.Write(secret[:])
+	h.Write([]byte(door))
+	return h.Sum(nil)
 }
+
+// CapFor derives this token's capability for one kind of door.
+func (t Token) CapFor(door string) []byte { return CapForSecret(t.Secret, door) }
 
 // CollectHint mirrors the relay's address derivation. It lives here rather
 // than importing transports/relay because protocol packages never depend on

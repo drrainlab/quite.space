@@ -116,3 +116,52 @@ func TestKeyDerivationIsActuallySlow(t *testing.T) {
 	}
 	t.Logf("scrypt N=2^17 took %v on this machine", took)
 }
+
+// A build that predates the intent fields must still open a new link: the
+// inner map is tag-keyed and skips what it does not know, and SealVersion
+// stays 1 precisely so the outer check does not refuse.
+func TestAnOldBuildStillOpensANewLink(t *testing.T) {
+	tok, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed, err := Seal(tok, Payload{
+		PassLink: "the-pass", From: "alice", Space: "Support group",
+		MaxUses: 5, Approval: "host", ExpiresAt: 1234567890,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Open(tok, sealed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.PassLink != "the-pass" || got.MaxUses != 5 || got.Approval != "host" {
+		t.Fatalf("intent did not survive the wire: %+v", got)
+	}
+	// The version is what an older reader checks first, and it must not
+	// have moved — otherwise every existing build refuses every new link.
+	if SealVersion != 1 {
+		t.Fatalf("SealVersion moved to %d; old builds now refuse new links", SealVersion)
+	}
+}
+
+// The two doors are different addresses, and one cannot be reached from
+// the other. Getting this wrong would either strand a link or let a
+// personal one be read without being spent.
+func TestTheTwoDoorsAreDifferentAddresses(t *testing.T) {
+	tok, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	personal, shared := tok.HintFor(DoorPersonal), tok.HintFor(DoorShared)
+	if string(personal) == string(shared) {
+		t.Fatal("both kinds of door share one mailbox")
+	}
+	if string(tok.Hint()) != string(personal) {
+		t.Fatal("the default address is no longer the personal one")
+	}
+	if string(tok.CapFor(DoorShared)) == string(tok.CapFor(DoorPersonal)) {
+		t.Fatal("one capability opens both doors")
+	}
+}

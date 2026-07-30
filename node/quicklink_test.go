@@ -99,7 +99,10 @@ func TestAQuickLinkWorksExactlyOnce(t *testing.T) {
 	if err == nil {
 		t.Fatal("the same words resolved twice")
 	}
-	if !strings.Contains(err.Error(), "works once") {
+	// The refusal has to explain itself — and now that a link may be
+	// personal OR shared, it must say WHICH kind was spent rather than
+	// asserting that every link works once.
+	if !strings.Contains(err.Error(), "spent by the first person") {
 		t.Fatalf("the second attempt should explain itself, got: %v", err)
 	}
 }
@@ -225,30 +228,157 @@ func TestNoRelayIsRefusedWithTheReason(t *testing.T) {
 	}
 }
 
-// The line is created once and reused; a second link must not spawn another.
-func TestTheLineIsCreatedOnceAndReused(t *testing.T) {
+// The exact inversion of what this file used to assert, and the accident
+// the wave removes: every quicklink used to mint into ONE space per node,
+// so a link made for Alice and a link made for Misha put two strangers in
+// the same room. Two links, two places.
+func TestTwoLinksNeverLandStrangersInOneRoom(t *testing.T) {
 	rt := openRuntime(t, t.TempDir(), "alice")
 	defer rt.Close()
 	srv, _ := setUpRelay(t, rt)
 	defer srv.Close()
 
-	a, err := rt.MintQuickLink(id.TerminalID{}, "")
+	before := len(rt.Spaces())
+	a, err := rt.CreateQuickLink(QuickLinkOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	n := len(rt.Spaces())
-	b, err := rt.MintQuickLink(id.TerminalID{}, "")
+	b, err := rt.CreateQuickLink(QuickLinkOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a.Space != b.Space {
-		t.Fatalf("two links led to different lines: %s vs %s", a.Space, b.Space)
+	if a.Space == b.Space {
+		t.Fatalf("two links opened the same room: %s", a.Space)
 	}
-	if got := len(rt.Spaces()); got != n {
-		t.Fatalf("a second link created another space: %d → %d", n, got)
+	if got := len(rt.Spaces()); got != before+2 {
+		t.Fatalf("each link should open a place: %d → %d", before, got)
 	}
 	if a.Link == b.Link {
-		t.Fatal("two links reused the same words")
+		t.Fatal("two links shared their words")
+	}
+}
+
+// A conversation between two people can become a group without anyone
+// re-creating it elsewhere: a second link points at the SAME space, on
+// purpose and explicitly.
+func TestALinkCanPointAtAnExistingSpace(t *testing.T) {
+	rt := openRuntime(t, t.TempDir(), "alice")
+	defer rt.Close()
+	srv, _ := setUpRelay(t, rt)
+	defer srv.Close()
+
+	first, err := rt.CreateQuickLink(QuickLinkOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tid, err := id.ParseTerminalID(first.Space)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := len(rt.Spaces())
+	second, err := rt.InviteToSpace(tid, QuickLinkOptions{MaxUses: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Space != first.Space {
+		t.Fatalf("an invite opened a new room instead: %s", second.Space)
+	}
+	if got := len(rt.Spaces()); got != before {
+		t.Fatalf("inviting into a space created another: %d → %d", before, got)
+	}
+}
+
+// A personal link is a one-time door: the words are spent by opening them.
+// A shared one stays readable until it expires, because a link for several
+// people that only the first person can read is a lie in its first
+// sentence.
+func TestAPersonalDoorIsSpentAndASharedDoorIsNot(t *testing.T) {
+	alice := openRuntime(t, t.TempDir(), "alice")
+	defer alice.Close()
+	bob := openRuntime(t, t.TempDir(), "bob")
+	defer bob.Close()
+	carol := openRuntime(t, t.TempDir(), "carol")
+	defer carol.Close()
+	srv, _ := setUpRelay(t, alice, bob, carol)
+	defer srv.Close()
+
+	personal, err := alice.CreateQuickLink(QuickLinkOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bob.ResolveQuickLink(personal.Phrase); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := carol.ResolveQuickLink(personal.Phrase); err == nil {
+		t.Fatal("a personal door opened twice")
+	}
+
+	shared, err := alice.CreateQuickLink(QuickLinkOptions{MaxUses: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, guest := range []*Runtime{bob, carol, bob} {
+		if _, err := guest.ResolveQuickLink(shared.Phrase); err != nil {
+			t.Fatalf("shared door refused reader %d: %v", i, err)
+		}
+	}
+}
+
+// The guest sees the intent BEFORE deciding to enter — how many may come,
+// and whether a person will let them in.
+func TestTheGuestSeesTheIntentBeforeEntering(t *testing.T) {
+	alice := openRuntime(t, t.TempDir(), "alice")
+	defer alice.Close()
+	bob := openRuntime(t, t.TempDir(), "bob")
+	defer bob.Close()
+	srv, _ := setUpRelay(t, alice, bob)
+	defer srv.Close()
+
+	info, err := alice.CreateQuickLink(QuickLinkOptions{
+		Title: "Support group", MaxUses: 5, Approval: "host",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prev, err := bob.ResolveQuickLink(info.Phrase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prev.MaxUses != 5 {
+		t.Fatalf("the guest could not see how many may come: %d", prev.MaxUses)
+	}
+	if prev.Approval != "host" {
+		t.Fatalf("the guest was not told a person decides: %q", prev.Approval)
+	}
+	if prev.Space != "Support group" {
+		t.Fatalf("the named space did not travel: %q", prev.Space)
+	}
+}
+
+// Backing out of the preview must not lose the entrance: the words are
+// spent, but this device remembers the doorway until the pass expires.
+func TestBackingOutDoesNotLoseTheEntrance(t *testing.T) {
+	alice := openRuntime(t, t.TempDir(), "alice")
+	defer alice.Close()
+	bob := openRuntime(t, t.TempDir(), "bob")
+	defer bob.Close()
+	srv, _ := setUpRelay(t, alice, bob)
+	defer srv.Close()
+
+	info, err := alice.CreateQuickLink(QuickLinkOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bob.ResolveQuickLink(info.Phrase); err != nil {
+		t.Fatal(err)
+	}
+	// The relay no longer holds it, but this device does.
+	again, err := bob.ResolvedQuickLink(info.Phrase)
+	if err != nil {
+		t.Fatalf("the device forgot an entrance it had already opened: %v", err)
+	}
+	if again.PassLink == "" {
+		t.Fatal("the cached entrance carries no way in")
 	}
 }
 

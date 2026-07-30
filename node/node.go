@@ -129,6 +129,12 @@ type Runtime struct {
 	// single re-ask, while writing a drain secret into the keystore would buy
 	// nothing and widen what a stolen keystore hands over. r.mu-guarded.
 	replyBoxes map[id.TerminalID]*replyBox
+
+	// resolvedLinks remembers entrances this device already opened, so
+	// backing out of a preview does not lose the way in. Memory only: the
+	// pass inside is short-lived, and persisting it would keep a bearer
+	// secret for no benefit.
+	resolvedLinks map[string]QuickLinkPreview
 }
 
 // replyBox is the address a media answer comes back to. We mint the

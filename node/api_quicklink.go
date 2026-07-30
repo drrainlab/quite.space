@@ -20,23 +20,48 @@ func (a *APIServer) routeQuickLinks(mux *http.ServeMux) {
 
 func (a *APIServer) handleMintQuickLink(w http.ResponseWriter, r *http.Request) {
 	body, err := readBody[struct {
-		// Space is optional: empty means this node's own line, created on
-		// first use. That is the "add me" gesture.
-		Space string `json:"space"`
-		Note  string `json:"note"`
+		// Space names an EXISTING room to invite into. Empty opens a new
+		// one — a quicklink never picks a space implicitly.
+		Space    string `json:"space"`
+		Title    string `json:"title"`
+		Note     string `json:"note"`
+		MaxUses  uint64 `json:"max_uses"`
+		TTLHours uint64 `json:"ttl_hours"`
+		Approval string `json:"approval"`
 	}](r)
 	if err != nil {
 		httpErr(w, http.StatusBadRequest, err)
 		return
 	}
-	var tid id.TerminalID
+	if body.MaxUses > 10 {
+		httpErr(w, http.StatusBadRequest,
+			errors.New("a link admits at most 10 devices"))
+		return
+	}
+	if body.TTLHours > 168 {
+		httpErr(w, http.StatusBadRequest,
+			errors.New("a link may last at most a week"))
+		return
+	}
+	if body.Approval != "" && body.Approval != "host" {
+		httpErr(w, http.StatusBadRequest,
+			errors.New(`approval is "" or "host"`))
+		return
+	}
+	o := QuickLinkOptions{Title: body.Title, Note: body.Note,
+		MaxUses: body.MaxUses, TTLHours: body.TTLHours, Approval: body.Approval}
+
+	var info QuickLinkInfo
 	if body.Space != "" {
-		if tid, err = id.ParseTerminalID(body.Space); err != nil {
-			httpErr(w, http.StatusBadRequest, err)
+		tid, er := id.ParseTerminalID(body.Space)
+		if er != nil {
+			httpErr(w, http.StatusBadRequest, er)
 			return
 		}
+		info, err = a.rt.InviteToSpace(tid, o)
+	} else {
+		info, err = a.rt.CreateQuickLink(o)
 	}
-	info, err := a.rt.MintQuickLink(tid, body.Note)
 	if err != nil {
 		httpErr(w, http.StatusForbidden, err)
 		return

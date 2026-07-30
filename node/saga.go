@@ -238,3 +238,19 @@ func (r *Runtime) resumeJoinPolling() {
 		go r.pollJoinResponse(at)
 	}
 }
+
+// setPassApproval records that this link asks a person to decide. It lives
+// in the owner's record, never in the pass frame: signingBody is a fixed
+// map, so a new signed field would invalidate every existing signature —
+// and approval does not need signing, because the owner is the enforcer.
+func (r *Runtime) setPassApproval(passIDShort, mode string) {
+	r.passes.mu.Lock()
+	for pid, rec := range r.passes.byID {
+		if hexShort(pid[:]) == passIDShort {
+			rec.approval = mode
+			break
+		}
+	}
+	r.passes.mu.Unlock()
+	_ = r.commitSaga()
+}

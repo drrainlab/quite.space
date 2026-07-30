@@ -39,6 +39,13 @@ const (
 	innerKeyPassLink = 1
 	innerKeyFrom     = 2 // display name, so the guest sees who before joining
 	innerKeySpace    = 3 // space title, same reason
+	// The link's INTENT, so a guest can see what they are walking into
+	// before they walk in. Strictly a description: the owner's own record
+	// is what actually admits or refuses, and the two disagreeing means the
+	// owner wins and the guest is told what really happened.
+	innerKeyMaxUses  = 4
+	innerKeyApproval = 5
+	innerKeyExpires  = 6
 )
 
 // SealVersion is bumped only when the sealed layout changes incompatibly.
@@ -55,6 +62,12 @@ type Payload struct {
 	PassLink string
 	From     string
 	Space    string
+	// MaxUses, Approval and ExpiresAt are CLAIMS about the link's intent —
+	// exactly as untrusted as From and Space. They exist so a person can
+	// decide whether to enter; the right to enter is decided elsewhere.
+	MaxUses   uint64
+	Approval  string
+	ExpiresAt uint64
 }
 
 // Seal encrypts a payload under a key derived from the token.
@@ -70,13 +83,35 @@ func Seal(t Token, p Payload) ([]byte, error) {
 	if p.PassLink == "" {
 		return nil, errors.New("quicklink: nothing to seal")
 	}
-	inner := codec.AppendMap(nil, 3)
+	n := 3
+	if p.MaxUses > 0 {
+		n++
+	}
+	if p.Approval != "" {
+		n++
+	}
+	if p.ExpiresAt > 0 {
+		n++
+	}
+	inner := codec.AppendMap(nil, n)
 	inner = codec.AppendUint(inner, innerKeyPassLink)
 	inner = codec.AppendText(inner, p.PassLink)
 	inner = codec.AppendUint(inner, innerKeyFrom)
 	inner = codec.AppendText(inner, p.From)
 	inner = codec.AppendUint(inner, innerKeySpace)
 	inner = codec.AppendText(inner, p.Space)
+	if p.MaxUses > 0 {
+		inner = codec.AppendUint(inner, innerKeyMaxUses)
+		inner = codec.AppendUint(inner, p.MaxUses)
+	}
+	if p.Approval != "" {
+		inner = codec.AppendUint(inner, innerKeyApproval)
+		inner = codec.AppendText(inner, p.Approval)
+	}
+	if p.ExpiresAt > 0 {
+		inner = codec.AppendUint(inner, innerKeyExpires)
+		inner = codec.AppendUint(inner, p.ExpiresAt)
+	}
 
 	aead, err := tokenAEAD(t)
 	if err != nil {
@@ -177,6 +212,12 @@ func Open(t Token, sealed []byte) (Payload, error) {
 			p.From, err = di.ReadText()
 		case innerKeySpace:
 			p.Space, err = di.ReadText()
+		case innerKeyMaxUses:
+			p.MaxUses, err = di.ReadUint()
+		case innerKeyApproval:
+			p.Approval, err = di.ReadText()
+		case innerKeyExpires:
+			p.ExpiresAt, err = di.ReadUint()
 		default:
 			err = di.SkipItem()
 		}

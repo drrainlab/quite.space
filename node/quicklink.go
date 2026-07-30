@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -152,10 +153,71 @@ type QuickLinkInfo struct {
 // MintQuickLink mints a pass into a space and parks it on the relay under a
 // five-word token.
 //
-// If space is the zero value the link leads to this node's line, creating it
-// on first use. That is the "add me" case; passing a real space id is the
-// "let somebody into this room" case, and the mechanism is identical.
+// QuickLinkOptions is what a person decided about the door they are opening.
+type QuickLinkOptions struct {
+	// Title names the new space. Empty means unnamed — the space will be
+	// called after whoever is in it (QL-3).
+	Title string
+	Note  string
+	// MaxUses counts DEVICES, not people: a verified principal does not
+	// exist in this protocol, so promising "one person" would promise a
+	// thing no signature backs. 0 → 1.
+	MaxUses uint64
+	// TTLHours defaults to 1 for an open link and 24 when a host must
+	// approve — an hour is dishonest when somebody may be asleep.
+	TTLHours uint64
+	// Approval is "" (walk straight in) or "host" (a person decides).
+	Approval string
+}
+
+// CreateQuickLink opens a NEW place and a door into it.
+//
+// A quicklink never picks a space implicitly. It used to reach for this
+// node's one "line", so a link made for Alice and a link made for Misha put
+// two strangers in the same room — the accident this wave removes. To let
+// somebody into a room that already exists, say so: InviteToSpace.
+func (r *Runtime) CreateQuickLink(o QuickLinkOptions) (QuickLinkInfo, error) {
+	space, err := r.createSpaceForLink(o.Title)
+	if err != nil {
+		return QuickLinkInfo{}, err
+	}
+	return r.mintLink(space, o)
+}
+
+// InviteToSpace opens a door into a space that already exists — how a
+// conversation between two people becomes a group without anyone
+// re-creating it somewhere else.
+func (r *Runtime) InviteToSpace(space id.TerminalID, o QuickLinkOptions) (QuickLinkInfo, error) {
+	if space == (id.TerminalID{}) {
+		return QuickLinkInfo{}, errors.New("node: name the space to invite into")
+	}
+	return r.mintLink(space, o)
+}
+
+// createSpaceForLink opens the room a new link leads to. An empty title is
+// a CHOICE, recorded as such, not a missing value.
+func (r *Runtime) createSpaceForLink(title string) (id.TerminalID, error) {
+	if strings.TrimSpace(title) == "" {
+		return r.CreateSpaceUnnamed()
+	}
+	return r.CreateSpace(title)
+}
+
+// MintQuickLink is the legacy shape, kept so existing callers compile. A
+// zero space still means "this node's line" for them; new code should say
+// which door it wants.
 func (r *Runtime) MintQuickLink(space id.TerminalID, note string) (QuickLinkInfo, error) {
+	if space == (id.TerminalID{}) {
+		var err error
+		if space, err = r.LineSpace(); err != nil {
+			return QuickLinkInfo{}, err
+		}
+	}
+	return r.mintLink(space, QuickLinkOptions{Note: note})
+}
+
+func (r *Runtime) mintLink(space id.TerminalID, o QuickLinkOptions) (QuickLinkInfo, error) {
+	note := o.Note
 	relayAddr := r.GetSettings().Relay
 	if relayAddr == "" {
 		return QuickLinkInfo{}, errors.New(
@@ -167,20 +229,36 @@ func (r *Runtime) MintQuickLink(space id.TerminalID, note string) (QuickLinkInfo
 		return QuickLinkInfo{}, err
 	}
 
-	var err error
-	if space == (id.TerminalID{}) {
-		if space, err = r.LineSpace(); err != nil {
-			return QuickLinkInfo{}, err
+	maxUses := o.MaxUses
+	if maxUses == 0 {
+		maxUses = 1
+	}
+	ttl := o.TTLHours
+	if ttl == 0 {
+		ttl = 1
+		if o.Approval == "host" {
+			// A host who has to decide may be asleep. An hour would refuse
+			// people for the crime of arriving at night.
+			ttl = 24
 		}
+	}
+	// A personal link is not a stored mode — it IS one device. One concept,
+	// enforced in one place.
+	door := quicklink.DoorShared
+	if maxUses == 1 {
+		door = quicklink.DoorPersonal
 	}
 
 	// The pass outlives the words deliberately: the link is the fragile part
 	// (ten minutes), the pass is what the guest actually redeems, and a guest
 	// who fetched the payload should not lose it because they took a minute
 	// to decide.
-	pass, err := r.MintPass(space, 1, 1, relayAddr)
+	pass, err := r.MintPass(space, maxUses, ttl, relayAddr)
 	if err != nil {
 		return QuickLinkInfo{}, err
+	}
+	if o.Approval != "" {
+		r.setPassApproval(pass.PassID, o.Approval)
 	}
 
 	tok, err := quicklink.New()
@@ -192,6 +270,9 @@ func (r *Runtime) MintQuickLink(space id.TerminalID, note string) (QuickLinkInfo
 		PassLink: pass.Link,
 		From:     r.DisplayName(),
 		Space:    title,
+		// Claims, so the guest can see what they are walking into. The
+		// owner's own record is what admits or refuses.
+		MaxUses: maxUses, Approval: o.Approval, ExpiresAt: pass.ExpiresAt,
 	})
 	if err != nil {
 		return QuickLinkInfo{}, err
@@ -203,7 +284,7 @@ func (r *Runtime) MintQuickLink(space id.TerminalID, note string) (QuickLinkInfo
 	}
 	defer client.Close()
 	expires := time.Now().Add(QuickLinkTTL)
-	if _, err := client.Put(tok.Hint(), uint64(expires.Unix()), sealed); err != nil {
+	if _, err := client.Put(tok.HintFor(door), uint64(expires.Unix()), sealed); err != nil {
 		return QuickLinkInfo{}, fmt.Errorf("node: the relay would not hold the link: %w", err)
 	}
 
@@ -241,6 +322,13 @@ func (r *Runtime) MintQuickLink(space id.TerminalID, note string) (QuickLinkInfo
 
 // QuickLinkPreview is what a guest sees before deciding.
 type QuickLinkPreview struct {
+	// MaxUses, Approval and ExpiresAt are the link's CLAIMED intent, shown
+	// so a person can decide whether to enter. What actually admits them is
+	// the owner's own validated pass state — if the two disagree, the owner
+	// wins and the guest is told what really happened.
+	MaxUses   uint64
+	Approval  string
+	ExpiresAt uint64
 	// From and Space are CLAIMS carried inside the link. They are shown as
 	// what the link says, never as verified fact — the pass verifies itself
 	// against the space's own key at join time, these two strings do not.
@@ -276,17 +364,30 @@ func (r *Runtime) ResolveQuickLink(words string) (QuickLinkPreview, error) {
 	}
 	defer client.Close()
 
-	// Collect, not Fetch: it removes what it reads, which is what makes a
-	// quick link single-use without the relay knowing that is what it is
-	// enforcing.
-	items, err := client.Collect([][]byte{tok.Cap()})
+	// Which door is this? The kind is inside the sealed payload, so it
+	// cannot be read before choosing how to read it — resolve it in the
+	// ADDRESS instead. Try the SHARED mailbox first with a non-destructive
+	// Fetch: a wrong guess costs nothing, whereas guessing the other way
+	// round would spend a personal link nobody managed to read.
+	items, err := client.Fetch([][]byte{tok.HintFor(quicklink.DoorShared)})
 	if err != nil {
 		return QuickLinkPreview{}, fmt.Errorf("node: the relay could not be asked: %w", err)
 	}
+	// Fall back ONLY on a definitive empty answer. A timeout, an offline
+	// relay or a protocol error must not push resolution into the
+	// destructive branch — that would burn a personal link on a network
+	// hiccup.
+	if len(items) == 0 {
+		items, err = client.Collect([][]byte{tok.CapFor(quicklink.DoorPersonal)})
+		if err != nil {
+			return QuickLinkPreview{}, fmt.Errorf("node: the relay could not be asked: %w", err)
+		}
+	}
 	if len(items) == 0 {
 		return QuickLinkPreview{}, errors.New(
-			"node: nothing waiting under those words. A quick link lasts ten minutes and " +
-				"works once — it may have expired, already been used, or been meant for a " +
+			"node: nothing waiting under those words. A personal link lasts ten minutes " +
+				"and is spent by the first person who opens it; a shared one lasts until " +
+				"it expires — these may have run out, been used, or been meant for a " +
 				"different relay")
 	}
 	var firstErr error
@@ -298,9 +399,44 @@ func (r *Runtime) ResolveQuickLink(words string) (QuickLinkPreview, error) {
 			}
 			continue
 		}
-		return QuickLinkPreview{From: p.From, Space: p.Space, PassLink: p.PassLink}, nil
+		prev := QuickLinkPreview{From: p.From, Space: p.Space, PassLink: p.PassLink,
+			MaxUses: p.MaxUses, Approval: p.Approval, ExpiresAt: p.ExpiresAt}
+		// Remember the entrance. The words may be spent, but backing out of
+		// a preview should not cost somebody their way in.
+		r.rememberResolved(tok.Phrase(), prev)
+		return prev, nil
 	}
 	return QuickLinkPreview{}, firstErr
+}
+
+// ResolvedQuickLink returns an entrance this device already opened. The
+// relay copy of a personal link is gone after the first read; this is how
+// pressing Back and returning does not lose it.
+func (r *Runtime) ResolvedQuickLink(words string) (QuickLinkPreview, error) {
+	tok, err := quicklink.Parse(words)
+	if err != nil {
+		return QuickLinkPreview{}, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	prev, ok := r.resolvedLinks[tok.Phrase()]
+	if !ok {
+		return QuickLinkPreview{}, errors.New(
+			"node: this device has not opened those words")
+	}
+	return prev, nil
+}
+
+// rememberResolved caches a resolved entrance in memory only. It is not
+// persisted: the pass inside it is short-lived, and a cache that outlived
+// the process would keep a bearer secret around for no benefit.
+func (r *Runtime) rememberResolved(phrase string, prev QuickLinkPreview) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.resolvedLinks == nil {
+		r.resolvedLinks = map[string]QuickLinkPreview{}
+	}
+	r.resolvedLinks[phrase] = prev
 }
 
 // QuickLinks lists what this node has handed out, newest first.
