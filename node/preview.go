@@ -292,7 +292,75 @@ func (r *Runtime) FollowPublicSpace(reference string) (id.TerminalID, error) {
 	if err := r.OpenPublicSpace(tid, relayAddr); err != nil {
 		return id.TerminalID{}, err
 	}
+	r.promotePreview(tid)
 	return tid, nil
+}
+
+// promotePreview turns a session's verified bytes into durable custody
+// after a successful Follow, in a fixed order (PM-6):
+//
+//  1. copy ONLY graph-reachable blobs the root lacks — manifest wire id,
+//     the chunks the (verified) manifest lists, or inline chunks. A
+//     hostile holder can push arbitrary blobs into a reply box; harmless
+//     in a dying session, immortal if blind-copied into a store with no
+//     GC.
+//  2. for EVERY graph-reachable manifest now in the root — including
+//     ones read through and never copied — fire the idempotent
+//     onBlobStored, or the chunks never index: LAN serving, exports and
+//     seeding would all skip an asset that reports complete.
+//
+// If the Follow's projection install failed, nothing moves: promoting
+// against a replica with no refs would orphan the blobs.
+func (r *Runtime) promotePreview(tid id.TerminalID) {
+	sess := r.previews.bySpace(tid)
+	if sess == nil || sess.fetcher == nil {
+		return
+	}
+	installed := false
+	_ = r.withSpace(tid, func(st *spaceState) error {
+		installed = len(st.space.ManifestFrame) > 0
+		return nil
+	})
+	if !installed {
+		return
+	}
+	f := sess.fetcher
+	f.mu.Lock()
+	refs := make([]*schemas.AssetRef, 0, len(f.graph))
+	for _, sa := range f.graph {
+		if sa.Ref != nil {
+			refs = append(refs, sa.Ref)
+		}
+	}
+	store := f.store
+	f.mu.Unlock()
+
+	for _, ref := range refs {
+		var hashes []id.Hash
+		if ref.ManifestWireID != nil {
+			hashes = append(hashes, *ref.ManifestWireID)
+			if man, err := assets.LoadManifest(store, ref); err == nil {
+				hashes = append(hashes, man.Chunks...)
+			}
+		} else {
+			hashes = append(hashes, ref.InlineChunks...)
+		}
+		for _, h := range hashes {
+			if r.root.HasBlob(h) {
+				continue
+			}
+			if b, err := store.GetBlob(h); err == nil {
+				_, _ = r.root.PutBlob(b)
+			}
+		}
+	}
+	r.mu.Lock()
+	for _, ref := range refs {
+		if ref.ManifestWireID != nil && r.root.HasBlob(*ref.ManifestWireID) {
+			r.onBlobStored(*ref.ManifestWireID)
+		}
+	}
+	r.mu.Unlock()
 }
 
 // ---- HTTP ----
