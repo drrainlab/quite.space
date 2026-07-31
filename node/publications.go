@@ -411,16 +411,14 @@ func (r *Runtime) PublishDocument(tid id.TerminalID, doc *publication.Document, 
 	// an honest sentence about a staleness we created ourselves. Async and
 	// best-effort; the loop remains the guarantee.
 	if r.ks.Spaces[tid].Owned && st.space.Policy().IsPublic() {
-		// Settings are read from the raw blob HERE because r.mu is held for
-		// this whole function and GetSettings takes it — the same deadlock
-		// the share builder already stepped around once (PS-2).
-		var cfg Settings
-		if len(r.ks.Settings) > 0 {
-			_ = json.Unmarshal(r.ks.Settings, &cfg)
-		}
-		if cfg.Relay != "" {
-			go func() { _ = r.publishPublicProjection(cfg.Relay, tid) }()
-		}
+		// The address resolves INSIDE the goroutine (RR-4): the resolver
+		// takes r.mu, which this function holds — the same deadlock the
+		// share builder already stepped around once (PS-2).
+		go func() {
+			if wa := r.ResolvePublicWriteRelay(tid); wa != "" {
+				_ = r.publishPublicProjection(wa, tid)
+			}
+		}()
 	}
 	return a, nil
 }

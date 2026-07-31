@@ -459,4 +459,3 @@ func (f *sessionFetcher) settleDeadlines() {
 		}
 	}
 }
-

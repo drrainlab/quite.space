@@ -27,6 +27,7 @@ import (
 	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/protocol/quicklink"
 	"github.com/drrainlab/quiet_places/terminals"
+	"github.com/drrainlab/quiet_places/transports/relay"
 )
 
 const quickLinkFile = "quicklinks.json"
@@ -354,41 +355,72 @@ func (r *Runtime) ResolveQuickLink(words string) (QuickLinkPreview, error) {
 	if err != nil {
 		return QuickLinkPreview{}, err
 	}
-	relayAddr := r.GetSettings().Relay
-	if relayAddr == "" {
+	// Candidates (RR-4): the words carry NO relay on purpose, and before
+	// the registry existed both sides had to configure the same address by
+	// hand. Now: personal relay first, then the best-measured registry
+	// relays — a BOUNDED fan-out (≤3), never "ask the whole world".
+	cands := r.quicklinkCandidates()
+	if len(cands) == 0 {
 		return QuickLinkPreview{}, errors.New(
 			"node: a quick link is fetched from a relay, and no relay is configured — " +
-				"set the same relay the sender used in Settings")
+				"set a relay in Settings or switch to automatic")
 	}
 	if err := r.relayGate(); err != nil {
 		return QuickLinkPreview{}, err
 	}
-	client, err := r.dialRelay(relayAddr)
-	if err != nil {
-		return QuickLinkPreview{}, fmt.Errorf("node: could not reach the relay: %w", err)
-	}
-	defer client.Close()
 
-	// Which door is this? The kind is inside the sealed payload, so it
-	// cannot be read before choosing how to read it — resolve it in the
-	// ADDRESS instead. Try the SHARED mailbox first with a non-destructive
-	// Fetch: a wrong guess costs nothing, whereas guessing the other way
-	// round would spend a personal link nobody managed to read.
-	items, err := client.Fetch([][]byte{tok.HintFor(quicklink.DoorShared)})
-	if err != nil {
-		return QuickLinkPreview{}, fmt.Errorf("node: the relay could not be asked: %w", err)
-	}
-	// Fall back ONLY on a definitive empty answer. A timeout, an offline
-	// relay or a protocol error must not push resolution into the
-	// destructive branch — that would burn a personal link on a network
-	// hiccup.
-	if len(items) == 0 {
-		items, err = client.Collect([][]byte{tok.CapFor(quicklink.DoorPersonal)})
+	// Phase 1 — the SHARED door, non-destructive Fetch on every candidate
+	// in order: a wrong guess costs nothing. Track which candidates gave a
+	// DEFINITIVE empty answer — only those may be tried destructively.
+	var items [][]byte
+	var definitiveEmpty []string
+	var lastErr error
+	for _, addr := range cands {
+		err := r.withRelayControl(addr, func(client *relay.Client) error {
+			got, ferr := client.Fetch([][]byte{tok.HintFor(quicklink.DoorShared)})
+			if ferr != nil {
+				return ferr
+			}
+			items = got
+			return nil
+		})
 		if err != nil {
-			return QuickLinkPreview{}, fmt.Errorf("node: the relay could not be asked: %w", err)
+			lastErr = err
+			continue
+		}
+		if len(items) > 0 {
+			break
+		}
+		definitiveEmpty = append(definitiveEmpty, addr)
+	}
+	// Phase 2 — the PERSONAL door: destructive Collect, STRICTLY
+	// SEQUENTIAL, and only on relays that answered "definitively empty"
+	// above. A timeout or protocol error never reaches this branch — that
+	// would burn a personal link on a network hiccup — and two parallel
+	// destructive drains could each consume half a door.
+	if len(items) == 0 {
+		for _, addr := range definitiveEmpty {
+			err := r.withRelayControl(addr, func(client *relay.Client) error {
+				got, cerr := client.Collect([][]byte{tok.CapFor(quicklink.DoorPersonal)})
+				if cerr != nil {
+					return cerr
+				}
+				items = got
+				return nil
+			})
+			if err != nil {
+				lastErr = err
+				continue
+			}
+			if len(items) > 0 {
+				break
+			}
 		}
 	}
 	if len(items) == 0 {
+		if lastErr != nil && len(definitiveEmpty) == 0 {
+			return QuickLinkPreview{}, fmt.Errorf("node: no relay could be asked: %w", lastErr)
+		}
 		return QuickLinkPreview{}, errors.New(
 			"node: nothing waiting under those words. A personal link lasts ten minutes " +
 				"and is spent by the first person who opens it; a shared one lasts until " +

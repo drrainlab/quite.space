@@ -167,7 +167,7 @@ func settingsJSON(s Settings) map[string]any {
 		"theme": s.Theme, "preset": s.Preset, "render_mode": s.RenderMode,
 		"relay": s.Relay, "relay_mode": mode,
 		"relay_sync_seconds": int(relayInterval(s) / time.Second),
-		"connectivity": map[string]any{"mode": string(s.Connectivity.Mode)},
+		"connectivity":       map[string]any{"mode": string(s.Connectivity.Mode)},
 		"llm": map[string]any{
 			"provider": s.LLM.Provider, "model": s.LLM.Model,
 			"base_url": s.LLM.BaseURL, "has_key": s.LLM.APIKey != "",

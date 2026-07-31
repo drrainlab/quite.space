@@ -63,10 +63,14 @@ type relayPeer struct {
 	bulk    relayLane
 
 	mu           sync.Mutex
-	failures     int       // consecutive, resets on success
+	failures     int       // consecutive, resets after recovery
 	backoffUntil time.Time // no dial attempts before this
 	attempt      int       // backoff ladder position
 	untrusted    bool      // pin mismatch: no auto-retry, ever
+	// successStreak gates RECOVERY (RR-6): a relay that failed does not
+	// read healthy again on one lucky round trip — two consecutive
+	// successes clear the ladder.
+	successStreak int
 }
 
 // relayPool is the runtime's connection pool.
@@ -182,7 +186,12 @@ func (p *relayPool) acquire(pe *relayPeer, lane *relayLane) (*relay.Client, func
 		switch {
 		case err == nil:
 			pe.mu.Lock()
-			pe.failures, pe.attempt = 0, 0
+			pe.successStreak++
+			// Recovery needs TWO consecutive successes (RR-6) — one lucky
+			// round trip after a failure run proves nothing.
+			if pe.failures == 0 || pe.successStreak >= 2 {
+				pe.failures, pe.attempt = 0, 0
+			}
 			pe.mu.Unlock()
 		case isConnFatal(err):
 			// Connection-level trouble: drop it so the next acquire
@@ -215,6 +224,7 @@ func (p *relayPool) noteFailure(pe *relayPeer, err error) {
 	var untrusted ErrRelayUntrusted
 	pe.mu.Lock()
 	defer pe.mu.Unlock()
+	pe.successStreak = 0
 	if errors.As(err, &untrusted) {
 		pe.untrusted = true // cleared only by an explicit re-trust
 		return

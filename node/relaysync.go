@@ -77,6 +77,16 @@ func (r *Runtime) applyRelaySync(addr string, interval time.Duration) {
 		close(rs.stop)
 		rs.stop = nil
 	}
+	if rs.addr != addr {
+		// A DIFFERENT relay knows nothing we pushed to the old one. Reset
+		// the push progress so everything re-publishes there (RR-6): a
+		// relay ACK is "accepted by transient memory", never durability —
+		// the client's log is the durable copy, and eventId dedup makes
+		// the re-push idempotent on every receiver.
+		rs.lastLen = map[id.TerminalID]int{}
+		rs.lastPubLen = map[id.TerminalID]int{}
+		rs.lastPubRefresh = map[id.TerminalID]time.Time{}
+	}
 	rs.addr = addr
 	rs.interval = interval
 	rs.lastErr = ""
@@ -136,6 +146,9 @@ func (r *Runtime) relaySyncOnce(addr string) {
 		contrib bool // joined community member / curator → ingress uplink
 		mirror  bool // volunteers to keep the space reachable (PH-3)
 		seed    bool // answers wants from blobs already held (PH-3, opt-in)
+		// Per-purpose relay addresses (RR-4), resolved after the snapshot.
+		readAddr  string
+		writeAddr string
 	}
 	spaces := make([]spaceLen, 0, len(r.spaces))
 	for tid, st := range r.spaces {
@@ -162,6 +175,17 @@ func (r *Runtime) relaySyncOnce(addr string) {
 		})
 	}
 	r.mu.Unlock()
+	// Per-purpose relay resolution (RR-4), outside r.mu — the resolvers
+	// take their own locks. `addr` stays the PERSONAL relay: private-space
+	// push/pull and the inbox drain live there; public spaces may read and
+	// write elsewhere (a followed space keeps its publisher's relay).
+	for i := range spaces {
+		sp := &spaces[i]
+		if sp.pub || sp.reader || sp.contrib {
+			sp.readAddr = r.ResolvePublicReadRelay(sp.tid)
+			sp.writeAddr = r.ResolvePublicWriteRelay(sp.tid)
+		}
+	}
 	// The open space is always hot: the person is looking at it.
 	vst := r.attn()
 	vst.mu.Lock()
@@ -240,19 +264,22 @@ func (r *Runtime) relaySyncOnce(addr string) {
 	// Readers Fetch their spaces' outboxes.
 	nowBucket := relayBucketNow()
 	// Drain community ingress for ALL owned public spaces in ONE batched
-	// Collect (RR-2) — contributions land in the canonical logs BEFORE the
-	// publish triggers below look for growth.
-	var pubs []id.TerminalID
+	// Collect PER WRITE RELAY (RR-2/RR-4) — contributions land in the
+	// canonical logs BEFORE the publish triggers below look for growth.
+	pubsByAddr := map[string][]id.TerminalID{}
 	for _, sp := range spaces {
-		if sp.pub {
-			pubs = append(pubs, sp.tid)
+		if sp.pub && sp.writeAddr != "" {
+			pubsByAddr[sp.writeAddr] = append(pubsByAddr[sp.writeAddr], sp.tid)
 		}
 	}
-	var ingressGot map[id.TerminalID]int
-	if len(pubs) > 0 {
-		var err error
-		if ingressGot, err = r.collectPublicIngressBatch(addr, pubs); err != nil {
+	ingressGot := map[id.TerminalID]int{}
+	for wa, pubs := range pubsByAddr {
+		got, err := r.collectPublicIngressBatch(wa, pubs)
+		if err != nil {
 			lastErr = err.Error()
+		}
+		for tid, n := range got {
+			ingressGot[tid] = n
 		}
 	}
 	for _, sp := range spaces {
@@ -272,7 +299,10 @@ func (r *Runtime) relaySyncOnce(addr string) {
 			// flips, aging — surface as a digest change and publish
 			// themselves); the relay is force-touched only on bucket
 			// rotation or the heartbeat.
-			touched, err := r.publishPublicProjectionForce(addr, sp.tid, rotated || stale)
+			if sp.writeAddr == "" {
+				continue
+			}
+			touched, err := r.publishPublicProjectionForce(sp.writeAddr, sp.tid, rotated || stale)
 			if err != nil {
 				lastErr = err.Error()
 				continue
@@ -289,8 +319,13 @@ func (r *Runtime) relaySyncOnce(addr string) {
 		if sp.reader || sp.contrib {
 			// Everyone who is not the publisher reads the space through its
 			// signed projection — contributors included (their local log
-			// holds only their own frames).
-			if err := r.fetchPublicProjection(addr, sp.tid); err != nil {
+			// holds only their own frames). The READ address prefers the
+			// space's own relay (RR-4): a followed space stops being polled
+			// on YOUR relay where its publisher never writes.
+			if sp.readAddr == "" {
+				continue
+			}
+			if err := r.fetchPublicProjection(sp.readAddr, sp.tid); err != nil {
 				// "no projection yet" is routine for a fresh space — only
 				// surface real transport errors.
 				if !errors.Is(err, ErrNoProjection) {
@@ -306,7 +341,13 @@ func (r *Runtime) relaySyncOnce(addr string) {
 			// must not paint the connection light red. What IS worth
 			// saying — "N of your contributions are waiting" — belongs to
 			// that space's row, not to the relay.
-			if err := r.pushPublicIngress(addr, sp.tid); err != nil {
+			// The WRITE address (RR-4): a non-owner never uplinks to its
+			// own personal relay — publishing where the members do not look
+			// is worse than the durable pending set waiting.
+			if sp.writeAddr == "" {
+				continue
+			}
+			if err := r.pushPublicIngress(sp.writeAddr, sp.tid); err != nil {
 				if !errors.Is(err, ErrNoProjection) {
 					lastErr = err.Error()
 				}
@@ -314,12 +355,12 @@ func (r *Runtime) relaySyncOnce(addr string) {
 			// Keep the space reachable, and hand out what we hold. Neither
 			// touches anyone else's mailbox: keepalive Puts, seeding Fetches.
 			if sp.mirror {
-				if err := r.mirrorKeepalive(addr, sp.tid); err != nil {
+				if err := r.mirrorKeepalive(sp.writeAddr, sp.tid); err != nil {
 					lastErr = err.Error()
 				}
 			}
 			if sp.seed {
-				if err := r.seedForSpace(addr, sp.tid); err != nil {
+				if err := r.seedForSpace(sp.writeAddr, sp.tid); err != nil {
 					lastErr = err.Error()
 				}
 			}
@@ -378,6 +419,9 @@ type PublicSpaceStatus struct {
 	PendingUplink int    `json:"pending_uplink,omitempty"`
 	AgoPublish    int    `json:"seconds_since_publish,omitempty"`
 	IgnoredTotal  uint64 `json:"ignored_total,omitempty"`
+	// Relay is where this space's traffic actually goes (RR-4): the
+	// space's own relay for followed spaces, "" meaning the personal one.
+	Relay string `json:"relay,omitempty"`
 }
 
 // RelaySync reports the background loop state.
@@ -442,6 +486,10 @@ func (r *Runtime) publicSpaceStatusesLocked() []PublicSpaceStatus {
 			Frozen:       pol.Frozen,
 			Seq:          r.ks.PublicPublish[tid].ProjectionSeq,
 			IgnoredTotal: st.space.PolicyStats.IgnoredTotal,
+			// "" = the personal relay (owner default); a followed space
+			// shows its publisher's address. Caller holds r.mu, so this is
+			// the meta view, not the resolver.
+			Relay: meta.SourceRelay,
 		})
 		if role != "publisher" {
 			out[len(out)-1].PendingUplink = len(st.space.UnackedLocalFrames())

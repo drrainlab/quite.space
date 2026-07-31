@@ -647,6 +647,9 @@ type PolicyDelta struct {
 	AddCurator    *terminals.WriterBinding
 	RemoveCurator *terminals.WriterBinding // exact (principal, device) pair
 	Frozen        *bool
+	// Relays replaces the signed relay set (RR-5): RelayRef strings,
+	// first = primary, at most two. Nil = unchanged; empty = clear.
+	Relays *[]string
 }
 
 // RevisePolicy re-signs the space manifest with the revised policy
@@ -713,6 +716,16 @@ func (r *Runtime) RevisePolicy(tid id.TerminalID, d PolicyDelta) error {
 	if d.Frozen != nil {
 		next.Frozen = *d.Frozen
 	}
+	if d.Relays != nil {
+		// Refs are validated by SpacePolicy.Validate inside ReviseManifest;
+		// the grammar is checked HERE too so the error names the field.
+		for _, ref := range *d.Relays {
+			if _, err := ParseRelayRef(ref); err != nil {
+				return err
+			}
+		}
+		next.Relays = append([]string(nil), (*d.Relays)...)
+	}
 	if err := st.space.ReviseManifest(title, character, next); err != nil {
 		return err
 	}
@@ -766,6 +779,7 @@ func (a *APIServer) handleRevisePolicy(w http.ResponseWriter, r *http.Request) {
 		AddCurator    *struct{ Principal, Device string } `json:"add_curator"`
 		RemoveCurator *struct{ Principal, Device string } `json:"remove_curator"`
 		Frozen        *bool                               `json:"frozen"`
+		Relays        *[]string                           `json:"relays"`
 	}](r)
 	if err != nil {
 		httpErr(w, http.StatusBadRequest, err)
@@ -782,7 +796,8 @@ func (a *APIServer) handleRevisePolicy(w http.ResponseWriter, r *http.Request) {
 		}
 		return &terminals.WriterBinding{Principal: prin, Device: dev}, nil
 	}
-	delta := PolicyDelta{Visibility: body.Visibility, Publish: body.Publish, Frozen: body.Frozen}
+	delta := PolicyDelta{Visibility: body.Visibility, Publish: body.Publish,
+		Frozen: body.Frozen, Relays: body.Relays}
 	if body.AddCurator != nil {
 		b, err := parseBinding(body.AddCurator.Principal, body.AddCurator.Device)
 		if err != nil {

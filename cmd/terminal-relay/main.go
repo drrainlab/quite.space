@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -18,6 +19,17 @@ func main() {
 	addr := ":7411"
 	dataDir := ""
 	limits := relay.DefaultLimits()
+	var perHintBytes, totalBytes int64
+	intArg := func(args []string, i *int) int64 {
+		if *i+1 < len(args) {
+			*i++
+			n, err := strconv.ParseInt(args[*i], 10, 64)
+			if err == nil {
+				return n
+			}
+		}
+		return 0
+	}
 	args := os.Args[1:]
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -31,11 +43,29 @@ func main() {
 				dataDir = args[i+1]
 				i++
 			}
+		// Operator limits (RR-7): abuse rails, not throughput promises.
+		case "--max-conns":
+			limits.MaxConns = int(intArg(args, &i))
+		case "--max-item-kib":
+			limits.MaxItemBytes = int(intArg(args, &i)) << 10
+		case "--per-hint-mib":
+			perHintBytes = intArg(args, &i) << 20
+		case "--total-gib":
+			totalBytes = intArg(args, &i) << 30
+		case "--collect-rate":
+			limits.CollectRatePerMin = int(intArg(args, &i))
+		case "--write-rate":
+			limits.WriteRatePerMin = int(intArg(args, &i))
+		case "--fetch-rate":
+			limits.FetchRatePerMin = int(intArg(args, &i))
 		case "--help", "-h":
-			fmt.Println("usage: terminal-relay [--listen ADDR] [--data DIR]")
-			fmt.Println("  --listen  bind address (default :7411)")
-			fmt.Println("  --data    directory for the persistent relay identity key;")
-			fmt.Println("            omitted = ephemeral identity (local/dev profile)")
+			fmt.Println("usage: terminal-relay [--listen ADDR] [--data DIR] [limits]")
+			fmt.Println("  --listen        bind address (default :7411)")
+			fmt.Println("  --data          directory for the persistent relay identity key;")
+			fmt.Println("                  omitted = ephemeral identity (local/dev profile)")
+			fmt.Println("  --max-conns N   concurrent connection cap (default 4096)")
+			fmt.Println("  --max-item-kib N | --per-hint-mib N | --total-gib N")
+			fmt.Println("  --collect-rate N | --write-rate N | --fetch-rate N   (per conn per minute)")
 			return
 		}
 	}
@@ -61,6 +91,9 @@ func main() {
 		os.Exit(1)
 	}
 	defer srv.Close()
+	if perHintBytes > 0 || totalBytes > 0 {
+		srv.SetByteBudgets(int(perHintBytes), totalBytes)
+	}
 	fmt.Printf("blind relay listening on port %d\n", port)
 	if pin != "" {
 		fmt.Printf("identity SPKI pin: %s\n", pin)
@@ -76,7 +109,10 @@ func main() {
 		t := time.NewTicker(5 * time.Minute)
 		defer t.Stop()
 		for range t.C {
-			fmt.Printf("pending items: %d\n", srv.Pending())
+			// The structured metrics line (RR-7) — one greppable record a
+			// minute-scale scrape or a human tail can both read.
+			fmt.Printf("metrics items=%d bytes=%d conns=%d\n",
+				srv.Pending(), srv.PendingBytes(), srv.Conns())
 		}
 	}()
 	sig := make(chan os.Signal, 1)

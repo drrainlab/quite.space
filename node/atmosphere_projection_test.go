@@ -81,9 +81,9 @@ func TestTheProjectionPassesTheRecipeThroughUnchanged(t *testing.T) {
 	var got struct {
 		Atmosphere struct {
 			Visual struct {
-				Scene   string `json:"scene"`
-				Seed    uint64 `json:"seed"`
-				Params  []struct {
+				Scene  string `json:"scene"`
+				Seed   uint64 `json:"seed"`
+				Params []struct {
 					Name  string `json:"name"`
 					Value uint64 `json:"value"`
 				} `json:"params"`

@@ -188,6 +188,7 @@ func (a *APIServer) Handler() http.Handler {
 	mux.HandleFunc("POST /api/relay/push", a.auth(a.handleRelayPush))
 	mux.HandleFunc("POST /api/relay/pull", a.auth(a.handleRelayPull))
 	mux.HandleFunc("GET /api/relay/status", a.auth(a.handleRelayStatus))
+	mux.HandleFunc("GET /api/relay/diagnostics", a.auth(a.handleRelayDiagnostics))
 	if a.ui != nil {
 		mux.Handle("GET /", http.FileServerFS(a.ui))
 	}
@@ -466,6 +467,15 @@ func (a *APIServer) handleCreateSpace(w http.ResponseWriter, r *http.Request) {
 		Visibility: terminals.Visibility(body.Visibility),
 		Join:       body.Join,
 		Publish:    body.Publish,
+	}
+	// Beta simple mode (RR-5): a NEW public space signs its creator's
+	// relay as the space's relay set — the one moment the personal relay
+	// legitimately becomes a space's address. Members and mirrors follow
+	// qp.relay from here on; changing it later is a policy revision.
+	if pol.IsPublic() {
+		if ref := a.rt.PersonalRelayRef(); ref != "" {
+			pol.Relays = []string{ref}
+		}
 	}
 	tid, err := a.rt.CreateSpaceWithOptions(strings.TrimSpace(body.Title),
 		CreateOptions{Character: c, Policy: pol})

@@ -69,6 +69,36 @@ type SpacePolicy struct {
 	// only permitted act is the manifest revision that unfreezes. Readers
 	// render an honest FROZEN state instead of guessing at outages.
 	Frozen bool
+	// Relays is the space's signed relay set (RR-5): RelayRef strings
+	// ("official:<id>" resolved through the client's embedded registry, or
+	// "custom:tls://host:port" self-contained), first entry primary, at
+	// most two. It rides the ManifestFrame inside the projection, so
+	// distribution, signature and anti-rollback are inherited — and old
+	// builds skip the label unread. Public spaces only.
+	Relays []string
+}
+
+// validRelayRefSyntax is the SYNTACTIC half of the RelayRef grammar —
+// duplicated from node.ParseRelayRef on purpose (terminals must not
+// import node): enough to refuse garbage from ever being signed, while
+// resolution stays the client's business. Keep the two in step.
+func validRelayRefSyntax(s string) bool {
+	if rest, ok := strings.CutPrefix(s, "official:"); ok {
+		return rest != "" && !strings.ContainsAny(rest, " \t\n/:")
+	}
+	if rest, ok := strings.CutPrefix(s, "custom:tls://"); ok {
+		i := strings.LastIndex(rest, ":")
+		if i <= 0 || i == len(rest)-1 || strings.ContainsAny(rest, " \t\n") {
+			return false
+		}
+		for _, c := range rest[i+1:] {
+			if c < '0' || c > '9' {
+				return false
+			}
+		}
+		return len(rest)-i-1 <= 5
+	}
+	return false
 }
 
 // IsPublic reports whether the space is readable without membership.
@@ -122,13 +152,23 @@ func (p *SpacePolicy) canonicalize() {
 func (p SpacePolicy) Validate() error {
 	switch p.Effective() {
 	case VisibilityPrivate:
-		if p.Join != JoinNone || p.Publish != PublishAll || len(p.Writers) != 0 || p.Frozen {
+		if p.Join != JoinNone || p.Publish != PublishAll || len(p.Writers) != 0 || p.Frozen ||
+			len(p.Relays) != 0 {
 			return errors.New("terminals: private spaces carry no join/publish policy")
 		}
 		return nil
 	case VisibilityUnlisted, VisibilityPublic:
 	default:
 		return fmt.Errorf("terminals: unknown visibility %q", p.Visibility)
+	}
+	// Relay set (RR-5): at most two, syntactically valid RelayRefs.
+	if len(p.Relays) > 2 {
+		return errors.New("terminals: a relay set carries at most two relays")
+	}
+	for _, ref := range p.Relays {
+		if !validRelayRefSyntax(ref) {
+			return fmt.Errorf("terminals: unreadable relay reference %q", ref)
+		}
 	}
 	switch p.Publish {
 	case PublishCurated: // broadcast
@@ -174,6 +214,11 @@ func (p SpacePolicy) Labels() []string {
 	for _, w := range q.Writers {
 		out = append(out, charPrefix+"writer="+
 			hex.EncodeToString(w.Principal[:])+":"+hex.EncodeToString(w.Device[:]))
+	}
+	// Relay set (RR-5): ORDER IS MEANING (first = primary), so unlike
+	// writers these are not canonicalized-sorted.
+	for _, ref := range q.Relays {
+		out = append(out, charPrefix+"relay="+ref)
 	}
 	return out
 }
@@ -227,6 +272,16 @@ func ParsePolicy(labels []string) SpacePolicy {
 			copy(w.Principal[:], pr)
 			copy(w.Device[:], dv)
 			p.Writers = append(p.Writers, w)
+		case "relay":
+			// RR-5: a malformed relay ref fails CLOSED like a malformed
+			// writer — an ambiguous relay set must never route traffic.
+			// Order is meaning (first = primary); count is bounded so a
+			// hostile manifest cannot grow the parse.
+			if !validRelayRefSyntax(kv[1]) || len(p.Relays) >= 2 {
+				bad = true
+				continue
+			}
+			p.Relays = append(p.Relays, kv[1])
 		}
 	}
 	if bad {

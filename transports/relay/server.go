@@ -6,6 +6,7 @@ package relay
 import (
 	"crypto/tls"
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/drrainlab/quiet_places/transports/lan"
@@ -21,6 +22,11 @@ type ServerLimits struct {
 	FetchMaxHints   int
 	FetchMaxBytes   int
 	FetchRatePerMin int
+
+	// MaxConns caps concurrent connections (RR-6): every accepted conn
+	// costs a goroutine and a poll ticker, so an accept flood must hit a
+	// wall, not the scheduler. Over the cap the conn is closed cheaply.
+	MaxConns int
 	// PH-0 drain and write bounds. Fetch was bounded from the start; Collect,
 	// Replace and Put were not — and every one of them is reachable by anyone
 	// who can COMPUTE a hint, which for a public space is anyone holding the
@@ -45,11 +51,23 @@ func DefaultLimits() ServerLimits {
 	// ride the bulk lane: a projection per active public space per tick →
 	// 240. These are still abuse rails, not throughput promises.
 	return ServerLimits{
-		MaxItemBytes: 16 << 20, PerHint: 64, MaxTTL: 7 * 24 * time.Hour,
+		// MaxItemBytes aligns with codec.MaxItemLen (RR-7): the old 16 MiB
+		// cap let the relay accept items NO CLIENT could decode (the codec
+		// refuses byte strings over 1 MiB) — a stall generator. Every real
+		// producer already stays under the app-level 768 KiB.
+		MaxItemBytes: 1 << 20, PerHint: 64, MaxTTL: 7 * 24 * time.Hour,
 		FetchMaxHints: 64, FetchMaxBytes: 8 << 20, FetchRatePerMin: 240,
 		CollectMaxHints: 64, CollectMaxBytes: 8 << 20, CollectRatePerMin: 240,
 		WriteRatePerMin: 600,
+		MaxConns:        4096,
 	}
+}
+
+func (l ServerLimits) maxConns() int {
+	if l.MaxConns <= 0 {
+		return 4096
+	}
+	return l.MaxConns
 }
 
 func (l ServerLimits) fetchMaxHints() int {
@@ -109,6 +127,8 @@ type Server struct {
 	limits ServerLimits
 	node   *lan.Node
 	stop   chan struct{}
+	connMu sync.Mutex
+	conns  int
 }
 
 // StartServer listens on addr (TLS, same session semantics as LAN: the
@@ -166,6 +186,21 @@ func (s *Server) Close() {
 // Pending reports held items (diagnostics).
 func (s *Server) Pending() int { return s.store.Pending() }
 
+// PendingBytes reports held ciphertext bytes (diagnostics).
+func (s *Server) PendingBytes() int64 { return s.store.PendingBytes() }
+
+// Conns reports current connections (diagnostics).
+func (s *Server) Conns() int {
+	s.connMu.Lock()
+	defer s.connMu.Unlock()
+	return s.conns
+}
+
+// SetByteBudgets forwards operator byte quotas to the store (RR-7).
+func (s *Server) SetByteBudgets(perHint int, total int64) {
+	s.store.SetByteBudgets(perHint, total)
+}
+
 // loadClass derives the self-reported load from simple store facts
 // (RR-3). Advisory: clients weigh it, they never owe it blind trust.
 func (s *Server) loadClass() string {
@@ -211,6 +246,21 @@ func spend(count *int, window *time.Time, limit int) bool {
 }
 
 func (s *Server) serve(c *lan.Conn) {
+	// Connection cap (RR-6): every conn costs a goroutine and a ticker,
+	// so an accept flood hits this wall instead of the scheduler.
+	s.connMu.Lock()
+	if s.conns >= s.limits.maxConns() {
+		s.connMu.Unlock()
+		c.Close()
+		return
+	}
+	s.conns++
+	s.connMu.Unlock()
+	defer func() {
+		s.connMu.Lock()
+		s.conns--
+		s.connMu.Unlock()
+	}()
 	t := time.NewTicker(20 * time.Millisecond)
 	defer t.Stop()
 	idle := time.Now()

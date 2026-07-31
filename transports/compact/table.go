@@ -39,10 +39,10 @@ type linkTable struct {
 
 	generation uint16
 	// send side: value → index, and whether the receiver has confirmed it.
-	sendIdx  map[idKey]uint16
-	defined  map[uint16]bool // indexes the receiver has ACKed at this gen
-	nextIdx  uint16
-	warm     bool // receiver TABLE_ACKed our generation
+	sendIdx map[idKey]uint16
+	defined map[uint16]bool // indexes the receiver has ACKed at this gen
+	nextIdx uint16
+	warm    bool // receiver TABLE_ACKed our generation
 
 	// receive side: index → value, keyed by the sender's generation.
 	recvGen uint16

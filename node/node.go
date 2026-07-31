@@ -1004,7 +1004,7 @@ func (r *Runtime) Spaces() []SpaceInfo {
 				Title: meta.Title, LocalTitle: meta.LocalTitle,
 				Unnamed: meta.Unnamed,
 			}, st.space, r.Principal.ID),
-			Dyad: isDisplayDyad(cards, r.Principal.ID),
+			Dyad:          isDisplayDyad(cards, r.Principal.ID),
 			Events:        events,
 			Messages:      len(st.space.State.Messages()),
 			Undecryptable: st.space.Undecryptable,
