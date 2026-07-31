@@ -30,8 +30,16 @@ function switchView(v) {
   if (shelf) refreshShelf();
 }
 
+// pubNav is a navigation token: refreshPosts (the LIST) and openPub (an
+// ARTICLE) both bump it, and refreshPosts only shows the list at the end
+// if nothing navigated past it meanwhile. Without this, a refresh started
+// before openPub finished by force-hiding the article it had just drawn —
+// found live: opening a shared post in a held space landed on the feed.
+let pubNav = 0;
+
 async function refreshPosts() {
   if (!current) return;
+  const nav = ++pubNav;
   // Leaving the article takes its atmosphere with it — the scene and the bed
   // both. renderArticle() wipes the container, but a canvas removed from the
   // DOM keeps its rAF loop and an <audio> removed from the DOM keeps playing,
@@ -128,6 +136,7 @@ async function refreshPosts() {
       feed.appendChild(card);
     }
   } catch (e) { console.error(e); }
+  if (nav !== pubNav) return; // somebody opened an article while we fetched
   document.getElementById('pubArticle').style.display = 'none';
   document.getElementById('pubFeed').style.display = '';
 }
@@ -136,6 +145,7 @@ async function refreshPosts() {
 
 async function openPub(docID, mode) {
   openDocID = docID;
+  pubNav++;
   try {
     const p = await api(`/api/spaces/${current}/publications/${docID}`);
     // mode is the entry chosen in the feed: 'quiet' | 'sound' | undefined
@@ -174,11 +184,17 @@ function renderArticle(p, mode) {
   // Forward, and a plain sentence — the promise made at send time holds
   // at read time too (PS-4b).
   if (!p.archived) {
-    const edit = document.createElement('button');
-    edit.className = 'btn-plain'; edit.textContent = 'Edit';
-    edit.onclick = () => openComposer(doc, p.revision_event_id);
-    bar.appendChild(edit);
     const sp = currentSpace();
+    // Edit only where this device can WRITE: a reader replica draws no
+    // affordance that opens a form just to refuse at the end of it.
+    // can_write is absent for ordinary private member spaces (undefined
+    // !== false), and explicitly false for a public reader.
+    if (sp?.can_write !== false) {
+      const edit = document.createElement('button');
+      edit.className = 'btn-plain'; edit.textContent = 'Edit';
+      edit.onclick = () => openComposer(doc, p.revision_event_id);
+      bar.appendChild(edit);
+    }
     if (sp && sp.character?.memory !== 'private_history') {
       const fwd = document.createElement('button');
       fwd.className = 'btn-plain';
@@ -569,6 +585,10 @@ function openComposer(doc, baseRevision) {
     document_id: randHex16(), kind: 'article', title: '', summary: '',
     visibility_intent: 'space', blocks: [],
   };
+  // A post with no blocks serializes "blocks": null, and every chip does
+  // composerDoc.blocks.push(...) — which threw, and the whole palette
+  // looked dead when EDITING while working fine on a fresh draft.
+  composerDoc.blocks = composerDoc.blocks || [];
   composerBase = baseRevision || '';
   document.getElementById('compTitle').value = composerDoc.title || '';
   document.getElementById('compSummary').value = composerDoc.summary || '';

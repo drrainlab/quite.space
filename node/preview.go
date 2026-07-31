@@ -157,7 +157,17 @@ func (r *Runtime) PreviewPublicPublication(reference string) (*PostPreview, erro
 		return &PostPreview{Space: tid, Document: *doc, State: PreviewExistingLocal}, nil
 	}
 
+	// A cached session that HOLDS the post serves it; one that does not is
+	// refetched rather than trusted for its TTL — a Retry on "not in it
+	// yet" must actually retry, and the post may have been published a
+	// heartbeat after our cached read. The cache still shields the common
+	// case: re-opening a post the session already resolves.
 	sess := r.previews.bySpace(tid)
+	if sess != nil {
+		if _, ok := sess.state.PublicationByID(*doc); !ok {
+			sess = nil
+		}
+	}
 	if sess == nil {
 		if err := r.relayGate(); err != nil {
 			return nil, err

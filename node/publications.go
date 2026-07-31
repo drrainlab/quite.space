@@ -405,6 +405,23 @@ func (r *Runtime) PublishDocument(tid id.TerminalID, doc *publication.Document, 
 	if err != nil {
 		return id.EventID{}, err
 	}
+	// A fresh post in an OWNED public space nudges the projection push
+	// instead of waiting for the sync loop's next pass: "Read post" on a
+	// just-forwarded card otherwise answered "not in it yet" for the gap —
+	// an honest sentence about a staleness we created ourselves. Async and
+	// best-effort; the loop remains the guarantee.
+	if r.ks.Spaces[tid].Owned && st.space.Policy().IsPublic() {
+		// Settings are read from the raw blob HERE because r.mu is held for
+		// this whole function and GetSettings takes it — the same deadlock
+		// the share builder already stepped around once (PS-2).
+		var cfg Settings
+		if len(r.ks.Settings) > 0 {
+			_ = json.Unmarshal(r.ks.Settings, &cfg)
+		}
+		if cfg.Relay != "" {
+			go func() { _ = r.publishPublicProjection(cfg.Relay, tid) }()
+		}
+	}
 	return a, nil
 }
 

@@ -653,14 +653,19 @@ const NAV = (() => {
     const q = v.query;
     // The AI is not a person and not an ordinary room, so it gets its own
     // line rather than hiding among the spaces.
-    const ai = spaces.filter(s => s.ai && matches(s, q));
+    // In SELECTION mode the list is destinations, and a destination this
+    // device cannot write into is not one: offering it would collect a
+    // per-row refusal the node was always going to give. Read-only public
+    // replicas are the whole can_write === false population today.
+    const sendable = v.select ? spaces.filter(s => s.can_write !== false) : spaces;
+    const ai = sendable.filter(s => s.ai && matches(s, q));
     /** @type {Record<string, {rows:any[]}>} */
     const content = {
       recent: { rows: state.recent.filter(r => refMatches(r, q)).map(r => refRow(v, r, 'recent', '')) },
       pinned: { rows: state.pins.filter(r => refMatches(r, q)).map(r => refRow(v, r, 'pinned', '')) },
       groups: { rows: [] },
-      spaces: { rows: spaces.filter(s => !s.dyad && !s.ai && matches(s, q)).map(s => spaceRow(v, s, 'spaces', '')) },
-      people: { rows: spaces.filter(s => s.dyad && matches(s, q)).map(s => spaceRow(v, s, 'people', '')) },
+      spaces: { rows: sendable.filter(s => !s.dyad && !s.ai && matches(s, q)).map(s => spaceRow(v, s, 'spaces', '')) },
+      people: { rows: sendable.filter(s => s.dyad && matches(s, q)).map(s => spaceRow(v, s, 'people', '')) },
       ai: { rows: ai.map(s => spaceRow(v, s, 'ai', '')) },
       catalogs: { rows: state.catalogs.filter(r => refMatches(r, q)).map(r => catalogRow(v, r)) },
     };

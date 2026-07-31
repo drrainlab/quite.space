@@ -1021,7 +1021,12 @@ async function refreshSpace() {
   const entries = await api(`/api/spaces/${current}/entries`);
   const log = document.getElementById('log');
   const stick = log.scrollTop + log.clientHeight >= log.scrollHeight - 40;
-  if (seenSpace !== current) {
+  // A SWITCH always rebuilds. Without this, entering an EMPTY space kept
+  // the previous space's rows on screen: the reset below cleared the sigs
+  // to [], and empty-against-empty read as "unchanged" — every([]) is
+  // true — so nothing repainted until the first message forced it.
+  const switched = seenSpace !== current;
+  if (switched) {
     seenSpace = current; seenEntries = new Set(); hereMembers = new Set();
     feedSig = []; feedContentSig = [];
     // Presence is per-space, so the countdown does not follow you into a
@@ -1050,11 +1055,11 @@ async function refreshSpace() {
   const aSig = entries.map(e => e.asset ? (e.asset.state + '/' + (e.asset.missing || 0) + '/' + (e.asset.total || 0)) : '');
   const rSig = entries.map(e => resSig(e.resonance));
   const sig = contentSig.map((c, i) => c + '|' + aSig[i] + '|' + rSig[i]);
-  const unchanged = sig.length === feedSig.length && sig.every((s, i) => s === feedSig[i]);
-  const appendOnly = sig.length > feedSig.length && feedSig.every((s, i) => s === sig[i]);
+  const unchanged = !switched && sig.length === feedSig.length && sig.every((s, i) => s === feedSig[i]);
+  const appendOnly = !switched && sig.length > feedSig.length && feedSig.every((s, i) => s === sig[i]);
   // Same rows/order — only asset progress and/or resonance moved. Patch just
   // the changed rows in place so unrelated playing media is never torn down.
-  const structSame = !unchanged && !appendOnly &&
+  const structSame = !switched && !unchanged && !appendOnly &&
     contentSig.length === feedContentSig.length &&
     contentSig.every((c, i) => c === feedContentSig[i]);
   const firstPaint = seenEntries.size === 0;

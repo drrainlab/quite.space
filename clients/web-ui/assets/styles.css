@@ -1895,3 +1895,11 @@ header .nav-act { padding: 5px 11px 5px 10px; min-height: 30px; }
 .prev-archived { border: 1px solid var(--warn); color: var(--warn);
   border-radius: var(--radius-sm); padding: 8px 12px; margin: 8px 0;
   font-size: 13px; }
+
+/* The reference toggle in the share dialog: one readable row, not a
+   checkbox floating in space. */
+#shareRefRow { display: flex; align-items: center; gap: 8px;
+  margin: 8px 0 2px; cursor: pointer; user-select: none; }
+#shareRefRow[hidden] { display: none; }
+#shareRefRow input { accent-color: var(--acc); width: 15px; height: 15px;
+  margin: 0; flex: none; }

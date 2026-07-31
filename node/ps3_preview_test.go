@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/drrainlab/quiet_places/protocol/id"
+	"github.com/drrainlab/quiet_places/protocol/publication"
 	"github.com/drrainlab/quiet_places/terminals"
 )
 
@@ -263,4 +264,50 @@ func TestAHeldSpaceIsPlainNavigationNotAPreview(t *testing.T) {
 		t.Fatal("a session was created for a held space")
 	}
 	_ = terminals.SpacePolicy{}
+}
+
+// Retry means retry: a cached session that does not hold the post is
+// refetched, not trusted for its TTL. Found live — a post published a
+// moment after the first read answered "not in it yet" for ten minutes.
+func TestAMissingPostIsRefetchedNotCachedForTheTTL(t *testing.T) {
+	alice, bob, src, _, _, done := previewFixture(t)
+	defer done()
+
+	// A post that does not exist yet: the first read caches a session
+	// that lacks it.
+	future := [16]byte{0xF0}
+	ref, err := alice.ComposePublicLink(src, &future)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pv, err := bob.PreviewPublicPublication(ref)
+	if err != nil || pv.State != PreviewMissingDoc {
+		t.Fatalf("expected missing, got %v %+v", err, pv)
+	}
+
+	// Now alice publishes it and pushes the projection.
+	doc := &publication.Document{
+		Kind: "article", Title: "выпущено позже", Visibility: "space",
+		DocumentID: future,
+		Blocks: []publication.Block{{ID: "b1", Type: "text",
+			RawProps: publication.EncodeTextProps(publication.TextProps{Text: "текст"})}},
+	}
+	if _, err := alice.PublishDocument(src, doc, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := alice.publishPublicProjection(alice.GetSettings().Relay, src); err != nil {
+		t.Fatal(err)
+	}
+
+	// Bob presses Retry — and gets the post, not the cache.
+	pv, err = bob.PreviewPublicPublication(ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pv.State != PreviewResolved {
+		t.Fatalf("retry served the stale cache: %s (%s)", pv.State, pv.Reason)
+	}
+	if pv.Pub.Title != "выпущено позже" {
+		t.Fatalf("the wrong post: %q", pv.Pub.Title)
+	}
 }
