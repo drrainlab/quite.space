@@ -65,6 +65,10 @@ type previewSession struct {
 	join    string
 	assets  map[string]*schemas.AssetRef
 	born    time.Time
+	// fetcher drives the swarm for this session (PM-2). Every death path
+	// of the session closes it — that is what makes "nothing survives"
+	// true for in-flight downloads too.
+	fetcher *sessionFetcher
 }
 
 // previewStore is the bounded session table. Its own mutex, not r.mu: a
@@ -109,6 +113,19 @@ func (ps *previewStore) put(s *previewSession) {
 		delete(ps.sessions, oldest)
 	}
 	ps.sessions[s.id] = s
+}
+
+// closeAll kills every session's fetcher — the runtime-shutdown death
+// path. The loops also watch r.stop; this releases their budgets.
+func (ps *previewStore) closeAll() {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	for k, v := range ps.sessions {
+		if v.fetcher != nil {
+			v.fetcher.close()
+		}
+		delete(ps.sessions, k)
+	}
 }
 
 // bySpace finds a fresh session for a space, so re-opening within the TTL
@@ -204,6 +221,14 @@ func (r *Runtime) PreviewPublicPublication(reference string) (*PostPreview, erro
 			title: title, publish: string(pol.Publish), join: string(pol.Join),
 			assets: previewAssetRefs(tid, env.Frames), born: time.Now(),
 		}
+		// The fetcher (PM-2): the envelope's IngressHints and the link's
+		// relay are exactly what the session used to discard. Best-effort —
+		// a session without a fetcher still reads text and serves what the
+		// node already holds.
+		if f, err := newSessionFetcher(tid, relayAddr, env.IngressHints, r.root); err == nil {
+			sess.fetcher = f
+			go f.run(r.stop)
+		}
 		r.previews.put(sess)
 	}
 
@@ -223,6 +248,13 @@ func (r *Runtime) PreviewPublicPublication(reference string) (*PostPreview, erro
 	default:
 		out.State = PreviewResolved
 		out.Pub = &pub
+	}
+	// Only what the person actually OPENED becomes requestable (PM-1): the
+	// allowlist grows by this publication's graph, never by "everything the
+	// projection mentions". An archived post's graph is deliberately NOT
+	// added — its withdrawn media is not offered for fetch.
+	if sess.fetcher != nil && out.State == PreviewResolved && pub.Document != nil {
+		sess.fetcher.extendGraph(pub.Document.LiveAssetIDs(), sess.assets)
 	}
 	return out, nil
 }
@@ -335,17 +367,68 @@ func (a *APIServer) handlePreviewAsset(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusBadRequest, err)
 		return
 	}
-	ref, ok := sess.assets[aid]
-	if !ok {
-		httpErr(w, http.StatusNotFound, errors.New("node: unknown asset in this preview"))
+	// GET is PASSIVE: it serves what the session has and never triggers
+	// the swarm — "fetch on GET miss" is the likeliest future regression,
+	// and the test suite pins this. Preview media never enters a durable
+	// browser layer either: no-store on every answer.
+	w.Header().Set("Cache-Control", "no-store")
+	if sess.fetcher != nil {
+		if data, ref, ok := sess.fetcher.bytesFor(aid); ok {
+			serveAssetBytes(w, r, ref, aid, data)
+			return
+		}
+	}
+	// Read-through: bytes the node already holds (mirror, prior follow)
+	// serve with zero network and zero session budget.
+	if ref, ok := sess.assets[aid]; ok {
+		var st assets.Store = a.rt.root
+		if sess.fetcher != nil {
+			st = sess.fetcher.store
+		}
+		if data, err := assets.RetrieveBytes(st, ref); err == nil {
+			serveAssetBytes(w, r, ref, aid, data)
+			return
+		}
+	}
+	state, missing, total, reason := FetchNotRequested, 0, 0, ""
+	if sess.fetcher != nil {
+		state, missing, total, reason = sess.fetcher.status(aid)
+		if state == "" {
+			httpErr(w, http.StatusNotFound, errors.New("node: this asset is outside the publication's graph"))
+			return
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusConflict)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"state": state, "missing": missing, "total": total, "reason": reason,
+	})
+}
+
+// handlePreviewFetch starts (or reports) one asset's session fetch. The
+// POST is the consent; identical concurrent requests coalesce into one
+// job, and a retry after silence re-arms it.
+func (a *APIServer) handlePreviewFetch(w http.ResponseWriter, r *http.Request) {
+	sess := a.rt.previews.get(r.PathValue("pid"))
+	if sess == nil {
+		httpErr(w, http.StatusNotFound, errors.New("node: this preview is gone — open the post again"))
 		return
 	}
-	data, err := assets.RetrieveBytes(a.rt.root, ref)
+	aid, err := a.assetID(r)
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusConflict)
-		_ = json.NewEncoder(w).Encode(map[string]any{"state": "incomplete", "reason": "no_source"})
+		httpErr(w, http.StatusBadRequest, err)
 		return
 	}
-	serveAssetBytes(w, r, ref, aid, data)
+	if sess.fetcher == nil {
+		httpErr(w, http.StatusConflict, errors.New("node: this preview has no fetch pipeline"))
+		return
+	}
+	state, missing, total, reason := sess.fetcher.request(aid)
+	if state == "" {
+		httpErr(w, http.StatusNotFound, errors.New("node: this asset is outside the publication's graph"))
+		return
+	}
+	writeJSON(w, map[string]any{
+		"state": state, "missing": missing, "total": total, "reason": reason,
+	})
 }

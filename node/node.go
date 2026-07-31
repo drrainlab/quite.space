@@ -523,6 +523,10 @@ const closeGrace = 5 * time.Second
 // Open unwinding through the same path a healthy shutdown uses.
 func (r *Runtime) Close() {
 	r.stopOnce.Do(func() { close(r.stop) })
+	// Preview fetchers watch r.stop too; closeAll additionally releases
+	// their memory budgets so a long-lived process (tests, the desktop
+	// shell reopening) does not leak the global cap.
+	r.previews.closeAll()
 	if r.lanNode != nil {
 		r.lanNode.Close()
 	}

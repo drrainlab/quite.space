@@ -106,6 +106,7 @@ func (a *APIServer) Handler() http.Handler {
 	mux.HandleFunc("POST /api/public/preview", a.auth(a.handlePublicPreview))
 	mux.HandleFunc("POST /api/public/follow", a.auth(a.handlePublicFollow))
 	mux.HandleFunc("GET /api/public/previews/{pid}/assets/{asset}", a.auth(a.handlePreviewAsset))
+	mux.HandleFunc("POST /api/public/previews/{pid}/assets/{asset}/fetch", a.auth(a.handlePreviewFetch))
 	mux.HandleFunc("GET /api/spaces/{id}/link", a.auth(a.handlePublicLink))
 	mux.HandleFunc("POST /api/spaces/{id}/join", a.auth(a.handlePublicJoin))
 	mux.HandleFunc("POST /api/spaces/{id}/policy", a.auth(a.handleRevisePolicy))
