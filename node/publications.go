@@ -129,8 +129,8 @@ func blockFromJSON(bj blockJSON) (publication.Block, error) {
 		switch {
 		case len(p.Items) > 0 || bj.Type == "gallery" || bj.Type == "credits":
 			b.RawProps = publication.EncodeListProps(publication.ListProps{Items: p.Items, Text: p.Text})
-		case p.Asset != "" || bj.Type == "image" || bj.Type == "audio" || bj.Type == "file" ||
-			bj.Type == "video-link" || bj.Type == "app":
+		case p.Asset != "" || bj.Type == "image" || bj.Type == "audio" || bj.Type == "video" ||
+			bj.Type == "file" || bj.Type == "video-link" || bj.Type == "app":
 			b.RawProps = publication.EncodeAssetProps(publication.AssetProps{Asset: p.Asset, Text: p.Text, Caption: p.Caption})
 		default:
 			b.RawProps = publication.EncodeTextProps(publication.TextProps{Text: p.Text, Extra: p.Extra, More: p.More})
@@ -155,8 +155,8 @@ func blockToJSON(b publication.Block) blockJSON {
 				if p, err := publication.ParseListProps(b.RawProps); err == nil {
 					bj.Props = &propsJSON{Items: p.Items, Text: p.Text}
 				}
-			case b.Type == "image" || b.Type == "audio" || b.Type == "file" ||
-				b.Type == "video-link" || b.Type == "app":
+			case b.Type == "image" || b.Type == "audio" || b.Type == "video" ||
+				b.Type == "file" || b.Type == "video-link" || b.Type == "app":
 				if p, err := publication.ParseAssetProps(b.RawProps); err == nil {
 					bj.Props = &propsJSON{Asset: p.Asset, Text: p.Text, Caption: p.Caption}
 				}

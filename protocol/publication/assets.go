@@ -16,7 +16,7 @@ package publication
 // everywhere except where the tree walk separately demands presence.
 //
 // Roles: cover · atmosphere_audio · atmosphere_poster · image · audio ·
-// file · poster (video-link) · gallery item.
+// video · file · poster (video-link) · gallery item.
 func (d *Document) visitAssets(visit func(hexID, role string)) {
 	if d.Cover != "" {
 		visit(d.Cover, "cover")
@@ -42,7 +42,7 @@ func (d *Document) visitAssets(visit func(hexID, role string)) {
 					}
 				case "app":
 					// Key 1 is an instance id, not an asset.
-				default: // image, audio, file
+				default: // image, audio, video, file
 					if p.Asset != "" {
 						visit(p.Asset, b.Type)
 					}

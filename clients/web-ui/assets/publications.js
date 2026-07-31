@@ -457,9 +457,19 @@ function renderPubBlock(b) {
       }
       el.appendChild(table); break;
     }
-    case 'image': case 'audio': case 'file': {
+    case 'image': case 'audio': case 'video': case 'file': {
       // Media via the existing lazy asset path.
       el.appendChild(pubAssetNode(b.type, p)); break;
+    }
+    case 'gallery': {
+      // A grid of lazy images — it used to fall into "Unsupported
+      // content", which for a first-class block type was simply a gap.
+      const grid = document.createElement('div');
+      grid.className = 'pub-gallery';
+      for (const it of p.items || []) {
+        if (it) grid.appendChild(pubAssetNode('image', { asset: it }));
+      }
+      el.appendChild(grid); break;
     }
     case 'video-link': {
       const a = document.createElement('a');
@@ -505,6 +515,12 @@ function pubAssetNode(kind, p) {
     au.controls = true;
     autoMediaSrc(au, p.asset); // fetch bytes on view (media on-demand)
     wrap.appendChild(au);
+  } else if (kind === 'video' && p.asset) {
+    const v = document.createElement('video');
+    v.controls = true;
+    v.preload = 'metadata';
+    autoMediaSrc(v, p.asset);
+    wrap.appendChild(v);
   } else if (kind === 'image' && p.asset) {
     const img = document.createElement('img');
     img.alt = p.text || '';
@@ -533,6 +549,7 @@ function pubAssetNode(kind, p) {
 const COMPOSER_CHIPS = [
   { t: 'text', label: 'Text' }, { t: 'heading', label: 'Heading' },
   { t: 'image', label: '🖼 Image' }, { t: 'audio', label: '♫ Audio' },
+  { t: 'video', label: '🎞 Video' },
   { t: 'file', label: '📄 File' }, { t: 'quote', label: '❝ Quote' },
   { t: 'callout', label: 'Callout' }, { t: 'code', label: 'Code' },
   { t: 'link', label: 'Link' }, { t: 'credits', label: 'Credits' },
@@ -672,7 +689,8 @@ async function uploadAssetFile(file) {
 
 // mediaAccept maps a media block type to its file-picker accept filter.
 function mediaAccept(type) {
-  return type === 'image' ? 'image/*' : type === 'audio' ? 'audio/*' : '';
+  return type === 'image' ? 'image/*' : type === 'audio' ? 'audio/*'
+    : type === 'video' ? 'video/*' : '';
 }
 
 // mediaDropZone builds the drop/browse surface with a live preview.
@@ -692,7 +710,9 @@ function mediaDropZone(b) {
   function showPreview() {
     preview.innerHTML = '';
     if (!b.props.asset) {
-      hint.textContent = `Drop ${b.type === 'image' ? 'an image' : b.type === 'audio' ? 'an audio file' : 'a file'} here — or click to browse`;
+      hint.textContent = `Drop ${b.type === 'image' ? 'an image'
+        : b.type === 'audio' ? 'an audio file'
+        : b.type === 'video' ? 'a video' : 'a file'} here — or click to browse`;
       return;
     }
     hint.textContent = (b.props.text || 'uploaded') + ' · click to replace';
@@ -701,6 +721,11 @@ function mediaDropZone(b) {
       img.alt = b.props.text || '';
       img.src = `/api/spaces/${current}/assets/${b.props.asset}?token=${token}`;
       preview.appendChild(img);
+    } else if (b.type === 'video') {
+      const v = document.createElement('video');
+      v.controls = true;
+      v.src = `/api/spaces/${current}/assets/${b.props.asset}?token=${token}`;
+      preview.appendChild(v);
     } else if (b.type === 'audio') {
       const au = document.createElement('audio');
       au.controls = true;
@@ -829,10 +854,11 @@ function renderComposerBlocks() {
       inp.value = (b.props.items || []).join(', ');
       inp.oninput = () => { b.props.items = inp.value.split(',').map(s => s.trim()).filter(Boolean); };
       row.appendChild(inp);
-    } else if (['image', 'audio', 'file'].includes(b.type)) {
+    } else if (['image', 'audio', 'video', 'file'].includes(b.type)) {
       row.appendChild(mediaDropZone(b));
       const alt = document.createElement('input');
-      alt.placeholder = b.type === 'image' ? 'alt text — what is in the image' : 'title';
+      alt.placeholder = b.type === 'image' ? 'alt text — what is in the image'
+        : b.type === 'video' ? 'alt text — what happens in the video' : 'title';
       alt.value = b.props.text || '';
       alt.oninput = () => { b.props.text = alt.value; };
       row.appendChild(alt);

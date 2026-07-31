@@ -47,6 +47,11 @@ var contentTypes = map[string]bool{
 	"gallery": true, "audio": true, "video-link": true, "file": true,
 	"link": true, "code": true, "callout": true, "separator": true,
 	"credits": true,
+	// video carries an UPLOADED file (PM follow-up): asset props exactly
+	// like image/audio — text is the alt, caption the caption. video-link
+	// stays the external-URL form. Older builds keep the block opaque and
+	// render their fallback (the decoder never rejects unknown types).
+	"video": true,
 	// Reserved since PUB-0 (renders fallback until APP-1) so the grammar
 	// never changes silently between gates.
 	"app": true,

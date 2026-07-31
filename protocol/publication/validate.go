@@ -176,7 +176,7 @@ func (v *treeValidator) props(b *Block) error {
 			if err := checkHex(p.Asset, "app instance"); err != nil { // key 1 = instance id
 				return err
 			}
-		default: // image, audio, file
+		default: // image, audio, video, file
 			if p.Asset == "" {
 				return fmt.Errorf("publication: %s block needs an asset", b.Type)
 			}

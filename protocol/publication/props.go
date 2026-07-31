@@ -186,7 +186,7 @@ func propsShape(blockType string) string {
 	switch blockType {
 	case "heading", "text", "quote", "callout", "code", "link":
 		return "text"
-	case "image", "audio", "file", "video-link", "app":
+	case "image", "audio", "file", "video", "video-link", "app":
 		return "asset"
 	case "gallery", "credits":
 		return "list"

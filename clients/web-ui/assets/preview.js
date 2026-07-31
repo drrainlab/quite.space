@@ -174,6 +174,20 @@ const PREV = (() => {
         box.appendChild(document.createElement('hr'));
         break;
       }
+      case 'gallery': {
+        const grid = document.createElement('div');
+        grid.className = 'pub-gallery';
+        for (const it of props.items || []) {
+          if (!it) continue;
+          const img = document.createElement('img');
+          img.className = 'pub-img';
+          img.alt = '';
+          grid.appendChild(img);
+          nearViewport(img, () => fetchInto(r.preview_id, it, img));
+        }
+        box.appendChild(grid);
+        break;
+      }
       case 'image': {
         if (!props.asset) break;
         const img = document.createElement('img');
@@ -219,6 +233,45 @@ const PREV = (() => {
               }
             };
             btn.replaceWith(el);
+          }, (p2) => {
+            if (p2.state === 'partial' && p2.total) {
+              btn.textContent = t('prev.progress', { got: p2.total - p2.missing, total: p2.total });
+            }
+          });
+        };
+        break;
+      }
+      case 'video': {
+        if (!props.asset) break;
+        // Explicit, whole-file (video v0): fetched completely, verified,
+        // then played over Range/206 from the session's assembled bytes.
+        const btn = document.createElement('button');
+        btn.textContent = t('prev.load_video');
+        box.appendChild(btn);
+        btn.onclick = () => {
+          btn.disabled = true;
+          btn.textContent = t('prev.loading');
+          prevFetch(r.preview_id, props.asset, (ok, state, reason) => {
+            if (!ok) {
+              const note = document.createElement('div');
+              note.className = 'hint';
+              note.textContent = prevStateLine(state, reason);
+              btn.replaceWith(note);
+              return;
+            }
+            const v = document.createElement('video');
+            v.controls = true;
+            v.src = prevAssetURL(r.preview_id, props.asset);
+            v.onplay = () => {
+              if (typeof AUDIO !== 'undefined') {
+                AUDIO.request('player', 'player', () => v.pause());
+              }
+            };
+            btn.replaceWith(v);
+          }, (p2) => {
+            if (p2.state === 'partial' && p2.total) {
+              btn.textContent = t('prev.progress', { got: p2.total - p2.missing, total: p2.total });
+            }
           });
         };
         break;
@@ -265,13 +318,14 @@ const PREV = (() => {
 
   /** prevFetch drives one session asset: POST the consent, poll the
    *  honest states, and answer cb(ok, state, reason) exactly once. */
-  async function prevFetch(pid, asset, cb) {
+  async function prevFetch(pid, asset, cb, onTick) {
     let last = { state: 'requesting', reason: '' };
     try {
       for (let i = 0; i < 55; i++) {
         const r = await api(`/api/public/previews/${pid}/assets/${asset}/fetch`,
           { method: 'POST' });
         last = r;
+        if (onTick) onTick(r);
         if (r.state === 'ready') { cb(true, r.state, ''); return; }
         if (r.state === 'no_response' || r.state === 'descriptor_unavailable' ||
             r.state === 'budget_exceeded' || r.state === 'integrity_error' ||
@@ -314,7 +368,14 @@ const PREV = (() => {
   /** fetchInto points an <img> at a session asset once its bytes are
    *  ready, or replaces it with the honest sentence. */
   function fetchInto(pid, asset, img) {
+    // The loader is a visible sibling, not a blank rectangle: a person
+    // watching an empty spot cannot tell "loading" from "broken".
+    const load = document.createElement('div');
+    load.className = 'prev-loading';
+    load.textContent = t('prev.looking');
+    img.after(load);
     prevFetch(pid, asset, (ok, state, reason) => {
+      load.remove();
       if (ok) {
         img.src = prevAssetURL(pid, asset);
         return;
@@ -323,6 +384,10 @@ const PREV = (() => {
       note.className = 'hint';
       note.textContent = prevStateLine(state, reason);
       img.replaceWith(note);
+    }, (r) => {
+      load.textContent = (r.state === 'partial' && r.total)
+        ? t('prev.progress', { got: r.total - r.missing, total: r.total })
+        : t('prev.looking');
     });
   }
 

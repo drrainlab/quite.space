@@ -1903,3 +1903,14 @@ header .nav-act { padding: 5px 11px 5px 10px; min-height: 30px; }
 #shareRefRow[hidden] { display: none; }
 #shareRefRow input { accent-color: var(--acc); width: 15px; height: 15px;
   margin: 0; flex: none; }
+
+/* The preview media loader: a quiet visible line, never a blank spot. */
+.prev-loading { color: var(--dim); font-size: 13px; padding: 10px 0;
+  animation: prev-pulse 1.6s ease-in-out infinite; }
+@keyframes prev-pulse { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .prev-loading { animation: none; } }
+#prevBody video { max-width: 100%; border-radius: var(--radius-sm); }
+
+.pub-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 8px; margin: 8px 0; }
+.pub-gallery img { width: 100%; border-radius: var(--radius-sm); }
