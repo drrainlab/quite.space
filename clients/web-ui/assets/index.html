@@ -124,6 +124,11 @@
     <div id="sharePicker" class="share-picker"></div>
     <div id="sharePicked" class="hint share-picked"></div>
     <textarea id="shareComment" rows="2"></textarea>
+    <!-- Post shares from a public space only: the toggle means "attach no
+         path back", never "send no card". -->
+    <label id="shareRefRow" class="hint" hidden>
+      <input type="checkbox" id="shareRef" checked> <span id="shareRefText"></span>
+    </label>
     <div class="row-end">
       <button class="btn-plain" onclick="SHARE.cancel()">Cancel</button>
       <button id="shareSend" onclick="SHARE.send()" disabled>Send</button>
@@ -139,6 +144,15 @@
   </dialog>
   <!-- A catalog is a place you look INSIDE, so it gets a screen with a
        trail rather than opening as an ordinary room (CAT-0a). -->
+  <!-- The transient post reader (PS-4): a shared card opened for a look.
+       Nothing about this screen persists — see preview.js. -->
+  <div id="previewScreen" style="display:none">
+    <div class="sig-bar">
+      <div id="prevSpace" class="prev-space"></div>
+    </div>
+    <div id="prevBody" class="prev-body"></div>
+    <div id="prevFoot" class="row prev-foot"></div>
+  </div>
   <div id="catalogScreen" style="display:none">
     <div class="sig-bar">
       <button class="btn-plain" onclick="CAT.back()">← back</button>
@@ -944,6 +958,7 @@
 <script src="audiopass.js"></script>
 <script src="gateway.js"></script>
 <script src="navigator.js"></script>
+<script src="preview.js"></script>
 <script src="catalog.js"></script>
 <script src="share.js"></script>
 <script src="app.js"></script>

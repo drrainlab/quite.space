@@ -1875,3 +1875,23 @@ header .nav-act { padding: 5px 11px 5px 10px; min-height: 30px; }
 .atmo-edit-text { width: 100%; resize: vertical; }
 .atmo-edit-sound { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .atmo-edit-sound code { font-size: .76rem; opacity: .7; }
+
+/* ---- PS-4: the post card + the transient reader ---- */
+.post-card { border: 1px solid var(--line); border-radius: var(--radius-md);
+  padding: 12px 14px; margin: 4px 0; max-width: 420px;
+  background: var(--panel); display: flex; flex-direction: column; gap: 6px; }
+.post-card-src { color: var(--dim); font-size: 12px; }
+.post-card-title { font-weight: 700; font-size: calc(15px * var(--font-scale)); }
+.post-card-sum { color: var(--dim); font-size: 13px;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+  overflow: hidden; }
+.post-card-meta { color: var(--muted); font-size: 12px; }
+.post-card-read { align-self: flex-end; }
+#previewScreen { padding: 12px 18px; max-width: 760px; margin: 0 auto; }
+.prev-space { color: var(--dim); font-size: 13px; }
+.prev-body { padding: 8px 0 16px; }
+.prev-body img { max-width: 100%; border-radius: var(--radius-sm); }
+.prev-foot { gap: 8px; padding-bottom: 24px; }
+.prev-archived { border: 1px solid var(--warn); color: var(--warn);
+  border-radius: var(--radius-sm); padding: 8px 12px; margin: 8px 0;
+  font-size: 13px; }

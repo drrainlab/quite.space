@@ -66,6 +66,13 @@ const SHARE = (() => {
     /** @type {HTMLTextAreaElement} */(document.getElementById('shareComment')).value = '';
     document.getElementById('shareAbout').textContent = about && about.source
       ? t('share.about', { space: labelOf(about.source) }) : '';
+    // Post shares from a public space carry a way back BY DEFAULT; the
+    // toggle means "attach no path back", never "send no card".
+    const refRow = /** @type {HTMLElement} */(document.getElementById('shareRefRow'));
+    const refBox = /** @type {HTMLInputElement} */(document.getElementById('shareRef'));
+    refRow.hidden = !(about && about.post && about.canReference);
+    refBox.checked = true;
+    document.getElementById('shareRefText').textContent = t('share.ref.toggle');
     refreshFoot();
     d.showModal();
     setTimeout(() => handle && handle.focus(), 0);
@@ -86,7 +93,10 @@ const SHARE = (() => {
     if (!targets.length) return;
     const comment = /** @type {HTMLTextAreaElement} */(
       document.getElementById('shareComment')).value.trim();
-    close({ targets, comment });
+    const refRow = /** @type {HTMLElement} */(document.getElementById('shareRefRow'));
+    const refBox = /** @type {HTMLInputElement} */(document.getElementById('shareRef'));
+    close({ targets, comment,
+      noReference: !refRow.hidden && !refBox.checked });
   }
 
   // ---- what happened afterwards (SHARE-2) ----

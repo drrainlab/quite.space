@@ -329,6 +329,18 @@ type sharedResp struct {
 	OriginalAt uint64 `json:"original_at,omitempty"`
 	Truncated  bool   `json:"truncated,omitempty"`
 	Quote      string `json:"quote"`
+	// Card is the post card when this share forwards a publication (PS).
+	// The client renders it from THESE fields, never by parsing the
+	// composed key-1 prose back apart.
+	Card *postCardResp `json:"card,omitempty"`
+}
+
+// postCardResp mirrors schemas.SharedPublication for the client.
+// (cardResp was already taken — it is a member card.)
+type postCardResp struct {
+	Title     string `json:"title,omitempty"`
+	Summary   string `json:"summary,omitempty"`
+	Reference string `json:"reference,omitempty"`
 }
 
 // quotedLines pulls the quotation back out of the composed text: the lines
@@ -528,6 +540,11 @@ func (a *APIServer) projectEntry(tid id.TerminalID, sp *terminals.Space,
 				// "> " marker, so a client that ignores this object still
 				// shows the quotation. This one renders from HERE.
 				Quote: quotedLines(o, e.Content.Text.Text),
+			}
+			if c := e.Content.Text.Card; c != nil {
+				resp.Shared.Card = &postCardResp{
+					Title: c.Title, Summary: c.Summary, Reference: c.Reference,
+				}
 			}
 		}
 		// Only when something other than a person signed it: a model name

@@ -170,11 +170,30 @@ function renderArticle(p, mode) {
   back.className = 'btn-plain'; back.textContent = '← Posts';
   back.onclick = () => refreshPosts();
   bar.appendChild(back);
-  const edit = document.createElement('button');
-  edit.className = 'btn-plain'; edit.textContent = 'Edit';
-  edit.onclick = () => openComposer(doc, p.revision_event_id);
-  bar.appendChild(edit);
+  // A withdrawn post is not an ordinary live article: no Edit, no
+  // Forward, and a plain sentence — the promise made at send time holds
+  // at read time too (PS-4b).
+  if (!p.archived) {
+    const edit = document.createElement('button');
+    edit.className = 'btn-plain'; edit.textContent = 'Edit';
+    edit.onclick = () => openComposer(doc, p.revision_event_id);
+    bar.appendChild(edit);
+    const sp = currentSpace();
+    if (sp && sp.character?.memory !== 'private_history') {
+      const fwd = document.createElement('button');
+      fwd.className = 'btn-plain';
+      fwd.textContent = t('share.card.forward');
+      fwd.onclick = () => forwardPost(p.document_id || (doc && doc.document_id));
+      bar.appendChild(fwd);
+    }
+  }
   box.appendChild(bar);
+  if (p.archived) {
+    const note = document.createElement('div');
+    note.className = 'prev-archived';
+    note.textContent = t('prev.archived');
+    box.appendChild(note);
+  }
 
   if (doc.cover) {
     const cov = document.createElement('img');

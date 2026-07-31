@@ -54,12 +54,17 @@ const (
 
 // previewSession is one verified, in-memory reading of a public space.
 type previewSession struct {
-	id     string
-	space  id.TerminalID
-	state  *reducers.State
-	title  string
-	assets map[string]*schemas.AssetRef
-	born   time.Time
+	id    string
+	space id.TerminalID
+	state *reducers.State
+	title string
+	// publish and join are the verified policy's participate axes, so the
+	// continuation can offer the right words: Follow for a broadcast
+	// space, Follow read-only / Join and participate for a community.
+	publish string
+	join    string
+	assets  map[string]*schemas.AssetRef
+	born    time.Time
 }
 
 // previewStore is the bounded session table. Its own mutex, not r.mu: a
@@ -127,6 +132,8 @@ type PostPreview struct {
 	State      string
 	Reason     string
 	SpaceTitle string
+	Publish    string
+	Join       string
 	Pub        *reducers.Publication
 }
 
@@ -181,15 +188,17 @@ func (r *Runtime) PreviewPublicPublication(reference string) (*PostPreview, erro
 		if len(m.DeclaredLabels) > 0 {
 			title = m.DeclaredLabels[0]
 		}
+		pol := terminals.ParsePolicy(m.DeclaredLabels)
 		sess = &previewSession{
 			id: hex.EncodeToString(pid), space: tid, state: state,
-			title: title, assets: previewAssetRefs(tid, env.Frames), born: time.Now(),
+			title: title, publish: string(pol.Publish), join: string(pol.Join),
+			assets: previewAssetRefs(tid, env.Frames), born: time.Now(),
 		}
 		r.previews.put(sess)
 	}
 
 	out := &PostPreview{PreviewID: sess.id, Space: tid, Document: *doc,
-		SpaceTitle: sess.title}
+		SpaceTitle: sess.title, Publish: sess.publish, Join: sess.join}
 	pub, ok := sess.state.PublicationByID(*doc)
 	switch {
 	case !ok:
@@ -228,6 +237,22 @@ func previewAssetRefs(tid id.TerminalID, frames [][]byte) map[string]*schemas.As
 	return out
 }
 
+// FollowPublicSpace is the explicit continuation after reading (PS-4c):
+// persist a reader replica of the space behind a reference. The link's
+// relay becomes this SPACE's source address (recorded by the projection
+// fetch) and never the global setting — a Follow from a message card must
+// not reconfigure the node.
+func (r *Runtime) FollowPublicSpace(reference string) (id.TerminalID, error) {
+	relayAddr, tid, _, err := ParsePublicLink(strings.TrimPrefix(strings.TrimSpace(reference), "qs:"))
+	if err != nil {
+		return id.TerminalID{}, err
+	}
+	if err := r.OpenPublicSpace(tid, relayAddr); err != nil {
+		return id.TerminalID{}, err
+	}
+	return tid, nil
+}
+
 // ---- HTTP ----
 
 func (a *APIServer) handlePublicPreview(w http.ResponseWriter, r *http.Request) {
@@ -249,6 +274,8 @@ func (a *APIServer) handlePublicPreview(w http.ResponseWriter, r *http.Request) 
 		"document_id": hex.EncodeToString(pv.Document[:]),
 		"state":       pv.State,
 		"space_title": pv.SpaceTitle,
+		"publish":     pv.Publish,
+		"join":        pv.Join,
 	}
 	if pv.Reason != "" {
 		out["reason"] = pv.Reason
@@ -271,6 +298,22 @@ func (a *APIServer) handlePublicPreview(w http.ResponseWriter, r *http.Request) 
 // want/reply fetch in this gate — for an old post the ref itself may be
 // unreachable by construction (the pruned-carrier finding), and inventing
 // a spinner over that would be a lie with a progress bar.
+func (a *APIServer) handlePublicFollow(w http.ResponseWriter, r *http.Request) {
+	body, err := readBody[struct {
+		Reference string `json:"reference"`
+	}](r)
+	if err != nil || strings.TrimSpace(body.Reference) == "" {
+		httpErr(w, http.StatusBadRequest, errors.New("reference required"))
+		return
+	}
+	tid, err := a.rt.FollowPublicSpace(body.Reference)
+	if err != nil {
+		httpErr(w, http.StatusForbidden, err)
+		return
+	}
+	writeJSON(w, map[string]string{"id": tid.Hex()})
+}
+
 func (a *APIServer) handlePreviewAsset(w http.ResponseWriter, r *http.Request) {
 	sess := a.rt.previews.get(r.PathValue("pid"))
 	if sess == nil {

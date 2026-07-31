@@ -2325,6 +2325,10 @@ function renderBody(e) {
 // says wrote it, and — plainly — that this is their word and not proof.
 function renderQuoted(e) {
   const s = e.shared;
+  // A forwarded POST renders as a card (PS-4a), from the structured
+  // fields alone — never by parsing the composed prose back apart. It
+  // issues no request on arrival; Read post is the first network touch.
+  if (s.card) return renderPostCard(e, s);
   const wrap = document.createElement('div');
   wrap.className = 'quoted';
   const head = document.createElement('div');
@@ -2351,6 +2355,76 @@ function renderQuoted(e) {
     : t('share.quote.claim_anon', { sender: e.author_name || t('conv.member') });
   wrap.appendChild(claim);
   return wrap;
+}
+
+// The post card: source, title, excerpt, author · date, and one door.
+// Without a reference it is a readable shared snapshot — no disabled
+// button, simply a card without a door.
+function renderPostCard(e, s) {
+  const card = document.createElement('div');
+  card.className = 'post-card';
+  if (s.source) {
+    const src = document.createElement('div');
+    src.className = 'post-card-src';
+    src.textContent = s.source;
+    card.appendChild(src);
+  }
+  const h = document.createElement('div');
+  h.className = 'post-card-title';
+  h.textContent = s.card.title || t('prev.untitled');
+  card.appendChild(h);
+  if (s.card.summary) {
+    const sum = document.createElement('div');
+    sum.className = 'post-card-sum';
+    sum.textContent = s.card.summary;
+    card.appendChild(sum);
+  }
+  const meta = document.createElement('div');
+  meta.className = 'post-card-meta';
+  const bits = [];
+  if (s.author) bits.push(s.author);
+  if (s.original_at) bits.push(new Date(s.original_at * 1000).toLocaleDateString());
+  meta.textContent = bits.join(' · ');
+  card.appendChild(meta);
+  if (s.card.reference) {
+    const read = document.createElement('button');
+    read.className = 'post-card-read';
+    read.textContent = t('share.card.read');
+    // Open says what it does: a temporary look at a space you are not
+    // in, at an address this person chose. Never "go to the original".
+    read.title = t('share.card.read_hint');
+    read.onclick = (ev) => { ev.stopPropagation(); PREV.open(s.card.reference); };
+    card.appendChild(read);
+  }
+  const claim = document.createElement('div');
+  claim.className = 'quoted-claim';
+  claim.textContent = t('share.card.claim', { sender: e.author_name || t('conv.member') });
+  card.appendChild(claim);
+  return card;
+}
+
+// forwardPost mirrors forwardEntry for a publication. The toggle in the
+// dialog means "attach no path back" — the card itself always travels.
+async function forwardPost(docID) {
+  const source = current;
+  const sp = currentSpace();
+  const isPublic = !!(sp && sp.visibility);
+  const chosen = await SHARE.pick({ source, post: true, canReference: isPublic });
+  if (!chosen) return;
+  try {
+    const r = await api('/api/share', {
+      method: 'POST',
+      body: JSON.stringify({
+        source_space: source, document: docID, targets: chosen.targets,
+        comment: chosen.comment,
+        name_author: true, name_source: false,
+        no_reference: chosen.noReference || false,
+      }),
+    });
+    SHARE.report(r.results || []);
+  } catch (err) {
+    alert(err.message);
+  }
 }
 
 function renderVisual(e) {
