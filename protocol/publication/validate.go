@@ -34,9 +34,10 @@ func Validate(doc *Document, assetOK func(hexID string) bool) error {
 	if !allowedLayout[doc.Layout] {
 		return fmt.Errorf("publication: layout %q not allowed", doc.Layout)
 	}
-	if err := checkAssetRef(doc.Cover, assetOK, "cover"); err != nil {
-		return err
-	}
+	// Asset EXISTENCE is checked in one unified pass below (visitAssets) —
+	// the same walk that enumerates the asset graph, so checking and
+	// enumerating cannot diverge. Here and in the tree walk only structure
+	// is judged.
 	if len(doc.Tags) > MaxTags {
 		return errors.New("publication: too many tags")
 	}
@@ -51,11 +52,12 @@ func Validate(doc *Document, assetOK func(hexID string) bool) error {
 		}
 	}
 
-	// Atmosphere carries up to two assets of its own. They resolve through
-	// exactly the same index as a cover image — an atmosphere asset that was
-	// not uploaded into this space is refused here rather than becoming a
-	// post that renders for its author and is blank for everybody else.
-	if err := doc.Atmosphere.Validate(assetOK); err != nil {
+	// Atmosphere bounds are its own business; its ASSETS resolve through
+	// the unified pass below, exactly like a cover image — an atmosphere
+	// asset that was not uploaded into this space is refused rather than
+	// becoming a post that renders for its author and is blank for
+	// everybody else.
+	if err := doc.Atmosphere.Validate(nil); err != nil {
 		return err
 	}
 	total := 0
@@ -67,7 +69,7 @@ func Validate(doc *Document, assetOK func(hexID string) bool) error {
 			total, MaxRawExtraBytes)
 	}
 
-	v := &treeValidator{assetOK: assetOK, seen: map[string]bool{}}
+	v := &treeValidator{seen: map[string]bool{}}
 	for i := range doc.Blocks {
 		if err := v.walk(&doc.Blocks[i], 1); err != nil {
 			return err
@@ -79,6 +81,18 @@ func Validate(doc *Document, assetOK func(hexID string) bool) error {
 	if v.textBudget > MaxTotalText {
 		return errors.New("publication: total text budget exceeded")
 	}
+	// The unified asset pass: the ONE walk (visitAssets) both checks and
+	// enumerates, so a site added there is validated here for free — and a
+	// site forgotten there fails the enumeration consumers too, loudly.
+	var assetErr error
+	doc.visitAssets(func(hexID, role string) {
+		if assetErr == nil {
+			assetErr = checkAssetRef(hexID, assetOK, role)
+		}
+	})
+	if assetErr != nil {
+		return assetErr
+	}
 	if len(doc.Encode()) > MaxSerializedSize {
 		return errors.New("publication: serialized document too large")
 	}
@@ -86,7 +100,6 @@ func Validate(doc *Document, assetOK func(hexID string) bool) error {
 }
 
 type treeValidator struct {
-	assetOK    func(string) bool
 	seen       map[string]bool
 	total      int
 	textBudget int
@@ -158,9 +171,7 @@ func (v *treeValidator) props(b *Block) error {
 			if err := checkURL(p.Asset); err != nil { // key 1 is the URL here
 				return err
 			}
-			if err := checkAssetRef(p.Caption, v.assetOK, "poster"); err != nil { // key 3 poster
-				return err
-			}
+			// The key-3 poster's existence rides the unified pass.
 		case "app":
 			if err := checkHex(p.Asset, "app instance"); err != nil { // key 1 = instance id
 				return err
@@ -169,9 +180,7 @@ func (v *treeValidator) props(b *Block) error {
 			if p.Asset == "" {
 				return fmt.Errorf("publication: %s block needs an asset", b.Type)
 			}
-			if err := checkAssetRef(p.Asset, v.assetOK, b.Type); err != nil {
-				return err
-			}
+			// Existence rides the unified pass; presence is structural.
 		}
 	case ListProps:
 		v.textBudget += len(p.Text)
@@ -180,11 +189,7 @@ func (v *treeValidator) props(b *Block) error {
 			if len(p.Items) == 0 || len(p.Items) > MaxGalleryAssets {
 				return errors.New("publication: gallery needs 1..24 assets")
 			}
-			for _, it := range p.Items {
-				if err := checkAssetRef(it, v.assetOK, "gallery item"); err != nil {
-					return err
-				}
-			}
+			// Item existence rides the unified pass.
 		case "credits":
 			if len(p.Items) == 0 || len(p.Items) > MaxCredits*2 || len(p.Items)%2 != 0 {
 				return errors.New("publication: credits must be role/name pairs")

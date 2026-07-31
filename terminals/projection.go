@@ -15,6 +15,7 @@ package terminals
 import (
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"sort"
@@ -151,8 +152,48 @@ func (s *Space) BuildPublicProjection(seq uint64, publisher id.DeviceID,
 			cutoff = nowUnix - age
 		}
 	}
-	// Oldest-first candidates: prunable frames, deterministic order
-	// (CreatedAt, LogicalClock, EventID).
+	// Live-carrier retention (PA-Assets). A block frame carrying the
+	// AssetRef of media a CURRENT publication references is what makes
+	// that media fetchable at all — the ref holds the manifest id and the
+	// key, and nothing else does. Age pruning used to drop these with
+	// their thirty-day cohort, leaving a post whose cover no peer could
+	// ever serve: the requester knew a bare hex id and nothing more.
+	//
+	// So live carriers are EXEMPT from tooOld — but they stay candidates
+	// under the byte/frame budget, pruned last and oldest-first. A hard
+	// exemption would convert the failure mode: ErrProjectionTooLarge is
+	// terminal (the space stops publishing), and a media-heavy space must
+	// degrade one old cover at a time, never brick.
+	live := map[string]bool{}
+	for _, pub := range s.State.Publications() {
+		if pub.Document == nil {
+			continue
+		}
+		for aid := range pub.Document.LiveAssetIDs() {
+			live[aid] = true
+		}
+	}
+	liveCarrier := map[id.EventID]bool{}
+	if len(live) > 0 {
+		for _, r := range all {
+			if !schemas.IsBlockSchema(r.env.Schema) {
+				continue
+			}
+			for _, ref := range schemas.ExtractAssetRefs(r.env.Schema, r.env.Payload) {
+				if ref == nil {
+					continue
+				}
+				if live[ref.PublicIDHex()] || live[hex.EncodeToString(ref.AssetID[:])] {
+					liveCarrier[r.eid] = true
+					break
+				}
+			}
+		}
+	}
+	// Candidates: prunable frames, non-live first, then live carriers —
+	// each half oldest-first, deterministic (CreatedAt, LogicalClock,
+	// EventID). Budget pressure therefore consumes the ordinary cohort
+	// before it touches anything a current publication still needs.
 	var cand []rec
 	for _, r := range all {
 		if prunable(r.env.Schema) {
@@ -161,6 +202,9 @@ func (s *Space) BuildPublicProjection(seq uint64, publisher id.DeviceID,
 	}
 	sort.Slice(cand, func(i, j int) bool {
 		a, b := cand[i], cand[j]
+		if la, lb := liveCarrier[a.eid], liveCarrier[b.eid]; la != lb {
+			return !la // non-live first
+		}
 		if a.env.CreatedAt != b.env.CreatedAt {
 			return a.env.CreatedAt < b.env.CreatedAt
 		}
@@ -172,9 +216,13 @@ func (s *Space) BuildPublicProjection(seq uint64, publisher id.DeviceID,
 	frames, bytesTotal := len(all), total
 	for _, c := range cand {
 		over := frames > lim.MaxFrames || bytesTotal > lim.MaxBytes
-		tooOld := cutoff > 0 && c.env.CreatedAt > 0 && c.env.CreatedAt < cutoff
+		tooOld := !liveCarrier[c.eid] && cutoff > 0 &&
+			c.env.CreatedAt > 0 && c.env.CreatedAt < cutoff
 		if !over && !tooOld {
-			break // candidates are oldest-first; nothing further qualifies
+			// Within the non-live prefix everything later is newer (not
+			// tooOld); live carriers drop only under budget pressure,
+			// which is monotone. Nothing further qualifies.
+			break
 		}
 		drop[c.eid] = true
 		frames--
