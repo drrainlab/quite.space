@@ -3,7 +3,11 @@
 // — instead of standing up a metrics stack for twelve users.
 package node
 
-import "net/http"
+import (
+	"errors"
+	"net/http"
+	"strings"
+)
 
 // RelayDiagnostics is the copyable snapshot.
 type RelayDiagnostics struct {
@@ -83,4 +87,77 @@ func (r *Runtime) RelayDiagnosticsSnapshot() RelayDiagnostics {
 
 func (a *APIServer) handleRelayDiagnostics(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, a.rt.RelayDiagnosticsSnapshot())
+}
+
+// handleRelayIdentity OBSERVES a relay's identity without trusting it —
+// the UI shows the fingerprint so a person can compare it with the
+// operator before anything is pinned.
+func (a *APIServer) handleRelayIdentity(w http.ResponseWriter, r *http.Request) {
+	body, err := readBody[struct {
+		Endpoint string `json:"endpoint"`
+	}](r)
+	if err != nil || strings.TrimSpace(body.Endpoint) == "" {
+		httpErr(w, http.StatusBadRequest, errors.New("endpoint required"))
+		return
+	}
+	ep := strings.TrimSpace(body.Endpoint)
+	pin, err := RelayIdentity(ep)
+	if err != nil {
+		httpErr(w, http.StatusBadGateway, err)
+		return
+	}
+	_, trusted := a.rt.loadRelayState().TrustedPin(ep)
+	writeJSON(w, map[string]any{
+		"endpoint": ep, "pin": pin, "trusted": trusted,
+		"local_lan": loopbackAddr(ep),
+	})
+}
+
+// handleRelayTrust stores a CONFIRMED pin. The fingerprint must match what
+// the relay currently presents — confirming blind would defeat the point.
+func (a *APIServer) handleRelayTrust(w http.ResponseWriter, r *http.Request) {
+	body, err := readBody[struct {
+		Endpoint    string `json:"endpoint"`
+		Fingerprint string `json:"fingerprint"`
+		Forget      bool   `json:"forget"`
+	}](r)
+	if err != nil || strings.TrimSpace(body.Endpoint) == "" {
+		httpErr(w, http.StatusBadRequest, errors.New("endpoint required"))
+		return
+	}
+	ep := strings.TrimSpace(body.Endpoint)
+	if body.Forget {
+		if err := a.rt.ForgetRelay(ep); err != nil {
+			httpErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, map[string]string{"status": "forgotten"})
+		return
+	}
+	if err := a.rt.TrustRelay(ep, strings.TrimSpace(body.Fingerprint)); err != nil {
+		httpErr(w, http.StatusForbidden, err)
+		return
+	}
+	// A re-confirmed relay leaves the untrusted latch (RR-6).
+	a.rt.pool().resetTrust(ep)
+	writeJSON(w, map[string]string{"status": "pinned"})
+}
+
+// handleRelayRemeasure runs the measured selection now (automatic mode).
+func (a *APIServer) handleRelayRemeasure(w http.ResponseWriter, r *http.Request) {
+	primary, backup := a.rt.runAutoSelection()
+	if primary == "" {
+		writeJSON(w, map[string]any{"status": "nothing reachable"})
+		return
+	}
+	// Move the sync loop onto the (possibly new) primary right away.
+	if ref, err := ParseRelayRef(primary); err == nil {
+		if ep, ok := ref.Resolve(BuiltinRelayRegistry); ok {
+			s := a.rt.GetSettings()
+			a.rt.applyRelaySync(ep, relayInterval(s))
+		}
+	}
+	writeJSON(w, map[string]any{
+		"status": "measured", "primary": primary, "backup": backup,
+	})
 }

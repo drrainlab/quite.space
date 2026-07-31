@@ -989,6 +989,14 @@
     border-style: dashed;
   }
 
+  /* A relay identity fingerprint: monospace, wrapping, selectable — it is
+     meant to be compared character by character against what the operator
+     says, so it must never be truncated or prettified. */
+  .pin-block { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px; line-height: 1.5; user-select: all; word-break: break-all;
+    white-space: pre-wrap; background: var(--surface-2, rgba(255,255,255,.04));
+    border: 1px solid var(--line, rgba(255,255,255,.10)); border-radius: 8px;
+    padding: 10px 12px; margin: 8px 4px; }
   .relay-public { margin: 8px 4px 0; }
   .relay-public-row { display: flex; justify-content: space-between; gap: 10px;
     font-size: 12px; padding: 3px 0; border-top: 1px solid var(--line); }

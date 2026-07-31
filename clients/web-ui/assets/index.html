@@ -556,8 +556,13 @@
   <div class="settings-cat" data-cat="relay">
   <div class="settings-sec">
     <p class="hint">Sync when off your network</p>
+    <div class="row" id="relayModeRow">
+      <button data-v="automatic" class="btn-plain" onclick="setRelayMode('automatic')">Automatic</button>
+      <button data-v="custom" class="btn-plain" onclick="setRelayMode('custom')">Custom</button>
+    </div>
+    <p class="hint" id="relayModeNote" style="margin-left:4px"></p>
     <div class="list">
-      <div class="list-row">
+      <div class="list-row" id="relayAddrRow">
         <span class="lr-label">Address</span>
         <input type="text" id="relaySetAddr" placeholder="host:port, e.g. 203.0.113.7:7411 (blank = off)">
       </div>
@@ -569,8 +574,11 @@
     <p class="hint" id="relaySetMsg" style="margin-left:4px"></p>
     <div class="row">
       <button class="btn-tinted" onclick="saveRelay()">Save &amp; sync</button>
+      <button class="btn-plain" onclick="remeasureRelays()">Re-measure</button>
+      <button class="btn-plain" onclick="copyRelayDiagnostics()">Copy diagnostics</button>
     </div>
     <p class="hint" style="margin-left:4px">Set an address and this device pushes &amp; pulls automatically every few seconds. Media stays on-demand — only text and manifests travel; open a media card to fetch its bytes. “Accepted by relay” is never “delivered”.</p>
+    <div id="relayDiagPanel" class="relay-public"></div>
     <div id="relayPublicPanel" class="relay-public"></div>
   </div>
   <div class="settings-sec">
@@ -854,6 +862,21 @@
     <p class="out" id="meXpub"></p>
     <p class="hint">fingerprint: <span id="meFp" class="mono"></span></p>
   </div>
+</dialog>
+
+<dialog id="dlgRelayTrust">
+  <h3>Trust this relay identity?</h3>
+  <p class="hint">A custom relay is pinned to its key the first time you use
+  it. Compare this fingerprint with the operator — over a channel that is not
+  this relay. After you confirm, a different key at the same address is a hard
+  failure, not a warning.</p>
+  <p class="hint" id="relayTrustAddr" style="margin-left:4px"></p>
+  <pre id="relayTrustPin" class="pin-block"></pre>
+  <div class="row">
+    <button class="btn-tinted" onclick="confirmRelayTrust()">It matches — pin it</button>
+    <button onclick="dlgRelayTrust.close()">Cancel</button>
+  </div>
+  <p class="hint" id="relayTrustMsg" style="margin-left:4px"></p>
 </dialog>
 
 <dialog id="dlgLan">

@@ -261,6 +261,9 @@ async function openSettings() {
     document.getElementById('relaySetInterval').value = s.relay_sync_seconds || 2;
     document.getElementById('relaySetMsg').textContent = '';
     document.getElementById('relayInfo').textContent = '';
+    relayMode = s.relay_mode || 'custom';
+    syncRelayModeUI();
+    renderRelayDiagnostics();
     document.getElementById('catalogLink').value = localStorage.getItem('qp.catalog') || '';
     document.getElementById('catalogMsg').textContent = '';
     renderRelayPublicPanel();
@@ -280,14 +283,139 @@ function showSettingsCat(cat) {
     b.classList.toggle('sel', b.dataset.cat === cat));
 }
 
-// saveRelay persists the relay address; the node (re)starts background sync.
+// ---- relay mode, trust and diagnostics (RR wave) ----
+
+// relayMode mirrors the node's setting: "automatic" measures the embedded
+// registry and picks; "custom" uses exactly the address below and never
+// falls back to an official relay behind your back.
+let relayMode = 'custom';
+let pendingTrust = null; // {endpoint, pin} awaiting the person's confirmation
+
+function syncRelayModeUI() {
+  document.querySelectorAll('#relayModeRow button').forEach(b =>
+    b.classList.toggle('sel', b.dataset.v === relayMode));
+  const auto = relayMode === 'automatic';
+  document.getElementById('relayAddrRow').style.opacity = auto ? '.45' : '';
+  document.getElementById('relaySetAddr').disabled = auto;
+  document.getElementById('relayModeNote').textContent = auto
+    ? t('relay.mode.auto')
+    : t('relay.mode.custom');
+}
+
+function setRelayMode(mode) {
+  relayMode = mode;
+  syncRelayModeUI();
+}
+
+// saveRelay persists the relay address and mode; the node (re)starts
+// background sync. A CUSTOM non-local relay must be trusted first: we ask
+// for its identity and let the person compare the fingerprint before
+// anything is pinned or dialled in anger.
 async function saveRelay() {
   const addr = document.getElementById('relaySetAddr').value.trim();
   const msg = document.getElementById('relaySetMsg');
+  msg.textContent = '';
+  if (relayMode === 'custom' && addr && !isLocalAddr(addr)) {
+    try {
+      const id = await api('/api/relay/identity', { method: 'POST',
+        body: JSON.stringify({ endpoint: addr }) });
+      if (!id.trusted && !id.local_lan) {
+        openRelayTrust(addr, id.pin);
+        return; // saving continues after the person confirms
+      }
+    } catch (e) {
+      msg.textContent = t('relay.unreachable') + ' ' + e.message;
+      return;
+    }
+  }
+  await persistRelaySettings(addr, msg);
+}
+
+async function persistRelaySettings(addr, msg) {
   try {
     await api('/api/settings', { method: 'POST',
-      body: JSON.stringify({ ...currentSettingsBody(), relay: addr }) });
-    msg.textContent = addr ? 'saved — syncing through ' + addr : 'relay sync off';
+      body: JSON.stringify({ ...currentSettingsBody(), relay: addr, relay_mode: relayMode }) });
+    msg.textContent = relayMode === 'automatic'
+      ? t('relay.saved.auto')
+      : (addr ? t('relay.saved.custom') + ' ' + addr : t('relay.off'));
+    if (relayMode === 'automatic') await remeasureRelays();
+    else renderRelayDiagnostics();
+  } catch (e) { msg.textContent = e.message; }
+}
+
+// isLocalAddr: loopback needs no pinning — identity there lives in event
+// signatures, exactly as on the LAN.
+function isLocalAddr(addr) {
+  const host = addr.replace(/:\d+$/, '');
+  return host === '127.0.0.1' || host === 'localhost' || host === '::1' || host === '[::1]';
+}
+
+function openRelayTrust(endpoint, pin) {
+  pendingTrust = { endpoint, pin };
+  document.getElementById('relayTrustAddr').textContent = endpoint;
+  document.getElementById('relayTrustPin').textContent = pin;
+  document.getElementById('relayTrustMsg').textContent = '';
+  dlgRelayTrust.showModal();
+}
+
+async function confirmRelayTrust() {
+  if (!pendingTrust) return;
+  const m = document.getElementById('relayTrustMsg');
+  try {
+    await api('/api/relay/trust', { method: 'POST',
+      body: JSON.stringify({ endpoint: pendingTrust.endpoint, fingerprint: pendingTrust.pin }) });
+    const addr = pendingTrust.endpoint;
+    pendingTrust = null;
+    dlgRelayTrust.close();
+    await persistRelaySettings(addr, document.getElementById('relaySetMsg'));
+  } catch (e) { m.textContent = e.message; }
+}
+
+async function remeasureRelays() {
+  const msg = document.getElementById('relaySetMsg');
+  msg.textContent = t('relay.measuring');
+  try {
+    const r = await api('/api/relay/remeasure', { method: 'POST', body: '{}' });
+    msg.textContent = r.primary
+      ? t('relay.measured') + ' ' + r.primary + (r.backup ? ' · backup ' + r.backup : '')
+      : t('relay.none');
+  } catch (e) { msg.textContent = e.message; }
+  renderRelayDiagnostics();
+}
+
+// renderRelayDiagnostics paints the honest one-screen state: which relay,
+// under what trust, how healthy, how fast (bucketed).
+async function renderRelayDiagnostics() {
+  const box = document.getElementById('relayDiagPanel');
+  if (!box) return;
+  box.innerHTML = '';
+  let d;
+  try { d = await api('/api/relay/diagnostics'); } catch (_) { return; }
+  const line = (k, v) => {
+    if (v === '' || v === undefined || v === null) return;
+    const row = document.createElement('div');
+    row.className = 'list-row';
+    const a = document.createElement('span'); a.className = 'lr-label'; a.textContent = k;
+    const b = document.createElement('span'); b.className = 'lr-sub'; b.textContent = v;
+    row.append(a, b); box.appendChild(row);
+  };
+  line(t('relay.diag.mode'), d.mode);
+  line(t('relay.diag.primary'), d.primary || '—');
+  line(t('relay.diag.backup'), d.backup || '');
+  line(t('relay.diag.trust'), d.trust || '');
+  line(t('relay.diag.health'), d.primary_health || '');
+  if (d.rtt_bucket_ms) line(t('relay.diag.rtt'), '~' + d.rtt_bucket_ms + ' ms');
+  line(t('relay.diag.load'), d.load_class || '');
+  line(t('relay.diag.sync'), d.sync_active ? t('relay.diag.on') : t('relay.diag.off'));
+  if (d.last_error) line(t('relay.diag.error'), d.last_error);
+}
+
+async function copyRelayDiagnostics() {
+  const msg = document.getElementById('relaySetMsg');
+  try {
+    const d = await api('/api/relay/diagnostics');
+    await navigator.clipboard.writeText(JSON.stringify(d, null, 2));
+    msg.textContent = t('relay.copied');
   } catch (e) { msg.textContent = e.message; }
 }
 

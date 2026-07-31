@@ -189,6 +189,9 @@ func (a *APIServer) Handler() http.Handler {
 	mux.HandleFunc("POST /api/relay/pull", a.auth(a.handleRelayPull))
 	mux.HandleFunc("GET /api/relay/status", a.auth(a.handleRelayStatus))
 	mux.HandleFunc("GET /api/relay/diagnostics", a.auth(a.handleRelayDiagnostics))
+	mux.HandleFunc("POST /api/relay/identity", a.auth(a.handleRelayIdentity))
+	mux.HandleFunc("POST /api/relay/trust", a.auth(a.handleRelayTrust))
+	mux.HandleFunc("POST /api/relay/remeasure", a.auth(a.handleRelayRemeasure))
 	if a.ui != nil {
 		mux.Handle("GET /", http.FileServerFS(a.ui))
 	}

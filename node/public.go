@@ -50,8 +50,18 @@ func (r *Runtime) OpenPublicSpace(spaceID id.TerminalID, relayAddr string) error
 	s.OnBlock = r.onBlockEvent(spaceID)
 	// Bootstrap state (I1): no manifest yet → neither public nor private;
 	// the verified manifest arrives inside the first projection.
+	//
+	// The link's relay is recorded as the space's SourceRelay RIGHT HERE,
+	// before any fetch (RR-tail): until a projection installs there is no
+	// signed relay set to resolve, and without this the reader's sync loop
+	// would fall back to his PERSONAL relay — an address where this space
+	// was never published. A publisher who is briefly offline at the moment
+	// somebody opens the link would then never be found again. The link is
+	// itself an observation of where the space says it lives; treating it
+	// as one is what makes the first fetch a retry rather than a lottery.
 	r.ks.Spaces[spaceID] = storage.SpaceMeta{
 		Title: "public space", Role: storage.RoleReader,
+		SourceRelay: relayAddr,
 	}
 	r.attach(spaceID, s)
 	err = r.saveKeystore()
