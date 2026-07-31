@@ -123,7 +123,7 @@ func targetOf(t *testing.T, link string) id.TerminalID {
 
 func linkOf(t *testing.T, rt *Runtime, tid id.TerminalID) string {
 	t.Helper()
-	l, err := rt.ComposePublicLink(tid)
+	l, err := rt.ComposePublicLink(tid, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

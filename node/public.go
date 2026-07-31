@@ -6,6 +6,7 @@
 package node
 
 import (
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -77,7 +78,23 @@ func (r *Runtime) fetchPublicProjection(addr string, tid id.TerminalID) error {
 		return err
 	}
 	defer client.Close()
-	return r.fetchPublicProjectionWith(client, tid)
+	if err := r.fetchPublicProjectionWith(client, tid); err != nil {
+		return err
+	}
+	// A projection ARRIVED from this address: remember it as the space's
+	// source relay (PS-1). An observation, not a setting — a reference
+	// composed later prefers it over the global relay, because this is the
+	// address the publisher demonstrably writes to. Every projection path
+	// funnels through here with the addr in hand, which is why the note
+	// lives here and not at the call sites.
+	r.mu.Lock()
+	if meta, ok := r.ks.Spaces[tid]; ok && meta.SourceRelay != addr {
+		meta.SourceRelay = addr
+		r.ks.Spaces[tid] = meta
+		_ = r.saveKeystore()
+	}
+	r.mu.Unlock()
+	return nil
 }
 
 func (r *Runtime) fetchPublicProjectionWith(client *relay.Client, tid id.TerminalID) error {
@@ -173,16 +190,55 @@ func (r *Runtime) fetchPublicProjectionWith(client *relay.Client, tid id.Termina
 
 // publicLinkPrefix marks a public-space share link's envelope half —
 // distinguishable from a Space Pass by the same splitShare parser, so one
-// paste box serves both artifact kinds.
+// paste box serves both artifact kinds. The envelope grammar is
+// space:<tid hex>[:<doc hex>] — the optional third field is a LANDING
+// HINT naming a publication inside the space, never a capability of its
+// own: what the holder can read is decided by the space's policy alone.
 const publicLinkPrefix = "space:"
 
-// ComposePublicLink builds the share link of a public space: the relay
-// address (from settings) + the space id. IRREVOCABLE by design — whoever
+// ParsePublicLink is the pure half of link handling: it opens nothing,
+// writes nothing, and dials nothing. Everything that ACTS on a link —
+// the paste path, the preview, Follow — starts here, so there is exactly
+// one reading of the grammar.
+func ParsePublicLink(link string) (relayAddr string, tid id.TerminalID, doc *[16]byte, err error) {
+	relayAddr, envelope, err := splitShare(link)
+	if err != nil {
+		return "", id.TerminalID{}, nil, err
+	}
+	if !strings.HasPrefix(envelope, publicLinkPrefix) {
+		return "", id.TerminalID{}, nil, errors.New("node: not a public space link")
+	}
+	rest := strings.TrimPrefix(envelope, publicLinkPrefix)
+	idHex, docHex, hasDoc := strings.Cut(rest, ":")
+	tid, err = id.ParseTerminalID(idHex)
+	if err != nil {
+		return "", id.TerminalID{}, nil, errors.New("node: malformed space id in link")
+	}
+	if hasDoc {
+		b, err := hex.DecodeString(docHex)
+		if err != nil || len(b) != 16 {
+			return "", id.TerminalID{}, nil, errors.New("node: malformed document id in link")
+		}
+		var d [16]byte
+		copy(d[:], b)
+		doc = &d
+	}
+	return relayAddr, tid, doc, nil
+}
+
+// ComposePublicLink builds the share link of a public space, optionally
+// pointing at one publication in it. IRREVOCABLE by design — whoever
 // learns the id derives every future mailbox hint and reads forever; that
 // is the declared semantics of the tier.
-func (r *Runtime) ComposePublicLink(tid id.TerminalID) (string, error) {
+//
+// The relay in the link prefers the address a projection for this space
+// actually ARRIVED from over the global setting: a reader forwarding
+// somebody else's post would otherwise mint a well-formed link pointing
+// at their own relay, which the publisher may never write to.
+func (r *Runtime) ComposePublicLink(tid id.TerminalID, doc *[16]byte) (string, error) {
 	r.mu.Lock()
 	st, ok := r.spaces[tid]
+	sourceRelay := r.ks.Spaces[tid].SourceRelay
 	r.mu.Unlock()
 	if !ok {
 		return "", errors.New("node: unknown space")
@@ -190,25 +246,46 @@ func (r *Runtime) ComposePublicLink(tid id.TerminalID) (string, error) {
 	if !st.space.Policy().IsPublic() {
 		return "", errors.New("node: not a public space")
 	}
-	relayAddr := r.GetSettings().Relay
+	relayAddr := sourceRelay
+	if relayAddr == "" {
+		relayAddr = r.GetSettings().Relay
+	}
 	if relayAddr == "" {
 		return "", errors.New("node: set a relay in Settings first — the link carries it")
 	}
-	return composeShare(relayAddr, publicLinkPrefix+tid.Hex()), nil
+	envelope := publicLinkPrefix + tid.Hex()
+	if doc != nil {
+		envelope += ":" + hex.EncodeToString(doc[:])
+	}
+	return composeShare(relayAddr, envelope), nil
+}
+
+// CanReferenceByPublicLink is the PS wave's eligibility predicate, named
+// so it cannot quietly narrow to one enum value. The property is not
+// abstract publicness but: a holder of this link reads without approval
+// and without membership. Today that is IsPublic() (unlisted OR public,
+// both link-readable) minus LocalOnly — a space that must never leave
+// this device can never be pointed at from outside it.
+func (r *Runtime) canReferenceByPublicLinkLocked(tid id.TerminalID) bool {
+	st, ok := r.spaces[tid]
+	if !ok {
+		return false
+	}
+	if r.ks.Spaces[tid].LocalOnly {
+		return false
+	}
+	return st.space.Policy().IsPublic()
 }
 
 // OpenPublicLink parses a public share link and opens the reader replica.
+// This is the DELIBERATE PASTE path: it may adopt the link's relay when
+// none is configured, which is fine for an address a person typed and not
+// fine for one that arrived inside a message — the preview and Follow
+// paths never come through here.
 func (r *Runtime) OpenPublicLink(link string) (id.TerminalID, error) {
-	relayAddr, envelope, err := splitShare(link)
+	relayAddr, tid, _, err := ParsePublicLink(link)
 	if err != nil {
 		return id.TerminalID{}, err
-	}
-	if !strings.HasPrefix(envelope, publicLinkPrefix) {
-		return id.TerminalID{}, errors.New("node: not a public space link")
-	}
-	tid, err := id.ParseTerminalID(strings.TrimPrefix(envelope, publicLinkPrefix))
-	if err != nil {
-		return id.TerminalID{}, errors.New("node: malformed space id in link")
 	}
 	if err := r.OpenPublicSpace(tid, relayAddr); err != nil {
 		return id.TerminalID{}, err
@@ -613,7 +690,7 @@ func (a *APIServer) handlePublicLink(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusBadRequest, err)
 		return
 	}
-	link, err := a.rt.ComposePublicLink(tid)
+	link, err := a.rt.ComposePublicLink(tid, nil)
 	if err != nil {
 		httpErr(w, http.StatusBadRequest, err)
 		return

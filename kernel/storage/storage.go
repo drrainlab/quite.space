@@ -227,6 +227,15 @@ type SpaceMeta struct {
 	// INVARIANT rather than a display preference, which is why it is
 	// checked at every egress rather than in the screen that shows it.
 	LocalOnly bool
+	// SourceRelay is the relay a public projection for this space actually
+	// ARRIVED from (PS-1). A composed reference prefers it over the global
+	// setting: a reader forwarding somebody else's post would otherwise
+	// mint a well-formed link pointing at their own relay, which the
+	// publisher may never write to. It is an observation, not a setting —
+	// updated whenever a projection installs, and distinct from the global
+	// relay on purpose (a Follow from a message card stores THIS and never
+	// touches that).
+	SourceRelay string
 }
 
 // RoleReader marks a public-space read replica in SpaceMeta.Role.
@@ -316,7 +325,7 @@ func (k *Keystore) encode() []byte {
 	buf = codec.AppendUint(buf, ksKeySpaces)
 	buf = codec.AppendArray(buf, len(k.Spaces))
 	for _, sm := range sortedSpaces(k.Spaces) {
-		buf = codec.AppendArray(buf, 14)
+		buf = codec.AppendArray(buf, 15)
 		buf = codec.AppendBytes(buf, sm.id[:])
 		buf = codec.AppendText(buf, sm.meta.Title)
 		buf = codec.AppendBool(buf, sm.meta.Owned)
@@ -336,6 +345,7 @@ func (k *Keystore) encode() []byte {
 		buf = codec.AppendBool(buf, sm.meta.Unnamed)
 		buf = codec.AppendText(buf, sm.meta.LocalTitle)
 		buf = codec.AppendBool(buf, sm.meta.LocalOnly)
+		buf = codec.AppendText(buf, sm.meta.SourceRelay)
 	}
 	buf = codec.AppendUint(buf, ksKeyName)
 	buf = codec.AppendText(buf, k.DisplayName)
@@ -655,12 +665,17 @@ func decodeKeystore(data []byte) (*Keystore, error) {
 						return nil, er
 					}
 				}
+				if acount >= 15 {
+					if meta.SourceRelay, er = d.ReadText(); er != nil {
+						return nil, er
+					}
+				}
 				// Anything a NEWER build appended: skip it rather than
 				// stopping mid-record. Without this, every future field
 				// makes this build fail to open a keystore it could
 				// otherwise have used — which is how the previous two
 				// waves each became one-way upgrades.
-				for i := 14; i < acount; i++ {
+				for i := 15; i < acount; i++ {
 					if er = d.SkipItem(); er != nil {
 						return nil, er
 					}
