@@ -104,6 +104,58 @@ type TextMessage struct {
 	// card correctly says it does not know. Written only when authorship is
 	// not human; ignored by any reader that predates it.
 	ProducedModel string
+	// Card says this message forwards a PUBLICATION out of a public space
+	// (PS wave). Key 4 stays the provenance of any quotation — who said
+	// this, where and when; the card says what OBJECT this points at.
+	// Different concerns, and a message share never carries a card.
+	Card *SharedPublication
+}
+
+// SharedPublication is a post card: a snapshot of a publication's face,
+// taken by the SENDER at send time. Like everything in a share it is a
+// claim — nothing in it is checkable by the reader before opening.
+//
+// Author, source and date are NOT here; they ride in ShareOrigin (key 4),
+// one source of truth with nothing to disagree with itself. The card is
+// textual on purpose: no cover, no atmosphere — media follows only after
+// the reader chooses to open the post.
+type SharedPublication struct {
+	// Title and Summary mirror the document's face at send time.
+	Title   string
+	Summary string
+	// Reference, when present, is the way back: a standard share link,
+	// base64url(relay ++ "\n" ++ "space:<tid>[:<doc>]"). OPTIONAL — the
+	// card exists without it (the sender declined, or no relay was known),
+	// and then it is a readable snapshot with no door. It rides here and
+	// not in ShareOrigin for a wire-safety reason: key 4's inner map has a
+	// fixed arity that existing quotations already carry, while this
+	// structure is new and its arity is computed.
+	Reference string
+}
+
+// Card bounds. Title and Summary mirror the publication document's own
+// budgets (protocol/publication imports this package, so the constants
+// live here); MaxShareRef generously bounds a composed share link.
+const (
+	MaxCardTitle   = 200
+	MaxCardSummary = 1000
+	MaxShareRef    = 512
+)
+
+// cardKeyCount is the computed arity of the card's inner map — only
+// non-empty fields are written, exactly as Encode computes the outer map.
+func cardKeyCount(c *SharedPublication) int {
+	n := 0
+	if c.Title != "" {
+		n++
+	}
+	if c.Summary != "" {
+		n++
+	}
+	if c.Reference != "" {
+		n++
+	}
+	return n
 }
 
 // MaxTextLen bounds a chat message payload.
@@ -170,6 +222,16 @@ func (t *TextMessage) Encode() ([]byte, error) {
 			return nil, errors.New("schemas: share label too long")
 		}
 	}
+	if t.Card != nil {
+		n++
+		if len(t.Card.Title) > MaxCardTitle ||
+			len(t.Card.Summary) > MaxCardSummary {
+			return nil, errors.New("schemas: card text too long")
+		}
+		if len(t.Card.Reference) > MaxShareRef {
+			return nil, errors.New("schemas: card reference too long")
+		}
+	}
 	buf := codec.AppendMap(nil, n)
 	buf = codec.AppendUint(buf, 1)
 	buf = codec.AppendText(buf, t.Text)
@@ -196,11 +258,28 @@ func (t *TextMessage) Encode() ([]byte, error) {
 		buf = codec.AppendUint(buf, 4)
 		buf = codec.AppendBool(buf, o.Truncated)
 	}
-	// Key 5 is the model claim (AI-0); 4 is this wave's provenance. Both
-	// append-only — a decoder that knows neither skips both.
+	// Key 5 is the model claim (AI-0); 4 is share provenance; 6 is the
+	// post card (PS). All append-only — a decoder that knows none of them
+	// skips them all.
 	if t.ProducedModel != "" {
 		buf = codec.AppendUint(buf, 5)
 		buf = codec.AppendText(buf, t.ProducedModel)
+	}
+	if t.Card != nil {
+		buf = codec.AppendUint(buf, 6)
+		buf = codec.AppendMap(buf, cardKeyCount(t.Card))
+		if t.Card.Title != "" {
+			buf = codec.AppendUint(buf, 1)
+			buf = codec.AppendText(buf, t.Card.Title)
+		}
+		if t.Card.Summary != "" {
+			buf = codec.AppendUint(buf, 2)
+			buf = codec.AppendText(buf, t.Card.Summary)
+		}
+		if t.Card.Reference != "" {
+			buf = codec.AppendUint(buf, 3)
+			buf = codec.AppendText(buf, t.Card.Reference)
+		}
 	}
 	return buf, nil
 }
@@ -294,6 +373,41 @@ func DecodeTextMessage(payload []byte) (*TextMessage, error) {
 			if err == nil && len(t.ProducedModel) > MaxModelLen {
 				return nil, errors.New("schemas: model name too long")
 			}
+		case 6:
+			var c SharedPublication
+			m2, er := d.ReadMapHeader()
+			if er != nil {
+				return nil, er
+			}
+			for {
+				k2, ok2, e2 := m2.Next()
+				if e2 != nil {
+					return nil, e2
+				}
+				if !ok2 {
+					break
+				}
+				switch k2 {
+				case 1:
+					c.Title, e2 = d.ReadText()
+				case 2:
+					c.Summary, e2 = d.ReadText()
+				case 3:
+					c.Reference, e2 = d.ReadText()
+				default:
+					e2 = d.SkipItem()
+				}
+				if e2 != nil {
+					return nil, e2
+				}
+			}
+			if len(c.Title) > MaxCardTitle || len(c.Summary) > MaxCardSummary {
+				return nil, errors.New("schemas: card text too long")
+			}
+			if len(c.Reference) > MaxShareRef {
+				return nil, errors.New("schemas: card reference too long")
+			}
+			t.Card = &c
 		default:
 			err = d.SkipItem()
 		}
