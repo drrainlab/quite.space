@@ -102,8 +102,11 @@ const PREV = (() => {
       img.className = 'pub-hero';
       img.src = prevAssetURL(r.preview_id, doc.cover);
       img.onerror = () => {
-        // The honest sentence, not a broken image: the bytes may be
-        // unreachable by construction for an old post.
+        // The honest sentence, not a broken image. And honest means THIS
+        // sentence: a preview deliberately has no media fetch pipeline —
+        // the whole want/reply machinery is space-scoped and a preview
+        // holds no space — so "no online source" would be a lie when the
+        // author is sitting right there. The bytes come with following.
         const note = document.createElement('div');
         note.className = 'hint';
         note.textContent = t('prev.media_unavailable');

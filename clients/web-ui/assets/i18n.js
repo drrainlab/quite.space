@@ -46,7 +46,7 @@ const I18N = {
     'prev.follow': 'Follow space',
     'prev.follow_ro': 'Follow read-only',
     'prev.join': 'Join and participate',
-    'prev.media_unavailable': 'media temporarily unavailable \u2014 no online source',
+    'prev.media_unavailable': 'media is not loaded in a preview \u2014 follow the space to see it',
     'prev.block_skipped': ({ kind }) => `a ${kind} block \u2014 open the space to see it`,
     'nav.search.clear': 'clear the search',
     'nav.sec.pinned': 'Pinned',
