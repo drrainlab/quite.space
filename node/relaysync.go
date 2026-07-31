@@ -35,7 +35,23 @@ type relaySyncState struct {
 	lastPubLen     map[id.TerminalID]int
 	lastPubBucket  map[id.TerminalID]uint64
 	lastPubRefresh map[id.TerminalID]time.Time
+	// Sync tiering (RR-2): tick counts cycles; lastChange remembers when a
+	// space last showed activity. Quiet spaces sync on a slow cadence.
+	tick       uint64
+	lastChange map[id.TerminalID]time.Time
 }
+
+// Tiering policy (RR-2): a space with no observed change for quietAfter
+// syncs only every quietEvery-th tick (~30s at the 2s default), staggered
+// by space id so the quiet ones do not all wake on the same tick. The
+// space a person is LOOKING AT is always hot. Renderer-side policy — never
+// a contract.
+const (
+	quietAfter = 60 * time.Second
+	quietEvery = 15
+)
+
+func quietStagger(tid id.TerminalID) uint64 { return uint64(tid[0]) % quietEvery }
 
 // applyRelaySync (re)starts the background loop for a relay address and
 // cadence. An empty address stops it. Safe to call from settings changes.
@@ -50,6 +66,7 @@ func (r *Runtime) applyRelaySync(addr string, interval time.Duration) {
 			lastPubLen:     map[id.TerminalID]int{},
 			lastPubBucket:  map[id.TerminalID]uint64{},
 			lastPubRefresh: map[id.TerminalID]time.Time{},
+			lastChange:     map[id.TerminalID]time.Time{},
 		}
 	}
 	rs := r.relaySync
@@ -74,6 +91,19 @@ func (r *Runtime) applyRelaySync(addr string, interval time.Duration) {
 	r.wg.Add(1)
 	go func() {
 		defer r.wg.Done()
+		// Polling jitter (RR-2): a stable per-device phase shift of up to
+		// 20% of the interval, derived from the device id — so a thousand
+		// clients started together do not pulse the relay on the same
+		// tick boundaries. Deterministic: the schedule does not wander.
+		phase := time.Duration(uint64(r.Device.ID[0])|uint64(r.Device.ID[1])<<8) %
+			(interval / 5)
+		select {
+		case <-time.After(phase):
+		case <-r.stop:
+			return
+		case <-stop:
+			return
+		}
 		t := time.NewTicker(interval)
 		defer t.Stop()
 		r.relaySyncOnce(addr) // an immediate first pass
@@ -132,6 +162,43 @@ func (r *Runtime) relaySyncOnce(addr string) {
 		})
 	}
 	r.mu.Unlock()
+	// The open space is always hot: the person is looking at it.
+	vst := r.attn()
+	vst.mu.Lock()
+	viewing := vst.viewing
+	vst.mu.Unlock()
+
+	// Sync tiering (RR-2): mark activity, then drop QUIET spaces from most
+	// ticks. A space is hot when its log moved recently, when it has media
+	// wants pending, or when the person is looking at it right now.
+	rs.mu.Lock()
+	rs.tick++
+	tick := rs.tick
+	now0 := time.Now()
+	hot := map[id.TerminalID]bool{}
+	for _, sp := range spaces {
+		r.mu.Lock()
+		wanting := len(r.relayWants[sp.tid]) > 0
+		r.mu.Unlock()
+		if _, seen := rs.lastChange[sp.tid]; !seen {
+			// First sight is HOT: a freshly joined/opened space must sync
+			// immediately, not wait out a quiet window it never earned.
+			rs.lastChange[sp.tid] = now0
+		}
+		if sp.n != rs.lastLen[sp.tid] || wanting || sp.tid == viewing {
+			rs.lastChange[sp.tid] = now0
+		}
+		quiet := now0.Sub(rs.lastChange[sp.tid]) > quietAfter
+		hot[sp.tid] = !quiet || tick%quietEvery == quietStagger(sp.tid)
+	}
+	rs.mu.Unlock()
+	active := spaces[:0]
+	for _, sp := range spaces {
+		if hot[sp.tid] {
+			active = append(active, sp)
+		}
+	}
+	spaces = active
 
 	var lastErr string
 	pushed := 0
@@ -172,13 +239,25 @@ func (r *Runtime) relaySyncOnce(addr string) {
 	// squatter wipe / relay restart must self-heal without new content).
 	// Readers Fetch their spaces' outboxes.
 	nowBucket := relayBucketNow()
+	// Drain community ingress for ALL owned public spaces in ONE batched
+	// Collect (RR-2) — contributions land in the canonical logs BEFORE the
+	// publish triggers below look for growth.
+	var pubs []id.TerminalID
 	for _, sp := range spaces {
 		if sp.pub {
-			// Drain community ingress FIRST: contributions land in the
-			// canonical log, then the publish trigger sees the growth.
-			if got, err := r.collectPublicIngress(addr, sp.tid); err != nil {
-				lastErr = err.Error()
-			} else if got > 0 {
+			pubs = append(pubs, sp.tid)
+		}
+	}
+	var ingressGot map[id.TerminalID]int
+	if len(pubs) > 0 {
+		var err error
+		if ingressGot, err = r.collectPublicIngressBatch(addr, pubs); err != nil {
+			lastErr = err.Error()
+		}
+	}
+	for _, sp := range spaces {
+		if sp.pub {
+			if ingressGot[sp.tid] > 0 {
 				r.mu.Lock()
 				if st, ok := r.spaces[sp.tid]; ok {
 					sp.n = st.space.Log.Len()

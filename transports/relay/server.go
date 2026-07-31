@@ -35,11 +35,20 @@ type ServerLimits struct {
 
 // DefaultLimits are conservative community-node settings.
 func DefaultLimits() ServerLimits {
+	// Rate budgets are PER CONNECTION, and RR-2's pool made connections
+	// long-lived: one control lane now carries everything a node does at
+	// its 2s cadence instead of resetting the window on every fresh dial.
+	// The arithmetic behind the numbers: per tick a node spends ~2 collects
+	// (inbox+reply drain, batched ingress) ≈ 60/min, plus headroom for
+	// retries and manual drains → 240. Writes: pushes to N recipients +
+	// ingress uplinks + want answers, bursty on catch-up → 600. Fetches
+	// ride the bulk lane: a projection per active public space per tick →
+	// 240. These are still abuse rails, not throughput promises.
 	return ServerLimits{
 		MaxItemBytes: 16 << 20, PerHint: 64, MaxTTL: 7 * 24 * time.Hour,
-		FetchMaxHints: 64, FetchMaxBytes: 8 << 20, FetchRatePerMin: 60,
-		CollectMaxHints: 64, CollectMaxBytes: 8 << 20, CollectRatePerMin: 60,
-		WriteRatePerMin: 240,
+		FetchMaxHints: 64, FetchMaxBytes: 8 << 20, FetchRatePerMin: 240,
+		CollectMaxHints: 64, CollectMaxBytes: 8 << 20, CollectRatePerMin: 240,
+		WriteRatePerMin: 600,
 	}
 }
 

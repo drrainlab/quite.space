@@ -131,41 +131,39 @@ func (r *Runtime) mirrorKeepalive(addr string, tid id.TerminalID) error {
 	if err := r.relayGate(); err != nil {
 		return err
 	}
-	client, err := r.dialRelay(addr)
-	if err != nil {
-		return err
-	}
-	defer client.Close()
-
-	// Is anything at least as fresh already there? Fetch is non-destructive,
-	// so asking costs the relay one read and nobody a mailbox.
-	now := uint64(time.Now().Unix())
-	b := relay.Bucket(now)
-	hints := [][]byte{relay.HintPublicOutbox(tid, b)}
-	items, err := client.Fetch(hints)
-	if err != nil {
-		return err
-	}
-	freshest := uint64(0)
-	for _, item := range items {
-		env, err := projection.Decode(item)
-		if err != nil || env.SpaceID != tid || projection.Verify(env) != nil {
-			continue
+	// Bulk lane (RR-2): projection fetches and republish Puts are large.
+	return r.withRelayBulk(addr, func(client *relay.Client) error {
+		// Is anything at least as fresh already there? Fetch is
+		// non-destructive, so asking costs the relay one read and nobody a
+		// mailbox.
+		now := uint64(time.Now().Unix())
+		b := relay.Bucket(now)
+		hints := [][]byte{relay.HintPublicOutbox(tid, b)}
+		items, err := client.Fetch(hints)
+		if err != nil {
+			return err
 		}
-		if env.Seq > freshest {
-			freshest = env.Seq
+		freshest := uint64(0)
+		for _, item := range items {
+			env, err := projection.Decode(item)
+			if err != nil || env.SpaceID != tid || projection.Verify(env) != nil {
+				continue
+			}
+			if env.Seq > freshest {
+				freshest = env.Seq
+			}
 		}
-	}
-	if freshest >= seq {
-		return nil // the owner (or another mirror) is keeping it alive
-	}
+		if freshest >= seq {
+			return nil // the owner (or another mirror) is keeping it alive
+		}
 
-	// Put, never Replace. Replace would let a mirror holding an older
-	// envelope wipe a newer one; Put is content-idempotent, so repeated
-	// keepalives from many mirrors settle into one item.
-	expires := now + uint64(DefaultRelayTTL/time.Second)
-	_, err = client.Put(relay.HintPublicOutbox(tid, b), expires, wire)
-	return err
+		// Put, never Replace. Replace would let a mirror holding an older
+		// envelope wipe a newer one; Put is content-idempotent, so repeated
+		// keepalives from many mirrors settle into one item.
+		expires := now + uint64(DefaultRelayTTL/time.Second)
+		_, err = client.Put(relay.HintPublicOutbox(tid, b), expires, wire)
+		return err
+	})
 }
 
 // mirrorAnswerWants serves media out of what this node already holds. It
@@ -208,13 +206,11 @@ func (r *Runtime) seedForSpace(addr string, tid id.TerminalID) error {
 	if err := r.relayGate(); err != nil {
 		return err
 	}
-	client, err := r.dialRelay(addr)
-	if err != nil {
-		return err
-	}
-	defer client.Close()
-	r.mirrorAnswerWants(client, tid)
-	return nil
+	// Bulk lane (RR-2): answers carry media blobs.
+	return r.withRelayBulk(addr, func(client *relay.Client) error {
+		r.mirrorAnswerWants(client, tid)
+		return nil
+	})
 }
 
 // SetMirror turns this node into a mirror for a public space (or turns it

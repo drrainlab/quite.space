@@ -200,21 +200,25 @@ func (r *Runtime) pushToRelay(addr string, tid id.TerminalID, policy AssetPolicy
 	if err := r.relayGate(); err != nil {
 		return 0, 0, 0, err
 	}
-	client, err := r.dialRelay(addr)
-	if err != nil {
-		return 0, 0, 0, err
-	}
-	defer client.Close()
 	now = uint64(time.Now().Unix())
 	bucket := relay.Bucket(now)
 	expires := now + uint64(DefaultRelayTTL/time.Second)
 	var deadline uint64
-	for _, dev := range recipients {
-		d, err := client.Put(relay.HintFor(tid, dev, bucket), expires, body)
-		if err != nil {
-			return 0, 0, 0, err
+	withLane := r.withRelayControl
+	if len(body) >= bulkThreshold {
+		withLane = r.withRelayBulk
+	}
+	if err := withLane(addr, func(client *relay.Client) error {
+		for _, dev := range recipients {
+			d, err := client.Put(relay.HintFor(tid, dev, bucket), expires, body)
+			if err != nil {
+				return err
+			}
+			deadline = d
 		}
-		deadline = d
+		return nil
+	}); err != nil {
+		return 0, 0, 0, err
 	}
 
 	// Record the honest receipt level for every pushed event: the relay
@@ -448,11 +452,14 @@ func (r *Runtime) PullFromRelay(addr string) (applied int, err error) {
 	if err := r.relayGate(); err != nil {
 		return 0, err
 	}
-	client, err := r.dialRelay(addr)
+	// Pooled control lane (RR-2): the drain is latency-bound and must
+	// never sit behind a bulk fetch on the serial wire.
+	client, release, err := r.pool().Control(addr)
 	if err != nil {
 		return 0, err
 	}
-	defer client.Close()
+	var opErr error
+	defer func() { release(opErr) }()
 
 	now := uint64(time.Now().Unix())
 	self := r.Device.ID
@@ -469,6 +476,7 @@ func (r *Runtime) PullFromRelay(addr string) (applied int, err error) {
 	caps = append(caps, r.replyBoxCaps(tids, relay.Bucket(now))...)
 	items, err := client.Collect(caps)
 	if err != nil {
+		opErr = err
 		return 0, err
 	}
 	for _, item := range items {

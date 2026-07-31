@@ -73,12 +73,11 @@ func (r *Runtime) fetchPublicProjection(addr string, tid id.TerminalID) error {
 	if err := r.relayGate(); err != nil {
 		return err
 	}
-	client, err := r.dialRelay(addr)
-	if err != nil {
-		return err
-	}
-	defer client.Close()
-	if err := r.fetchPublicProjectionWith(client, tid); err != nil {
+	// Bulk lane (RR-2): a projection is up to 768 KiB and must not block
+	// the control lane's collects behind it.
+	if err := r.withRelayBulk(addr, func(client *relay.Client) error {
+		return r.fetchPublicProjectionWith(client, tid)
+	}); err != nil {
 		return err
 	}
 	// A projection ARRIVED from this address: remember it as the space's
@@ -409,33 +408,34 @@ func (r *Runtime) pushPublicIngress(addr string, tid id.TerminalID) error {
 	if err := r.relayGate(); err != nil {
 		return err
 	}
-	client, err := r.dialRelay(addr)
-	if err != nil {
-		return err
+	lane := r.withRelayControl
+	if len(body) >= bulkThreshold {
+		lane = r.withRelayBulk
 	}
-	defer client.Close()
-	if hint == nil {
-		// No address yet — the usual cause is a restart, which keeps the
-		// durable pending set but not the in-memory projection. Fetch one and
-		// re-resolve rather than failing: the contribution is legitimate and
-		// the address is one round trip away.
-		if err := r.fetchPublicProjectionWith(client, tid); err != nil {
-			return fmt.Errorf("node: no ingress address and none could be fetched: %w", err)
-		}
-		r.mu.Lock()
-		if st, ok := r.spaces[tid]; ok {
-			hint = r.ingressHintLocked(st, tid, self, relay.Bucket(now0))
-		}
-		r.mu.Unlock()
+	return lane(addr, func(client *relay.Client) error {
 		if hint == nil {
-			return errors.New("node: this space publishes no ingress address")
+			// No address yet — the usual cause is a restart, which keeps the
+			// durable pending set but not the in-memory projection. Fetch one and
+			// re-resolve rather than failing: the contribution is legitimate and
+			// the address is one round trip away.
+			if err := r.fetchPublicProjectionWith(client, tid); err != nil {
+				return fmt.Errorf("node: no ingress address and none could be fetched: %w", err)
+			}
+			r.mu.Lock()
+			if st, ok := r.spaces[tid]; ok {
+				hint = r.ingressHintLocked(st, tid, self, relay.Bucket(now0))
+			}
+			r.mu.Unlock()
+			if hint == nil {
+				return errors.New("node: this space publishes no ingress address")
+			}
 		}
-	}
-	now := uint64(time.Now().Unix())
-	// Short TTL: ingress is consumed by the owner within a bucket or
-	// re-pushed; stale bundles must not linger against relay quotas.
-	_, err = client.Put(hint, now+6*3600, body)
-	return err
+		now := uint64(time.Now().Unix())
+		// Short TTL: ingress is consumed by the owner within a bucket or
+		// re-pushed; stale bundles must not linger against relay quotas.
+		_, err := client.Put(hint, now+6*3600, body)
+		return err
+	})
 }
 
 // collectPublicIngress drains all ingress shards of an OWNED public space
@@ -443,54 +443,94 @@ func (r *Runtime) pushPublicIngress(addr string, tid id.TerminalID) error {
 // canonical gates (admission, chains, dedup), answers media wants, and
 // starts custody fetches for newly referenced assets (PA-0.4D).
 func (r *Runtime) collectPublicIngress(addr string, tid id.TerminalID) (int, error) {
+	got, err := r.collectPublicIngressBatch(addr, []id.TerminalID{tid})
+	return got[tid], err
+}
+
+// collectPublicIngressBatch drains SEVERAL owned public spaces' ingress
+// shards through ONE Collect (RR-2). This batching is safe because the
+// capability class is homogeneous: every item in an ingress mailbox is a
+// contributor bundle that NAMES its space (parts.Terminal) — the cap it
+// sat behind adds no information, so items route by content and each
+// space's community gates (per-author budgets, rejected ring, frame caps)
+// apply per space exactly as before.
+func (r *Runtime) collectPublicIngressBatch(addr string, tids []id.TerminalID) (map[id.TerminalID]int, error) {
+	applied := map[id.TerminalID]int{}
+	// Roots per space, frozen spaces skipped (TRUE freeze: not read at all).
+	roots := map[id.TerminalID][32]byte{}
 	r.mu.Lock()
-	var root [32]byte
-	var haveRoot bool
-	if st, ok := r.spaces[tid]; ok {
-		if st.space.Policy().Frozen {
-			r.mu.Unlock()
-			return 0, nil // TRUE freeze: ingress is not read at all
+	for _, tid := range tids {
+		if st, ok := r.spaces[tid]; ok && !st.space.Policy().Frozen {
+			if root, ok := st.space.IngressRoot(); ok {
+				roots[tid] = root
+			}
 		}
-		root, haveRoot = st.space.IngressRoot()
 	}
 	r.mu.Unlock()
+	if len(roots) == 0 {
+		return applied, nil
+	}
 	if err := r.relayGate(); err != nil {
-		return 0, err
+		return applied, err
 	}
-	client, err := r.dialRelay(addr)
+	// Pooled control lane (RR-2).
+	client, release, err := r.pool().Control(addr)
 	if err != nil {
-		return 0, err
+		return applied, err
 	}
-	defer client.Close()
+	var opErr error
+	defer func() { release(opErr) }()
 	now := uint64(time.Now().Unix())
 	b := relay.Bucket(now)
-	var caps [][]byte
-	if haveRoot {
-		// Current, previous and next bucket: a contributor may be running a
-		// slightly fast or slightly stale clock, and losing a contribution to
-		// a rounding edge would be indistinguishable from censorship.
-		buckets := []uint64{b, b + 1}
-		if b > 0 {
-			buckets = append(buckets, b-1)
+	// Current, previous and next bucket per space: a contributor may run a
+	// slightly fast or stale clock, and losing a contribution to a rounding
+	// edge would be indistinguishable from censorship. Deterministic order.
+	buckets := []uint64{b, b + 1}
+	if b > 0 {
+		buckets = append(buckets, b-1)
+	}
+	ordered := make([]id.TerminalID, 0, len(roots))
+	for _, tid := range tids {
+		if _, ok := roots[tid]; ok {
+			ordered = append(ordered, tid)
 		}
+	}
+	var caps [][]byte
+	for _, tid := range ordered {
+		root := roots[tid]
 		for _, bk := range buckets {
 			for sh := byte(0); sh < relay.IngressShards; sh++ {
 				caps = append(caps, relay.CapPublicIngress(root, bk, sh))
 			}
 		}
 	}
-	items, err := client.Collect(caps)
-	if err != nil {
-		return 0, err
+	// The server bounds caps per request; split when many spaces overflow it.
+	var items [][]byte
+	const maxCapsPerCollect = 64
+	for off := 0; off < len(caps); off += maxCapsPerCollect {
+		end := min(off+maxCapsPerCollect, len(caps))
+		part, err := client.Collect(caps[off:end])
+		if err != nil {
+			opErr = err
+			return applied, err
+		}
+		items = append(items, part...)
 	}
-	applied := 0
 	nowT := time.Now()
-	budget := newAuthorBudget() // per-drain-cycle abuse caps (PA-1.3)
-	acc := newWantAccumulator() // one deduped answer per reply box (PM-0)
+	budgets := map[id.TerminalID]*authorBudget{} // per-space per-cycle caps
+	accs := map[id.TerminalID]*wantAccumulator{} // per-space reply answers
 	for _, item := range items {
 		parts, err := bundle.DecodeParts(item)
-		if err != nil || parts.Terminal != tid {
+		if err != nil {
 			continue
+		}
+		tid := parts.Terminal
+		if _, mine := roots[tid]; !mine {
+			continue // not one of the drained spaces
+		}
+		if budgets[tid] == nil {
+			budgets[tid] = newAuthorBudget()
+			accs[tid] = newWantAccumulator()
 		}
 		r.mu.Lock()
 		st, ok := r.spaces[tid]
@@ -513,7 +553,7 @@ func (r *Runtime) collectPublicIngress(addr string, tid id.TerminalID) (int, err
 			// invalid signer is rejected by Absorb below anyway, and a
 			// valid one cannot exceed its per-cycle share.
 			dev := ingressFrameDevice(f)
-			if !budget.admit(dev, len(f)) {
+			if !budgets[tid].admit(dev, len(f)) {
 				continue // over budget this cycle — arrives on a later one
 			}
 			n, err := st.space.Absorb(f)
@@ -521,7 +561,7 @@ func (r *Runtime) collectPublicIngress(addr string, tid id.TerminalID) (int, err
 				st.rejected.remember(eid, nowT)
 				continue // admission-refused or malformed: PolicyStats has it
 			}
-			applied += n
+			applied[tid] += n
 		}
 		r.mu.Unlock()
 		// Custody (0.4D): any asset referenced by newly contributed block
@@ -529,9 +569,13 @@ func (r *Runtime) collectPublicIngress(addr string, tid id.TerminalID) (int, err
 		// wants machinery; until the blob is verified locally the
 		// projection's Exclude filter keeps the publication unprojected.
 		r.requestIncompleteAssets(tid, parts.Frames)
-		acc.add(parts.Wanter, parts.Wants, parts.ReplyBox)
+		accs[tid].add(parts.Wanter, parts.Wants, parts.ReplyBox)
 	}
-	acc.answer(r, client, tid, true)
+	for _, tid := range ordered {
+		if acc := accs[tid]; acc != nil {
+			acc.answer(r, client, tid, true)
+		}
+	}
 	return applied, nil
 }
 
@@ -853,13 +897,12 @@ func (r *Runtime) publishPublicProjectionForce(addr string, tid id.TerminalID, f
 	if err := r.relayGate(); err != nil {
 		return false, err
 	}
-	client, err := r.dialRelay(addr)
-	if err != nil {
-		return false, err
-	}
-	defer client.Close()
-	expires := now + uint64(DefaultRelayTTL/time.Second)
-	_, err = client.Replace(relay.HintPublicOutbox(tid, relay.Bucket(now)), expires, wire)
+	// Bulk lane (RR-2): a projection Replace carries up to 768 KiB.
+	err = r.withRelayBulk(addr, func(client *relay.Client) error {
+		expires := now + uint64(DefaultRelayTTL/time.Second)
+		_, perr := client.Replace(relay.HintPublicOutbox(tid, relay.Bucket(now)), expires, wire)
+		return perr
+	})
 	return err == nil, err
 }
 

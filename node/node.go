@@ -132,6 +132,11 @@ type Runtime struct {
 	// configured). r.mu guards the pointer; the state has its own lock.
 	relaySync *relaySyncState
 
+	// relayPool holds the persistent relay connections (RR-2): two lanes
+	// per address, health, backoff. Created lazily under poolOnce.
+	relayPoolV *relayPool
+	poolOnce   sync.Once
+
 	// relayWants holds blob hashes this node is trying to fetch over the relay
 	// (media on-demand when there is no direct peer). The auto-sync push rides
 	// these to peers as a request; a holder answers into our inbox. r.mu-guarded.
@@ -527,6 +532,9 @@ func (r *Runtime) Close() {
 	// their memory budgets so a long-lived process (tests, the desktop
 	// shell reopening) does not leak the global cap.
 	r.previews.closeAll()
+	if r.relayPoolV != nil {
+		r.relayPoolV.closeAll()
+	}
 	if r.lanNode != nil {
 		r.lanNode.Close()
 	}
