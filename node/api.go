@@ -101,6 +101,10 @@ func (a *APIServer) Handler() http.Handler {
 	mux.HandleFunc("POST /api/spaces/{id}/presence", a.auth(a.handlePresence))
 	mux.HandleFunc("POST /api/invites/accept", a.auth(a.handleJoin))
 	mux.HandleFunc("POST /api/public/open", a.auth(a.handlePublicOpen))
+	// The transient post preview (PS-3): a card invites a look, and looking
+	// persists nothing. Session-scoped asset route — see node/preview.go.
+	mux.HandleFunc("POST /api/public/preview", a.auth(a.handlePublicPreview))
+	mux.HandleFunc("GET /api/public/previews/{pid}/assets/{asset}", a.auth(a.handlePreviewAsset))
 	mux.HandleFunc("GET /api/spaces/{id}/link", a.auth(a.handlePublicLink))
 	mux.HandleFunc("POST /api/spaces/{id}/join", a.auth(a.handlePublicJoin))
 	mux.HandleFunc("POST /api/spaces/{id}/policy", a.auth(a.handleRevisePolicy))

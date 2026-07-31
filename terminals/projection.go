@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/drrainlab/quiet_places/kernel/eventlog"
+	"github.com/drrainlab/quiet_places/kernel/reducers"
 	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/protocol/manifest"
 	"github.com/drrainlab/quiet_places/protocol/projection"
@@ -244,21 +245,92 @@ func (s *Space) BuildPublicProjection(seq uint64, publisher id.DeviceID,
 // frame's own device signature. Installation needs NO chain contiguity —
 // this is the derived read model, never the canonical log (I6). Idempotent
 // per event. Returns how many events were newly applied.
-func (s *Space) InstallPublicProjection(env *projection.Envelope) (int, error) {
-	if env.SpaceID != s.ID {
-		return 0, errors.New("terminals: projection for another space")
+// verifyProjectionManifest is the shared verification half of accepting a
+// projection: envelope signature against the space key, manifest decode,
+// identity match and manifest signature. The replica install and the
+// transient preview (PS-3) both come through here, so "verified" cannot
+// mean two different things.
+func verifyProjectionManifest(spaceID id.TerminalID, env *projection.Envelope) (*manifest.Manifest, error) {
+	if env.SpaceID != spaceID {
+		return nil, errors.New("terminals: projection for another space")
 	}
 	if err := projection.Verify(env); err != nil {
-		return 0, err
+		return nil, err
 	}
 	m, err := manifest.Decode(env.ManifestFrame)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	if m.Terminal != s.ID || m.Kind != manifest.KindSpace {
-		return 0, errors.New("terminals: projection manifest mismatch")
+	if m.Terminal != spaceID || m.Kind != manifest.KindSpace {
+		return nil, errors.New("terminals: projection manifest mismatch")
 	}
 	if err := manifest.VerifyFrame(env.ManifestFrame, m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+// verifiedProjectionFrame decodes and verifies one projected frame. A
+// failure means skip — one bad frame never poisons a projection — and both
+// consumers skip identically because there is one function to skip in.
+func verifiedProjectionFrame(spaceID id.TerminalID, frame []byte) (*signal.Envelope, id.EventID, bool) {
+	fe, err := signal.Decode(frame)
+	if err != nil {
+		return nil, id.EventID{}, false
+	}
+	if fe.Terminal != spaceID {
+		return nil, id.EventID{}, false
+	}
+	if signal.VerifyFrame(frame, fe) != nil {
+		return nil, id.EventID{}, false
+	}
+	return fe, id.EventIDOf(frame), true
+}
+
+// MaterializePublicProjection replays a verified projection into a
+// THROWAWAY reducer state: no Space, no log, no disk, no keystore. This is
+// the transient preview's whole substance (PS-3) — the non-persistence is
+// by construction, because there is nothing here that could persist.
+//
+// The state is deliberately not a laxer reader than a real replica: the
+// same verification, the same dedup, and the same Authorized defense in
+// depth, built from the same verified policy.
+func MaterializePublicProjection(spaceID id.TerminalID, env *projection.Envelope) (*reducers.State, *manifest.Manifest, error) {
+	m, err := verifyProjectionManifest(spaceID, env)
+	if err != nil {
+		return nil, nil, err
+	}
+	pol := ParsePolicy(m.DeclaredLabels)
+	if !pol.IsPublic() {
+		return nil, nil, errors.New("terminals: projection for a non-public policy")
+	}
+	st := reducers.NewState()
+	c := m.Controller
+	st.Controller = &c
+	st.Authorized = authorizedFromPolicy(m, pol)
+	seen := map[id.EventID]bool{}
+	for _, frame := range env.Frames {
+		fe, eid, ok := verifiedProjectionFrame(spaceID, frame)
+		if !ok || seen[eid] {
+			continue
+		}
+		seen[eid] = true
+		// Key distribution is not user-visible state, and a throwaway
+		// state has no registry for member manifests. Sealed frames are
+		// unreadable without epoch keys the preview rightly lacks.
+		if fe.Schema == schemas.MembershipEpoch || fe.Schema == schemas.ManifestUpdated {
+			continue
+		}
+		if fe.PayloadEncoding == signal.PayloadEncrypted {
+			continue
+		}
+		st.Apply(fe, eid)
+	}
+	return st, m, nil
+}
+
+func (s *Space) InstallPublicProjection(env *projection.Envelope) (int, error) {
+	if _, err := verifyProjectionManifest(s.ID, env); err != nil {
 		return 0, err
 	}
 	// Revision-aware install (PA-1, anti-rollback): a stale or forked
@@ -279,18 +351,8 @@ func (s *Space) InstallPublicProjection(env *projection.Envelope) (int, error) {
 	}
 	applied := 0
 	for _, frame := range env.Frames {
-		fe, err := signal.Decode(frame)
-		if err != nil {
-			continue // one bad frame never poisons the projection
-		}
-		if fe.Terminal != s.ID {
-			continue
-		}
-		eid := id.EventIDOf(frame)
-		if s.projSeen[eid] {
-			continue
-		}
-		if err := signal.VerifyFrame(frame, fe); err != nil {
+		fe, eid, ok := verifiedProjectionFrame(s.ID, frame)
+		if !ok || s.projSeen[eid] {
 			continue
 		}
 		s.projSeen[eid] = true

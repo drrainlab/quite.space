@@ -259,15 +259,21 @@ func (a *APIServer) handleGetAsset(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	// Content-Type strictly from the validated AssetRef; never sniffed.
+	serveAssetBytes(w, r, ref, aid, data)
+}
+
+// serveAssetBytes writes verified asset bytes with the headers every asset
+// route shares: Content-Type strictly from the validated AssetRef (never
+// sniffed), nosniff, inline for media, Range/206 via ServeContent. The
+// space route and the preview route (PS-3) serve identically because they
+// serve HERE.
+func serveAssetBytes(w http.ResponseWriter, r *http.Request, ref *schemas.AssetRef, aid string, data []byte) {
 	ct := ref.MediaType
 	if _, _, err := mime.ParseMediaType(ct); err != nil {
 		ct = "application/octet-stream"
 	}
 	w.Header().Set("Content-Type", ct)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	// Media plays inline (video/audio elements need Range + inline);
-	// everything else downloads as an attachment.
 	disp := "attachment"
 	if strings.HasPrefix(ct, "image/") || strings.HasPrefix(ct, "audio/") || strings.HasPrefix(ct, "video/") {
 		disp = "inline"
@@ -275,7 +281,6 @@ func (a *APIServer) handleGetAsset(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition",
 		mime.FormatMediaType(disp, map[string]string{"filename": schemas.NormalizeFilename("asset-" + aid[:min(12, len(aid))])}))
 	w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
-	// ServeContent adds Range/206 support — video seeking works.
 	http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(data))
 }
 

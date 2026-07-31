@@ -403,12 +403,6 @@ var ErrReadOnlyReplica = errors.New("terminals: join this space to write")
 // then lives at the admission gate.
 func (s *Space) refreshPolicy() {
 	pol := s.Policy()
-	rev := uint64(1)
-	if len(s.ManifestFrame) > 0 {
-		if m, err := manifest.Decode(s.ManifestFrame); err == nil {
-			rev = m.Revision
-		}
-	}
 	if pol.Frozen {
 		// TRUE freeze: nothing is admitted — the owner's frames included.
 		s.State.Authorized = nil // freeze is always rev ≥ 2
@@ -428,19 +422,16 @@ func (s *Space) refreshPolicy() {
 		return
 	}
 	writers := make(map[WriterBinding]bool, len(pol.Writers))
-	principals := map[id.PrincipalID]bool{}
 	for _, w := range pol.Writers {
 		writers[w] = true
-		principals[w.Principal] = true
 	}
-	if m, err := manifest.Decode(s.ManifestFrame); err == nil {
-		principals[m.Controller] = true
+	var m *manifest.Manifest
+	if dm, err := manifest.Decode(s.ManifestFrame); err == nil {
+		m = dm
 	}
-	if rev == 1 {
-		s.State.Authorized = principals
-	} else {
-		s.State.Authorized = nil // permanently off after the first revision
-	}
+	// One computation, shared with the transient preview (PS-3), so the
+	// preview can never be a LAXER reader than a real replica.
+	s.State.Authorized = authorizedFromPolicy(m, pol)
 	s.Log.SetAdmit(func(env *signal.Envelope) error {
 		if writers[WriterBinding{Principal: env.Principal, Device: env.Device}] {
 			return nil
@@ -452,4 +443,20 @@ func (s *Space) refreshPolicy() {
 		})
 		return ErrNotAuthorized
 	})
+}
+
+// authorizedFromPolicy computes the defense-in-depth principal set for a
+// verified manifest+policy pair: non-nil ONLY while Revision == 1 and the
+// initial policy is curated (the PA-1 determinism rule stated above). Both
+// the replica (refreshPolicy) and the transient preview build it here.
+func authorizedFromPolicy(m *manifest.Manifest, pol SpacePolicy) map[id.PrincipalID]bool {
+	if m == nil || pol.Frozen || pol.Publish != PublishCurated || m.Revision != 1 {
+		return nil
+	}
+	principals := map[id.PrincipalID]bool{}
+	for _, w := range pol.Writers {
+		principals[w.Principal] = true
+	}
+	principals[m.Controller] = true
+	return principals
 }

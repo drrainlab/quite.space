@@ -97,7 +97,11 @@ func (r *Runtime) fetchPublicProjection(addr string, tid id.TerminalID) error {
 	return nil
 }
 
-func (r *Runtime) fetchPublicProjectionWith(client *relay.Client, tid id.TerminalID) error {
+// bestProjectionFor reads a space's public outbox (current + previous
+// bucket) and returns the newest verified envelope with its wire bytes.
+// Shared by the replica sync and the transient preview (PS-3), so both
+// pick the same envelope by the same rule.
+func bestProjectionFor(client *relay.Client, tid id.TerminalID) (*projection.Envelope, []byte, error) {
 	now := uint64(time.Now().Unix())
 	b := relay.Bucket(now)
 	hints := [][]byte{relay.HintPublicOutbox(tid, b)}
@@ -106,7 +110,7 @@ func (r *Runtime) fetchPublicProjectionWith(client *relay.Client, tid id.Termina
 	}
 	items, err := client.Fetch(hints)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	var best *projection.Envelope
 	var bestWire []byte
@@ -123,7 +127,15 @@ func (r *Runtime) fetchPublicProjectionWith(client *relay.Client, tid id.Termina
 		}
 	}
 	if best == nil {
-		return ErrNoProjection
+		return nil, nil, ErrNoProjection
+	}
+	return best, bestWire, nil
+}
+
+func (r *Runtime) fetchPublicProjectionWith(client *relay.Client, tid id.TerminalID) error {
+	best, bestWire, err := bestProjectionFor(client, tid)
+	if err != nil {
+		return err
 	}
 
 	r.mu.Lock()

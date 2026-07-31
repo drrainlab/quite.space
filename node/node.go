@@ -35,6 +35,10 @@ import (
 type Runtime struct {
 	mu sync.Mutex
 
+	// previews is the transient post-preview store (PS-3). Its own lock,
+	// never r.mu — a preview touches no runtime state by design.
+	previews previewStore
+
 	root      *storage.Root
 	ks        *storage.Keystore
 	Principal *identity.Principal
