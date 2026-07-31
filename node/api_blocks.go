@@ -327,17 +327,29 @@ type sharedResp struct {
 }
 
 // quotedLines pulls the quotation back out of the composed text: the lines
-// the node prefixed with "> ", minus the header line it also wrote.
-func quotedLines(text string) string {
+// the node prefixed with "> ", minus what the node ALSO wrote around them.
+// Both removals match the composer exactly rather than trusting position:
+// the header line is dropped only when it equals what quoteHeadline would
+// have produced (it used to be "line 0", which silently ate the first line
+// of any quote whose header happened to be empty), and the trailing "…"
+// marker is dropped when the origin says truncated — the client appends
+// its own, and collecting this one rendered a double ellipsis.
+func quotedLines(o *schemas.ShareOrigin, text string) string {
+	head := quoteHeadline(o)
+	lines := strings.Split(text, "\n")
 	var out []string
-	for i, line := range strings.Split(text, "\n") {
+	for i, line := range lines {
 		if !strings.HasPrefix(line, "> ") {
 			continue
 		}
-		if i == 0 {
-			continue // the "who · where · when" header
+		body := strings.TrimPrefix(line, "> ")
+		if i == 0 && head != "" && body == head {
+			continue
 		}
-		out = append(out, strings.TrimPrefix(line, "> "))
+		if o.Truncated && i == len(lines)-1 && body == "…" {
+			continue
+		}
+		out = append(out, body)
 	}
 	return strings.TrimSpace(strings.Join(out, "\n"))
 }
@@ -510,7 +522,7 @@ func (a *APIServer) projectEntry(tid id.TerminalID, sp *terminals.Space,
 				// The quoted lines are carried in the composed text with a
 				// "> " marker, so a client that ignores this object still
 				// shows the quotation. This one renders from HERE.
-				Quote: quotedLines(e.Content.Text.Text),
+				Quote: quotedLines(o, e.Content.Text.Text),
 			}
 		}
 		// Only when something other than a person signed it: a model name

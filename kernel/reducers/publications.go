@@ -22,6 +22,9 @@ type pubRec struct {
 	revID    id.EventID
 	revClock uint64
 	prevRev  *id.EventID
+	// createdAt is the wall clock of the FIRST accepted revision; later
+	// revisions never move it (PS-2).
+	createdAt uint64
 
 	archived     bool
 	archiveEvent id.EventID
@@ -59,8 +62,11 @@ type Publication struct {
 	RevisionEventID id.EventID
 	PrevRevision    *id.EventID
 	Clock           uint64
-	Archived        bool
-	Comments        []PublicationComment
+	// CreatedAt is the first accepted revision's wall clock (author-clock
+	// advisory); an edit never refreshes it.
+	CreatedAt uint64
+	Archived  bool
+	Comments  []PublicationComment
 }
 
 func (s *State) pubRecFor(docID [16]byte) *pubRec {
@@ -105,6 +111,12 @@ func (s *State) applyPublicationRevision(env *signal.Envelope, eid id.EventID) {
 	rec := s.pubRecFor(doc.DocumentID)
 	if rec.docRaw != nil && !later(env.LogicalClock, eid, rec.revClock, rec.revID) {
 		return // stale revision
+	}
+	// CreatedAt is the wall clock of the FIRST accepted revision and never
+	// moves after that (PS-2): an edit must not masquerade as a new post.
+	// Author-clock advisory, like every CreatedAt in this codebase.
+	if rec.docRaw == nil {
+		rec.createdAt = env.CreatedAt
 	}
 	rec.docRaw = append([]byte(nil), p.Document...)
 	rec.title = doc.Title
@@ -189,7 +201,7 @@ func (s *State) projectPublications(archived bool) []Publication {
 			DocumentID: docID, Document: doc, Raw: rec.docRaw,
 			Title: rec.title, Author: rec.author,
 			RevisionEventID: rec.revID, PrevRevision: rec.prevRev,
-			Clock: rec.revClock, Archived: rec.archived,
+			Clock: rec.revClock, CreatedAt: rec.createdAt, Archived: rec.archived,
 		}
 		for _, c := range rec.comments {
 			pub.Comments = append(pub.Comments, *c)
