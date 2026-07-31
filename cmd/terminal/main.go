@@ -33,6 +33,8 @@ func main() {
 		err = runMirror(os.Args[2:])
 	case "custodian":
 		err = runCustodian(os.Args[2:])
+	case "relay":
+		err = runRelayTrust(os.Args[2:])
 	case "backup":
 		err = runBackup(os.Args[2:])
 	case "restore":
@@ -78,6 +80,9 @@ usage:
                                          this node (no authority over it)
   terminal custodian list|pin|unpin      which gateways this node trusts
                                          (public keys; no passphrase needed)
+  terminal relay show-identity|trust|forget
+                                         confirm a custom relay's SPKI pin
+                                         (no passphrase needed)
 `)
 }
 

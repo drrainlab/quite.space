@@ -9,6 +9,7 @@ import (
 	"errors"
 	"github.com/drrainlab/quiet_places/attention"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -25,6 +26,12 @@ type Settings struct {
 	// disables background relay sync. Set it and the node pushes changed
 	// spaces + pulls on a timer — no manual push/pull needed.
 	Relay string `json:"relay"`
+	// RelayMode selects how relays are chosen (RR-0). "" or "custom" =
+	// exactly the relay above, nothing else, no hidden official fallback;
+	// "automatic" = measured selection over the embedded registry (the
+	// probe-selected primary/backup live in relays.json — they are derived
+	// runtime state, never user configuration, and never stored here).
+	RelayMode string `json:"relay_mode,omitempty"`
 	// RelaySyncSeconds is the background push/pull cadence; 0 = default 2s.
 	RelaySyncSeconds int `json:"relay_sync_seconds"`
 	// Connectivity is the transport policy: which ways out of this device
@@ -61,6 +68,13 @@ func (r *Runtime) GetSettings() Settings {
 	return s
 }
 
+// ErrBadRelayMode is a relay mode this build does not understand.
+type ErrBadRelayMode struct{ Mode string }
+
+func (e ErrBadRelayMode) Error() string {
+	return "node: unknown relay mode " + strconv.Quote(e.Mode) + " — use \"automatic\" or \"custom\""
+}
+
 // SetSettings persists settings. An empty LLM.APIKey means "keep the stored
 // key" (the UI sends the key only when the user changes it).
 func (r *Runtime) SetSettings(s Settings) error {
@@ -70,6 +84,12 @@ func (r *Runtime) SetSettings(s Settings) error {
 	// it is "send nothing", which looks to the person like an outage.
 	if err := s.Connectivity.Validate(); err != nil {
 		return err
+	}
+	// Same rule for the relay mode: validate at the door, hold on unreadable.
+	switch s.RelayMode {
+	case "", "automatic", "custom":
+	default:
+		return ErrBadRelayMode{Mode: s.RelayMode}
 	}
 	r.mu.Lock()
 	var cur Settings
@@ -85,6 +105,12 @@ func (r *Runtime) SetSettings(s Settings) error {
 	// which is what saving a zero value here would do.
 	if s.Connectivity.Mode == "" && s.Connectivity.PerSpace == nil {
 		s.Connectivity = cur.Connectivity
+	}
+	// An omitted attention policy means "leave it alone" too. Before this
+	// guard, ANY settings write from a screen without the QuietRank controls
+	// silently erased the trained policy (RR-0 hygiene fix).
+	if s.Attention == nil {
+		s.Attention = cur.Attention
 	}
 	b, err := json.Marshal(s)
 	if err != nil {
@@ -133,9 +159,14 @@ func (r *Runtime) TestLLM(ctx context.Context) error {
 
 // settingsJSON is the API view: it carries has_key instead of the key itself.
 func settingsJSON(s Settings) map[string]any {
+	mode := s.RelayMode
+	if mode == "" {
+		mode = "custom" // "" is legacy-custom; the API always says which
+	}
 	return map[string]any{
 		"theme": s.Theme, "preset": s.Preset, "render_mode": s.RenderMode,
-		"relay": s.Relay, "relay_sync_seconds": int(relayInterval(s) / time.Second),
+		"relay": s.Relay, "relay_mode": mode,
+		"relay_sync_seconds": int(relayInterval(s) / time.Second),
 		"connectivity": map[string]any{"mode": string(s.Connectivity.Mode)},
 		"llm": map[string]any{
 			"provider": s.LLM.Provider, "model": s.LLM.Model,
@@ -149,12 +180,17 @@ func (a *APIServer) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *APIServer) handleSetSettings(w http.ResponseWriter, r *http.Request) {
+	// Relay fields are POINTERS so absence is distinguishable from an
+	// explicit clear: before this, a settings POST from any screen that
+	// did not show the relay silently erased it (RR-0 hygiene fix). nil =
+	// keep stored; "" = the user really cleared it.
 	body, err := readBody[struct {
-		Theme      string `json:"theme"`
-		Preset     string `json:"preset"`
-		RenderMode string `json:"render_mode"`
-		Relay      string `json:"relay"`
-		RelaySync  int    `json:"relay_sync_seconds"`
+		Theme      string  `json:"theme"`
+		Preset     string  `json:"preset"`
+		RenderMode string  `json:"render_mode"`
+		Relay      *string `json:"relay"`
+		RelayMode  *string `json:"relay_mode"`
+		RelaySync  *int    `json:"relay_sync_seconds"`
 		Conn       struct {
 			Mode string `json:"mode"`
 		} `json:"connectivity"`
@@ -169,8 +205,18 @@ func (a *APIServer) handleSetSettings(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusBadRequest, err)
 		return
 	}
+	cur := a.rt.GetSettings()
 	s := Settings{Theme: body.Theme, Preset: body.Preset, RenderMode: body.RenderMode,
-		Relay: strings.TrimSpace(body.Relay), RelaySyncSeconds: body.RelaySync}
+		Relay: cur.Relay, RelayMode: cur.RelayMode, RelaySyncSeconds: cur.RelaySyncSeconds}
+	if body.Relay != nil {
+		s.Relay = strings.TrimSpace(*body.Relay)
+	}
+	if body.RelayMode != nil {
+		s.RelayMode = strings.TrimSpace(*body.RelayMode)
+	}
+	if body.RelaySync != nil {
+		s.RelaySyncSeconds = *body.RelaySync
+	}
 	s.LLM.Provider = body.LLM.Provider
 	s.LLM.Model = body.LLM.Model
 	s.LLM.BaseURL = body.LLM.BaseURL
@@ -178,7 +224,11 @@ func (a *APIServer) handleSetSettings(w http.ResponseWriter, r *http.Request) {
 	s.Connectivity.Mode = ConnectivityMode(body.Conn.Mode)
 	if err := a.rt.SetSettings(s); err != nil {
 		// An unreadable mode is the caller's mistake, not a server fault.
-		if _, bad := err.(ErrBadConnectivityMode); bad {
+		if _, badConn := err.(ErrBadConnectivityMode); badConn {
+			httpErr(w, http.StatusBadRequest, err)
+			return
+		}
+		if _, badRelay := err.(ErrBadRelayMode); badRelay {
 			httpErr(w, http.StatusBadRequest, err)
 			return
 		}

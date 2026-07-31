@@ -150,7 +150,7 @@ func TestPreviewCannotRequestAssetOutsidePublicationGraph(t *testing.T) {
 // descriptor_unavailable, a fact about the projection — never a network
 // silence, never a spinner.
 func TestMissingCarrierReportsDescriptorUnavailable(t *testing.T) {
-	f, err := newSessionFetcher(id.TerminalID{1}, "nowhere.example:1", nil, newMemSink())
+	f, err := newSessionFetcher(id.TerminalID{1}, "nowhere.example:1", nil, newMemSink(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +168,7 @@ func TestMissingCarrierReportsDescriptorUnavailable(t *testing.T) {
 
 // Identical concurrent fetch requests coalesce into ONE job.
 func TestConcurrentFetchRequestsCoalesce(t *testing.T) {
-	f, err := newSessionFetcher(id.TerminalID{1}, "nowhere.example:1", nil, newMemSink())
+	f, err := newSessionFetcher(id.TerminalID{1}, "nowhere.example:1", nil, newMemSink(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +190,7 @@ func TestConcurrentFetchRequestsCoalesce(t *testing.T) {
 // Peak-memory admission: an asset whose expected working set exceeds the
 // global cap is refused AT ADMISSION, even when Size alone would fit.
 func TestPeakWorkingSetIsRefusedAtAdmission(t *testing.T) {
-	f, err := newSessionFetcher(id.TerminalID{1}, "nowhere.example:1", nil, newMemSink())
+	f, err := newSessionFetcher(id.TerminalID{1}, "nowhere.example:1", nil, newMemSink(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

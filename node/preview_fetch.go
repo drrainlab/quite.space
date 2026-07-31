@@ -157,6 +157,7 @@ type sessionFetcher struct {
 	mu      sync.Mutex
 	space   id.TerminalID
 	relay   string
+	dial    func(string) (*relay.Client, error) // trust-profile dialer (RR-1)
 	hints   [][]byte
 	wanter  id.DeviceID
 	cap     []byte
@@ -172,7 +173,7 @@ type sessionFetcher struct {
 }
 
 func newSessionFetcher(space id.TerminalID, relayAddr string, hints [][]byte,
-	root assets.Store) (*sessionFetcher, error) {
+	root assets.Store, dial func(string) (*relay.Client, error)) (*sessionFetcher, error) {
 	wanter, err := newSwarmIdentity()
 	if err != nil {
 		return nil, err
@@ -181,8 +182,11 @@ func newSessionFetcher(space id.TerminalID, relayAddr string, hints [][]byte,
 	if err != nil {
 		return nil, err
 	}
+	if dial == nil {
+		dial = relay.DialClient
+	}
 	return &sessionFetcher{
-		space: space, relay: relayAddr, hints: hints,
+		space: space, relay: relayAddr, dial: dial, hints: hints,
 		wanter: wanter, cap: replyCap,
 		store: newSessionStore(root),
 		graph: map[string]sessionAsset{}, jobs: map[string]*fetchJob{},
@@ -325,7 +329,7 @@ func (f *sessionFetcher) run(runtimeStop <-chan struct{}) {
 		wants, expected := f.gatherWants()
 		if len(wants) > 0 {
 			if client == nil {
-				c, err := relay.DialClient(f.relay)
+				c, err := f.dial(f.relay)
 				if err != nil {
 					f.settleDeadlines()
 					continue

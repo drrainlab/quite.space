@@ -17,7 +17,6 @@ import (
 	"github.com/drrainlab/quiet_places/protocol/appdef"
 	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/protocol/listening"
-	"github.com/drrainlab/quiet_places/transports/relay"
 )
 
 func init() {
@@ -152,7 +151,7 @@ type relayClock struct {
 // CalibrateRelayClock samples the relay several times and keeps the minimum
 // RTT sample (monotonic clock for RTT — wall time is what's being measured).
 func (r *Runtime) CalibrateRelayClock(addr string) error {
-	client, err := relay.DialClient(addr)
+	client, err := r.dialRelay(addr)
 	if err != nil {
 		return err
 	}

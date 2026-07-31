@@ -15,6 +15,7 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -173,6 +174,51 @@ func NewNodeWithMaxPacket(maxPkt int) (*Node, error) {
 	}
 	return &Node{tlsCert: tls.Certificate{Certificate: [][]byte{der}, PrivateKey: priv},
 		maxPkt: maxPkt}, nil
+}
+
+// SetCertificate replaces the node's ephemeral identity with a persistent
+// one (RR-1). Public relays use this so their SPKI pin survives restarts;
+// LAN sessions keep the ephemeral default — identity there lives in event
+// signatures, not certificates, and must stay that way.
+func (n *Node) SetCertificate(cert tls.Certificate) { n.tlsCert = cert }
+
+// SPKIPin is the base64 SHA-256 digest of a certificate's
+// SubjectPublicKeyInfo — the stable name of a TLS identity KEY. A relay
+// may regenerate its certificate freely; as long as the private key
+// persists, the pin does not move. Rotating the KEY is a deliberate act
+// shipped as a [current, next] pin set.
+func SPKIPin(rawCert []byte) (string, error) {
+	cert, err := x509.ParseCertificate(rawCert)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(cert.RawSubjectPublicKeyInfo)
+	return base64.StdEncoding.EncodeToString(sum[:]), nil
+}
+
+// DialPinned opens a connection and hands the peer's SPKI pin to verify
+// BEFORE any protocol byte flows; a rejection aborts the handshake. The
+// CA/hostname machinery stays off — on this path the pin IS the identity,
+// and certificate validity windows are irrelevant to it.
+func (n *Node) DialPinned(addr string, verify func(pin string) error) (*Conn, error) {
+	cfg := &tls.Config{
+		InsecureSkipVerify: true, MinVersion: tls.VersionTLS13,
+		VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+			if len(rawCerts) == 0 {
+				return errors.New("lan: peer presented no certificate")
+			}
+			pin, err := SPKIPin(rawCerts[0])
+			if err != nil {
+				return err
+			}
+			return verify(pin)
+		},
+	}
+	c, err := tls.Dial("tcp", addr, cfg)
+	if err != nil {
+		return nil, err
+	}
+	return newConn(c, n.maxPkt), nil
 }
 
 func (n *Node) serverConfig() *tls.Config {

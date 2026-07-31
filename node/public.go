@@ -73,7 +73,7 @@ func (r *Runtime) fetchPublicProjection(addr string, tid id.TerminalID) error {
 	if err := r.relayGate(); err != nil {
 		return err
 	}
-	client, err := relay.DialClient(addr)
+	client, err := r.dialRelay(addr)
 	if err != nil {
 		return err
 	}
@@ -409,7 +409,7 @@ func (r *Runtime) pushPublicIngress(addr string, tid id.TerminalID) error {
 	if err := r.relayGate(); err != nil {
 		return err
 	}
-	client, err := relay.DialClient(addr)
+	client, err := r.dialRelay(addr)
 	if err != nil {
 		return err
 	}
@@ -457,7 +457,7 @@ func (r *Runtime) collectPublicIngress(addr string, tid id.TerminalID) (int, err
 	if err := r.relayGate(); err != nil {
 		return 0, err
 	}
-	client, err := relay.DialClient(addr)
+	client, err := r.dialRelay(addr)
 	if err != nil {
 		return 0, err
 	}
@@ -853,7 +853,7 @@ func (r *Runtime) publishPublicProjectionForce(addr string, tid id.TerminalID, f
 	if err := r.relayGate(); err != nil {
 		return false, err
 	}
-	client, err := relay.DialClient(addr)
+	client, err := r.dialRelay(addr)
 	if err != nil {
 		return false, err
 	}

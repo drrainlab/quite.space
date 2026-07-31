@@ -142,10 +142,6 @@ func entryStateName(s storage.EntryState) string {
 // pending request can still fail honestly if the pass ran out while it was
 // waiting.
 func (r *Runtime) DecideEntry(reqIDShort string, admit bool, reason string) error {
-	addr := r.GetSettings().Relay
-	if addr == "" {
-		return errors.New("node: deciding needs the relay the link was made on")
-	}
 	r.passes.mu.Lock()
 	var (
 		rec   *passRecord
@@ -170,6 +166,11 @@ func (r *Runtime) DecideEntry(reqIDShort string, admit bool, reason string) erro
 	space, rendezvous := rec.space, rec.pass.Rendezvous
 	xpub, reqID := entry.Xpub, entry.Request
 	device := entry.Device
+	// The decision goes back to the relay THIS pass was minted on — the
+	// record knows it (per-record on purpose, node/pass.go). The global
+	// setting is only a legacy fallback for records persisted before the
+	// relay travelled with the pass (RR-0).
+	addr := rec.relay
 
 	// Re-validate at the moment of the decision, not at the knock: time
 	// passed while a person thought about it.
@@ -184,7 +185,13 @@ func (r *Runtime) DecideEntry(reqIDShort string, admit bool, reason string) erro
 	}
 	r.passes.mu.Unlock()
 
-	client, err := relay.DialClient(addr)
+	if addr == "" {
+		addr = r.GetSettings().Relay
+	}
+	if addr == "" {
+		return errors.New("node: deciding needs the relay the link was made on")
+	}
+	client, err := r.dialRelay(addr)
 	if err != nil {
 		return err
 	}
@@ -341,10 +348,6 @@ func (r *Runtime) applyDecision(at *joinAttempt, d *terminals.Decision) bool {
 // person waiting at a door that no longer exists deserves to be told, not
 // left to time out.
 func (r *Runtime) declinePendingForPass(passIDShort, reason string) {
-	addr := r.GetSettings().Relay
-	if addr == "" {
-		return
-	}
 	r.passes.mu.Lock()
 	type target struct {
 		reqID [32]byte
@@ -353,10 +356,14 @@ func (r *Runtime) declinePendingForPass(passIDShort, reason string) {
 		rdv   [16]byte
 	}
 	var waiting []target
+	var addr string
 	for pid, rec := range r.passes.byID {
 		if hexShort(pid[:]) != passIDShort {
 			continue
 		}
+		// The decline goes to the relay THIS pass was minted on (RR-0) —
+		// the people waiting are waiting THERE, not on the global setting.
+		addr = rec.relay
 		for _, e := range rec.entries {
 			if e.State == storage.EntryPending {
 				waiting = append(waiting, target{e.Request, e.Xpub, rec.space, rec.pass.Rendezvous})
@@ -367,7 +374,13 @@ func (r *Runtime) declinePendingForPass(passIDShort, reason string) {
 	if len(waiting) == 0 {
 		return
 	}
-	client, err := relay.DialClient(addr)
+	if addr == "" {
+		addr = r.GetSettings().Relay // legacy records minted before RR-0
+	}
+	if addr == "" {
+		return
+	}
+	client, err := r.dialRelay(addr)
 	if err != nil {
 		return
 	}

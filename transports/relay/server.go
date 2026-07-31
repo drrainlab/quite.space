@@ -4,6 +4,7 @@
 package relay
 
 import (
+	"crypto/tls"
 	"errors"
 	"time"
 
@@ -102,8 +103,16 @@ type Server struct {
 }
 
 // StartServer listens on addr (TLS, same session semantics as LAN: the
-// channel is private, identity is not claimed).
+// channel is private, identity is not claimed — ephemeral certificate,
+// the local-lan trust profile).
 func StartServer(addr string, limits ServerLimits) (*Server, int, error) {
+	return StartServerWithIdentity(addr, limits, nil)
+}
+
+// StartServerWithIdentity is StartServer with a PERSISTENT TLS identity
+// (RR-1): a public relay pins its SPKI, so its key must outlive restarts.
+// cert == nil keeps the ephemeral default.
+func StartServerWithIdentity(addr string, limits ServerLimits, cert *tls.Certificate) (*Server, int, error) {
 	s := &Server{
 		store:  NewStore(limits.PerHint, limits.MaxItemBytes),
 		limits: limits,
@@ -114,6 +123,9 @@ func StartServer(addr string, limits ServerLimits) (*Server, int, error) {
 	node, err := lan.NewNodeWithMaxPacket(lan.RelayMaxPacket)
 	if err != nil {
 		return nil, 0, err
+	}
+	if cert != nil {
+		node.SetCertificate(*cert)
 	}
 	s.node = node
 	port, err := node.Listen(addr, func(c *lan.Conn) { go s.serve(c) })
@@ -338,13 +350,30 @@ type Client struct {
 	conn *lan.Conn
 }
 
-// DialClient connects to a relay.
+// DialClient connects to a relay with NO identity check — the local-lan
+// trust profile (loopback and LAN, where identity lives in event
+// signatures). Public relays are dialed through DialClientPinned.
 func DialClient(addr string) (*Client, error) {
 	node, err := lan.NewNodeWithMaxPacket(lan.RelayMaxPacket)
 	if err != nil {
 		return nil, err
 	}
 	c, err := node.Dial(addr)
+	if err != nil {
+		return nil, err
+	}
+	return &Client{conn: c}, nil
+}
+
+// DialClientPinned connects with SPKI verification (RR-1): verify gets the
+// peer's pin during the handshake; returning an error aborts the
+// connection before any protocol byte flows.
+func DialClientPinned(addr string, verify func(pin string) error) (*Client, error) {
+	node, err := lan.NewNodeWithMaxPacket(lan.RelayMaxPacket)
+	if err != nil {
+		return nil, err
+	}
+	c, err := node.DialPinned(addr, verify)
 	if err != nil {
 		return nil, err
 	}

@@ -27,7 +27,6 @@ import (
 	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/protocol/quicklink"
 	"github.com/drrainlab/quiet_places/terminals"
-	"github.com/drrainlab/quiet_places/transports/relay"
 )
 
 const quickLinkFile = "quicklinks.json"
@@ -284,7 +283,7 @@ func (r *Runtime) mintLink(space id.TerminalID, o QuickLinkOptions) (QuickLinkIn
 		return QuickLinkInfo{}, err
 	}
 
-	client, err := relay.DialClient(relayAddr)
+	client, err := r.dialRelay(relayAddr)
 	if err != nil {
 		return QuickLinkInfo{}, fmt.Errorf("node: could not reach the relay to park the link: %w", err)
 	}
@@ -364,7 +363,7 @@ func (r *Runtime) ResolveQuickLink(words string) (QuickLinkPreview, error) {
 	if err := r.relayGate(); err != nil {
 		return QuickLinkPreview{}, err
 	}
-	client, err := relay.DialClient(relayAddr)
+	client, err := r.dialRelay(relayAddr)
 	if err != nil {
 		return QuickLinkPreview{}, fmt.Errorf("node: could not reach the relay: %w", err)
 	}

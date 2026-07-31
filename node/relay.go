@@ -200,7 +200,7 @@ func (r *Runtime) pushToRelay(addr string, tid id.TerminalID, policy AssetPolicy
 	if err := r.relayGate(); err != nil {
 		return 0, 0, 0, err
 	}
-	client, err := relay.DialClient(addr)
+	client, err := r.dialRelay(addr)
 	if err != nil {
 		return 0, 0, 0, err
 	}
@@ -448,7 +448,7 @@ func (r *Runtime) PullFromRelay(addr string) (applied int, err error) {
 	if err := r.relayGate(); err != nil {
 		return 0, err
 	}
-	client, err := relay.DialClient(addr)
+	client, err := r.dialRelay(addr)
 	if err != nil {
 		return 0, err
 	}

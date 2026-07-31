@@ -32,7 +32,6 @@ import (
 	"github.com/drrainlab/quiet_places/protocol/schemas"
 	"github.com/drrainlab/quiet_places/protocol/signal"
 	"github.com/drrainlab/quiet_places/terminals"
-	"github.com/drrainlab/quiet_places/transports/relay"
 )
 
 // previewTTL bounds how long a session lives; previewCap bounds how many.
@@ -189,7 +188,7 @@ func (r *Runtime) PreviewPublicPublication(reference string) (*PostPreview, erro
 		if err := r.relayGate(); err != nil {
 			return nil, err
 		}
-		client, err := relay.DialClient(relayAddr)
+		client, err := r.dialRelay(relayAddr)
 		if err != nil {
 			return &PostPreview{Space: tid, Document: *doc, State: PreviewWaiting,
 				Reason: "nothing has arrived from this address yet"}, nil
@@ -225,7 +224,7 @@ func (r *Runtime) PreviewPublicPublication(reference string) (*PostPreview, erro
 		// relay are exactly what the session used to discard. Best-effort —
 		// a session without a fetcher still reads text and serves what the
 		// node already holds.
-		if f, err := newSessionFetcher(tid, relayAddr, env.IngressHints, r.root); err == nil {
+		if f, err := newSessionFetcher(tid, relayAddr, env.IngressHints, r.root, r.dialRelay); err == nil {
 			sess.fetcher = f
 			go f.run(r.stop)
 		}

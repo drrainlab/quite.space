@@ -253,7 +253,7 @@ func (r *Runtime) pollPassRequests(addr string) {
 	if len(caps) == 0 {
 		return
 	}
-	client, err := relay.DialClient(addr)
+	client, err := r.dialRelay(addr)
 	if err != nil {
 		return
 	}
@@ -443,7 +443,7 @@ func (r *Runtime) JoinByPass(shared string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	client, err := relay.DialClient(relayAddr)
+	client, err := r.dialRelay(relayAddr)
 	if err != nil {
 		return "", err
 	}
@@ -518,7 +518,7 @@ func (r *Runtime) pollJoinResponse(at *joinAttempt) {
 			_ = r.commitSaga()
 			return
 		}
-		client, err := relay.DialClient(at.relayAddr)
+		client, err := r.dialRelay(at.relayAddr)
 		if err != nil {
 			continue
 		}

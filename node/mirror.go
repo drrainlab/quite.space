@@ -131,7 +131,7 @@ func (r *Runtime) mirrorKeepalive(addr string, tid id.TerminalID) error {
 	if err := r.relayGate(); err != nil {
 		return err
 	}
-	client, err := relay.DialClient(addr)
+	client, err := r.dialRelay(addr)
 	if err != nil {
 		return err
 	}
@@ -208,7 +208,7 @@ func (r *Runtime) seedForSpace(addr string, tid id.TerminalID) error {
 	if err := r.relayGate(); err != nil {
 		return err
 	}
-	client, err := relay.DialClient(addr)
+	client, err := r.dialRelay(addr)
 	if err != nil {
 		return err
 	}
