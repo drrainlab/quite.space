@@ -486,6 +486,7 @@ func (r *Runtime) collectPublicIngress(addr string, tid id.TerminalID) (int, err
 	applied := 0
 	nowT := time.Now()
 	budget := newAuthorBudget() // per-drain-cycle abuse caps (PA-1.3)
+	acc := newWantAccumulator() // one deduped answer per reply box (PM-0)
 	for _, item := range items {
 		parts, err := bundle.DecodeParts(item)
 		if err != nil || parts.Terminal != tid {
@@ -528,10 +529,9 @@ func (r *Runtime) collectPublicIngress(addr string, tid id.TerminalID) (int, err
 		// wants machinery; until the blob is verified locally the
 		// projection's Exclude filter keeps the publication unprojected.
 		r.requestIncompleteAssets(tid, parts.Frames)
-		if len(parts.Wants) > 0 {
-			r.answerWants(client, tid, parts.Wanter, parts.Wants, parts.ReplyBox, true)
-		}
+		acc.add(parts.Wanter, parts.Wants, parts.ReplyBox)
 	}
+	acc.answer(r, client, tid, true)
 	return applied, nil
 }
 

@@ -288,6 +288,53 @@ func (r *Runtime) relayWantsLocked(tid id.TerminalID) [][]byte {
 // clear, so an inbox derived from them is an inbox anyone can empty. A
 // public request without a reply box therefore gets no answer, and saying
 // that plainly is better than delivering into a box we know is open.
+// wantAccumulator dedupes wanted hashes ACROSS the items of one drain
+// cycle, per reply box (PM-0 hardening). Before it, every item carrying
+// the same wants earned its own full answer — up to 8 MiB each — and a
+// handful of duplicate bundles multiplied a holder's egress for free. One
+// box, one deduped answer, one budget per cycle.
+type wantAccumulator struct {
+	byBox map[string]*boxWants
+}
+
+type boxWants struct {
+	replyBox []byte
+	wanter   []byte
+	seen     map[string]bool
+	wants    [][]byte
+}
+
+func newWantAccumulator() *wantAccumulator {
+	return &wantAccumulator{byBox: map[string]*boxWants{}}
+}
+
+func (w *wantAccumulator) add(wanter []byte, wants [][]byte, replyBox []byte) {
+	if len(wants) == 0 {
+		return
+	}
+	key := string(replyBox)
+	if key == "" {
+		key = "w:" + string(wanter) // private path addresses by wanter
+	}
+	bw := w.byBox[key]
+	if bw == nil {
+		bw = &boxWants{replyBox: replyBox, wanter: wanter, seen: map[string]bool{}}
+		w.byBox[key] = bw
+	}
+	for _, h := range wants {
+		if !bw.seen[string(h)] {
+			bw.seen[string(h)] = true
+			bw.wants = append(bw.wants, h)
+		}
+	}
+}
+
+func (w *wantAccumulator) answer(r *Runtime, client *relay.Client, tid id.TerminalID, public bool) {
+	for _, bw := range w.byBox {
+		r.answerWants(client, tid, bw.wanter, bw.wants, bw.replyBox, public)
+	}
+}
+
 func (r *Runtime) answerWants(client *relay.Client, tid id.TerminalID, wanter []byte, wants [][]byte, replyBox []byte, public bool) {
 	if len(wants) == 0 {
 		return

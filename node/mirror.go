@@ -189,13 +189,15 @@ func (r *Runtime) mirrorAnswerWants(client *relay.Client, tid id.TerminalID) {
 	if err != nil {
 		return
 	}
+	acc := newWantAccumulator() // one deduped answer per reply box (PM-0)
 	for _, item := range items {
 		parts, err := bundle.DecodeParts(item)
 		if err != nil || parts.Terminal != tid || len(parts.Wants) == 0 {
 			continue
 		}
-		r.answerWants(client, tid, parts.Wanter, parts.Wants, parts.ReplyBox, true)
+		acc.add(parts.Wanter, parts.Wants, parts.ReplyBox)
 	}
+	acc.answer(r, client, tid, true)
 }
 
 // seedForSpace answers other readers' media wants out of what this node
