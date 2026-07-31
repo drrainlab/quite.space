@@ -131,6 +131,17 @@ const ATMO = (() => {
    * @param {string} postId
    * @returns {{ok: true} | {ok: false, why: string}}
    */
+  // srcFor/posterInto are the URL seam (PM-3): the transient post reader
+  // mounts atmosphere through SESSION routes, and pointing the hardcoded
+  // current-space assetURL at a space the node does not hold is exactly
+  // how a preview quietly stops being one. Set per-mount; reset on unmount.
+  let srcFor = null;    // (assetId) => url — bed audio
+  let posterInto = null; // (img, assetId) => void — the fall poster
+  let ignoreRemembered = false;
+  // soundGate(assetId, proceed): the reader's chance to FETCH the bed's
+  // bytes after the sound consent and before the element needs them.
+  let soundGate = null;
+
   function startBed(audio, postId) {
     stopBed();
     if (!audio || !audio.asset) return { ok: false, why: 'this post has no sound' };
@@ -140,7 +151,7 @@ const ATMO = (() => {
     }
     try {
       const el = new Audio();
-      el.src = assetURL(audio.asset);
+      el.src = srcFor ? srcFor(audio.asset) : assetURL(audio.asset);
       el.loop = audio.mode !== 'once';
       el.crossOrigin = 'anonymous';
       const target = Math.min(1, Math.max(0, (Number(audio.gain) || 700) / 1000));
@@ -223,6 +234,10 @@ const ATMO = (() => {
   /** Take down whatever is playing and undo the shell. Safe to call twice. */
   function unmount() {
     stopBed();
+    srcFor = null;
+    posterInto = null;
+    ignoreRemembered = false;
+    soundGate = null;
     if (stillRO) { stillRO.disconnect(); stillRO = null; }
     if (typeof STAGE !== 'undefined') STAGE.clear();
     if (mounted) {
@@ -298,6 +313,14 @@ const ATMO = (() => {
     unmount();
     if (!shell || !atmosphere || !atmosphere.visual) return;
     const bar = (opts && opts.bar) || null;
+    srcFor = (opts && opts.srcFor) || null;
+    posterInto = (opts && opts.posterInto) || null;
+    soundGate = (opts && opts.soundGate) || null;
+    // A remembered "always with sound" was recorded for HELD spaces; in a
+    // transient preview it would be an audio fetch with no per-post
+    // consent. The reader passes ignoreRemembered and the standing
+    // instruction simply does not apply there.
+    ignoreRemembered = !!(opts && opts.ignoreRemembered);
 
     const fall = atmosphere.fallback || {};
     const scene = typeof SCENES !== 'undefined'
@@ -337,7 +360,8 @@ const ATMO = (() => {
       const img = document.createElement('img');
       img.className = 'atmo-poster';
       img.alt = '';
-      autoMediaSrc(img, fall.poster);
+      if (posterInto) posterInto(img, fall.poster);
+      else autoMediaSrc(img, fall.poster);
       stage.appendChild(img);
     } else if (scene) {
       stillFrame(stage, scene, atmosphere);
@@ -462,6 +486,24 @@ const ATMO = (() => {
           if (!fall.poster) stillFrame(stage, scene, atmosphere);
         }
       }
+      if (withSound && soundGate && atmosphere.audio && atmosphere.audio.asset) {
+        // The consent already happened (the person pressed the sound
+        // door); the gate fetches the bytes and re-enters when they are
+        // there — or reports why they are not.
+        const gate = soundGate;
+        gate(atmosphere.audio.asset, (ok, why) => {
+          if (ok) {
+            const r = startBed(atmosphere.audio, postId);
+            if (!r.ok) notes.push('quiet — ' + r.why);
+          } else {
+            notes.push('quiet — ' + (why || 'the sound never arrived'));
+          }
+          renderBar((!sceneLive && !bed) ? 'still' : 'live', notes);
+        });
+        renderBar((!sceneLive && !bed) ? 'still' : 'live',
+          notes.concat(['fetching the sound…']));
+        return;
+      }
       if (withSound) {
         const r = startBed(atmosphere.audio, postId);
         if (!r.ok) notes.push(r.why);
@@ -508,7 +550,8 @@ const ATMO = (() => {
     else if (how === 'quiet') enter(false);
     // A plain open (still) with a remembered yes: the person's own standing
     // instruction, recorded at their request, outranks the quiet default.
-    else if (hasSound && soundMode() === 'remember' && localStorage.getItem(CONSENT_KEY)) {
+    else if (!ignoreRemembered && hasSound && soundMode() === 'remember' &&
+             localStorage.getItem(CONSENT_KEY)) {
       enter(true);
     }
   }
@@ -544,7 +587,8 @@ const ATMO = (() => {
       const img = document.createElement('img');
       img.className = 'atmo-poster';
       img.alt = '';
-      autoMediaSrc(img, fall.poster);
+      if (posterInto) posterInto(img, fall.poster);
+      else autoMediaSrc(img, fall.poster);
       layer.appendChild(img);
       card.prepend(layer);
       dispose = () => layer.remove();

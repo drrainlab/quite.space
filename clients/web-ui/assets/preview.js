@@ -29,6 +29,8 @@ const PREV = (() => {
 
   function close() {
     open_ = null;
+    if (typeof ATMO !== 'undefined') ATMO.unmount();
+    if (prevObserver) prevObserver.disconnect();
     screen().style.display = 'none';
     const c = document.getElementById('content');
     if (c) c.style.display = '';
@@ -64,6 +66,7 @@ const PREV = (() => {
     if (!open_) return;
     const r = open_.data;
     show();
+    if (typeof ATMO !== 'undefined') ATMO.unmount();
     const box = document.getElementById('prevBody');
     box.innerHTML = '';
     const head = document.getElementById('prevSpace');
@@ -97,22 +100,33 @@ const PREV = (() => {
   /** @param {HTMLElement} box */
   function renderPost(box, r, pub) {
     const doc = pub.document || {};
+    // Atmosphere mounts through the URL seam: bed and poster come from
+    // the SESSION routes, the sound door first fetches the bytes (the
+    // gate), and the remembered "always with sound" consent — recorded
+    // for held spaces — deliberately does not apply here.
+    if (doc.atmosphere && typeof ATMO !== 'undefined') {
+      const atmoBar = document.createElement('div');
+      atmoBar.className = 'atmo-bar';
+      box.appendChild(atmoBar);
+      ATMO.mount(box, doc.atmosphere, 'prev:' + r.document_id, {
+        bar: atmoBar, enter: 'still',
+        ignoreRemembered: true,
+        srcFor: (aid) => prevAssetURL(r.preview_id, aid),
+        posterInto: (img, aid) => fetchInto(r.preview_id, aid, img),
+        soundGate: (aid, proceed) => prevFetch(r.preview_id, aid,
+          (ok, state, reason) => proceed(ok, prevStateLine(state, reason))),
+      });
+    }
     if (doc.cover) {
+      // Eager, through the swarm (PM-3): Read post was the consent for
+      // the post's face, and the session fetches the bytes from whoever
+      // holds them — the honest states replace the old "not loaded in a
+      // preview" sentence, which stopped being true this gate.
       const img = document.createElement('img');
       img.className = 'pub-hero';
-      img.src = prevAssetURL(r.preview_id, doc.cover);
-      img.onerror = () => {
-        // The honest sentence, not a broken image. And honest means THIS
-        // sentence: a preview deliberately has no media fetch pipeline —
-        // the whole want/reply machinery is space-scoped and a preview
-        // holds no space — so "no online source" would be a lie when the
-        // author is sitting right there. The bytes come with following.
-        const note = document.createElement('div');
-        note.className = 'hint';
-        note.textContent = t('prev.media_unavailable');
-        img.replaceWith(note);
-      };
+      img.alt = '';
       box.appendChild(img);
+      fetchInto(r.preview_id, doc.cover, img);
     }
     const h = document.createElement('h2');
     h.className = 'pub-h1';
@@ -165,20 +179,71 @@ const PREV = (() => {
         const img = document.createElement('img');
         img.className = 'pub-img';
         img.alt = props.text || '';
-        img.src = prevAssetURL(r.preview_id, props.asset);
-        img.onerror = () => {
-          const note = document.createElement('div');
-          note.className = 'hint';
-          note.textContent = t('prev.media_unavailable');
-          img.replaceWith(note);
-        };
         box.appendChild(img);
+        // Near-viewport: interest is announced when the image approaches
+        // the screen, not when the post opens.
+        nearViewport(img, () => fetchInto(r.preview_id, props.asset, img));
         if (props.caption) {
           const c = document.createElement('div');
           c.className = 'hint';
           c.textContent = props.caption;
           box.appendChild(c);
         }
+        break;
+      }
+      case 'audio': {
+        if (!props.asset) break;
+        // On play, whole-file (PM-4): fetched completely, verified, THEN
+        // played — progressive playback of unverified bytes would play
+        // what the digest check might later refuse.
+        const btn = document.createElement('button');
+        btn.textContent = t('prev.load_audio');
+        box.appendChild(btn);
+        btn.onclick = () => {
+          btn.disabled = true;
+          btn.textContent = t('prev.loading');
+          prevFetch(r.preview_id, props.asset, (ok, state, reason) => {
+            if (!ok) {
+              const note = document.createElement('div');
+              note.className = 'hint';
+              note.textContent = prevStateLine(state, reason);
+              btn.replaceWith(note);
+              return;
+            }
+            const el = document.createElement('audio');
+            el.controls = true;
+            el.src = prevAssetURL(r.preview_id, props.asset);
+            el.onplay = () => {
+              if (typeof AUDIO !== 'undefined') {
+                AUDIO.request('player', 'player', () => el.pause());
+              }
+            };
+            btn.replaceWith(el);
+          });
+        };
+        break;
+      }
+      case 'file': {
+        // Explicit only (PM-5 v0): a download is a choice.
+        const btn = document.createElement('button');
+        btn.className = 'btn-plain';
+        btn.textContent = t('prev.download_file');
+        box.appendChild(btn);
+        if (!props.asset) { btn.disabled = true; break; }
+        btn.onclick = () => {
+          btn.disabled = true;
+          btn.textContent = t('prev.loading');
+          prevFetch(r.preview_id, props.asset, (ok, state, reason) => {
+            if (!ok) {
+              btn.textContent = prevStateLine(state, reason);
+              return;
+            }
+            const a = document.createElement('a');
+            a.href = prevAssetURL(r.preview_id, props.asset);
+            a.textContent = t('prev.open_file');
+            btn.replaceWith(a);
+          });
+        };
         break;
       }
       case 'stack': case 'section': case 'hero': case 'columns': {
@@ -196,6 +261,81 @@ const PREV = (() => {
 
   function prevAssetURL(pid, asset) {
     return `/api/public/previews/${pid}/assets/${asset}?token=${token}`;
+  }
+
+  /** prevFetch drives one session asset: POST the consent, poll the
+   *  honest states, and answer cb(ok, state, reason) exactly once. */
+  async function prevFetch(pid, asset, cb) {
+    let last = { state: 'requesting', reason: '' };
+    try {
+      for (let i = 0; i < 55; i++) {
+        const r = await api(`/api/public/previews/${pid}/assets/${asset}/fetch`,
+          { method: 'POST' });
+        last = r;
+        if (r.state === 'ready') { cb(true, r.state, ''); return; }
+        if (r.state === 'no_response' || r.state === 'descriptor_unavailable' ||
+            r.state === 'budget_exceeded' || r.state === 'integrity_error' ||
+            r.state === 'cancelled') {
+          cb(false, r.state, r.reason || '');
+          return;
+        }
+        await new Promise(res => setTimeout(res, 1200));
+        if (!open_) { cb(false, 'cancelled', ''); return; } // reader closed
+      }
+    } catch (err) {
+      cb(false, 'no_response', err.message || String(err));
+      return;
+    }
+    cb(false, last.state || 'no_response', last.reason || '');
+  }
+
+  /** A preview-local near-viewport trigger: the fetch starts when the
+   *  element approaches the screen, not when the post opens — the person
+   *  does not announce interest in every attachment at once. */
+  const prevObserver = typeof IntersectionObserver !== 'undefined'
+    ? new IntersectionObserver((entries) => {
+        for (const e of entries) {
+          if (e.isIntersecting && e.target._prevLazy) {
+            prevObserver.unobserve(e.target);
+            const fn = e.target._prevLazy;
+            e.target._prevLazy = null;
+            fn();
+          }
+        }
+      }, { rootMargin: '300px' })
+    : null;
+
+  function nearViewport(el, fn) {
+    if (!prevObserver) { fn(); return; }
+    el._prevLazy = fn;
+    prevObserver.observe(el);
+  }
+
+  /** fetchInto points an <img> at a session asset once its bytes are
+   *  ready, or replaces it with the honest sentence. */
+  function fetchInto(pid, asset, img) {
+    prevFetch(pid, asset, (ok, state, reason) => {
+      if (ok) {
+        img.src = prevAssetURL(pid, asset);
+        return;
+      }
+      const note = document.createElement('div');
+      note.className = 'hint';
+      note.textContent = prevStateLine(state, reason);
+      img.replaceWith(note);
+    });
+  }
+
+  /** The honest sentences, one per observed state. */
+  function prevStateLine(state, reason) {
+    switch (state) {
+      case 'no_response': return t('prev.no_response');
+      case 'descriptor_unavailable': return t('prev.descriptor');
+      case 'budget_exceeded': return t('prev.budget');
+      case 'integrity_error': return t('prev.integrity');
+      case 'cancelled': return t('prev.cancelled');
+    }
+    return reason || t('prev.no_response');
   }
 
   /** The explicit continuation — after reading, never as a side effect. */

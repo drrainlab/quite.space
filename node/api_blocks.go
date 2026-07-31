@@ -280,7 +280,13 @@ func serveAssetBytes(w http.ResponseWriter, r *http.Request, ref *schemas.AssetR
 	}
 	w.Header().Set("Content-Disposition",
 		mime.FormatMediaType(disp, map[string]string{"filename": schemas.NormalizeFilename("asset-" + aid[:min(12, len(aid))])}))
-	w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
+	// Content-addressed bytes are immutable — unless the caller already
+	// declared a stricter policy (the preview route sets no-store BEFORE
+	// serving: transient media must not enter a durable browser layer, and
+	// clobbering that header here silently re-cached it for a year).
+	if w.Header().Get("Cache-Control") == "" {
+		w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
+	}
 	http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(data))
 }
 
