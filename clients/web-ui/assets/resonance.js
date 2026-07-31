@@ -46,6 +46,31 @@ function resSig(res) {
     '|p:' + RES.paletteRev;
 }
 
+// resCounts: one entry's aggregate as a plain {identity → count} map —
+// the feed keeps the previous tick's map per entry so arrivals can be
+// computed as honest per-group deltas instead of guessing from the
+// dominant group.
+function resCounts(res) {
+  const out = {};
+  for (const g of (res?.groups || [])) out[resIdentity(g)] = g.count || 0;
+  return out;
+}
+
+// computeResDeltas: which groups GREW since the previous snapshot, with
+// magnitudes. prev === null/undefined means the row was never seen before
+// — that is history arriving, not a reaction happening, so no deltas.
+// A count going DOWN (clear) corrects the residue but is never an
+// arrival: removing a reaction does not animate in reverse.
+function computeResDeltas(prev, res) {
+  if (!prev) return [];
+  const deltas = [];
+  for (const g of (res?.groups || [])) {
+    const d = (g.count || 0) - (prev[resIdentity(g)] || 0);
+    if (d > 0) deltas.push({ group: g, delta: d });
+  }
+  return deltas;
+}
+
 function resGlyph(g) {
   // The node already resolved the authoritative fallback; last-resort
   // generic marker if even that is missing.

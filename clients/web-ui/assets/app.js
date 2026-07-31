@@ -17,6 +17,11 @@ let hereMembers = new Set();
 // only touches the DOM when something actually changed (keeps players alive).
 let feedSig = [];
 let feedContentSig = [];
+// feedResCounts: entry id → {group identity → count} from the last render.
+// Arrival effects are computed as per-group DELTAS against this map — the
+// group that actually grew fires, never "the dominant one" (RA-0). An id
+// absent here means the row's resonance is history, not an arrival.
+let feedResCounts = new Map();
 // Space Composition Contract (SC-0): the appearance snapshot last applied.
 let appearanceSpace = null;
 // The connection chip's last painted state — see refresh() for why repaints
@@ -1028,7 +1033,7 @@ async function refreshSpace() {
   const switched = seenSpace !== current;
   if (switched) {
     seenSpace = current; seenEntries = new Set(); hereMembers = new Set();
-    feedSig = []; feedContentSig = [];
+    feedSig = []; feedContentSig = []; feedResCounts = new Map();
     // Presence is per-space, so the countdown does not follow you into a
     // room where it was never posted.
     presenceForget();
@@ -1043,10 +1048,13 @@ async function refreshSpace() {
       .catch(() => {});
     if (typeof pubView !== 'undefined' && pubView !== 'chat') switchView('chat');
   }
-  // Incremental feed render, three paths: (1) nothing changed → nothing
+  // Incremental feed render, four paths: (1) nothing changed → nothing
   // re-renders (a playing <video>/<audio> is never torn down); (2) appended
-  // only → add the new rows; (3) ONLY resonance changed → patch the res
-  // rows in place and hand the deltas to effects. Anything else rebuilds.
+  // only → add the new rows; (3) same rows, asset/resonance moved → patch
+  // those rows in place and hand effects the per-group deltas; (4) appended
+  // AND old rows moved (the busy-room tick) → patch survivors, then append.
+  // Anything else rebuilds — and a rebuild NEVER fires arrivals: that
+  // asymmetry is the no-replay guarantee for reaction effects.
   const contentSig = entries.map(e => e.id + ':' + (e.revised ? 1 : 0) + ':' +
     (e.kept ? 'k' : '') + (e.keep_count || 0));
   // Asset fetch state is part of what a row shows (poster → progress →
@@ -1062,33 +1070,61 @@ async function refreshSpace() {
   const structSame = !switched && !unchanged && !appendOnly &&
     contentSig.length === feedContentSig.length &&
     contentSig.every((c, i) => c === feedContentSig[i]);
+  // Same-tick message + resonance: the content PREFIX is intact, old rows'
+  // resonance/asset moved AND new rows arrived. Without this class the tick
+  // fell into a full rebuild — which never fires arrivals and tears down
+  // every fx layer — so a busy room silenced its own reactions exactly when
+  // they were most alive (RA-0).
+  const appendPatch = !switched && !unchanged && !appendOnly && !structSame &&
+    contentSig.length > feedContentSig.length &&
+    feedContentSig.every((c, i) => c === contentSig[i]);
   const firstPaint = seenEntries.size === 0;
-  if (structSame) {
-    for (let i = 0; i < entries.length; i++) {
+  // patchRow: update one surviving row in place. Asset progress re-renders
+  // the row (safe — a fetching asset has no playing media to tear down);
+  // a resonance-only change patches just the res row and hands effects the
+  // honest per-group deltas. Returns false when the DOM row is missing —
+  // the caller resets the signatures and refetches.
+  const patchRow = (i) => {
+    const e = entries[i];
+    const node = log.querySelector(`[data-eid="${e.id}"]`);
+    if (!node) return false;
+    const prevA = (feedSig[i] || '').split('|')[1] || '';
+    if (aSig[i] !== prevA) {
+      const grouped = i > 0 && entries[i - 1].author === e.author &&
+        entries[i - 1].produced_by === e.produced_by;
+      const tmp = document.createElement('div');
+      renderEntry(tmp, e, false, grouped);
+      const fresh = tmp.firstElementChild;
+      if (fresh) node.replaceWith(fresh);
+    } else {
+      const fresh = renderResonanceRow(e.resonance, e.id);
+      const old = node.querySelector('.res-row');
+      if (old) old.replaceWith(fresh); else node.querySelector('.bubble')?.appendChild(fresh);
+      if (typeof RESFX !== 'undefined') {
+        RESFX.onAggregateChange(node, e.resonance,
+          computeResDeltas(feedResCounts.get(e.id), e.resonance));
+      }
+    }
+    return true;
+  };
+  if (structSame || appendPatch) {
+    const patched = appendPatch ? feedContentSig.length : entries.length;
+    for (let i = 0; i < patched; i++) {
       if (sig[i] === feedSig[i]) continue;
-      const e = entries[i];
-      const node = log.querySelector(`[data-eid="${e.id}"]`);
-      if (!node) { feedSig = []; feedContentSig = []; refreshSpace(); return; }
-      const prevA = (feedSig[i] || '').split('|')[1] || '';
-      if (aSig[i] !== prevA) {
-        // Asset fetch state changed (progress/complete): re-render this row so
-        // its card and progress update live. Safe — a fetching asset has no
-        // playing <video> to tear down.
-        const grouped = i > 0 && entries[i - 1].author === e.author &&
-          entries[i - 1].produced_by === e.produced_by;
-        const tmp = document.createElement('div');
-        renderEntry(tmp, e, false, grouped);
-        const fresh = tmp.firstElementChild;
-        if (fresh) node.replaceWith(fresh);
-      } else {
-        // Resonance-only change: patch just the res row, never the media.
-        const fresh = renderResonanceRow(e.resonance, e.id);
-        const old = node.querySelector('.res-row');
-        if (old) old.replaceWith(fresh); else node.querySelector('.bubble')?.appendChild(fresh);
-        if (typeof RESFX !== 'undefined') RESFX.onAggregateChange(node, e.resonance);
+      if (!patchRow(i)) { feedSig = []; feedContentSig = []; refreshSpace(); return; }
+    }
+    if (appendPatch) {
+      let prev = entries[feedContentSig.length - 1] || null;
+      for (let i = feedContentSig.length; i < entries.length; i++) {
+        const e = entries[i];
+        if (e.id) seenEntries.add(e.id);
+        const grouped = prev && prev.author === e.author && prev.produced_by === e.produced_by;
+        renderEntry(log, e, true, grouped);
+        prev = e;
       }
     }
     feedSig = sig; feedContentSig = contentSig;
+    if (appendPatch && stick) log.scrollTop = log.scrollHeight;
   } else if (!unchanged) {
     let prev = null;
     if (appendOnly && !firstPaint) {
@@ -1113,6 +1149,11 @@ async function refreshSpace() {
     feedSig = sig; feedContentSig = contentSig;
     if (stick) log.scrollTop = log.scrollHeight;
   }
+  // The delta baseline for the NEXT tick — updated on every path, including
+  // rebuilds. A rebuild never fires arrivals (no patchRow ran), but it must
+  // still move the baseline forward or the next quiet tick would replay the
+  // growth it swallowed.
+  feedResCounts = new Map(entries.map(e => [e.id, resCounts(e.resonance)]));
 
   const st = await api(`/api/spaces/${current}/state`);
   const cards = document.getElementById('cards');

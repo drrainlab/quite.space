@@ -1429,6 +1429,34 @@
     100% { background: transparent; }
   }
 
+  /* ASCII glyphs (RA-1): the reaction's own symbol rises out of the card.
+     DOM nodes + compositor keyframes — no rAF; opacity is capped and the
+     curve has no strobe, which IS the photosensitivity clamp here. */
+  .fx-glyph { position: absolute; bottom: 4px; line-height: 1; opacity: 0;
+    pointer-events: none; color: var(--dim); font-weight: 600; }
+  .fx-glyph-echo { animation: fxGlyphRise 1.5s ease-out forwards;
+    text-shadow: 0 0 6px color-mix(in srgb, currentColor 50%, transparent); }
+  @keyframes fxGlyphRise {
+    0% { transform: translateY(0) scale(.7); opacity: 0; }
+    22% { opacity: .85; }
+    100% { transform: translateY(-42px) scale(1.1); opacity: 0; }
+  }
+  /* Stream: a paced procession drifting along the bottom edge */
+  .fx-glyph-stream { animation: fxGlyphDrift 2.2s linear forwards; }
+  @keyframes fxGlyphDrift {
+    0% { transform: translate(0, 0); opacity: 0; }
+    12% { opacity: .8; }
+    85% { opacity: .7; }
+    100% { transform: translate(34px, -10px); opacity: 0; }
+  }
+  /* Fountain: one emitter — each glyph arcs sideways by its own --fxdx */
+  .fx-glyph-fount { animation: fxGlyphArc 1.8s ease-out forwards; }
+  @keyframes fxGlyphArc {
+    0% { transform: translate(0, 0) scale(.7); opacity: 0; }
+    15% { opacity: .85; }
+    100% { transform: translate(var(--fxdx, 0px), -64px) scale(1.05); opacity: 0; }
+  }
+
   /* --- Listening room (LR-2) --- */
   .listen-room { display: flex; flex-direction: column; gap: 10px; }
   .listen-title { font-weight: 600; }
@@ -1443,7 +1471,8 @@
     .sc-appearance::before { transition: none; }
     dialog[open], dialog[open]::backdrop { animation: none; }
     /* resonance arrivals never animate; static residue stays */
-    [class*="fx-arrive-"], [class*="fx-arrive-"] > .fx-layer, .fx-plus {
+    [class*="fx-arrive-"], [class*="fx-arrive-"] > .fx-layer, .fx-plus,
+    .fx-glyph {
       animation: none; }
   }
 
