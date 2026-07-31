@@ -123,7 +123,10 @@ func hintFor(i int) []byte {
 func steady(addr string, clients int, duration time.Duration) {
 	fmt.Printf("L-1 steady: %d clients × 2s cadence for %v against %s\n", clients, duration, addr)
 	var st stats
-	stop := time.After(duration)
+	// A CLOSED channel, not time.After: a timer channel delivers its value
+	// to exactly ONE receiver, so every other client would wait forever.
+	stop := make(chan struct{})
+	go func() { time.Sleep(duration); close(stop) }()
 	var wg sync.WaitGroup
 	start := time.Now()
 	for i := 0; i < clients; i++ {
