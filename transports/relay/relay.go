@@ -185,3 +185,14 @@ func (s *Store) Pending() int {
 	defer s.mu.Unlock()
 	return s.total
 }
+
+// FillRatio reports how full the store is against its item quota (RR-3
+// load-class input). Byte-based accounting arrives with RR-7.
+func (s *Store) FillRatio() float64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.maxTotal <= 0 {
+		return 0
+	}
+	return float64(s.total) / float64(s.maxTotal)
+}

@@ -166,6 +166,19 @@ func (s *Server) Close() {
 // Pending reports held items (diagnostics).
 func (s *Server) Pending() int { return s.store.Pending() }
 
+// loadClass derives the self-reported load from simple store facts
+// (RR-3). Advisory: clients weigh it, they never owe it blind trust.
+func (s *Server) loadClass() string {
+	fill := s.store.FillRatio()
+	switch {
+	case fill > 0.9:
+		return LoadOverloaded
+	case fill > 0.7:
+		return LoadBusy
+	}
+	return LoadNormal
+}
+
 // WipeForTest drops a hint's items — simulates a squatter wipe / storage
 // loss in tests. Never part of the wire protocol.
 func (s *Server) WipeForTest(hint []byte) {
@@ -258,7 +271,11 @@ func (s *Server) handle(m *Msg, cs *connState) *Msg {
 	case msgCollect:
 		// PH-1: knowing a hint is no longer enough to empty a mailbox. Refuse
 		// loudly rather than answering "nothing here" — an empty drain and a
-		// rejected drain must never look the same to an old client.
+		// rejected drain must never look the same to an old client. Metered
+		// (RR-3): a dead verb must not be the cheapest thing to spin.
+		if !spend(&cs.collects, &cs.collectWindow, s.limits.collectRatePerMin()) {
+			return &Msg{Type: msgError, Reason: "rate limited"}
+		}
 		return &Msg{Type: msgError, Reason: "collect requires a capability"}
 	case msgCollectCap:
 		// Draining is destructive, so it gets the same shape of bounds Fetch
@@ -291,8 +308,25 @@ func (s *Server) handle(m *Msg, cs *connState) *Msg {
 		return &Msg{Type: msgItems, Items: items}
 	case msgTime:
 		// LR-2 calibration source: this clock's only property is that every
-		// participant asking THIS relay gets the same one.
+		// participant asking THIS relay gets the same one. Metered (RR-3):
+		// an unmetered echo is a free amplification target.
+		if !spend(&cs.collects, &cs.collectWindow, s.limits.collectRatePerMin()) {
+			return &Msg{Type: msgError, Reason: "rate limited"}
+		}
 		return &Msg{Type: msgTimeOK, Now: uint64(time.Now().UnixMilli())}
+	case msgProbe:
+		// RR-3: the selection probe — protocol range, load class, accepting,
+		// wall clock, nonce echoed. No durable state; metered like a collect
+		// so a probe storm pays the same rail as any other read.
+		if !spend(&cs.collects, &cs.collectWindow, s.limits.collectRatePerMin()) {
+			return &Msg{Type: msgError, Reason: "rate limited"}
+		}
+		return &Msg{
+			Type: msgProbeOK, Nonce: m.Nonce,
+			ProtoMin: RelayProtocolVersion, ProtoMax: RelayProtocolVersion,
+			Load: s.loadClass(), Accepting: 1,
+			Now: uint64(time.Now().UnixMilli()),
+		}
 	case msgReplace:
 		if len(m.Hint) != HintLen || len(m.Body) == 0 {
 			return &Msg{Type: msgError, Reason: "malformed replace"}
@@ -315,16 +349,14 @@ func (s *Server) handle(m *Msg, cs *connState) *Msg {
 		return &Msg{Type: msgPutOK, Expires: expires}
 	case msgFetch:
 		// Non-destructive read for public mailboxes: rate-limited per
-		// connection, hint- and byte-capped per request.
-		if time.Since(cs.fetchWindow) > time.Minute {
-			cs.fetchWindow, cs.fetches = time.Now(), 0
-		}
-		cs.fetches++
-		if cs.fetches > s.limits.fetchRatePerMin() {
-			return &Msg{Type: msgError, Reason: "rate limited"}
-		}
+		// connection, hint- and byte-capped per request. Validation runs
+		// BEFORE the budget is spent (RR-3 consistency fix — a rejected
+		// oversize request used to charge the window anyway).
 		if len(m.Hints) > s.limits.fetchMaxHints() {
 			return &Msg{Type: msgError, Reason: "too many hints"}
+		}
+		if !spend(&cs.fetches, &cs.fetchWindow, s.limits.fetchRatePerMin()) {
+			return &Msg{Type: msgError, Reason: "rate limited"}
 		}
 		budget := s.limits.fetchMaxBytes()
 		var items [][]byte
@@ -391,6 +423,38 @@ func DialClientPinned(addr string, verify func(pin string) error) (*Client, erro
 
 // Close disconnects.
 func (c *Client) Close() { c.conn.Close() }
+
+// ProbeResult is one measured exchange with a relay (RR-3).
+type ProbeResult struct {
+	RTT       time.Duration
+	NowMS     uint64 // the relay's wall clock — clock calibration for free
+	ProtoMin  uint64
+	ProtoMax  uint64
+	Load      string
+	Accepting bool
+}
+
+// Probe runs one msgProbe round trip. The nonce binds the reply to this
+// request; a legacy relay answers "unknown message type" (an ErrRelay),
+// which the caller may treat as "fall back to the msgTime-only profile".
+func (c *Client) Probe(nonce []byte) (ProbeResult, error) {
+	start := time.Now()
+	reply, err := c.roundTrip(&Msg{Type: msgProbe, Nonce: nonce}, 5*time.Second)
+	if err != nil {
+		return ProbeResult{}, err
+	}
+	if reply.Type != msgProbeOK {
+		return ProbeResult{}, errors.New("relay: unexpected probe reply")
+	}
+	if len(nonce) > 0 && string(reply.Nonce) != string(nonce) {
+		return ProbeResult{}, errors.New("relay: probe nonce mismatch")
+	}
+	return ProbeResult{
+		RTT: time.Since(start), NowMS: reply.Now,
+		ProtoMin: reply.ProtoMin, ProtoMax: reply.ProtoMax,
+		Load: reply.Load, Accepting: reply.Accepting == 1,
+	}, nil
+}
 
 func (c *Client) roundTrip(m *Msg, timeout time.Duration) (*Msg, error) {
 	if err := c.conn.Send(m.Encode()); err != nil {

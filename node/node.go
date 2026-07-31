@@ -401,8 +401,12 @@ func Open(dataDir string, passphrase []byte, displayName string) (rt *Runtime, e
 	}
 	r.ensurePassPolling()
 	r.resumeJoinPolling()
-	// Resume background relay sync if a relay was configured.
-	if s := r.GetSettings(); s.Relay != "" {
+	// Resume background relay sync. Automatic mode (RR-3) resolves its
+	// primary from measurements in the background — unlock never waits on
+	// a probe; custom mode uses exactly the configured address.
+	if s := r.GetSettings(); s.RelayMode == "automatic" {
+		r.startAutomaticRelay(relayInterval(s))
+	} else if s.Relay != "" {
 		r.applyRelaySync(s.Relay, relayInterval(s))
 	}
 	return r, nil

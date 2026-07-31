@@ -213,6 +213,26 @@ const (
 	// an empty mailbox — an old client deserves a diagnosable error, and a
 	// silent empty drain is indistinguishable from "nothing was waiting".
 	msgCollectCap = 11
+	// RR-3: the measured-selection probe. One cheap round trip carrying a
+	// client nonce; the reply names the relay's protocol range, load class
+	// and whether it accepts new sessions, PLUS the wall clock (keyNow) —
+	// so selection and clock calibration share one benchmark instead of
+	// two. Writes no durable state; metered like a collect.
+	msgProbe   = 12
+	msgProbeOK = 13
+)
+
+// RelayProtocolVersion is this build's wire protocol generation. Bumped
+// only on a break an old peer cannot skip past.
+const RelayProtocolVersion = 1
+
+// Load classes a relay may self-report (advisory — a client never owes
+// them blind trust, but respects draining/not-accepting).
+const (
+	LoadNormal     = "normal"
+	LoadBusy       = "busy"
+	LoadOverloaded = "overloaded"
+	LoadDraining   = "draining"
 )
 
 // Message key table v0 (append-only, ADR-009).
@@ -226,6 +246,12 @@ const (
 	keyReason  = 7
 	keyNow     = 8 // relay wall time, unix milliseconds
 	keyCaps    = 9 // PH-1 collect capabilities
+	// RR-3 probe keys.
+	keyNonce     = 10
+	keyProtoMin  = 11
+	keyProtoMax  = 12
+	keyLoad      = 13
+	keyAccepting = 14 // 1 = accepting new sessions
 )
 
 // Msg is one relay protocol message.
@@ -237,8 +263,14 @@ type Msg struct {
 	Hints   [][]byte
 	Items   [][]byte
 	Reason  string
-	Now     uint64   // unix ms (msgTimeOK)
+	Now     uint64   // unix ms (msgTimeOK / msgProbeOK)
 	Caps    [][]byte // PH-1: collect capabilities (msgCollectCap)
+	// RR-3 probe fields.
+	Nonce     []byte
+	ProtoMin  uint64
+	ProtoMax  uint64
+	Load      string
+	Accepting uint64
 }
 
 // Encode serializes a message.
@@ -266,6 +298,21 @@ func (m *Msg) Encode() []byte {
 		n++
 	}
 	if len(m.Caps) > 0 {
+		n++
+	}
+	if len(m.Nonce) > 0 {
+		n++
+	}
+	if m.ProtoMin != 0 {
+		n++
+	}
+	if m.ProtoMax != 0 {
+		n++
+	}
+	if m.Load != "" {
+		n++
+	}
+	if m.Accepting != 0 {
 		n++
 	}
 	buf := codec.AppendMap(nil, n)
@@ -311,6 +358,26 @@ func (m *Msg) Encode() []byte {
 		for _, c := range m.Caps {
 			buf = codec.AppendBytes(buf, c)
 		}
+	}
+	if len(m.Nonce) > 0 {
+		buf = codec.AppendUint(buf, keyNonce)
+		buf = codec.AppendBytes(buf, m.Nonce)
+	}
+	if m.ProtoMin != 0 {
+		buf = codec.AppendUint(buf, keyProtoMin)
+		buf = codec.AppendUint(buf, m.ProtoMin)
+	}
+	if m.ProtoMax != 0 {
+		buf = codec.AppendUint(buf, keyProtoMax)
+		buf = codec.AppendUint(buf, m.ProtoMax)
+	}
+	if m.Load != "" {
+		buf = codec.AppendUint(buf, keyLoad)
+		buf = codec.AppendText(buf, m.Load)
+	}
+	if m.Accepting != 0 {
+		buf = codec.AppendUint(buf, keyAccepting)
+		buf = codec.AppendUint(buf, m.Accepting)
 	}
 	return buf
 }
@@ -386,6 +453,18 @@ func DecodeMsg(data []byte) (*Msg, error) {
 				}
 				m.Items = append(m.Items, append([]byte(nil), it...))
 			}
+		case keyNonce:
+			var b []byte
+			b, er = d.ReadBytes()
+			m.Nonce = append([]byte(nil), b...)
+		case keyProtoMin:
+			m.ProtoMin, er = d.ReadUint()
+		case keyProtoMax:
+			m.ProtoMax, er = d.ReadUint()
+		case keyLoad:
+			m.Load, er = d.ReadText()
+		case keyAccepting:
+			m.Accepting, er = d.ReadUint()
 		default:
 			er = d.SkipItem()
 		}
