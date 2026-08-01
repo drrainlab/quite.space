@@ -9,6 +9,12 @@
 </head>
 <body>
 <header class="glass">
+  <!-- Both side panels fold away. On a narrow screen they start folded, so
+       the reading column is the whole screen and the panels are somewhere
+       to go rather than something in the way. -->
+  <button class="icon-btn panel-toggle" id="tglNav" onclick="togglePanel('nav')"
+    title="Spaces" aria-label="Show or hide the list of spaces"
+    aria-controls="sidebar" aria-expanded="true">☰</button>
   <b class="brand"><img src="brand-lockup.png" alt="quite.space" class="brand-lockup"></b>
   <span id="conn" class="conn-chip off" onclick="dlgLan.showModal()" tabindex="0"
     role="button" aria-label="Connection details"><span class="dot"></span><span id="connText">Not connected</span></span>

@@ -1128,9 +1128,48 @@ function toggleFreeze() {
 
 // Conversation header actions (PUI-1).
 function openPassCurrent() { const s = currentSpace(); if (s) openPass(s); }
-function toggleMembers() {
-  document.getElementById('members').classList.toggle('hidden');
+// ---- folding side panels -------------------------------------------------
+//
+// Two panels, one rule: a person's choice is remembered, and a narrow screen
+// starts with both folded. On a phone the reading column IS the screen, and
+// a list of spaces permanently occupying a third of it is the desktop layout
+// wearing a smaller coat. Folded, they are somewhere to go instead.
+//
+// This is also the shape a phone build needs (RS-0): nothing here measures a
+// window, so there is no second layout to keep in step — the same markup is
+// the compact one.
+const PANEL_KEYS = { nav: 'qp.fold.nav', info: 'qp.fold.info' };
+// The app's established compact boundary — the same 600px the stylesheet
+// has used since UI-3, named once here rather than guessed at again.
+const COMPACT = '(max-width: 600px)';
+
+function isPanelFolded(which) {
+  const saved = localStorage.getItem(PANEL_KEYS[which]);
+  if (saved === '1') return true;
+  if (saved === '0') return false;
+  return window.matchMedia(COMPACT).matches;   // no choice yet: ask the screen
 }
+
+function setPanel(which, folded) {
+  localStorage.setItem(PANEL_KEYS[which], folded ? '1' : '0');
+  applyPanels();
+}
+
+function applyPanels() {
+  const navFolded = isPanelFolded('nav');
+  document.body.classList.toggle('fold-nav', navFolded);
+  const nav = document.getElementById('tglNav');
+  if (nav) nav.setAttribute('aria-expanded', String(!navFolded));
+
+  const infoFolded = isPanelFolded('info');
+  const m = document.getElementById('members');
+  if (m) m.classList.toggle('hidden', infoFolded);
+}
+
+function togglePanel(which) { setPanel(which, !isPanelFolded(which)); }
+
+/** The space-info panel's own button, which predates the pair. */
+function toggleMembers() { togglePanel('info'); }
 
 async function refreshSpace() {
   const sp = currentSpace();
@@ -3456,6 +3495,10 @@ function checkPassDeepLink() {
   document.getElementById('joinPass').value = decodeURIComponent(m[1]);
 }
 
+applyPanels();
+// A window that becomes narrow folds them, unless the person has said
+// otherwise — the media query is consulted, not obeyed.
+window.matchMedia(COMPACT).addEventListener('change', applyPanels);
 NAV.mount(document.getElementById('nav'));
 NAV.onOpen = (id) => { current = id; refresh(); };
 checkOnboarding();
