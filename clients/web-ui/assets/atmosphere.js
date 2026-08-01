@@ -1347,101 +1347,174 @@ const ATMO_EDIT = (() => {
   function renderStages(host, doc, a, changed) {
     a.visual.stages = a.visual.stages || [];
     sortStages(a, doc);
-    const stages = a.visual.stages;
-    const choices = blockChoices(doc);
-
-    if (!choices.length) {
-      host.appendChild(el('p', 'hint warn',
-        'Write the post first — a picture is anchored to a block, and there are none yet.'));
-      return;
-    }
-
-    const list = el('div', 'atmo-edit-stages');
-    stages.forEach((s, i) => {
-      const r = el('div', 'atmo-edit-stage');
-
-      const thumb = el('img', 'atmo-edit-thumb');
-      thumb.alt = '';
-      if (typeof assetURL === 'function' && s.image) thumb.src = assetURL(s.image);
-      r.appendChild(thumb);
-
-      const where = el('select', 'atmo-edit-anchor');
-      // Every block is offered except the ones another stage already has:
-      // two pictures on one block have no defined meaning, and the contract
-      // refuses them.
-      const taken = new Set(stages.filter((_, j) => j !== i).map(x => x.anchor));
-      for (const c of choices) {
-        if (taken.has(c.id)) continue;
-        const o = el('option', null, c.label);
-        o.value = c.id;
-        if (c.id === s.anchor) o.selected = true;
-        where.appendChild(o);
-      }
-      if (!choices.some(c => c.id === s.anchor)) {
-        const o = el('option', null, '— this block is gone, pick another —');
-        o.value = ''; o.selected = true;
-        where.insertBefore(o, where.firstChild);
-      }
-      where.onchange = () => { s.anchor = where.value; changed(); };
-      r.appendChild(where);
-
-      const how = el('select', 'atmo-edit-transition');
-      for (const [v, label] of [['fade', 'fades in'], ['cut', 'cuts in']]) {
-        const o = el('option', null, label);
-        o.value = v;
-        if ((s.transition || 'fade') === v) o.selected = true;
-        how.appendChild(o);
-      }
-      how.onchange = () => {
-        s.transition = how.value;
-        if (s.transition === 'cut') delete s.duration_ms;
-        changed();
-      };
-      r.appendChild(how);
-
-      if ((s.transition || 'fade') !== 'cut') {
-        const ms = el('input', 'atmo-edit-ms');
-        ms.type = 'number'; ms.min = '0'; ms.max = String(MAX_FADE); ms.step = '100';
-        ms.value = String(s.duration_ms || 700);
-        ms.title = 'milliseconds';
-        ms.onchange = () => {
-          s.duration_ms = Math.max(0, Math.min(MAX_FADE, Number(ms.value) || 0));
-          changed();
-        };
-        r.appendChild(ms);
-      }
-
-      const rm = el('button', 'btn-plain', '✕');
-      rm.type = 'button';
-      rm.title = 'remove this picture';
-      rm.onclick = () => { stages.splice(i, 1); changed(); };
-      r.appendChild(rm);
-      list.appendChild(r);
-    });
-    host.appendChild(list);
-
-    if (stages.length < MAX_STAGES && stages.length < choices.length) {
-      const add = el('button', 'btn-plain', '+ Picture');
-      add.type = 'button';
-      add.onclick = () => chooseAsset('image/*', async f => {
-        const r = await uploadAssetFile(f);
-        const taken = new Set(stages.map(x => x.anchor));
-        const free = choices.find(c => !taken.has(c.id));
-        stages.push({
-          anchor: free ? free.id : choices[0].id,
-          image: r.asset_id, transition: 'fade', duration_ms: 700,
-        });
-        changed();
-      });
-      host.appendChild(add);
-    }
-    if (!stages.length) {
+    const n = a.visual.stages.length;
+    host.appendChild(el('p', 'hint',
+      n === 0
+        ? 'No pictures yet. Add one from the block list below — it goes into the ' +
+          'post where the background should change.'
+        : (n === 1 ? 'One picture' : n + ' pictures') +
+          ', shown among the blocks below where each one takes over.'));
+    if (n === 0) {
       host.appendChild(el('p', 'hint warn',
         'A sequence needs at least one picture, or this post has no atmosphere at all.'));
     }
-    host.appendChild(el('p', 'hint',
-      'Each picture takes over when its block reaches the reader. They are kept ' +
-      'in the order the post is read.'));
+  }
+
+  // ---- stages IN THE BLOCK FLOW --------------------------------------------
+  //
+  // A change of background is a place in the post, so the composer puts it
+  // where places live — between the blocks, moved and deleted like one.
+  //
+  // It is NOT a block on the wire, and that difference is the whole reason
+  // for the split. A block type this build invented would reach an older
+  // client as an unknown type and draw a fallback card in the middle of the
+  // article — a visible fault where the author put something meant to be
+  // invisible. Kept in the signed atmosphere, it degrades to nothing at all:
+  // no pictures, just the fallback words. The recipe also stays ONE object,
+  // so "use this atmosphere" and the lineage hash cover the whole form
+  // rather than the half that did not move into the body.
+
+  /** The stages of a composer document, or none when it carries a scene. */
+  function docStages(doc) {
+    const a = doc && doc.atmosphere;
+    if (!a || !a.visual || a.visual.scene) return [];
+    return a.visual.stages || [];
+  }
+
+  /** The stage anchored to this block, if any. */
+  function stageFor(doc, blockId) {
+    return docStages(doc).find(s => s && s.anchor === blockId) || null;
+  }
+
+  /**
+   * Add a picture to the flow. It anchors to the LAST block without one,
+   * which is where an author writing top-down means "from here on".
+   *
+   * Returns a sentence when it cannot, rather than doing something surprising:
+   * a scene and a sequence are alternatives, and inventing an anchor for a
+   * post with no blocks would be a stage that never fires.
+   */
+  function addStage(doc, changed) {
+    const choices = blockChoices(doc);
+    if (!choices.length) {
+      return 'Write something first — a picture marks a place in the post, and there are none yet.';
+    }
+    if (doc.atmosphere && doc.atmosphere.visual && doc.atmosphere.visual.scene) {
+      return 'This post has a moving scene. A scene and pictures are alternatives — ' +
+        'switch it to “Pictures as you read” in the Atmosphere panel first.';
+    }
+    if (!doc.atmosphere) {
+      doc.atmosphere = {
+        visual: { scene: '', seed: 0, params: [], palette: defaultPalette(), stages: [] },
+        fallback: { text: '' },
+      };
+    }
+    const a = doc.atmosphere;
+    a.visual.stages = a.visual.stages || [];
+    if (a.visual.stages.length >= MAX_STAGES) {
+      return 'A post carries at most ' + MAX_STAGES + ' pictures.';
+    }
+    const taken = new Set(a.visual.stages.map(s => s.anchor));
+    // From the END: the last free place is the one "from here on" means.
+    let free = null;
+    for (let i = choices.length - 1; i >= 0; i--) {
+      if (!taken.has(choices[i].id)) { free = choices[i]; break; }
+    }
+    if (!free) return 'Every block already changes the background.';
+    chooseAsset('image/*', async f => {
+      const r = await uploadAssetFile(f);
+      a.visual.stages.push({
+        anchor: free.id, image: r.asset_id, transition: 'fade', duration_ms: 700,
+      });
+      sortStages(a, doc);
+      changed();
+    });
+    return '';
+  }
+
+  /**
+   * One row for the block flow: the picture that takes over here.
+   *
+   * Rendered immediately BEFORE its anchor block, which is how it reads —
+   * everything from this point down has this background.
+   *
+   * @param {any} doc @param {any} s the stage @param {() => void} changed
+   */
+  function stageRow(doc, s, changed) {
+    const a = doc.atmosphere;
+    const stages = a.visual.stages;
+    const i = stages.indexOf(s);
+    const r = el('div', 'comp-stage');
+
+    const mark = el('span', 'comp-stage-mark', '\u{1F5BC}');
+    mark.title = 'The background changes here';
+    r.appendChild(mark);
+
+    const thumb = el('img', 'comp-stage-thumb');
+    thumb.alt = '';
+    thumb.title = 'Click to replace';
+    if (typeof assetURL === 'function' && s.image) thumb.src = assetURL(s.image);
+    thumb.onclick = () => chooseAsset('image/*', async f => {
+      const up = await uploadAssetFile(f);
+      s.image = up.asset_id;
+      changed();
+    });
+    r.appendChild(thumb);
+
+    r.appendChild(el('span', 'comp-stage-label', 'background changes here'));
+
+    const how = el('select', 'atmo-edit-transition');
+    for (const [v, label] of [['fade', 'fades in'], ['cut', 'cuts in']]) {
+      const o = el('option', null, label);
+      o.value = v;
+      if ((s.transition || 'fade') === v) o.selected = true;
+      how.appendChild(o);
+    }
+    how.onchange = () => {
+      s.transition = how.value;
+      if (s.transition === 'cut') delete s.duration_ms;
+      changed();
+    };
+    r.appendChild(how);
+
+    if ((s.transition || 'fade') !== 'cut') {
+      const ms = el('input', 'atmo-edit-ms');
+      ms.type = 'number'; ms.min = '0'; ms.max = String(MAX_FADE); ms.step = '100';
+      ms.value = String(s.duration_ms || 700);
+      ms.title = 'milliseconds';
+      ms.onchange = () => {
+        s.duration_ms = Math.max(0, Math.min(MAX_FADE, Number(ms.value) || 0));
+        changed();
+      };
+      r.appendChild(ms);
+    }
+
+    // Moving means RE-ANCHORING to the next free place — the row has no
+    // position of its own to slide along.
+    const choices = blockChoices(doc);
+    const at = choices.findIndex(c => c.id === s.anchor);
+    const taken = new Set(stages.filter(x => x !== s).map(x => x.anchor));
+    const freeFrom = (from, step) => {
+      for (let j = from; j >= 0 && j < choices.length; j += step) {
+        if (!taken.has(choices[j].id)) return choices[j].id;
+      }
+      return null;
+    };
+    const up = freeFrom(at - 1, -1), down = freeFrom(at + 1, 1);
+    const mk = (txt, title, to) => {
+      const b = el('button', 'icon-btn comp-ctl', txt);
+      b.type = 'button'; b.title = title; b.disabled = !to;
+      b.onclick = () => { s.anchor = to; sortStages(a, doc); changed(); };
+      r.appendChild(b);
+    };
+    mk('↑', 'Move earlier', up);
+    mk('↓', 'Move later', down);
+
+    const rm = el('button', 'icon-btn comp-ctl', '✕');
+    rm.type = 'button'; rm.title = 'Remove this picture';
+    rm.onclick = () => { stages.splice(i, 1); changed(); };
+    r.appendChild(rm);
+    return r;
   }
 
   function renderPalette(host, a, changed) {
@@ -1580,7 +1653,11 @@ const ATMO_EDIT = (() => {
     }
   }
 
-  return { render, blank, rollSeed };
+  // stageFor/stageRow/addStage are what the composer's BLOCK LIST calls: a
+  // change of background is a place in the post, so it is edited where places
+  // are. The knowledge of what a stage is stays here, with the rest of the
+  // recipe's authoring — publications.js only asks "is there one here".
+  return { render, blank, rollSeed, stageFor, stageRow, addStage };
 })();
 
 if (typeof window !== 'undefined') window.ATMO_EDIT = ATMO_EDIT;

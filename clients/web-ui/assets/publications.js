@@ -560,6 +560,10 @@ const COMPOSER_CHIPS = [
   { t: 'separator', label: '—' },
   { t: 'poll', label: '📊 Poll', app: true }, { t: 'form', label: '📝 Form', app: true },
   { t: 'listening', label: '🎧 Listening room', app: true },
+  // Not a block on the wire — a stage of the post's atmosphere, edited here
+  // because it marks a PLACE, and places live between the blocks. See the
+  // note above ATMO_EDIT.stageRow for why it is not a block type.
+  { t: 'atmosphere', label: '🖼 Background', stage: true },
 ];
 
 function renderComposerChips() {
@@ -571,6 +575,13 @@ function renderComposerChips() {
     chip.textContent = '+ ' + c.label;
     chip.onclick = () => {
       if (c.app) { insertAppBlock(c.t); return; }
+      if (c.stage) {
+        const msg = document.getElementById('compMsg');
+        const why = typeof ATMO_EDIT === 'undefined' ? 'atmosphere is unavailable'
+          : ATMO_EDIT.addStage(composerDoc, refreshComposerBody);
+        if (msg) msg.textContent = why;
+        return;
+      }
       composerDoc.blocks.push({ id: 'b' + randHex16().slice(0, 8), type: c.t, props: {} });
       renderComposerBlocks();
       // Focus the freshly added block's first field.
@@ -629,7 +640,15 @@ function openComposer(doc, baseRevision) {
 function renderComposerAtmosphere() {
   const box = document.getElementById('compAtmosphere');
   if (!box || typeof ATMO_EDIT === 'undefined') return;
-  ATMO_EDIT.render(box, composerDoc);
+  // The panel and the block list show two halves of one thing — the recipe
+  // and the places it changes — so either one moving redraws both.
+  ATMO_EDIT.render(box, composerDoc, renderComposerBlocks);
+}
+
+/** Both halves of the composer body: the atmosphere panel and the flow. */
+function refreshComposerBody() {
+  renderComposerBlocks();
+  renderComposerAtmosphere();
 }
 
 // ---- cover: a slim drop strip above the title ----
@@ -796,6 +815,12 @@ function renderComposerBlocks() {
     box.appendChild(empty);
   }
   (composerDoc.blocks || []).forEach((b, i) => {
+    // A background change is anchored to this block, so it is drawn just
+    // above it: everything from here down has that picture.
+    const stage = typeof ATMO_EDIT !== 'undefined' && b.id
+      ? ATMO_EDIT.stageFor(composerDoc, b.id) : null;
+    if (stage) box.appendChild(ATMO_EDIT.stageRow(composerDoc, stage, refreshComposerBody));
+
     const row = document.createElement('div');
     row.className = 'comp-block';
     row.dataset.index = i;

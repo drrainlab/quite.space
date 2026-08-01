@@ -1928,19 +1928,27 @@ header .nav-act { padding: 5px 11px 5px 10px; min-height: 30px; }
   border: 1px solid var(--line, rgba(255,255,255,.12)); border-radius: 12px;
 }
 
-/* The sequence editor (AM-7): one row per picture — where it takes over, how
-   it arrives, how long that takes. */
 .atmo-edit-mode { margin-left: auto; }
-.atmo-edit-stages { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
-.atmo-edit-stage {
-  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-}
-.atmo-edit-thumb {
-  width: 44px; height: 30px; object-fit: cover; border-radius: 4px;
-  background: var(--line, rgba(255,255,255,.12)); flex: none;
-}
-.atmo-edit-anchor { flex: 1 1 12ch; min-width: 0; }
 .atmo-edit-ms { width: 7ch; }
+
+/* A background change in the composer's BLOCK FLOW (AM-7): slimmer than a
+   block and dashed, because it is a place rather than a thing — it marks
+   where the picture behind the post changes, and carries no content of its
+   own into the article. */
+.comp-stage {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin: 6px 0; padding: 5px 8px;
+  border: 1px dashed var(--line, rgba(255,255,255,.18));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--acc, #7ab4e0) 5%, transparent);
+}
+.comp-stage-mark { opacity: .8; }
+.comp-stage-thumb {
+  width: 40px; height: 26px; object-fit: cover; border-radius: 4px;
+  background: var(--line, rgba(255,255,255,.12));
+  flex: none; cursor: pointer;
+}
+.comp-stage-label { font-size: .84rem; opacity: .72; margin-right: auto; }
 .atmo-edit-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .atmo-edit-row {
   display: flex; align-items: center; gap: 10px; margin: 7px 0;
