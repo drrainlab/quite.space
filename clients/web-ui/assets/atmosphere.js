@@ -885,9 +885,40 @@ const ATMO = (() => {
    * crossfaded under it. The product of the two is identical to writing the
    * alpha into the stops, which is what this did before stages existed.
    */
-  function paintScrim(shell, scrim, ground, luma) {
+  /**
+   * The colour the wash is made of.
+   *
+   * A flat neutral over a photograph reads as a sheet laid on top of it —
+   * you can see the picture and you can see the sheet. A wash mixed from the
+   * picture's OWN average, darkened, reads as the same picture in lower
+   * light, which is what an atmosphere is supposed to be. The room's ground
+   * colour is still folded in, so a space keeps its identity across every
+   * photograph an author might publish in it.
+   *
+   * @param {[number,number,number]|null} mean the picture's average colour
+   * @param {string} ground the palette's first token, `#rrggbb`
+   * @returns {[number,number,number]}
+   */
+  function washColour(mean, ground) {
     const n = parseInt(String(ground).slice(1), 16);
-    const rgb = `${(n >> 16) & 255},${(n >> 8) & 255},${n & 255}`;
+    const g = [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+    if (!mean) return /** @type {[number,number,number]} */ (g);
+    // Darkened first: an average is by definition mid-toned, and a mid-toned
+    // wash cannot darken anything however much of it is laid down.
+    const DARK = 0.34, TOWARD_ROOM = 0.34;
+    return /** @type {[number,number,number]} */ (mean.map((c, i) => {
+      const d = c * DARK;
+      return Math.round(d + (g[i] - d) * TOWARD_ROOM);
+    }));
+  }
+
+  /**
+   * @param {HTMLElement|null} shell @param {HTMLElement} scrim
+   * @param {string} ground @param {number} luma
+   * @param {[number,number,number]|null} [mean] the picture's average colour
+   */
+  function paintScrim(shell, scrim, ground, luma, mean) {
+    const rgb = washColour(mean || null, ground).join(',');
     // Even, not a spotlight. The old gradient was densest at 50% 30% and
     // thinned to 0.45 by the bottom — its dark middle sat over the cover
     // while the body text ran through its weakest part, which is why a
@@ -904,7 +935,7 @@ const ATMO = (() => {
     // 0.36, which is a picture the text has to fight. The ceiling stays below
     // 1 on purpose: at some point the honest answer is that the atmosphere is
     // a background, not a page colour.
-    scrim.style.opacity = String(Math.min(0.78, 0.14 + 0.72 * Math.max(0, luma)));
+    scrim.style.opacity = String(Math.min(0.86, 0.24 + 0.78 * Math.max(0, luma)));
     if (!shell) return;
     // What the letters' glow is made of. The measurement lives here, the
     // shape lives in the stylesheet — a halo on the glyphs, so the picture
@@ -989,13 +1020,13 @@ const ATMO = (() => {
    * origin, so the canvas is not tainted; a browser that disagrees returns -1
    * and the recipe's own palette decides the scrim, exactly as before.
    */
-  function plateLuminance(img) {
+  function plateStats(img) {
     try {
       const N = 24;
       const cv = document.createElement('canvas');
       cv.width = N; cv.height = N;
       const ctx = cv.getContext('2d', { willReadFrequently: true });
-      if (!ctx) return -1;
+      if (!ctx) return null;
       // MEASURE WHAT IS ON SCREEN, not what is in the file.
       //
       // A plate is object-fit: cover, so a tall photograph in a wide window
@@ -1017,19 +1048,37 @@ const ATMO = (() => {
       // would let a dark corner pay for a bright centre.
       const lo = Math.floor(N * 0.2), hi = Math.ceil(N * 0.8);
       const vals = [];
+      const sum = [0, 0, 0];
+      let count = 0;
       for (let y = 0; y < N; y++) {
         for (let x = lo; x < hi; x++) {
           const i = (y * N + x) * 4;
           vals.push(0.2126 * toLinear(d[i]) + 0.7152 * toLinear(d[i + 1]) +
                     0.0722 * toLinear(d[i + 2]));
+          sum[0] += d[i]; sum[1] += d[i + 1]; sum[2] += d[i + 2];
+          count++;
         }
       }
-      if (!vals.length) return -1;
+      if (!vals.length) return null;
       vals.sort((a, b) => a - b);
-      // The 85th percentile: the brightest place a line of text is likely to
-      // cross, without letting a single specular highlight black out the page.
-      return vals[Math.min(vals.length - 1, Math.floor(vals.length * 0.85))];
-    } catch { return -1; }
+      return {
+        // The 85th percentile: the brightest place a line of text is likely
+        // to cross, without letting one specular highlight black out the page.
+        luma: vals[Math.min(vals.length - 1, Math.floor(vals.length * 0.85))],
+        // The plain mean, in sRGB. This one is not about contrast at all —
+        // it is what the wash is COLOURED with, so it wants the picture's
+        // ordinary colour rather than its extremes.
+        mean: /** @type {[number,number,number]} */ ([
+          Math.round(sum[0] / count), Math.round(sum[1] / count), Math.round(sum[2] / count),
+        ]),
+      };
+    } catch { return null; }
+  }
+
+  /** Just the readability number, for callers that colour nothing. */
+  function plateLuminance(img) {
+    const s = plateStats(img);
+    return s ? s.luma : -1;
   }
 
   /** Point a background plate at an asset, without touching anything else. */
@@ -1120,9 +1169,11 @@ const ATMO = (() => {
         // generative scene is soft gradients — so a bright picture needs more
         // scrim than a bright palette token does, and the scrim has to be
         // recomputed per stage rather than once at mount.
-        const l = plateLuminance(back);
-        if (l >= 0) {
-          paintScrim(shell, scrim, paletteOf(atmosphere)[0], l);
+        const seen = plateStats(back);
+        if (seen) {
+          // Both numbers come from the SAME crop of the SAME picture: how
+          // strong the wash has to be, and what colour it is made of.
+          paintScrim(shell, scrim, paletteOf(atmosphere)[0], seen.luma, seen.mean);
         }
         preload(i + 1);
       };
