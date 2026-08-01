@@ -1825,14 +1825,30 @@ header .nav-act { padding: 5px 11px 5px 10px; min-height: 30px; }
 @media (max-width: 600px) {
   .atmo-shell { padding: 12px 14px 10px; }
 }
-.atmo-stage, .atmo-scrim {
+/* The veil spans the whole article — it is what gets clipped and rounded —
+   while the stage and the scrim inside it are ONE SCREEN tall and stick to
+   the top of the scrollport. The atmosphere is the background of the reading
+   area, not of the document: stretched over a long post, a picture shows as
+   a single flat slice and a crossfade cannot be seen at all. */
+/* clip-path, NOT overflow: hidden. An overflow ancestor becomes the nearest
+   scroll container, and a sticky child then sticks to a box that does not
+   scroll — the picture scrolled away with the text. clip-path rounds and
+   clips the same way without claiming to be a scrollport. */
+.atmo-veil {
   position: absolute; inset: 0; z-index: 0;
-  overflow: hidden; border-radius: var(--radius-md);
+  clip-path: inset(0 round var(--radius-md));
   pointer-events: none;
 }
-/* Everything the article contains is forced above both layers — the same
-   idiom as .sc-appearance > * . */
-.atmo-shell > :not(.atmo-stage):not(.atmo-scrim) {
+.atmo-stage, .atmo-scrim {
+  position: sticky; top: 0;
+  height: 100vh; height: 100dvh;
+  overflow: hidden;
+}
+/* Pulled back over the stage it follows in the flow, and above it. */
+.atmo-scrim { margin-top: -100vh; margin-top: -100dvh; z-index: 1; }
+/* Everything the article contains is forced above the veil — the same idiom
+   as .sc-appearance > * . */
+.atmo-shell > :not(.atmo-veil) {
   position: relative; z-index: 1;
 }
 .atmo-poster {

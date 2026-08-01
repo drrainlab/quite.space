@@ -268,8 +268,7 @@ const ATMO = (() => {
     if (mounted) {
       const m = mounted;
       mounted = null;
-      try { m.stage.remove(); } catch { /* already gone */ }
-      try { m.scrim.remove(); } catch { /* already gone */ }
+      try { m.veil.remove(); } catch { /* already gone */ }
       m.shell.classList.remove('atmo-shell');
       if (m.bar) m.bar.innerHTML = '';
     }
@@ -296,8 +295,7 @@ const ATMO = (() => {
    */
   function detach() {
     if (!mounted) return null;
-    mounted.stage.remove();
-    mounted.scrim.remove();
+    mounted.veil.remove();
     if (mounted.bar) mounted.bar.remove();
     mounted.shell.classList.remove('atmo-shell');
     return { bar: mounted.bar };
@@ -312,8 +310,7 @@ const ATMO = (() => {
    */
   function reattach(shell) {
     if (!mounted) return;
-    shell.prepend(mounted.scrim);
-    shell.prepend(mounted.stage);
+    shell.prepend(mounted.veil);
     shell.classList.add('atmo-shell');
     mounted.shell = shell;
     // The LAYERS survived, but every block node was rebuilt underneath them.
@@ -361,21 +358,32 @@ const ATMO = (() => {
         })
       : null;
 
-    // The two layers. Stage first, scrim second: both are z-index 0, so DOM
-    // order stacks the scrim above the picture — and everything the article
-    // already contains is forced above both by the .atmo-shell child rule.
+    // The layers, and the one structural thing that is easy to get wrong: the
+    // atmosphere is the background of the READING AREA, not of the document.
+    //
+    // Stretching a picture over the whole article means a long post shows one
+    // thin slice of it and a crossfade is invisible — a 120 000px article was
+    // rendering a 64px photograph as a flat colour. So a veil spans the
+    // article (that is what has to be clipped and rounded) and the stage
+    // sticks to the top of the scrollport inside it, one screen tall. The
+    // scrim rides the same way, pulled back over the stage.
+    //
+    // A running scene gains from this too: STAGE's backing-store cap was
+    // being spread over the article's whole height.
+    const veil = document.createElement('div');
+    veil.className = 'atmo-veil';
+    veil.setAttribute('aria-hidden', 'true');
     const stage = document.createElement('div');
     stage.className = 'atmo-stage';
-    stage.setAttribute('aria-hidden', 'true');
     const scrim = document.createElement('div');
     scrim.className = 'atmo-scrim';
-    scrim.setAttribute('aria-hidden', 'true');
-    shell.prepend(scrim);
-    shell.prepend(stage);
+    veil.appendChild(stage);
+    veil.appendChild(scrim);
+    shell.prepend(veil);
     shell.classList.add('atmo-shell');
     styleScrim(scrim, atmosphere);
 
-    mounted = { shell, stage, scrim, bar, scene, atmosphere, postId,
+    mounted = { shell, veil, stage, scrim, bar, scene, atmosphere, postId,
                 // The recipe's identity, so a re-render can tell "the same
                 // atmosphere, keep it running" from "an edit changed it,
                 // remount". JSON is fine here: the projection is canonical
@@ -403,8 +411,15 @@ const ATMO = (() => {
     }
 
     const hasSound = !!(atmosphere.audio && atmosphere.audio.asset);
-    const label = (typeof SCENES !== 'undefined' &&
-      SCENES.get(String(atmosphere.visual.scene || ''))?.label) || 'Atmosphere';
+    // A sequence has no scene id, so SCENES has no name for it and the bar
+    // used to introduce itself as "Atmosphere atmosphere". Name it for what
+    // it is instead — and say how many pictures, because that is the one
+    // thing a reader cannot see from the first of them.
+    const seqCount = stagesOf(atmosphere).length;
+    const label = isSequence
+      ? (seqCount === 1 ? 'One picture as you read' : seqCount + ' pictures as you read')
+      : ((typeof SCENES !== 'undefined' &&
+          SCENES.get(String(atmosphere.visual.scene || ''))?.label) || 'Atmosphere');
     // Whether THIS mount's scene is actually on the stage. STAGE.running()
     // alone cannot answer that — it is false during a mechanical pause
     // (offscreen host, hidden tab) and during the person's own pause.
@@ -431,7 +446,8 @@ const ATMO = (() => {
         if (bed) bits.push('sound');
         name.textContent = bits.join(' \u00B7 ');
       } else {
-        name.textContent = label + ' atmosphere';
+        // A sequence's label is already a sentence; a scene's is a name.
+        name.textContent = isSequence ? label : label + ' atmosphere';
         // The author's words are the atmosphere's description AND its last
         // line of defence: title everywhere, visible text when the picture
         // cannot exist at all.
