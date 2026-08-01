@@ -917,7 +917,26 @@ const ATMO = (() => {
    * @param {string} ground @param {number} luma
    * @param {[number,number,number]|null} [mean] the picture's average colour
    */
-  function paintScrim(shell, scrim, ground, luma, mean) {
+  /**
+   * How much to soften a picture, in pixels, for how busy it is.
+   *
+   * A scrim answers BRIGHTNESS and can do nothing about TEXTURE: bark at an
+   * ordinary brightness is still hard to read over, because its detail sits
+   * at the scale of the letter strokes and competes with them there. More
+   * wash does not fix that — it only takes the picture away.
+   *
+   * Softening does, and it costs the right thing. A blurred photograph of
+   * bark is still unmistakably bark: the colour, the depth and the movement
+   * of it survive, and only the frequency that was fighting the text goes.
+   * That is what a background is FOR, so this is the honest countermeasure
+   * rather than a heavier sheet on top.
+   *
+   * Capped low on purpose — this is a correction, not a treatment, and an
+   * author who published a photograph should still recognise it.
+   */
+  const MAX_SOFTEN_PX = 4.5;
+
+  function paintScrim(shell, scrim, ground, luma, mean, detail) {
     const rgb = washColour(mean || null, ground).join(',');
     // Even, not a spotlight. The old gradient was densest at 50% 30% and
     // thinned to 0.45 by the bottom — its dark middle sat over the cover
@@ -940,6 +959,11 @@ const ATMO = (() => {
     // What the letters' glow is made of. The measurement lives here, the
     // shape lives in the stylesheet — a halo on the glyphs, so the picture
     // survives between the lines instead of being covered by a plate.
+    // Texture is answered by softening, brightness by the wash — two
+    // properties, two remedies, so a busy DARK picture gets the blur without
+    // a heavier sheet it does not need.
+    shell.style.setProperty('--atmo-soften',
+      (MAX_SOFTEN_PX * Math.max(0, Math.min(1, detail || 0))).toFixed(2) + 'px');
     shell.style.setProperty('--atmo-ink', rgb);
     shell.style.setProperty('--atmo-glow', String(Math.min(1, 0.6 + 0.5 * luma)));
   }
@@ -1022,7 +1046,12 @@ const ATMO = (() => {
    */
   function plateStats(img) {
     try {
-      const N = 24;
+      // 48 rather than 24: brightness survives any downsample, but TEXTURE
+      // does not, and texture is the other half of what makes a picture hard
+      // to read over. Measured on a bark-like plate against a smooth
+      // gradient, the two separate by a factor of about twenty at this size
+      // — and 48×48 is still four thousand samples, which costs nothing.
+      const N = 48;
       const cv = document.createElement('canvas');
       cv.width = N; cv.height = N;
       const ctx = cv.getContext('2d', { willReadFrequently: true });
@@ -1049,17 +1078,34 @@ const ATMO = (() => {
       const lo = Math.floor(N * 0.2), hi = Math.ceil(N * 0.8);
       const vals = [];
       const sum = [0, 0, 0];
+      const lum = new Float64Array(N * N);
       let count = 0;
       for (let y = 0; y < N; y++) {
         for (let x = lo; x < hi; x++) {
           const i = (y * N + x) * 4;
-          vals.push(0.2126 * toLinear(d[i]) + 0.7152 * toLinear(d[i + 1]) +
-                    0.0722 * toLinear(d[i + 2]));
+          const l = 0.2126 * toLinear(d[i]) + 0.7152 * toLinear(d[i + 1]) +
+                    0.0722 * toLinear(d[i + 2]);
+          vals.push(l);
+          lum[y * N + x] = l;
           sum[0] += d[i]; sum[1] += d[i + 1]; sum[2] += d[i + 2];
           count++;
         }
       }
       if (!vals.length) return null;
+      // How much the surface CHANGES, as opposed to how bright it is: the
+      // mean absolute step between neighbouring samples. This is the property
+      // a scrim cannot answer — bark measured a perfectly ordinary brightness
+      // and was still hard to read, because its detail sits at the same scale
+      // as the strokes of the letters and competes with them there.
+      let steps = 0, pairs = 0;
+      for (let y = 1; y < N; y++) {
+        for (let x = lo + 1; x < hi; x++) {
+          const i = y * N + x;
+          steps += Math.abs(lum[i] - lum[i - 1]) + Math.abs(lum[i] - lum[i - N]);
+          pairs += 2;
+        }
+      }
+      const step = pairs ? steps / pairs : 0;
       vals.sort((a, b) => a - b);
       return {
         // The 85th percentile: the brightest place a line of text is likely
@@ -1071,6 +1117,11 @@ const ATMO = (() => {
         mean: /** @type {[number,number,number]} */ ([
           Math.round(sum[0] / count), Math.round(sum[1] / count), Math.round(sum[2] / count),
         ]),
+        // 0 for a smooth gradient, 1 for a busy surface. The floor and the
+        // span come from measuring both against this exact statistic: a
+        // gradient lands near 0.002 and bark near 0.045, so anything under
+        // the floor is "calm" and the span carries the rest.
+        detail: Math.max(0, Math.min(1, (step - 0.006) / 0.040)),
       };
     } catch { return null; }
   }
@@ -1173,7 +1224,8 @@ const ATMO = (() => {
         if (seen) {
           // Both numbers come from the SAME crop of the SAME picture: how
           // strong the wash has to be, and what colour it is made of.
-          paintScrim(shell, scrim, paletteOf(atmosphere)[0], seen.luma, seen.mean);
+          paintScrim(shell, scrim, paletteOf(atmosphere)[0],
+                     seen.luma, seen.mean, seen.detail);
         }
         preload(i + 1);
       };

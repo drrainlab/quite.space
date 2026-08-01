@@ -2015,6 +2015,15 @@ header .nav-act { padding: 5px 11px 5px 10px; min-height: 30px; }
 }
 .atmo-plate.on { opacity: 1; }
 .atmo-scrim { transition: opacity var(--atmo-fade, 700ms) linear; }
+/* SOFTENING — the answer to texture, which no amount of wash can give.
+   The measurement is in paintScrim; --atmo-soften is 0px for a smooth
+   picture and a few pixels for a busy one. The plate is scaled slightly
+   past its box because a blur samples outside the source and would
+   otherwise leave a pale fringe at the edges of the screen. */
+.atmo-shell .atmo-plate, .atmo-shell .atmo-poster {
+  filter: blur(var(--atmo-soften, 0px));
+  transform: scale(calc(1 + var(--atmo-soften, 0px) / 120px * 3));
+}
 /* A slow tide in the SPACE's own colour, over the readability wash.
    ------------------------------------------------------------------
    The wash is a flat neutral by design, and a flat neutral over a
