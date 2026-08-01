@@ -254,9 +254,50 @@ function dangling() {
   check('...and skips straight past the stage it cannot place', showing(shell), IMAGES[2]);
 }
 
+// ------------------------------------------------------------- no layout yet
+
+// An article measured before its pane has a size reports every anchor at
+// top 0. With an activation line of zero every one of them counts as
+// reached, so the sequence would open on its LAST picture — found live in an
+// embedded webview, where innerHeight is 0 while the page is plainly there.
+function noLayout() {
+  const { ctx, harness, get } = boot(['modes.js', 'audio.js', 'brush.js', 'atmosphere.js']);
+  ctx.innerHeight = 0;
+  ctx.document.documentElement = { clientHeight: 0 };
+  const ATMO = get('ATMO');
+  const shell = harness.document.createElement('div');
+  harness.body.appendChild(shell);
+  const blocks = {};
+  for (const id of ['b1', 'b2', 'b3']) {
+    const el = harness.document.createElement('div');
+    el.dataset.blockId = id;
+    el.rect = { top: 0 };
+    shell.appendChild(el);
+    blocks[id] = el;
+  }
+  ATMO.mount(shell, sequence(), 'p1', {
+    bar: harness.document.createElement('div'),
+    stageInto: (img, aid) => { img.src = 'blob:' + aid; },
+  });
+  settle(harness);
+  // Past the dwell window twice, so nothing is merely waiting its turn —
+  // without the guard this is where the story jumps to its last picture.
+  for (let i = 0; i < 3; i++) { harness.tick(2000); settle(harness); }
+  check('with no layout the story stays on its FIRST picture', showing(shell), IMAGES[0]);
+
+  // And it catches up the moment there is something to measure.
+  ctx.document.documentElement = { clientHeight: 360 };
+  scrollTo(blocks, 900);
+  harness.tick(2000);
+  harness.fire('scroll');
+  settle(harness);
+  check('...and moves on once the pane has a size', showing(shell), IMAGES[1]);
+}
+
 // ----------------------------------------------------------------------- main
 
 reading();
+noLayout();
 dwell();
 teardown();
 rearm();

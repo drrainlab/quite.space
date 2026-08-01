@@ -732,6 +732,19 @@ const ATMO = (() => {
   /** A stage takes over when its block's top passes this much of the screen. */
   const ACTIVATION_LINE = 0.4;
 
+  /**
+   * How tall the reading area is, and zero when there is not one yet.
+   *
+   * clientHeight rather than innerHeight alone: it excludes the scrollbar,
+   * which is the right number for "where is the reader looking", and it is
+   * the one an embedded webview reliably reports — innerHeight comes back 0
+   * in at least one shell we render inside.
+   */
+  function viewportHeight() {
+    const doc = document.documentElement;
+    return (doc && doc.clientHeight) || window.innerHeight || 0;
+  }
+
   /** sRGB channel to linear, for relative luminance. */
   function toLinear(c) {
     const s = c / 255;
@@ -823,6 +836,10 @@ const ATMO = (() => {
     function preload(i) {
       if (i < 0 || i >= list.length) return;
       const back = plates[1 - front];
+      // Nobody is waiting on this plate any more: a handler left over from
+      // the show() that just finished would fire against a picture it was
+      // never about.
+      back.onload = null;
       if (back.dataset.asset === list[i].image) return;
       back.dataset.asset = list[i].image;
       back.classList.remove('on');
@@ -838,6 +855,7 @@ const ATMO = (() => {
       const swap = () => {
         if (swapped || back.dataset.asset !== s.image) return;
         swapped = true;
+        back.onload = null;
         back.classList.add('on');
         plates[front].classList.remove('on');
         front = 1 - front;
@@ -853,9 +871,15 @@ const ATMO = (() => {
         }
         preload(i + 1);
       };
+      // The handler is (re)assigned unconditionally, even when the plate
+      // already holds this picture. Assigning it only on the load branch
+      // left a plate carrying a handler from an EARLIER show(), and an
+      // element has exactly one `onload` — so the newest intent has to be
+      // the one written there, or a late frame swaps in a stage the reader
+      // has already scrolled away from.
+      back.onload = swap;
       if (back.dataset.asset !== s.image) {
         back.dataset.asset = s.image;
-        back.onload = swap;
         plateSrc(back, s.image);
       }
       // Already loaded (the usual case — this is the plate that was
@@ -872,7 +896,14 @@ const ATMO = (() => {
      */
     function recompute() {
       if (!anchors.length) return;
-      const line = window.innerHeight * ACTIVATION_LINE;
+      // A viewport of zero has no honest answer: every anchor's top is 0,
+      // every one of them counts as reached, and the sequence would open on
+      // its LAST picture. That is not hypothetical — an article measured
+      // before its pane is laid out reports exactly this. Wait; the resize
+      // observer calls back the moment there is something to measure.
+      const h = viewportHeight();
+      if (h <= 0) return;
+      const line = h * ACTIVATION_LINE;
       let want = 0;
       for (const a of anchors) {
         if (a.el.getBoundingClientRect().top <= line) want = a.i;
