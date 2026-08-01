@@ -192,8 +192,20 @@
       var(--col-nav, calc(var(--w-nav) + 2 * var(--pad-panel)))
       minmax(0, 1fr)
       var(--col-info, calc(var(--w-info) + 2 * var(--pad-panel)));
+    /* The ROW has to be spelled out, and leaving it implicit is what broke
+       scrolling everywhere. A grid row is auto-sized by default and a grid
+       item's min-height is auto, so the row grew to whatever the content
+       wanted; `overflow: hidden` above then clipped it, and every scroller
+       INSIDE — the post, the feed, the space list — was handed an unbounded
+       height and had nothing left to scroll within. minmax(0, 1fr) says the
+       row is exactly this container and may be smaller than its contents,
+       which is what gives the scrollers something to scroll in. */
+    grid-template-rows: minmax(0, 1fr);
     transition: grid-template-columns .2s ease;
   }
+  /* Same reason, one level down: a grid item that may not shrink cannot
+     contain a scroller. */
+  main > * { min-height: 0; }
   body.fold-nav main { --col-nav: 0px; }
   body.fold-info main { --col-info: 0px; }
   #sidebar {
