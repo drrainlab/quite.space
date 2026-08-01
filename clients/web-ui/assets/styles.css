@@ -2017,8 +2017,37 @@ header .nav-act { padding: 5px 11px 5px 10px; min-height: 30px; }
   border: 1px solid var(--line, rgba(255,255,255,.18)); background: none;
 }
 .atmo-edit-text { width: 100%; resize: vertical; }
-.atmo-edit-sound { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.atmo-edit-sound code { font-size: .76rem; opacity: .7; }
+
+/* Sound leads the panel: it is the only part of a recipe with no default the
+   editor can pick, so it gets the width and the filled button rather than a
+   row among the sliders. */
+.atmo-edit-sound { margin: 10px 0 4px; }
+.atmo-edit-sound .hint { margin: 6px 0 0; }
+.atmo-edit-sound-add { width: 100%; justify-content: center; font-size: .95rem; padding: 11px 14px; }
+.atmo-edit-sound-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.atmo-edit-sound-line code { font-size: .76rem; opacity: .7; }
+.atmo-edit-sound-mark { font-size: 1.05rem; opacity: .85; }
+.atmo-edit-sound-sub {
+  flex: 0 0 4.5rem; font-size: .78rem; opacity: .6; text-transform: lowercase;
+}
+.atmo-edit-sound .atmo-edit-slider-wrap { margin-top: 8px; }
+
+/* Everything visual folds away — the defaults publish as they are. */
+.atmo-edit-more { margin-top: 10px; }
+.atmo-edit-more > summary {
+  cursor: pointer; list-style: none; user-select: none;
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 0; font-size: .86rem; opacity: .8;
+}
+.atmo-edit-more > summary::-webkit-details-marker { display: none; }
+.atmo-edit-more > summary::before {
+  content: '\25B8'; font-size: .7rem; opacity: .7;
+  transition: transform .12s ease;
+}
+.atmo-edit-more[open] > summary::before { transform: rotate(90deg); }
+.atmo-edit-more > summary:hover { opacity: 1; }
+.atmo-edit-sum { font-size: .8rem; opacity: .55; }
+.atmo-edit-sum::before { content: '\00B7\00A0'; }
 
 /* ---- PS-4: the post card + the transient reader ---- */
 .post-card { border: 1px solid var(--line); border-radius: var(--radius-md);

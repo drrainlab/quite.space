@@ -168,6 +168,46 @@ const ATMO = (() => {
   // bytes after the sound consent and before the element needs them.
   let soundGate = null;
 
+  /**
+   * The bed's bytes, before the <audio> element needs them.
+   *
+   * A space serves an asset it does not hold as a 409, and an <audio> pointed
+   * at one fails silently — el.play() rejects and the catch says nothing. So
+   * a reader who was not the author heard nothing and was told nothing, while
+   * the author heard it fine because the bytes were already on their disk.
+   *
+   * The pictures never had this bug: their plates go through observeMedia,
+   * which ASKS the node to fetch. The sound has to ask too, and this is the
+   * one place that does it — every path to startBed goes through here.
+   *
+   * @param {string} assetId
+   * @param {(ok: boolean, why?: string) => void} done called when it is
+   *   settled; may be preceded by `waiting` calls while the ladder retries
+   * @param {(note: string) => void} [waiting] the fetch is still going, and
+   *   this is what to say meanwhile
+   * @returns {boolean} true when the answer is deferred, so the caller knows
+   *   to show a waiting state rather than fall through to a final one
+   */
+  function withBedBytes(assetId, done, waiting) {
+    // A transient post reader supplies its own gate: its bytes come through
+    // a SESSION route, and the held-space fetch below would ask a space this
+    // node does not have.
+    if (soundGate) { soundGate(assetId, done); return true; }
+    // No fetch machinery at all (the editor's preview, a stub): behave the
+    // way this did before there was any asking — point at it and hope.
+    if (typeof autoFetchAsset !== 'function') { done(true); return false; }
+    autoFetchAsset(assetId, null, (reason) => {
+      // Reported the first time nobody has answered — the ladder keeps
+      // asking, so this changes what the reader is TOLD, not what we do.
+      if (waiting) waiting(reason === 'no_source'
+        ? 'nobody is answering for the sound yet — still asking'
+        : 'fetching the sound…');
+    }).then(
+      (ok) => done(!!ok, ok ? '' : 'the sound never arrived'),
+      () => done(false, 'the sound never arrived'));
+    return true;
+  }
+
   function startBed(audio, postId) {
     stopBed();
     if (!audio || !audio.asset) return { ok: false, why: 'this post has no sound' };
@@ -254,6 +294,13 @@ const ATMO = (() => {
   // atmosphere; the atmosphere is not an insert inside the post.
 
   let mounted = null; // { shell, stage, scrim, bar, scene, atmosphere, postId }
+  /**
+   * Which mount a callback belongs to. Fetching the bed's bytes takes as long
+   * as it takes, and a reader can close the post while it is in the air — so
+   * anything that starts sound checks that the post it was asked for is still
+   * the one on screen.
+   */
+  let mountGen = 0;
   /** Keeps the still frame the same size as the stage it sits in. */
   let stillRO = null;
   /** The running image sequence, when the recipe is one. */
@@ -261,6 +308,7 @@ const ATMO = (() => {
 
   /** Take down whatever is playing and undo the shell. Safe to call twice. */
   function unmount() {
+    mountGen++;
     stopBed();
     srcFor = null;
     posterInto = null;
@@ -478,12 +526,22 @@ const ATMO = (() => {
         });
         if (hasSound && soundMode() !== 'never') {
           btn(bed ? 'Mute' : 'Unmute', 'btn-plain', () => {
-            if (bed) stopBed();
-            else {
-              const r = startBed(atmosphere.audio, postId);
-              if (!r.ok) notes = [r.why];
-            }
-            renderBar('live', notes);
+            if (bed) { stopBed(); renderBar('live', notes); return; }
+            // Unmute asks for the bytes too. It usually returns at once —
+            // they arrived when the reader first opened the sound — but a
+            // reader who muted before they ever landed would otherwise get
+            // an <audio> pointed at a 409 and silence with no explanation.
+            const gen = mountGen;
+            const deferred = withBedBytes(atmosphere.audio.asset, (ok, why) => {
+              if (gen !== mountGen) return;
+              if (ok) {
+                const r = startBed(atmosphere.audio, postId);
+                renderBar('live', r.ok ? notes : [r.why]);
+              } else {
+                renderBar('live', ['quiet — ' + (why || 'the sound never arrived')]);
+              }
+            }, (note) => { if (gen === mountGen) renderBar('live', [note]); });
+            if (deferred) renderBar('live', ['fetching the sound…']);
           });
         }
         btn('Leave', 'btn-plain', () => {
@@ -548,28 +606,31 @@ const ATMO = (() => {
           if (!fall.poster) stillFrame(stage, scene, atmosphere);
         }
       }
-      if (withSound && soundGate && atmosphere.audio && atmosphere.audio.asset) {
-        // The consent already happened (the person pressed the sound
-        // door); the gate fetches the bytes and re-enters when they are
-        // there — or reports why they are not.
-        const gate = soundGate;
-        gate(atmosphere.audio.asset, (ok, why) => {
+      if (withSound && atmosphere.audio && atmosphere.audio.asset) {
+        // The consent already happened (the person pressed the sound door);
+        // the bytes are fetched and the bed starts when they are there — or
+        // the bar says why they are not.
+        const gen = mountGen;
+        const state = () => (!sceneLive && !bed) ? 'still' : 'live';
+        const deferred = withBedBytes(atmosphere.audio.asset, (ok, why) => {
+          // The reader may have left, or opened another post, while this was
+          // in the air. Starting a bed for a post nobody is on would be sound
+          // arriving from nowhere.
+          if (gen !== mountGen) return;
           if (ok) {
             const r = startBed(atmosphere.audio, postId);
             if (!r.ok) notes.push('quiet — ' + r.why);
+            else if (soundMode() === 'remember') localStorage.setItem(CONSENT_KEY, '1');
           } else {
             notes.push('quiet — ' + (why || 'the sound never arrived'));
           }
-          renderBar((!sceneLive && !bed) ? 'still' : 'live', notes);
+          renderBar(state(), notes);
+        }, (note) => {
+          if (gen !== mountGen) return;
+          renderBar(state(), notes.concat([note]));
         });
-        renderBar((!sceneLive && !bed) ? 'still' : 'live',
-          notes.concat(['fetching the sound…']));
+        if (deferred) renderBar(state(), notes.concat(['fetching the sound…']));
         return;
-      }
-      if (withSound) {
-        const r = startBed(atmosphere.audio, postId);
-        if (!r.ok) notes.push(r.why);
-        else if (soundMode() === 'remember') localStorage.setItem(CONSENT_KEY, '1');
       }
       // Nothing came up at all — no motion, no sound. That is not a "live"
       // state to control, it is the still state with an explanation, and the
@@ -1374,17 +1435,75 @@ const ATMO_EDIT = (() => {
     head.appendChild(drop);
     host.appendChild(head);
 
-    if (isSeq) {
-      renderStages(host, doc, a, changed);
-    } else {
-      renderScene(host, a, changed, onChange);
+    // Sound first, and large. Every visual knob below has a working default —
+    // a scene, a seed, a palette taken from the room — so the panel opens on
+    // the one decision that has none and that nothing can guess: whether this
+    // post is meant to be heard.
+    renderSound(host, a, changed, onChange);
+
+    // A sequence with no pictures is not an atmosphere, and this says so out
+    // here where a collapsed panel cannot hide it. (The words have their own
+    // warning, beside the field, because they can only go missing while
+    // somebody is typing in it — see renderWords.)
+    const problems = [];
+    if (isSeq && !docStages({ atmosphere: a }).length) {
+      problems.push('A sequence needs at least one picture, or this post has no atmosphere at all.');
+    }
+    for (const p of problems) host.appendChild(el('p', 'hint warn', p));
+
+    // --- everything visual, folded away ------------------------------------
+    // The defaults are already publishable, so this is tuning, not setup. It
+    // opens by itself when something out here needs attention, because a
+    // warning pointing at a field nobody can see is worse than no warning.
+    const more = el('details', 'atmo-edit-more');
+    more.open = editOpen || problems.length > 0;
+    const sum = el('summary', null, 'Customize');
+    sum.appendChild(el('span', 'atmo-edit-sum', summarise(a, doc)));
+    more.appendChild(sum);
+    // Re-render on toggle rather than just remembering: a closed panel must
+    // not leave the live preview drawing into a box of zero height.
+    more.ontoggle = () => {
+      if (more.open === editOpen) return;
+      editOpen = more.open;
+      render(host, doc, onChange);
+    };
+    host.appendChild(more);
+
+    // Folding the panel away takes the preview's canvas out of the document,
+    // and STAGE would go on drawing into it — a rAF loop nobody can see and
+    // nothing will ever stop. Hand the stage back instead.
+    if ((!more.open || isSeq) && previewHasStage) {
+      previewHasStage = false;
+      if (typeof STAGE !== 'undefined') STAGE.clear();
     }
 
-    // --- palette ----------------------------------------------------------
-    // In both forms: the palette's ground is what the readability scrim is
-    // made of, so a sequence needs one just as much as a scene does.
-    renderPalette(host, a, changed);
-    renderWordsSoundLineage(host, a, changed, onChange);
+    if (more.open) {
+      if (isSeq) renderStages(more, doc, a, changed);
+      else renderScene(more, a, changed, onChange);
+      // The palette's ground is what the readability scrim is made of, so a
+      // sequence needs one just as much as a scene does.
+      renderPalette(more, a, changed);
+      renderWords(more, a);
+      renderLineage(more, a);
+    }
+  }
+
+  /** Whether the visual half is unfolded. Outlives a re-render; not a document
+   *  property — where this author last left a panel is nobody else's business. */
+  let editOpen = false;
+  /** Whether the editor's preview is the thing currently holding STAGE. There
+   *  is one stage for the whole client, so this is how the editor knows it has
+   *  something of its own to give back. */
+  let previewHasStage = false;
+
+  /** What is under the fold, in a few words, so closing it hides no decision. */
+  function summarise(a, doc) {
+    if (!a.visual.scene) {
+      const n = docStages({ atmosphere: a }).length;
+      return n === 1 ? '1 picture' : n + ' pictures';
+    }
+    const known = typeof SCENES !== 'undefined' && SCENES.get(String(a.visual.scene));
+    return known ? known.label : String(a.visual.scene);
   }
 
   /** The generative half: scene, seed, parameters, and a live preview. */
@@ -1468,10 +1587,8 @@ const ATMO_EDIT = (() => {
           'post where the background should change.'
         : (n === 1 ? 'One picture' : n + ' pictures') +
           ', shown among the blocks below where each one takes over.'));
-    if (n === 0) {
-      host.appendChild(el('p', 'hint warn',
-        'A sequence needs at least one picture, or this post has no atmosphere at all.'));
-    }
+    // The "no pictures at all" warning lives at panel level, outside the fold:
+    // a recipe that will not publish must not be able to hide.
   }
 
   // ---- stages IN THE BLOCK FLOW --------------------------------------------
@@ -1661,20 +1778,26 @@ const ATMO_EDIT = (() => {
     host.appendChild(row('Palette', pal));
   }
 
-  function renderWordsSoundLineage(host, a, changed, onChange) {
-    // --- the words, which are required -----------------------------------
-    // ADR-013 invariant 1: the renderer may degrade, the meaning may not. A
-    // reader who gets no picture — old client, reduced motion, an id we do
-    // not know — still gets this, so the validator refuses a recipe without
-    // it and the editor says so before the publish button does.
+  /**
+   * The words, which are required.
+   *
+   * ADR-013 invariant 1: the renderer may degrade, the meaning may not. A
+   * reader who gets no picture — old client, reduced motion, an id we do not
+   * know — still gets this, so the validator refuses a recipe without it.
+   * The editor keeps a true sentence here, so the field can only be empty
+   * WHILE somebody is clearing it — the next structural render writes one
+   * back. That is why the warning lives here, in place, rather than with the
+   * panel's own: it has to appear on the keystroke that empties the field,
+   * for the author who is looking straight at it, and it would never fire at
+   * all if it were computed at render time.
+   */
+  function renderWords(host, a) {
     const fall = el('textarea', 'atmo-edit-text');
     fall.maxLength = MAX_FALLBACK;
     fall.rows = 2;
     fall.placeholder = 'What a reader gets when the picture cannot be shown';
     fall.value = a.fallback.text || '';
     host.appendChild(row('In words', fall));
-    // Only ever seen by someone who deliberately empties the field — the
-    // editor keeps a true sentence there otherwise.
     const warn = el('p', 'hint warn',
       'Without these words a reader who cannot see the picture gets nothing.');
     host.appendChild(warn);
@@ -1684,27 +1807,50 @@ const ATMO_EDIT = (() => {
     const syncWarn = () => { warn.hidden = !!(a.fallback.text || '').trim(); };
     fall.oninput = () => { a.fallback.text = fall.value; syncWarn(); };
     syncWarn();
+  }
 
-    // --- sound ------------------------------------------------------------
-    const sound = el('div', 'atmo-edit-sound');
+  /**
+   * The sound, at the top of the panel and given room.
+   *
+   * It is the only part of an atmosphere with no usable default: a scene, a
+   * seed and a palette can all be chosen for an author, and a bed cannot be
+   * invented. It is also the part a reader consents to separately, so it is
+   * worth deciding on deliberately rather than finding at the bottom of a
+   * list of sliders.
+   */
+  function renderSound(host, a, changed, onChange) {
+    const box = el('div', 'atmo-edit-sound');
     if (a.audio && a.audio.asset) {
-      sound.appendChild(el('code', null, a.audio.asset.slice(0, 8) + '…'));
+      const line = el('div', 'atmo-edit-sound-line');
+      line.appendChild(el('span', 'atmo-edit-sound-mark', '♫'));
+      line.appendChild(el('code', null, a.audio.asset.slice(0, 8) + '…'));
+      const loop = el('button', 'btn-plain', a.audio.mode === 'once' ? 'once' : 'loop');
+      loop.type = 'button';
+      loop.title = a.audio.mode === 'once'
+        ? 'plays once when the reader opens the post'
+        : 'plays for as long as they are reading';
+      loop.onclick = () => { a.audio.mode = a.audio.mode === 'once' ? 'loop' : 'once'; changed(); };
+      line.appendChild(loop);
+      const rm = el('button', 'btn-plain', 'Remove');
+      rm.type = 'button';
+      rm.onclick = () => { delete a.audio; changed(); };
+      line.appendChild(rm);
+      box.appendChild(line);
+
       const g = el('input', 'atmo-edit-slider');
       g.type = 'range'; g.min = '0'; g.max = '1000'; g.step = '10';
       g.value = String(a.audio.gain ?? 700);
       g.title = 'gain';
       g.onchange = () => { a.audio.gain = Number(g.value); if (onChange) onChange(); };
-      sound.appendChild(g);
-      const loop = el('button', 'btn-plain', a.audio.mode === 'once' ? 'once' : 'loop');
-      loop.type = 'button';
-      loop.onclick = () => { a.audio.mode = a.audio.mode === 'once' ? 'loop' : 'once'; changed(); };
-      sound.appendChild(loop);
-      const rm = el('button', 'btn-plain', 'Remove');
-      rm.type = 'button';
-      rm.onclick = () => { delete a.audio; changed(); };
-      sound.appendChild(rm);
+      const gwrap = el('div', 'atmo-edit-slider-wrap');
+      gwrap.appendChild(el('span', 'atmo-edit-sound-sub', 'volume'));
+      gwrap.appendChild(g);
+      box.appendChild(gwrap);
+      box.appendChild(el('p', 'hint',
+        'A reader chooses this: the post opens silent, with a door that says ' +
+        'there is sound behind it.'));
     } else {
-      const pickAudio = el('button', 'btn-plain', 'Add a sound…');
+      const pickAudio = el('button', 'btn-filled atmo-edit-sound-add', '♫  Add a sound');
       pickAudio.type = 'button';
       pickAudio.onclick = () => chooseAsset('audio/*', async f => {
         const r = await uploadAssetFile(f);
@@ -1712,18 +1858,21 @@ const ATMO_EDIT = (() => {
         if (Number(a.audio.fade_in_ms) > MAX_FADE) a.audio.fade_in_ms = MAX_FADE;
         changed();
       });
-      sound.appendChild(pickAudio);
+      box.appendChild(pickAudio);
+      box.appendChild(el('p', 'hint',
+        'Plays behind the post for a reader who opens it with sound. Optional.'));
     }
-    host.appendChild(row('Sound', sound));
+    host.appendChild(box);
+  }
 
-    // --- lineage, when this recipe came from somebody else's post ----------
-    if (a.derived_from && (a.derived_from.publication_id || a.derived_from.recipe_hash)) {
-      const note = el('p', 'hint',
-        a.derived_from.publication_id
-          ? 'Derived from an atmosphere in this space. The link is recorded when you publish.'
-          : 'Derived from another atmosphere, recorded by digest only.');
-      host.appendChild(note);
-    }
+  /** Where this recipe came from, when it came from somebody else's post. */
+  function renderLineage(host, a) {
+    if (!a.derived_from) return;
+    if (!a.derived_from.publication_id && !a.derived_from.recipe_hash) return;
+    host.appendChild(el('p', 'hint',
+      a.derived_from.publication_id
+        ? 'Derived from an atmosphere in this space. The link is recorded when you publish.'
+        : 'Derived from another atmosphere, recorded by digest only.'));
   }
 
   /** Set one parameter without disturbing the order of the others. */
@@ -1754,6 +1903,7 @@ const ATMO_EDIT = (() => {
   function playPreview(host, a) {
     if (typeof STAGE === 'undefined' || typeof SCENES === 'undefined') return;
     STAGE.clear();
+    previewHasStage = true;
     const scene = SCENES.make(String(a.visual.scene || ''), {
       seed: Number(a.visual.seed) || 0, params: ATMO.paramsOf(a),
     });

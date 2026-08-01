@@ -163,6 +163,7 @@ function install(global, size) {
 
   const store = new Map();
   const observers = new Set();
+  const audios = [];
   // Timers ride the same synthetic clock as frames, so "no two background
   // changes closer together than N milliseconds" is an assertion rather than
   // a sleep.
@@ -208,6 +209,15 @@ function install(global, size) {
       observe() {} unobserve() {} disconnect() {}
     },
     console: { warn() {}, error() {}, log() {} },
+    // Enough <audio> to answer bookkeeping questions — WAS one created, and
+    // WITH WHICH url. Nothing is decoded and nothing sounds; see the note at
+    // the top about what this stub is and is not for.
+    Audio: class {
+      constructor() { this.src = ''; this.volume = 1; this.loop = false; audios.push(this); }
+      play() { this.played = true; return Promise.resolve(); }
+      pause() { this.paused = true; }
+      addEventListener() {} removeEventListener() {}
+    },
   });
   global.window = global;
 
@@ -216,6 +226,8 @@ function install(global, size) {
     document: doc,
     /** How many elements are still being watched, across every observer. */
     observed() { let n = 0; for (const o of observers) n += o.seen.size; return n; },
+    /** Every <audio> element built so far, oldest first. */
+    audios() { return audios; },
     /** Advance the synthetic clock and run whatever is due — frames, then timers. */
     tick(ms) {
       now += ms;
