@@ -411,8 +411,16 @@ function renderPubBlock(b) {
       h.textContent = p.text || ''; el.appendChild(h); break;
     }
     case 'text': {
-      const t = document.createElement('p');
-      t.className = 'txt'; t.textContent = p.text || ''; el.appendChild(t); break;
+      // Markdown is the text block's language (see markdown.js). It is a
+      // reading decision, not a wire one: the document still carries exactly
+      // what the author typed, and a client that does not know this shows
+      // the source — which is itself readable, and is the whole reason
+      // markdown is the right language to adopt here.
+      const t = document.createElement('div');
+      t.className = 'txt md';
+      if (typeof MD !== 'undefined') MD.into(t, p.text || '');
+      else t.textContent = p.text || '';
+      el.appendChild(t); break;
     }
     case 'quote': {
       const q = document.createElement('blockquote');

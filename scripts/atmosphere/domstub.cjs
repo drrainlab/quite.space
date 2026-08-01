@@ -63,7 +63,18 @@ function install(global, size) {
       getAttribute(k) { return k in el.attrs ? el.attrs[k] : null; },
       removeAttribute(k) { delete el.attrs[k]; },
       addEventListener() {}, removeEventListener() {},
-      appendChild(c) { c.parentNode = el; el.children.push(c); return c; },
+      appendChild(c) {
+        // A fragment is SPREAD by whoever receives it — that is what makes it
+        // a fragment rather than a wrapper, and a stub that nested it instead
+        // would report a tree one level deeper than the browser builds.
+        if (c && c.tagName === '#FRAGMENT') {
+          for (const g of c.children.slice()) { g.parentNode = el; el.children.push(g); }
+          c.children = [];
+          return c;
+        }
+        c.parentNode = el; el.children.push(c); return c;
+      },
+      append(...cs) { for (const c of cs) el.appendChild(c); },
       // Only `innerHTML = ''` is modelled, because that is the only form the
       // client uses — as "empty this". Leaving it unimplemented was worse
       // than absent: assignments silently did nothing, so a rebuilt bar kept
@@ -159,6 +170,11 @@ function install(global, size) {
     hidden: false,
     body,
     createElement: makeEl,
+    // A fragment is a parentless bag of children that vanishes into whatever
+    // it is appended to. Modelled as an element whose appendChild is spread
+    // by the receiver — enough for code that builds a tree and hands it over.
+    createDocumentFragment: () => makeEl('#fragment'),
+    createTextNode: (t) => { const n = makeEl('#text'); n.textContent = String(t); return n; },
     getElementById: () => null,
     querySelectorAll: sel => findAll(body, sel),
     querySelector: sel => findAll(body, sel)[0] || null,

@@ -897,7 +897,14 @@ const ATMO = (() => {
     // only a calm even wash now, and it can be lighter than before: the
     // picture stays a picture.
     scrim.style.background = `linear-gradient(rgba(${rgb},0.9), rgba(${rgb},1))`;
-    scrim.style.opacity = String(Math.min(0.62, 0.16 + 0.4 * luma));
+    // The response curve, steeper than it was at the bright end. A dark
+    // photograph needs almost nothing and should keep its depth; a bright one
+    // needs a great deal, and the old slope ran out long before it got there
+    // — a bark photograph in full light measured 0.5 and was handed a wash of
+    // 0.36, which is a picture the text has to fight. The ceiling stays below
+    // 1 on purpose: at some point the honest answer is that the atmosphere is
+    // a background, not a page colour.
+    scrim.style.opacity = String(Math.min(0.78, 0.14 + 0.72 * Math.max(0, luma)));
     if (!shell) return;
     // What the letters' glow is made of. The measurement lives here, the
     // shape lives in the stylesheet — a halo on the glyphs, so the picture
@@ -989,7 +996,22 @@ const ATMO = (() => {
       cv.width = N; cv.height = N;
       const ctx = cv.getContext('2d', { willReadFrequently: true });
       if (!ctx) return -1;
-      ctx.drawImage(img, 0, 0, N, N);
+      // MEASURE WHAT IS ON SCREEN, not what is in the file.
+      //
+      // A plate is object-fit: cover, so a tall photograph in a wide window
+      // has most of its height cropped away — and the part that survives is
+      // exactly the part the text is read against. Drawing the whole file
+      // measured a picture nobody sees, which is how a bright band ended up
+      // under a paragraph with a scrim computed from the dark sky above it.
+      const nw = img.naturalWidth || 0, nh = img.naturalHeight || 0;
+      const box = img.getBoundingClientRect();
+      let sx = 0, sy = 0, sw = nw, sh = nh;
+      if (nw > 0 && nh > 0 && box.width > 0 && box.height > 0) {
+        const want = box.width / box.height, have = nw / nh;
+        if (have > want) { sw = nh * want; sx = (nw - sw) / 2; }
+        else { sh = nw / want; sy = (nh - sh) / 2; }
+      }
+      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, N, N);
       const d = ctx.getImageData(0, 0, N, N).data;
       // The text column, in image terms: the middle band. Reading the edges
       // would let a dark corner pay for a bright centre.

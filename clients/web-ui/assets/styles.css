@@ -1148,6 +1148,41 @@
   #pubArticle img, .pub-block img, .pub-card img {
     max-width: 100%; height: auto; border-radius: var(--radius-md);
     cursor: zoom-in; display: block; }
+  /* Markdown in a post's text block. Modest on purpose: the article already
+     has a typographic scale, and a body heading must never grow into
+     something that competes with the title above it. */
+  .md > :first-child { margin-top: 0; }
+  .md > :last-child { margin-bottom: 0; }
+  .md p { margin: 0 0 .85em; }
+  .md h2, .md h3, .md h4, .md h5, .md h6 {
+    margin: 1.4em 0 .5em; line-height: 1.25; font-weight: 600;
+  }
+  .md h2 { font-size: 1.28em; }
+  .md h3 { font-size: 1.12em; }
+  .md h4, .md h5, .md h6 { font-size: 1em; color: var(--dim); }
+  .md ul, .md ol { margin: 0 0 .85em; padding-left: 1.4em; }
+  .md li { margin: .2em 0; }
+  .md blockquote {
+    margin: .9em 0; padding: .1em 0 .1em .9em;
+    border-left: 2px solid var(--line); color: var(--dim);
+  }
+  .md hr { border: 0; border-top: 1px solid var(--line); margin: 1.5em 0; }
+  .md code {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .9em;
+    background: color-mix(in srgb, var(--fg, #fff) 8%, transparent);
+    padding: .1em .35em; border-radius: 4px;
+  }
+  .md pre {
+    margin: .9em 0; padding: .8em 1em; overflow-x: auto;
+    background: color-mix(in srgb, var(--fg, #fff) 6%, transparent);
+    border-radius: 8px;
+  }
+  .md pre code { background: none; padding: 0; }
+  .md a { color: var(--accent); text-underline-offset: 2px; }
+  /* An image written into text renders as its words and its address — see
+     markdown.js. It is dimmed so it reads as a note, not as a picture that
+     failed to load. */
+  .md .md-noimg { color: var(--dim); font-size: .92em; }
   #pubArticle audio, .pub-block audio { width: 100%; max-width: 480px; display: block; }
   #pubArticle video, .pub-block video { max-width: 100%; height: auto; }
   .pub-block table { display: block; overflow-x: auto; }
@@ -1980,6 +2015,33 @@ header .nav-act { padding: 5px 11px 5px 10px; min-height: 30px; }
 }
 .atmo-plate.on { opacity: 1; }
 .atmo-scrim { transition: opacity var(--atmo-fade, 700ms) linear; }
+/* A slow tide in the SPACE's own colour, over the readability wash.
+   ------------------------------------------------------------------
+   The wash is a flat neutral by design, and a flat neutral over a
+   photograph reads as a sheet of plastic. This puts the room back into it:
+   two very wide gradients in --acc, drifting against each other so the
+   surface is never quite even and never quite still. It belongs to the
+   scrim rather than to a layer of its own, so there is no node to mount,
+   nothing to tear down, and it cannot outlive the thing it tints.
+
+   The numbers are the photosensitivity floor, not taste: alpha stays inside
+   a narrow band well under a tenth, one cycle is half a minute, and nothing
+   about it changes luminance abruptly — at this rate an eye reads it as the
+   page breathing rather than as anything happening. */
+.atmo-scrim::after {
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  background:
+    radial-gradient(80% 55% at 22% 18%,
+      color-mix(in srgb, var(--acc, #7ab4e0) 30%, transparent), transparent 70%),
+    radial-gradient(70% 60% at 78% 82%,
+      color-mix(in srgb, var(--acc, #7ab4e0) 22%, transparent), transparent 72%);
+  opacity: .085;
+  animation: atmo-tide 34s ease-in-out infinite alternate;
+}
+@keyframes atmo-tide {
+  from { transform: translate3d(-2.5%, -1.5%, 0) scale(1.06); opacity: .06; }
+  to   { transform: translate3d(2.5%,  1.5%, 0) scale(1.12); opacity: .105; }
+}
 
 /* The controller: a slim in-flow row, not a panel. Before entry it holds the
    doors; after, Pause / Mute / Leave. */
@@ -2028,6 +2090,15 @@ header .nav-act { padding: 5px 11px 5px 10px; min-height: 30px; }
    moves. */
 @media (prefers-reduced-motion: reduce) {
   .atmo-plate, .atmo-scrim { transition-duration: 900ms !important; }
+  /* The tide holds still — the colour of the room stays, its movement does
+     not. Somebody who asked for less motion asked for that, not for a
+     duller page. */
+  .atmo-scrim::after { animation: none; opacity: .085; }
+}
+/* Opaque behind content under reduced transparency: the tint is a tint, and
+   it must not be the reason a paragraph sits on a picture. */
+@media (prefers-reduced-transparency: reduce) {
+  .atmo-scrim::after { display: none; }
 }
 
 /* ---- Atmosphere editor (AM-5) ---------------------------------------------

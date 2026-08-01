@@ -175,8 +175,13 @@ const PREV = (() => {
         break;
       }
       case 'text': case 'callout': {
-        const p = document.createElement('p');
-        p.textContent = props.text || '';
+        // The transient reader renders the same language as the held one —
+        // two renderers that disagree about what a post SAYS would be worse
+        // than either being wrong alone.
+        const p = document.createElement('div');
+        p.className = 'md';
+        if (typeof MD !== 'undefined') MD.into(p, props.text || '');
+        else p.textContent = props.text || '';
         box.appendChild(p);
         break;
       }
