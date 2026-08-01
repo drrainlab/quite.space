@@ -167,24 +167,48 @@
   header .dim { color: var(--dim); font-size: 12px; }
   /* FOLDING PANELS.
      -------------------------------------------------------------------
-     Both sides slide away and the reading column takes the room. The
-     panel keeps its width and moves out on a negative margin rather than
-     shrinking to zero: a width animation reflows everything inside it on
-     every frame, and a list of spaces re-wrapping as it disappears is
-     both ugly and the expensive way round.
-     One transition, on a click, ~200ms — the opposite of the continuous
-     work that was making the machine warm. */
-  main { flex: 1; display: flex; min-height: 0; overflow: hidden; }
-  #sidebar {
-    width: 260px; padding: 12px;
-    display: flex; flex-direction: column; gap: 8px; overflow-y: auto;
-    transition: margin-left .2s ease;
+     The GRID owns the geometry, and that is the whole point. The first
+     version folded with a negative margin the width of the panel plus its
+     padding — a number written by hand in a second place, which is only
+     ever right until one of the two changes. It drifted, and the layout
+     slid sideways with the title cut off at one edge and the messages
+     running off the other.
+     Here the column IS the width: closing it to 0 cannot disagree with
+     anything, because there is no second number to disagree with. The
+     panel is clipped rather than re-wrapped, and its contents hold their
+     width while the column closes, so nothing inside reflows on the way.
+     One transition, on a click, ~200ms. */
+  /* Each measurement is written ONCE and everything else derives from it.
+     That is the actual repair: the first version had the fold offset spelled
+     out by hand as "panel width plus its padding", a second copy of two
+     numbers that was only ever right until one of them moved. It moved. */
+  main {
+    --pad-panel: 12px;
+    --w-nav: 260px;
+    --w-info: 250px;
+    flex: 1; min-height: 0; overflow: hidden;
+    display: grid;
+    grid-template-columns:
+      var(--col-nav, calc(var(--w-nav) + 2 * var(--pad-panel)))
+      minmax(0, 1fr)
+      var(--col-info, calc(var(--w-info) + 2 * var(--pad-panel)));
+    transition: grid-template-columns .2s ease;
   }
-  body.fold-nav #sidebar { margin-left: -284px; }
+  body.fold-nav main { --col-nav: 0px; }
+  body.fold-info main { --col-info: 0px; }
+  #sidebar {
+    padding: var(--pad-panel);
+    display: flex; flex-direction: column; gap: 8px;
+    overflow: hidden auto; min-width: 0;
+  }
+  /* The contents keep their width while the column shuts around them, so
+     nothing inside re-wraps on the way out. */
+  #sidebar > * { min-width: var(--w-nav); }
+  #members > * { min-width: var(--w-info); }
   .panel-toggle { font-size: 15px; line-height: 1; }
   body.fold-nav #tglNav { opacity: .5; }
   @media (prefers-reduced-motion: reduce) {
-    #sidebar, #members { transition: none; }
+    main { transition: none; }
   }
   .space {
     padding: 9px 11px; border: 1px solid var(--line); border-radius: var(--radius-md);
@@ -337,9 +361,8 @@
   h3 { margin-bottom: 6px; color: var(--acc); font-size: 13px; }
   .hint { color: var(--dim); font-size: 11px; }
   #members {
-    width: 250px; padding: 12px;
-    overflow-y: auto; font-size: 12px;
-    transition: margin-right .2s ease;
+    padding: var(--pad-panel, 12px); font-size: 12px;
+    overflow: hidden auto; min-width: 0;
   }
   .member {
     border: 1px solid var(--line); border-radius: 4px; background: var(--panel);
@@ -678,8 +701,13 @@
   .sysrow { align-self: center; color: var(--muted); font-size: 12px;
     background: var(--panel); border-radius: 999px; padding: 3px 12px; margin: 8px 0; }
 
-  /* --- chat-list sidebar --- */
-  #sidebar { padding: 8px; gap: 3px; }
+  /* --- chat-list sidebar ---
+     Sets the VARIABLE, not the padding: the grid column is computed from it,
+     so a rule that changed the padding directly would put the column and the
+     panel back out of step — which is the bug this layout was rebuilt to
+     make impossible. */
+  main { --pad-panel: 8px; }
+  #sidebar { gap: 3px; }
   .space { display: flex; gap: 10px; align-items: center; border: 0;
     border-radius: var(--radius-md); padding: 8px 10px; background: transparent; }
   .space:hover { background: var(--surface-raised); }
@@ -888,10 +916,8 @@
   #convbar { display: flex; align-items: center; gap: 8px; padding: 8px 12px 8px 16px;
     min-height: 48px; }
   #convTitle { font-weight: 600; font-size: calc(15px * var(--font-scale)); }
-  /* Folds rather than vanishing. `display: none` had it disappear and the
-     content snap wider in one frame; the panel keeps its width and slides
-     out, so the two sides behave the same way. */
-  #members.hidden { margin-right: -274px; }
+  /* The panel's own class is kept for anything that still reads it; the
+     FOLD is body.fold-info on the grid, so both sides work one way. */
   .info-toggle { cursor: pointer; }
 
   /* --- sheet-style dialog --- */
@@ -1126,20 +1152,23 @@
   }
   /* mobile (§20): list ↔ space as screens; composer bottom; pass full-screen */
   @media (max-width: 600px) {
-    /* The panels fold rather than restacking: applyPanels() starts them
-       folded on a narrow screen, and unfolding one overlays the reading
-       column instead of squeezing it. */
-    #sidebar { width: 78vw; max-width: 300px; }
-    main { position: relative; }
-    #sidebar, #members { position: absolute; top: 0; bottom: 0; z-index: 30;
-      background: var(--bg); box-shadow: var(--shadow); }
+    /* At this width the reading column IS the screen, so a panel does not
+       take a column at all — it comes over the top and goes away again.
+       The grid collapses to a single track and the panels leave the flow;
+       the fold is then a TRANSFORM, which clears the whole panel however
+       wide the screen makes it and costs the compositor alone. */
+    main { position: relative; grid-template-columns: minmax(0, 1fr); }
+    #sidebar, #members {
+      position: absolute; top: 0; bottom: 0; z-index: 30;
+      width: 78vw; max-width: 300px;
+      background: var(--bg); box-shadow: var(--shadow);
+      transition: transform .2s ease;
+    }
     #sidebar { left: 0; }
-    #members { right: 0; width: 78vw; max-width: 300px; }
-    /* Absolutely placed, so the fold is a TRANSFORM — off the main thread,
-       and it clears the whole panel however wide the screen makes it. */
-    #sidebar, #members { transition: transform .2s ease; }
-    body.fold-nav #sidebar { margin-left: 0; transform: translateX(-100%); }
-    #members.hidden { margin-right: 0; transform: translateX(100%); }
+    #members { right: 0; }
+    #sidebar > *, #members > * { min-width: 0; }
+    body.fold-nav #sidebar { transform: translateX(-100%); }
+    body.fold-info #members { transform: translateX(100%); }
     #content { min-height: 0; }
     dialog { max-width: 100%; width: calc(100% - 16px); }
     #dlgPass, #dlgJoin { width: 100%; max-width: 100%; height: 100%;

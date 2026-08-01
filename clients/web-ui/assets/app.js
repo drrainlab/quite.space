@@ -1162,6 +1162,7 @@ function applyPanels() {
   if (nav) nav.setAttribute('aria-expanded', String(!navFolded));
 
   const infoFolded = isPanelFolded('info');
+  document.body.classList.toggle('fold-info', infoFolded);
   const m = document.getElementById('members');
   if (m) m.classList.toggle('hidden', infoFolded);
 }
