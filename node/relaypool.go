@@ -88,12 +88,19 @@ func newRelayPool(dial func(string) (*relay.Client, error)) *relayPool {
 
 // pool returns the runtime's connection pool, created on first use; its
 // janitor lives until Runtime.Close (closeAll closes p.stop).
+// The pointer is atomic because Close reads it WITHOUT going through the
+// Once — it must not create a pool merely to shut one down, and it cannot
+// claim the Once either (a later pool() would then get nil). sync.Once
+// orders the field only for callers of Do, so a plain field here raced a
+// shutdown against a sync goroutine's first use; the pool created inside
+// that window kept its janitor running past Close.
 func (r *Runtime) pool() *relayPool {
 	r.poolOnce.Do(func() {
-		r.relayPoolV = newRelayPool(r.dialRelay)
-		go r.relayPoolV.janitor()
+		p := newRelayPool(r.dialRelay)
+		r.relayPoolV.Store(p)
+		go p.janitor()
 	})
-	return r.relayPoolV
+	return r.relayPoolV.Load()
 }
 
 // withRelayControl runs fn with the pooled control-lane client — probes,

@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/drrainlab/quiet_places/kernel/eventlog"
@@ -140,8 +141,9 @@ type Runtime struct {
 	relaySync *relaySyncState
 
 	// relayPool holds the persistent relay connections (RR-2): two lanes
-	// per address, health, backoff. Created lazily under poolOnce.
-	relayPoolV *relayPool
+	// per address, health, backoff. Created lazily under poolOnce; the
+	// pointer is atomic because Close reads it without the Once (see pool).
+	relayPoolV atomic.Pointer[relayPool]
 	poolOnce   sync.Once
 
 	// relayWants holds blob hashes this node is trying to fetch over the relay
@@ -220,6 +222,15 @@ type spaceState struct {
 	// rejected remembers ingress frames that failed admission so a
 	// re-pushed copy is dropped cheaply (PA-1.3). Lazily created.
 	rejected *rejectedRing
+	// throttled counts frames DEFERRED by the owner's contribution limit
+	// (IC-1), in memory, r.mu-guarded.
+	//
+	// Deliberately not PolicyStats.IgnoredTotal, which means "refused for
+	// good": a throttled frame is coming back, so it would be counted again
+	// every cycle it waits, and one loud contributor would flush the 64-entry
+	// rejection ring of every real policy refusal. An owner who sets a limit
+	// needs to see it working; they do not need it to look like censorship.
+	throttled uint64
 
 	// The last projection this replica verified and installed, kept VERBATIM
 	// (PH-2/PH-3): a mirror republishes the owner's exact signed bytes, which
@@ -547,8 +558,8 @@ func (r *Runtime) Close() {
 	// their memory budgets so a long-lived process (tests, the desktop
 	// shell reopening) does not leak the global cap.
 	r.previews.closeAll()
-	if r.relayPoolV != nil {
-		r.relayPoolV.closeAll()
+	if p := r.relayPoolV.Load(); p != nil {
+		p.closeAll()
 	}
 	if r.lanNode != nil {
 		r.lanNode.Close()
