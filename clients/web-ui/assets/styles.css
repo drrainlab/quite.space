@@ -26,6 +26,28 @@
     --tap: 34px;
     --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, Inter, sans-serif;
     --font-mono: "SF Mono", ui-monospace, "JetBrains Mono", Menlo, monospace;
+    /* THE READING FACE — a post is the one place in this app that is READ
+       rather than operated, so it is the one place that gets a serif. That
+       is also what makes an article look like an article next to chrome
+       that is all mono and sans.
+
+       Every family here is already on the machine. A webfont was never an
+       option: fetching one is a request to somebody else's host the moment
+       a reader opens a post — the same beacon markdown.js refuses for
+       inline images — and it would leave the reading surface broken
+       offline, in an app whose whole point is working without anybody's
+       infrastructure.
+
+       The ORDER is about Cyrillic. Fallback happens per GLYPH, so a single
+       entry with Latin but no Cyrillic renders a bilingual paragraph in two
+       different faces mid-sentence; every family listed carries both.
+       Charter leads — Matthew Carter's text face, drawn to hold up when the
+       rendering is poor, shipped with macOS and as Bitstream Charter on
+       Linux. Cambria and Constantia cover Windows; Georgia is the wide net
+       under all of it. */
+    --font-read: "Charter", "Bitstream Charter", "Iowan Old Style",
+                 "Source Serif 4", "Source Serif Pro", "Noto Serif",
+                 Cambria, Constantia, Georgia, serif;
   }
 
   /* ---- Light theme palette ---- */
@@ -1122,7 +1144,22 @@
   .sc-obj.sc-music { border-left: 2px solid var(--sc-accent, var(--acc)); }
   .sc-obj.sc-relic { border-left: 2px solid var(--sc-signal, var(--signal)); font-style: italic; }
   /* publications (PUB-1) */
-  #posts { flex: 1; overflow-y: auto; padding: 12px 16px; }
+  /* The reading column dissolves at its edges instead of being guillotined.
+     A MASK rather than two gradient overlays, because an overlay has to be
+     painted in some colour and there is no right colour here: over an
+     atmosphere the background is a photograph, and a band of --bg across it
+     is a grey stripe. A mask fades whatever is actually there.
+     The mask is positioned against the element's own box, which does not
+     move when the content scrolls, so the fade stays pinned to the top and
+     bottom edges. */
+  #posts {
+    flex: 1; overflow-y: auto; padding: 12px 16px;
+    --edge-fade: 40px;
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0,
+      #000 var(--edge-fade), #000 calc(100% - var(--edge-fade)), transparent 100%);
+    mask-image: linear-gradient(to bottom, transparent 0,
+      #000 var(--edge-fade), #000 calc(100% - var(--edge-fade)), transparent 100%);
+  }
   .pub-card { border: 1px solid var(--line); border-radius: var(--radius-md);
     background: var(--panel); padding: 12px 14px; margin-bottom: 10px;
     cursor: pointer; box-shadow: var(--shadow); }
@@ -1131,6 +1168,20 @@
   .pub-summary { color: var(--dim); font-size: 13px; margin-top: 2px; }
   .pub-meta { color: var(--muted); font-size: 11px; margin-top: 4px; }
   #pubArticle { max-width: 680px; overflow-wrap: break-word; }
+  #pubArticle .pub-h1, #pubArticle .pub-summary,
+  #pubArticle .md, #pubArticle .pub-block blockquote,
+  #pubArticle .pub-comment {
+    font-family: var(--font-read);
+  }
+  /* Long-form Cyrillic wants more air between lines than a UI does, and the
+     ragged edge is left alone: automatic hyphenation without a Russian
+     dictionary breaks words in places no reader would. */
+  #pubArticle .md, #pubArticle .pub-summary {
+    line-height: 1.72; hyphens: none; text-wrap: pretty;
+  }
+  #pubArticle .md { font-size: calc(16.5px * var(--font-scale)); }
+  /* Code keeps the mono face — it is not prose and must not read as prose. */
+  #pubArticle .md code, #pubArticle .md pre { font-family: var(--font-mono); }
   /* Content scales to its column — nothing busts out of the article. */
   #pubArticle img, .pub-block img, .pub-card img {
     max-width: 100%; height: auto; border-radius: var(--radius-md);
