@@ -7,6 +7,7 @@ package node
 
 import (
 	"errors"
+	"log"
 	"time"
 
 	"github.com/drrainlab/quiet_places/kernel/assets"
@@ -37,6 +38,88 @@ const DefaultBundleBudget = 8 << 20
 // as a single CBOR byte string, bounded by codec.MaxItemLen (1 MiB); we stay
 // safely under it so large media answers split into several decodable items.
 const maxRelayItem = 768 << 10
+
+// bundleHeadroom leaves room for the bundle's own CBOR framing — the map, the
+// arrays, the terminal id, and the want list — so a batch measured by payload
+// bytes alone still encodes under the item cap.
+const bundleHeadroom = 8 << 10
+
+// splitBundles packs a space's frames and blobs into relay items that each fit
+// under maxRelayItem.
+//
+// The relay carries one item as a single CBOR byte string bounded by
+// codec.MaxItemLen, so a whole-log bundle is a working design only while the
+// log is small. It is not a threshold a space approaches gently, either: once
+// past it NOTHING is delivered, to anybody, and it never recovers on its own
+// because the bundle only ever grows. The media path next door has always
+// known this (see answerWants); this is the same rule for frames.
+//
+// The wants ride on the FIRST item only — asking once is asking.
+//
+// Returns the bodies in order, and how many frames were too large to travel at
+// all. A frame bigger than one item cannot be split here: it is one signed
+// object, and cutting it would produce something no verifier would accept.
+func splitBundles(tid id.TerminalID, frames, blobs, wants [][]byte, wanter []byte) ([][]byte, int) {
+	limit := maxRelayItem - bundleHeadroom
+	var out [][]byte
+	var batch [][]byte
+	oversize, size := 0, 0
+
+	flush := func(isFirst bool) {
+		if len(batch) == 0 {
+			return
+		}
+		if isFirst {
+			out = append(out, bundle.EncodeWithWants(tid, batch, nil, wants, wanter))
+		} else {
+			out = append(out, bundle.Encode(tid, batch))
+		}
+		batch, size = nil, 0
+	}
+	for _, f := range frames {
+		if len(f) > limit {
+			oversize++
+			continue
+		}
+		if size+len(f) > limit {
+			flush(len(out) == 0)
+		}
+		batch = append(batch, f)
+		size += len(f)
+	}
+	flush(len(out) == 0)
+
+	// Blobs travel the same way and under the same cap. collectBlobs works to
+	// its own multi-megabyte budget, which was never a size ONE item could
+	// carry — so its output is batched here rather than trusted.
+	var bb [][]byte
+	bsize := 0
+	fb := func() {
+		if len(bb) == 0 {
+			return
+		}
+		out = append(out, bundle.EncodeWithBlobs(tid, nil, bb))
+		bb, bsize = nil, 0
+	}
+	for _, b := range blobs {
+		if len(b) > limit {
+			continue // one blob past the cap; the on-demand path handles it
+		}
+		if bsize+len(b) > limit {
+			fb()
+		}
+		bb = append(bb, b)
+		bsize += len(b)
+	}
+	fb()
+
+	// Nothing to send but a question still to ask: the wants must go anyway,
+	// or a node with no unacked frames could never request media at all.
+	if len(out) == 0 && (len(wants) > 0 || len(frames) > 0 || len(blobs) > 0) {
+		out = append(out, bundle.EncodeWithWants(tid, nil, nil, wants, wanter))
+	}
+	return out, oversize
+}
 
 // ExportReport honestly describes what a bundle carries.
 type ExportReport struct {
@@ -177,7 +260,7 @@ func (r *Runtime) pushToRelay(addr string, tid id.TerminalID, policy AssetPolicy
 	if len(wants) > 0 {
 		wanter = self[:]
 	}
-	body := bundle.EncodeWithWants(tid, frames, blobs, wants, wanter)
+	bodies, oversize := splitBundles(tid, frames, blobs, wants, wanter)
 	// Per-recipient dead-drop: hand a copy to every OTHER member's own relay
 	// inbox. The shared per-terminal mailbox is single-reader (destructive
 	// Collect), so with many members polling one relay the first poller drains
@@ -204,21 +287,41 @@ func (r *Runtime) pushToRelay(addr string, tid id.TerminalID, policy AssetPolicy
 	bucket := relay.Bucket(now)
 	expires := now + uint64(DefaultRelayTTL/time.Second)
 	var deadline uint64
+	biggest := 0
+	for _, b := range bodies {
+		if len(b) > biggest {
+			biggest = len(b)
+		}
+	}
 	withLane := r.withRelayControl
-	if len(body) >= bulkThreshold {
+	if biggest >= bulkThreshold {
 		withLane = r.withRelayBulk
 	}
 	if err := withLane(addr, func(client *relay.Client) error {
 		for _, dev := range recipients {
-			d, err := client.Put(relay.HintFor(tid, dev, bucket), expires, body)
-			if err != nil {
-				return err
+			hint := relay.HintFor(tid, dev, bucket)
+			// One mailbox, several items. A Collect drains them all and the
+			// receiver folds each independently, so the only thing the split
+			// costs is wire ops — and the alternative was a space that stops
+			// delivering the day its log outgrows one item.
+			for _, b := range bodies {
+				d, err := client.Put(hint, expires, b)
+				if err != nil {
+					return err
+				}
+				deadline = d
 			}
-			deadline = d
 		}
 		return nil
 	}); err != nil {
 		return 0, 0, 0, err
+	}
+	if oversize > 0 {
+		// Said out loud rather than dropped in silence: a single frame past
+		// the item cap can never travel this way, and nothing downstream can
+		// tell that from a peer being offline.
+		log.Printf("relay: %d frame(s) in space %s exceed the %d-byte item cap and were not pushed",
+			oversize, tid.String()[:8], maxRelayItem)
 	}
 
 	// Record the honest receipt level for every pushed event: the relay
