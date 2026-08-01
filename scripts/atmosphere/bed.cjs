@@ -48,8 +48,12 @@ function boot() {
   const harness = install(ctx);
   const asked = [];
   let resolveFetch = null;
-  ctx.autoFetchAsset = (assetId, onReady, onUnavailable) => {
+  let report = null;   // the live pass's onProgress
+  let quiet = null;    // the live pass's onUnavailable
+  ctx.autoFetchAsset = (assetId, onReady, onUnavailable, onProgress) => {
     asked.push(assetId);
+    report = onProgress || null;
+    quiet = onUnavailable || null;
     return new Promise((res) => { resolveFetch = res; });
   };
   ctx.assetURL = (assetId) => '/api/spaces/S/assets/' + assetId + '?token=t';
@@ -63,6 +67,10 @@ function boot() {
     harness, asked,
     atmo: vm.runInContext('ATMO', ctx),
     arrive: (ok) => { if (resolveFetch) { resolveFetch(ok); resolveFetch = null; } },
+    /** Chunks landing mid-pass, the way a real poll reports them. */
+    chunks: (have, total) => { if (report) report(have, total); },
+    /** The node saying nobody has answered yet, while still asking. */
+    noSource: () => { if (quiet) quiet('no_source'); },
     // The fetch resolves through a promise, so the callbacks that follow it
     // land a microtask later. Give them one.
     settle: () => new Promise((res) => setImmediate(res)),
@@ -114,18 +122,49 @@ function shell(harness) {
     b.atmo.unmount();
   }
 
-  // Nobody answers. The reader is told, rather than left with a silent post
-  // and no explanation.
+  // Nobody answers. Patience is spent on progress, never on silence — so a
+  // pass that adds nothing is followed by ONE more, and then the reader is
+  // told, rather than left with a silent post and no explanation.
   {
     const b = boot();
     const bar = b.harness.document.createElement('div');
     b.atmo.mount(shell(b.harness), withSound(), 'p1', { bar, enter: 'sound' });
+    b.noSource();
+    assert('silence is named while we keep asking', /nobody is answering/i.test(words(bar)),
+      `the bar said ${JSON.stringify(words(bar))}`);
+    b.arrive(false);
+    await b.settle();
+    assert('one empty pass is not the answer', b.asked.length === 2,
+      `gave up after ${b.asked.length} pass(es)`);
     b.arrive(false);
     await b.settle();
     assert('no bed when the bytes never came', b.harness.audios().length === 0,
       'a bed was started for bytes that never arrived');
-    assert('and the bar says so', /never arrived|quiet/i.test(words(bar)),
+    assert('and the bar says so', /never arrived/i.test(words(bar)),
       `the bar said ${JSON.stringify(words(bar))}`);
+    b.atmo.unmount();
+  }
+
+  // A bed is the biggest thing an atmosphere carries. While its chunks are
+  // still landing the reader sees them land — that is the whole difference
+  // between "wait a moment" and "something is wrong" — and the asking does
+  // not stop just because one pass ran out of patience.
+  {
+    const b = boot();
+    const bar = b.harness.document.createElement('div');
+    b.atmo.mount(shell(b.harness), withSound(), 'p1', { bar, enter: 'sound' });
+    b.chunks(9, 57);
+    assert('the count is shown', /9\/57/.test(words(bar)),
+      `the bar said ${JSON.stringify(words(bar))}`);
+    b.arrive(false);           // the pass ran out, but chunks HAD arrived
+    await b.settle();
+    assert('progress buys another pass', b.asked.length === 2,
+      `gave up at 9/57 after ${b.asked.length} pass(es)`);
+    b.chunks(57, 57);
+    b.arrive(true);
+    await b.settle();
+    assert('and it plays when they are all here', b.harness.audios().length === 1,
+      'every chunk arrived and nothing played');
     b.atmo.unmount();
   }
 

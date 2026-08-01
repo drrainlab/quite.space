@@ -196,15 +196,47 @@ const ATMO = (() => {
     // No fetch machinery at all (the editor's preview, a stub): behave the
     // way this did before there was any asking — point at it and hope.
     if (typeof autoFetchAsset !== 'function') { done(true); return false; }
-    autoFetchAsset(assetId, null, (reason) => {
-      // Reported the first time nobody has answered — the ladder keeps
-      // asking, so this changes what the reader is TOLD, not what we do.
-      if (waiting) waiting(reason === 'no_source'
-        ? 'nobody is answering for the sound yet — still asking'
-        : 'fetching the sound…');
-    }).then(
-      (ok) => done(!!ok, ok ? '' : 'the sound never arrived'),
-      () => done(false, 'the sound never arrived'));
+
+    // A bed is the biggest thing an atmosphere carries — many more chunks
+    // than any picture in the post — and one pass of autoFetchAsset gives up
+    // after about a hundred seconds. Over a relay's sync cadence that is well
+    // short of the honest answer, so this keeps going FOR AS LONG AS CHUNKS
+    // ARE STILL ARRIVING, and stops when a whole pass adds nothing. Patience
+    // is spent on progress, never on silence.
+    const ROUNDS_WITHOUT_PROGRESS = 2;
+    let best = -1;    // the most chunks seen to arrive
+    let idle = 0;     // consecutive passes that added none
+    let say = 'fetching the sound…';
+
+    const progress = (have, total) => {
+      say = 'fetching the sound… ' + have + '/' + total;
+      if (have > best) { best = have; idle = 0; }
+      if (waiting) waiting(say);
+    };
+    const silence = (reason) => {
+      // The node says nobody has answered YET. The ladder keeps asking, so
+      // this changes what the reader is told, not what we do.
+      if (reason === 'no_source' && best <= 0) {
+        say = 'nobody is answering for the sound yet — still asking';
+        if (waiting) waiting(say);
+      }
+    };
+    const pass = () => {
+      const seen = best;
+      autoFetchAsset(assetId, null, silence, progress).then((ok) => {
+        if (ok) { done(true); return; }
+        idle = best > seen ? 0 : idle + 1;
+        if (idle >= ROUNDS_WITHOUT_PROGRESS) {
+          done(false, best > 0
+            ? 'the sound stopped arriving at ' + best + ' of its pieces'
+            : 'the sound never arrived');
+          return;
+        }
+        if (waiting) waiting(say);
+        pass();
+      }, () => done(false, 'the sound never arrived'));
+    };
+    pass();
     return true;
   }
 

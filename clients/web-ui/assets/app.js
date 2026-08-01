@@ -2407,12 +2407,17 @@ function clearUnavailable(el) {
 // /fetch endpoint (RequestAsset dedups in-flight). Bails if the user
 // navigates. Resolves true only when the bytes are actually here — the
 // caller schedules another attempt for every other ending.
-async function autoFetchAsset(assetId, onReady, onUnavailable) {
+// onProgress(have, total) is called on every poll that knows the counts. A
+// caller with a place to show them can then tell a SLOW fetch from a STALLED
+// one — which is otherwise impossible from outside, and is the difference
+// between "wait a moment" and "something is wrong".
+async function autoFetchAsset(assetId, onReady, onUnavailable, onProgress) {
   const sp = current;
   let toldUnavailable = false;
   try {
     for (let i = 0; i < 90; i++) {
       const r = await api(`/api/spaces/${sp}/assets/${assetId}/fetch`, { method: 'POST' });
+      if (onProgress && r.total > 0) onProgress(r.total - (r.missing || 0), r.total);
       if (r.state === 'complete') { onReady && onReady(); return true; }
       if (r.state === 'failed') { onUnavailable && onUnavailable(r.reason); return false; }
       // The node reports "no source" while still asking. Surface it the

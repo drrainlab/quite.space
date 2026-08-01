@@ -251,7 +251,14 @@ func (r *Runtime) assetStatusLocked(key AssetKey) (FetchStatus, error) {
 	if res.ManifestMissing {
 		out.Missing = res.TotalChunks
 	}
-	if r.assetIdx.fetching[key] {
+	// A running fetch is worth SAYING, but it is not worth lying about: if
+	// every chunk is on disk the asset is complete, whatever a loop is still
+	// doing about it. Without the guard the caller of RequestAsset+AssetStatus
+	// — which is every poll of POST /fetch — re-arms this flag a moment
+	// before reading the answer, so the answer was never "complete" for any
+	// asset at all. The `failed` override on the next line has always had the
+	// same guard; this one was missing it.
+	if r.assetIdx.fetching[key] && out.State != assets.StateComplete {
 		out.State = assets.StateFetching
 	}
 	if reason, ok := r.assetIdx.failed[key]; ok && out.State != assets.StateComplete {
@@ -282,6 +289,15 @@ func (r *Runtime) RequestAsset(space id.TerminalID, asset string) error {
 	if r.assetIdx.fetching[key] {
 		r.mu.Unlock()
 		return nil // in-flight dedup: join the existing fetch
+	}
+	// Already here. Starting a loop to fetch what is on disk would spawn a
+	// goroutine per poll — and each one re-registers relay wants for chunks
+	// nobody needs, churning the want set the fetch machinery depends on.
+	if s, _ := assets.StateOf(r.root, ref); s == assets.StateComplete {
+		delete(r.assetIdx.failed, key)
+		delete(r.assetIdx.silent, key)
+		r.mu.Unlock()
+		return nil
 	}
 	st, _ := r.spaces[space]
 	if st == nil {
