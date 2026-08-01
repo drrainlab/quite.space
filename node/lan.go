@@ -154,6 +154,29 @@ func (r *Runtime) adoptConn(c *lan.Conn) {
 	r.adoptLink(c, pumpEvery, 2*time.Second, "lan")
 }
 
+// liveLink is one adopted link plus the filter it was adopted under. The
+// filter is kept because it is what decides whether a space created later
+// belongs on this link at all — re-asking it is the only honest way to
+// wire that space in.
+type liveLink struct {
+	c     link
+	label string
+	allow func(routing.FrameMeta) bool
+}
+
+// wireLiveLinksLocked attaches every currently adopted link this space is
+// allowed on. Caller holds r.mu (every attach() call site does).
+func (r *Runtime) wireLiveLinksLocked(tid id.TerminalID, st *spaceState) {
+	for _, l := range r.links {
+		if l.allow != nil && !l.allow(routing.FrameMeta{
+			Destination: tid, IngressLink: routing.LinkID(l.label),
+		}) {
+			continue
+		}
+		st.conns = append(st.conns, l.c)
+	}
+}
+
 // adoptLink attaches any link to every space and pumps it until it dies.
 // Frames for other terminals are simply not matched by the engines — each
 // engine checks its own terminal id. Cadence is per-transport: a LAN link
@@ -170,9 +193,8 @@ func (r *Runtime) adoptLink(c link, pump, summaryEvery time.Duration, label stri
 // its spaces without adopting the full router.
 func (r *Runtime) adoptLinkFiltered(c link, pump, summaryEvery time.Duration,
 	label string, allow func(routing.FrameMeta) bool) {
+	linkKind := transportOfLink(label)
 	r.mu.Lock()
-	states := make([]*spaceState, 0, len(r.spaces))
-	byTerm := make(map[id.TerminalID]*spaceState, len(r.spaces))
 	for tid, st := range r.spaces {
 		if allow != nil && !allow(routing.FrameMeta{
 			Destination: tid, IngressLink: routing.LinkID(label),
@@ -180,13 +202,12 @@ func (r *Runtime) adoptLinkFiltered(c link, pump, summaryEvery time.Duration,
 			continue
 		}
 		st.conns = append(st.conns, c)
-		states = append(states, st)
-		byTerm[tid] = st
 	}
-	r.mu.Unlock()
-
-	linkKind := transportOfLink(label)
-	r.mu.Lock()
+	// Register the link so a space created LATER can be wired into it
+	// (attach). A radio is adopted ONCE at startup, when the space set is
+	// usually empty; without this registry every space made during the
+	// session was invisible to it until a restart.
+	r.links = append(r.links, liveLink{c: c, label: label, allow: allow})
 	if r.liveLinks == nil {
 		r.liveLinks = map[TransportKind]int{}
 	}
@@ -226,6 +247,21 @@ func (r *Runtime) adoptLinkFiltered(c link, pump, summaryEvery time.Duration,
 
 			r.mu.Lock()
 			r.curLink = label // OnSent closures read this under the same lock
+			// Membership is read FRESH every tick, never snapshotted when the
+			// link was adopted. A radio is adopted once at startup — usually
+			// with no spaces yet — so a snapshot meant everything a person
+			// created during the session was carried by nothing and received
+			// by nothing on that link until both sides restarted. The lock is
+			// already held here, so the fresh read costs a map walk.
+			byTerm := make(map[id.TerminalID]*spaceState, len(r.spaces))
+			for tid, st := range r.spaces {
+				if allow != nil && !allow(routing.FrameMeta{
+					Destination: tid, IngressLink: routing.LinkID(label),
+				}) {
+					continue
+				}
+				byTerm[tid] = st
+			}
 			// Two different questions, answered separately.
 			//
 			// POLICY decides whether this link may carry a space at all. A
@@ -239,7 +275,7 @@ func (r *Runtime) adoptLinkFiltered(c link, pump, summaryEvery time.Duration,
 			// because going deaf on the mesh whenever the internet happens
 			// to be preferred would be a strange way to run a radio node.
 			sending := map[id.TerminalID]bool{}
-			active := make([]*spaceState, 0, len(states))
+			active := make([]*spaceState, 0, len(byTerm))
 			for tid, st := range byTerm {
 				if !conn.allows(kind, tid) {
 					continue
@@ -337,6 +373,15 @@ func (r *Runtime) dropConn(c link) {
 		}
 		st.conns = kept
 	}
+	// And out of the registry, or a space created after this link died
+	// would be wired into a corpse.
+	keptLinks := r.links[:0]
+	for _, l := range r.links {
+		if l.c != c {
+			keptLinks = append(keptLinks, l)
+		}
+	}
+	r.links = keptLinks
 }
 
 // LAN reports transport diagnostics.

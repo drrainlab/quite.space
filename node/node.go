@@ -128,6 +128,13 @@ type Runtime struct {
 	// only choose a road that exists.
 	liveLinks map[TransportKind]int
 
+	// links are the adopted links THEMSELVES, with the filter each was
+	// adopted under — so a space created after adoption can be wired into
+	// them (see attach). Without this a radio, which is adopted exactly
+	// once at startup, carried only the spaces that already existed then.
+	// r.mu-guarded.
+	links []liveLink
+
 	// relaySync is the background relay push/pull loop (nil until first
 	// configured). r.mu guards the pointer; the state has its own lock.
 	relaySync *relaySyncState
@@ -444,6 +451,10 @@ func (r *Runtime) attach(tid id.TerminalID, s *terminals.Space) {
 		s.OnBlock = r.onBlockEvent(tid)
 	}
 	st := &spaceState{space: s, eng: kernelsync.NewEngine(s.Log)}
+	// Links adopted BEFORE this space existed still carry it: media fetch
+	// and the peer count read st.conns, and a space created during the
+	// session must not look peerless on a radio that is right there.
+	r.wireLiveLinksLocked(tid, st)
 	st.eng.OnApplied = func(a eventlog.Applied) {
 		s.AttachSyncApply(a)
 		// New epochs may arrive over sync; keep the keystore current.
