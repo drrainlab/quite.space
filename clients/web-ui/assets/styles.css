@@ -1254,7 +1254,16 @@
   .pub-title { font-weight: 600; font-size: calc(15px * var(--font-scale)); }
   .pub-summary { color: var(--dim); font-size: 13px; margin-top: 2px; }
   .pub-meta { color: var(--muted); font-size: 11px; margin-top: 4px; }
-  #pubArticle { max-width: 680px; overflow-wrap: break-word; padding-block: 12px; }
+  /* Centred in whatever room it is given. With both panels open the column
+     is barely wider than the article and this changes nothing; fold them and
+     the reading column stays where the eye already is instead of clinging to
+     the left edge of a suddenly very wide window.
+     The list is centred with it, so folding a panel does not make the cards
+     and the article they open disagree about where the middle is. */
+  #pubArticle, #posts > .pub-card {
+    max-width: 680px; margin-inline: auto;
+  }
+  #pubArticle { overflow-wrap: break-word; padding-block: 12px; }
   /* The list keeps the same breathing room the scroller used to give it. */
   #posts > .pub-card:first-child { margin-top: 12px; }
   #posts > .pub-card:last-child { margin-bottom: 12px; }
