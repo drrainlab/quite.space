@@ -15,8 +15,15 @@ package publication
 // word in Validate's error). Empty ids are skipped — absence is legal
 // everywhere except where the tree walk separately demands presence.
 //
-// Roles: cover · atmosphere_audio · atmosphere_poster · image · audio ·
-// video · file · poster (video-link) · gallery item.
+// Roles: cover · atmosphere_audio · atmosphere_poster · atmosphere_stage ·
+// atmosphere_stage_audio · image · audio · video · file · poster
+// (video-link) · gallery item.
+//
+// The completeness matters more than it looks: an asset that is not visited
+// here is not indexed, not fetchable, not servable, fails the authoring
+// validator, and is excluded from the public projection by the custody gate.
+// A stage image omitted from this walk would look fine to its author and be
+// invisible to everybody else.
 func (d *Document) visitAssets(visit func(hexID, role string)) {
 	if d.Cover != "" {
 		visit(d.Cover, "cover")
@@ -27,6 +34,17 @@ func (d *Document) visitAssets(visit func(hexID, role string)) {
 		}
 		if a.Fall.Poster != "" {
 			visit(a.Fall.Poster, "atmosphere_poster")
+		}
+		for _, s := range a.Visual.Stages {
+			if s.Image != "" {
+				visit(s.Image, "atmosphere_stage")
+			}
+			// Enumerated even though nothing renders it yet: an asset the
+			// contract carries but the walk forgets is one nobody can fetch
+			// on the day the renderer lands.
+			if s.Audio != "" {
+				visit(s.Audio, "atmosphere_stage_audio")
+			}
 		}
 	}
 	var walk func(b *Block)

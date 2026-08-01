@@ -190,10 +190,14 @@ func TestAtmosphereAssetsMustResolve(t *testing.T) {
 	if err := a2.Validate(none); err == nil {
 		t.Fatal("an unresolvable poster was accepted")
 	}
-	// Both must be reported, or the custody gate cannot see them.
-	refs := sampleAtmosphere().AssetRefs()
-	if len(refs) != 2 {
-		t.Fatalf("expected the audio AND the poster, got %v", refs)
+	// Both must be ENUMERATED too, or the custody gate cannot see them. The
+	// one walk is the only place that answers this — there is deliberately
+	// no second list of atmosphere assets to fall out of step with it.
+	doc := &publication.Document{Kind: "post", Title: "t", Visibility: "space"}
+	doc.Atmosphere = sampleAtmosphere()
+	live := doc.LiveAssetIDs()
+	if live[hexAsset64] != "atmosphere_audio" || live[hexAsset32] != "atmosphere_poster" {
+		t.Fatalf("expected the audio AND the poster in the asset graph, got %v", live)
 	}
 }
 

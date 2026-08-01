@@ -49,10 +49,20 @@ const (
 	// second body for the post.
 	MaxAtmosphereFallback = 200
 	// MaxFadeMs bounds a fade so a "gentle" one cannot become a ten-minute
-	// ramp that never audibly starts.
+	// ramp that never audibly starts. A stage transition is a fade too, and
+	// reuses this rather than growing a second number that means the same.
 	MaxFadeMs = 10000
 	// MaxPermille is the ceiling for every 0..1000 quantity.
 	MaxPermille = 1000
+	// MaxAtmosphereStages bounds an image sequence. A story has a handful of
+	// scenes; a gallery of 24 (MaxGalleryAssets) is the other kind of object,
+	// and each stage here is a full-bleed background someone has to fetch
+	// before they can read past it.
+	MaxAtmosphereStages = 12
+	// MaxAtmosphereRawExtraBytes bounds unknown-key passengers inside the
+	// atmosphere, well below the document's own budget: this is a nested map,
+	// not a second document.
+	MaxAtmosphereRawExtraBytes = 4 << 10
 )
 
 // Audio playback modes.
@@ -60,6 +70,18 @@ const (
 	AudioLoop = "loop"
 	AudioOnce = "once"
 )
+
+// Stage transitions. Deliberately two words and a default: the vocabulary is
+// data the renderer switches on, not a description of an animation. Anything
+// richer would be an executable payload wearing a string (ADR-013 invariant 2).
+const (
+	TransitionFade = "fade"
+	TransitionCut  = "cut"
+)
+
+// allowedTransition includes "" — the idiom for "optional with a default",
+// as in allowedLayout and allowedDiscussion.
+var allowedTransition = map[string]bool{"": true, TransitionFade: true, TransitionCut: true}
 
 var (
 	// sceneRe is live_signal's preset grammar, verbatim: a lowercase name and
@@ -80,15 +102,54 @@ type Atmosphere struct {
 	React   *Reactive
 	Fall    Fallback
 	Derived *Derived
+	// RawExtra keeps atmosphere-level keys this build does not know. See
+	// Document.Extra: the same hole existed one level down, where the first
+	// nested extension would have hit it.
+	RawExtra []Extra
 }
 
-// Visual is the deterministic form: which scene, from which seed, with which
-// bounded knobs.
+// Visual is the deterministic form — and it is EITHER a generative scene OR an
+// image sequence, never both and never neither.
+//
+// A scene is one recipe rendered continuously: scene id, seed, bounded knobs.
+// Stages are a story: a list of images anchored to blocks, so the background
+// changes as the reader arrives at each one. They are alternatives rather than
+// layers because a post has one background, and two sources for it would leave
+// every renderer free to decide differently which one wins.
+//
+// Stages live HERE, inside the visual recipe, rather than beside it — so
+// RecipeHash covers them and "derived from that atmosphere" stays a provable
+// claim about the whole form rather than about the half of it that happens to
+// be generative.
 type Visual struct {
-	Scene   string // "name@version"
+	Scene   string // "name@version"; empty when this is a sequence
 	Seed    uint64
 	Params  []Param
 	Palette []PaletteToken
+	Stages  []Stage
+	// RawExtra keeps visual-level keys this build does not know.
+	RawExtra []Extra
+}
+
+// Stage is one step of an image sequence: when it takes over, what it shows,
+// and how it arrives.
+//
+// Anchor is a BLOCK ID from this same document. Not an index (blocks are
+// edited, and an index silently re-points at whatever moved into that slot),
+// not an offset in pixels or permille (the same post is a different height on
+// every screen). The one thing that identifies a place in a document to both
+// the author and the reader is the block that is there.
+//
+// Audio is CONTRACT NOW, RENDERED LATER: the field is signed, validated and
+// enumerated with every other asset, so a sequence authored today does not
+// have to be re-signed when per-stage sound ships. Nothing plays it yet, and
+// the composer does not offer it.
+type Stage struct {
+	Anchor     string // block id, <= 64 bytes, must exist in this document
+	Image      string // hex asset id, required
+	Audio      string // optional hex asset id — not rendered yet
+	Transition string // "" | fade | cut
+	DurationMs uint64 // <= MaxFadeMs; 0 means the renderer's own default
 }
 
 // Param is one bounded knob. Value is permille, so "0.4 density" travels as
@@ -155,11 +216,20 @@ const (
 	atmKeyReactive = 3
 	atmKeyFallback = 4
 	atmKeyDerived  = 5
+	maxKnownAtmKey = atmKeyDerived
 
-	visKeyScene   = 1
-	visKeySeed    = 2
-	visKeyParams  = 3
-	visKeyPalette = 4
+	visKeyScene    = 1
+	visKeySeed     = 2
+	visKeyParams   = 3
+	visKeyPalette  = 4
+	visKeyStages   = 5
+	maxKnownVisKey = visKeyStages
+
+	stgKeyAnchor     = 1
+	stgKeyImage      = 2
+	stgKeyAudio      = 3
+	stgKeyTransition = 4
+	stgKeyDuration   = 5
 
 	prmKeyName  = 1
 	prmKeyValue = 2
@@ -184,37 +254,42 @@ const (
 	drvKeyRevision   = 3
 )
 
-// AssetRefs lists every asset this atmosphere points at.
-//
-// BOTH of them, and the completeness matters more than it looks: an asset that
-// is not reported here is not indexed, not fetchable, not servable, fails the
-// authoring validator, and is excluded from the public projection by the
-// custody gate. A poster omitted from this list would look fine to its author
-// and be invisible to everybody else.
-func (a *Atmosphere) AssetRefs() []string {
-	if a == nil {
-		return nil
-	}
-	var out []string
-	if a.Audio != nil && a.Audio.Asset != "" {
-		out = append(out, a.Audio.Asset)
-	}
-	if a.Fall.Poster != "" {
-		out = append(out, a.Fall.Poster)
-	}
-	return out
-}
-
 // Validate checks everything provable from the bytes alone. Readability,
 // contrast and whether a scene is too busy are the client's call at render
 // time (ADR-013 invariant 5): the contract proposes an atmosphere, the client
 // keeps the last word.
+//
+// Stage ANCHORS are not checked here: whether a block id exists is a fact
+// about the document, and this function is deliberately reachable without one.
+// Document validation resolves them after its tree walk (validateStages).
 func (a *Atmosphere) Validate(assetOK func(hexID string) bool) error {
 	if a == nil {
 		return nil
 	}
-	if !sceneRe.MatchString(a.Visual.Scene) {
-		return fmt.Errorf("publication: atmosphere scene %q is not name@version", a.Visual.Scene)
+	hasScene := a.Visual.Scene != ""
+	hasStages := len(a.Visual.Stages) > 0
+	switch {
+	case hasScene && hasStages:
+		return errors.New("publication: an atmosphere is either a generative " +
+			"scene or an image sequence, never both — a post has one background")
+	case !hasScene && !hasStages:
+		return errors.New("publication: an atmosphere needs either a scene or " +
+			"at least one stage")
+	}
+	if hasScene {
+		if !sceneRe.MatchString(a.Visual.Scene) {
+			return fmt.Errorf("publication: atmosphere scene %q is not name@version", a.Visual.Scene)
+		}
+	} else {
+		// Nothing generative to parameterise, and a seed that steers nothing
+		// is a number a later renderer would feel free to invent a use for.
+		if len(a.Visual.Params) > 0 || a.Visual.Seed != 0 {
+			return errors.New("publication: an image sequence carries no seed " +
+				"and no params — there is no scene for them to steer")
+		}
+		if err := a.validateStages(assetOK); err != nil {
+			return err
+		}
 	}
 	if len(a.Visual.Params) > MaxAtmosphereParams {
 		return fmt.Errorf("publication: %d atmosphere params, at most %d",
@@ -295,6 +370,58 @@ func (a *Atmosphere) Validate(assetOK func(hexID string) bool) error {
 				"64-character hex event id")
 		}
 	}
+
+	total := 0
+	for _, e := range a.RawExtra {
+		total += len(e.Raw)
+	}
+	for _, e := range a.Visual.RawExtra {
+		total += len(e.Raw)
+	}
+	if total > MaxAtmosphereRawExtraBytes {
+		return fmt.Errorf("publication: %d bytes of unknown atmosphere fields, at most %d",
+			total, MaxAtmosphereRawExtraBytes)
+	}
+	return nil
+}
+
+// validateStages checks an image sequence's own structure. Order and anchor
+// existence are the document's business (validateStages is reachable without
+// one); everything provable from the stage alone is decided here.
+func (a *Atmosphere) validateStages(assetOK func(hexID string) bool) error {
+	if len(a.Visual.Stages) > MaxAtmosphereStages {
+		return fmt.Errorf("publication: %d atmosphere stages, at most %d",
+			len(a.Visual.Stages), MaxAtmosphereStages)
+	}
+	seen := make(map[string]struct{}, len(a.Visual.Stages))
+	for _, s := range a.Visual.Stages {
+		// The same bound the block id itself carries — an anchor that could
+		// not be a block id is not an anchor.
+		if s.Anchor == "" || len(s.Anchor) > 64 {
+			return fmt.Errorf("publication: stage anchor missing or oversized (%q)", s.Anchor)
+		}
+		if _, dup := seen[s.Anchor]; dup {
+			// Two stages on one block have no defined meaning, exactly like a
+			// repeated param: both renderers would be right.
+			return fmt.Errorf("publication: two stages anchored to block %q", s.Anchor)
+		}
+		seen[s.Anchor] = struct{}{}
+		if s.Image == "" {
+			return fmt.Errorf("publication: stage %q needs an image", s.Anchor)
+		}
+		if err := checkAssetRef(s.Image, assetOK, "stage image"); err != nil {
+			return err
+		}
+		if err := checkAssetRef(s.Audio, assetOK, "stage audio"); err != nil {
+			return err
+		}
+		if !allowedTransition[s.Transition] {
+			return fmt.Errorf("publication: stage transition %q not allowed", s.Transition)
+		}
+		if s.DurationMs > MaxFadeMs {
+			return fmt.Errorf("publication: stage transition longer than %dms", MaxFadeMs)
+		}
+	}
 	return nil
 }
 
@@ -305,6 +432,13 @@ func (a *Atmosphere) Validate(assetOK func(hexID string) bool) error {
 // also picked the same background track, and a hash that changed when somebody
 // swapped the audio would break every chain for a reason nobody would call
 // descent.
+//
+// It DOES cover a stage sequence, because the sequence is the visual recipe
+// when there is no scene — inheriting somebody's story means inheriting the
+// images and their order, and a hash blind to them would call two unrelated
+// sequences the same atmosphere. Recipes written before stages existed are
+// unaffected: they carry no key 5, so their bytes and their hashes are what
+// they always were.
 func (a *Atmosphere) RecipeHash() []byte {
 	if a == nil {
 		return nil
@@ -324,6 +458,8 @@ func (a *Atmosphere) encode(buf []byte) []byte {
 	if a.Derived != nil {
 		n++
 	}
+	extra := retainExtra(a.RawExtra, maxKnownAtmKey, MaxAtmosphereRawExtraBytes)
+	n += len(extra)
 	buf = codec.AppendMap(buf, n)
 
 	buf = codec.AppendUint(buf, atmKeyVisual)
@@ -414,22 +550,38 @@ func (a *Atmosphere) encode(buf []byte) []byte {
 			buf = codec.AppendText(buf, a.Derived.RevisionHash)
 		}
 	}
+	for _, e := range extra {
+		buf = codec.AppendUint(buf, e.Key)
+		buf = append(buf, e.Raw...)
+	}
 	return buf
 }
 
 func encodeVisual(buf []byte, v *Visual) []byte {
-	n := 2 // scene + seed
+	// Scene and seed travel together or not at all: a sequence has no scene,
+	// and an empty scene id would fail sceneRe on the way back in.
+	n := 0
+	if v.Scene != "" {
+		n += 2
+	}
 	if len(v.Params) > 0 {
 		n++
 	}
 	if len(v.Palette) > 0 {
 		n++
 	}
+	if len(v.Stages) > 0 {
+		n++
+	}
+	extra := retainExtra(v.RawExtra, maxKnownVisKey, MaxAtmosphereRawExtraBytes)
+	n += len(extra)
 	buf = codec.AppendMap(buf, n)
-	buf = codec.AppendUint(buf, visKeyScene)
-	buf = codec.AppendText(buf, v.Scene)
-	buf = codec.AppendUint(buf, visKeySeed)
-	buf = codec.AppendUint(buf, v.Seed)
+	if v.Scene != "" {
+		buf = codec.AppendUint(buf, visKeyScene)
+		buf = codec.AppendText(buf, v.Scene)
+		buf = codec.AppendUint(buf, visKeySeed)
+		buf = codec.AppendUint(buf, v.Seed)
+	}
 	if len(v.Params) > 0 {
 		buf = codec.AppendUint(buf, visKeyParams)
 		buf = codec.AppendArray(buf, len(v.Params))
@@ -451,6 +603,43 @@ func encodeVisual(buf []byte, v *Visual) []byte {
 			buf = codec.AppendUint(buf, palKeyHex)
 			buf = codec.AppendText(buf, t.Hex)
 		}
+	}
+	if len(v.Stages) > 0 {
+		buf = codec.AppendUint(buf, visKeyStages)
+		buf = codec.AppendArray(buf, len(v.Stages))
+		for _, s := range v.Stages {
+			ns := 2 // anchor + image
+			if s.Audio != "" {
+				ns++
+			}
+			if s.Transition != "" {
+				ns++
+			}
+			if s.DurationMs > 0 {
+				ns++
+			}
+			buf = codec.AppendMap(buf, ns)
+			buf = codec.AppendUint(buf, stgKeyAnchor)
+			buf = codec.AppendText(buf, s.Anchor)
+			buf = codec.AppendUint(buf, stgKeyImage)
+			buf = codec.AppendText(buf, s.Image)
+			if s.Audio != "" {
+				buf = codec.AppendUint(buf, stgKeyAudio)
+				buf = codec.AppendText(buf, s.Audio)
+			}
+			if s.Transition != "" {
+				buf = codec.AppendUint(buf, stgKeyTransition)
+				buf = codec.AppendText(buf, s.Transition)
+			}
+			if s.DurationMs > 0 {
+				buf = codec.AppendUint(buf, stgKeyDuration)
+				buf = codec.AppendUint(buf, s.DurationMs)
+			}
+		}
+	}
+	for _, e := range extra {
+		buf = codec.AppendUint(buf, e.Key)
+		buf = append(buf, e.Raw...)
 	}
 	return buf
 }
@@ -481,7 +670,10 @@ func decodeAtmosphere(d *codec.Decoder) (*Atmosphere, error) {
 		case atmKeyDerived:
 			a.Derived, er = decodeDerived(d)
 		default:
-			er = d.SkipItem() // must-ignore (ADR-009)
+			// Must-ignore (ADR-009), and — one level down from the document —
+			// must not FORGET either: an older build round-tripping a newer
+			// atmosphere would otherwise delete the part it could not name.
+			er = readExtra(d, k, maxKnownAtmKey, &a.RawExtra)
 		}
 		if er != nil {
 			return nil, er
@@ -538,11 +730,62 @@ func decodeVisual(d *codec.Decoder, v *Visual) error {
 				}
 				v.Palette = append(v.Palette, t)
 			}
+		case visKeyStages:
+			cnt, e := d.ReadArray()
+			if e != nil {
+				return e
+			}
+			// Refused against the bound BEFORE allocating: the count is
+			// otherwise a lever on memory inside the document budget.
+			if cnt > MaxAtmosphereStages {
+				return errors.New("publication: too many atmosphere stages")
+			}
+			for range cnt {
+				s, e := decodeStage(d)
+				if e != nil {
+					return e
+				}
+				v.Stages = append(v.Stages, s)
+			}
+		default:
+			er = readExtra(d, k, maxKnownVisKey, &v.RawExtra)
+		}
+		if er != nil {
+			return er
+		}
+	}
+}
+
+func decodeStage(d *codec.Decoder) (Stage, error) {
+	mr, err := d.ReadMapHeader()
+	if err != nil {
+		return Stage{}, err
+	}
+	var s Stage
+	for {
+		k, ok, er := mr.Next()
+		if er != nil {
+			return Stage{}, er
+		}
+		if !ok {
+			return s, nil
+		}
+		switch k {
+		case stgKeyAnchor:
+			s.Anchor, er = d.ReadText()
+		case stgKeyImage:
+			s.Image, er = d.ReadText()
+		case stgKeyAudio:
+			s.Audio, er = d.ReadText()
+		case stgKeyTransition:
+			s.Transition, er = d.ReadText()
+		case stgKeyDuration:
+			s.DurationMs, er = d.ReadUint()
 		default:
 			er = d.SkipItem()
 		}
 		if er != nil {
-			return er
+			return Stage{}, er
 		}
 	}
 }

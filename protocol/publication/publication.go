@@ -249,24 +249,47 @@ func (doc *Document) Encode() []byte {
 // build learns key 13, that key stops being retainable here and starts being
 // written from its typed field — never both.
 func (doc *Document) retainableExtra() []Extra {
-	if len(doc.RawExtra) == 0 {
+	return retainExtra(doc.RawExtra, maxKnownDocKey, MaxRawExtraBytes)
+}
+
+// retainExtra is the filter itself, shared by every map that keeps unknown
+// keys. The document was the first, but not the last: a map nested inside it
+// has exactly the same hole, and a second copy of these five conditions is
+// how the two would eventually disagree about what "retainable" means.
+func retainExtra(list []Extra, maxKnown uint64, budget int) []Extra {
+	if len(list) == 0 {
 		return nil
 	}
-	out := make([]Extra, 0, len(doc.RawExtra))
+	out := make([]Extra, 0, len(list))
 	var last uint64
 	var total int
-	for _, e := range doc.RawExtra {
-		if e.Key <= maxKnownDocKey || e.Key <= last || len(e.Raw) == 0 {
+	for _, e := range list {
+		if e.Key <= maxKnown || e.Key <= last || len(e.Raw) == 0 {
 			continue
 		}
 		total += len(e.Raw)
-		if total > MaxRawExtraBytes {
+		if total > budget {
 			break
 		}
 		out = append(out, e)
 		last = e.Key
 	}
 	return out
+}
+
+// readExtra is the decode half: keep the bytes of a key above this build's
+// known range, skip anything at or below it (that one we either handled or
+// must not pretend to preserve).
+func readExtra(d *codec.Decoder, k, maxKnown uint64, into *[]Extra) error {
+	if k <= maxKnown {
+		return d.SkipItem()
+	}
+	raw, err := d.ReadRawItem()
+	if err != nil {
+		return err
+	}
+	*into = append(*into, Extra{Key: k, Raw: raw})
+	return nil
 }
 
 func (b *Block) encode(buf []byte) []byte {
@@ -375,15 +398,7 @@ func decodeDocument(d *codec.Decoder) (*Document, error) {
 			// Must-ignore (ADR-009) — but ignore is not the same as forget.
 			// Keep the bytes so an edit round-trip through this build does
 			// not silently delete what a newer one wrote.
-			if k > maxKnownDocKey {
-				var raw []byte
-				raw, er = d.ReadRawItem()
-				if er == nil {
-					doc.RawExtra = append(doc.RawExtra, Extra{Key: k, Raw: raw})
-				}
-			} else {
-				er = d.SkipItem()
-			}
+			er = readExtra(d, k, maxKnownDocKey, &doc.RawExtra)
 		}
 		if er != nil {
 			return nil, er

@@ -69,7 +69,7 @@ func Validate(doc *Document, assetOK func(hexID string) bool) error {
 			total, MaxRawExtraBytes)
 	}
 
-	v := &treeValidator{seen: map[string]bool{}}
+	v := &treeValidator{seen: map[string]int{}}
 	for i := range doc.Blocks {
 		if err := v.walk(&doc.Blocks[i], 1); err != nil {
 			return err
@@ -80,6 +80,12 @@ func Validate(doc *Document, assetOK func(hexID string) bool) error {
 	}
 	if v.textBudget > MaxTotalText {
 		return errors.New("publication: total text budget exceeded")
+	}
+	// Stage anchors need the tree, so they are resolved here rather than in
+	// Atmosphere.Validate — which runs above and is deliberately usable
+	// without a document at all.
+	if err := validateStageAnchors(doc, v.seen); err != nil {
+		return err
 	}
 	// The unified asset pass: the ONE walk (visitAssets) both checks and
 	// enumerates, so a site added there is validated here for free — and a
@@ -99,8 +105,42 @@ func Validate(doc *Document, assetOK func(hexID string) bool) error {
 	return nil
 }
 
+// validateStageAnchors resolves an image sequence against the document it
+// belongs to: every anchor names a block that exists, and the stages run in
+// document order.
+//
+// Order is part of the contract rather than a renderer's problem. A sequence
+// is read top to bottom, so stages out of document order have no meaning a
+// renderer could act on — it would have to sort them and hope, or advance
+// backwards. Deciding it here makes the renderer a single forward cursor.
+//
+// The decoder still accepts anything, exactly like an unknown block type: the
+// refusal is the authoring gate's, never transport's (ADR-014).
+func validateStageAnchors(doc *Document, order map[string]int) error {
+	if doc.Atmosphere == nil {
+		return nil
+	}
+	last := -1
+	for _, s := range doc.Atmosphere.Visual.Stages {
+		at, ok := order[s.Anchor]
+		if !ok {
+			return fmt.Errorf("publication: stage anchored to block %q, which "+
+				"is not in this document", s.Anchor)
+		}
+		if at <= last {
+			return fmt.Errorf("publication: stage anchored to block %q is out "+
+				"of document order", s.Anchor)
+		}
+		last = at
+	}
+	return nil
+}
+
 type treeValidator struct {
-	seen       map[string]bool
+	// seen maps a block id to its position in document order — position,
+	// not merely presence, because stage anchors have to be checked against
+	// the order the reader will meet them in.
+	seen       map[string]int
 	total      int
 	textBudget int
 }
@@ -110,10 +150,10 @@ func (v *treeValidator) walk(b *Block, depth int) error {
 		return errors.New("publication: block tree too deep")
 	}
 	v.total++
-	if b.ID == "" || len(b.ID) > 64 || v.seen[b.ID] {
+	if _, dup := v.seen[b.ID]; b.ID == "" || len(b.ID) > 64 || dup {
 		return fmt.Errorf("publication: block id missing, oversized or duplicate (%q)", b.ID)
 	}
-	v.seen[b.ID] = true
+	v.seen[b.ID] = v.total
 	if !KnownBlockType(b.Type) {
 		return fmt.Errorf("publication: unknown block type %q (authoring rejects; transport keeps opaque)", b.Type)
 	}
