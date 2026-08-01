@@ -1985,13 +1985,20 @@ header .nav-act { padding: 5px 11px 5px 10px; min-height: 30px; }
 .pub-card-atmo-on .pub-title,
 .pub-card-atmo-on .pub-summary,
 .pub-card-atmo-on .pub-meta {
+  /* The radii are scaled by --atmo-halo, which paintScrim computes from how
+     BRIGHT and how BUSY the picture behind is. A bright, patterned surface
+     needs the surroundings of each stroke sunk further out; a calm dark one
+     needs almost nothing. Widening the halo does that where it matters and
+     leaves everything more than a few pixels from a glyph untouched — which
+     is why this, and not blurring the author's photograph, is the answer to
+     a picture that competes with the text. */
   text-shadow:
-    0 0 1px rgba(var(--atmo-ink, 11,16,32), var(--atmo-glow, .8)),
-    0 0 2px rgba(var(--atmo-ink, 11,16,32), var(--atmo-glow, .8)),
-    0 0 4px rgba(var(--atmo-ink, 11,16,32), var(--atmo-glow, .8)),
-    0 0 8px rgba(var(--atmo-ink, 11,16,32), calc(var(--atmo-glow, .8) * .95)),
-    0 0 16px rgba(var(--atmo-ink, 11,16,32), calc(var(--atmo-glow, .8) * .85)),
-    0 0 30px rgba(var(--atmo-ink, 11,16,32), calc(var(--atmo-glow, .8) * .7));
+    0 0 calc(1px * var(--atmo-halo, 1)) rgba(var(--atmo-ink, 11,16,32), var(--atmo-glow, .8)),
+    0 0 calc(2px * var(--atmo-halo, 1)) rgba(var(--atmo-ink, 11,16,32), var(--atmo-glow, .8)),
+    0 0 calc(4px * var(--atmo-halo, 1)) rgba(var(--atmo-ink, 11,16,32), var(--atmo-glow, .8)),
+    0 0 calc(8px * var(--atmo-halo, 1)) rgba(var(--atmo-ink, 11,16,32), calc(var(--atmo-glow, .8) * .95)),
+    0 0 calc(16px * var(--atmo-halo, 1)) rgba(var(--atmo-ink, 11,16,32), calc(var(--atmo-glow, .8) * .85)),
+    0 0 calc(30px * var(--atmo-halo, 1)) rgba(var(--atmo-ink, 11,16,32), calc(var(--atmo-glow, .8) * .7));
 }
 /* Code keeps its own surface, so a halo on it would be a second background
    fighting the first. */
@@ -2015,15 +2022,6 @@ header .nav-act { padding: 5px 11px 5px 10px; min-height: 30px; }
 }
 .atmo-plate.on { opacity: 1; }
 .atmo-scrim { transition: opacity var(--atmo-fade, 700ms) linear; }
-/* SOFTENING — the answer to texture, which no amount of wash can give.
-   The measurement is in paintScrim; --atmo-soften is 0px for a smooth
-   picture and a few pixels for a busy one. The plate is scaled slightly
-   past its box because a blur samples outside the source and would
-   otherwise leave a pale fringe at the edges of the screen. */
-.atmo-shell .atmo-plate, .atmo-shell .atmo-poster {
-  filter: blur(var(--atmo-soften, 0px));
-  transform: scale(calc(1 + var(--atmo-soften, 0px) / 120px * 3));
-}
 /* A slow tide in the SPACE's own colour, over the readability wash.
    ------------------------------------------------------------------
    The wash is a flat neutral by design, and a flat neutral over a

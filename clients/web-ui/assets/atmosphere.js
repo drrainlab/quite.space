@@ -918,23 +918,25 @@ const ATMO = (() => {
    * @param {[number,number,number]|null} [mean] the picture's average colour
    */
   /**
-   * How much to soften a picture, in pixels, for how busy it is.
+   * How far the letters' halo reaches, as a multiple of its base radii.
    *
-   * A scrim answers BRIGHTNESS and can do nothing about TEXTURE: bark at an
-   * ordinary brightness is still hard to read over, because its detail sits
-   * at the scale of the letter strokes and competes with them there. More
-   * wash does not fix that — it only takes the picture away.
+   * A picture is hard to read over for two unrelated reasons: it is BRIGHT,
+   * and it is BUSY. Blurring the picture answered both and was rejected —
+   * the author published a photograph, and softening it to make room for
+   * text takes something that was not ours to take.
    *
-   * Softening does, and it costs the right thing. A blurred photograph of
-   * bark is still unmistakably bark: the colour, the depth and the movement
-   * of it survive, and only the frequency that was fighting the text goes.
-   * That is what a background is FOR, so this is the honest countermeasure
-   * rather than a heavier sheet on top.
-   *
-   * Capped low on purpose — this is a correction, not a treatment, and an
-   * author who published a photograph should still recognise it.
+   * The halo answers both and costs nothing of the picture. Widening it
+   * sinks the immediate surroundings of each stroke, which is exactly where
+   * a bright field bleaches a letter and where bark's own detail competes
+   * with it, and everything more than a few pixels from a glyph is left
+   * alone. So the picture stays a picture, at full resolution, and the text
+   * carries its own readability with it.
    */
-  const MAX_SOFTEN_PX = 4.5;
+  function haloScale(luma, detail) {
+    const l = Math.max(0, Math.min(1, luma || 0));
+    const d = Math.max(0, Math.min(1, detail || 0));
+    return Math.min(2.6, 1 + 1.15 * l + 0.55 * d);
+  }
 
   function paintScrim(shell, scrim, ground, luma, mean, detail) {
     const rgb = washColour(mean || null, ground).join(',');
@@ -959,11 +961,11 @@ const ATMO = (() => {
     // What the letters' glow is made of. The measurement lives here, the
     // shape lives in the stylesheet — a halo on the glyphs, so the picture
     // survives between the lines instead of being covered by a plate.
-    // Texture is answered by softening, brightness by the wash — two
-    // properties, two remedies, so a busy DARK picture gets the blur without
-    // a heavier sheet it does not need.
-    shell.style.setProperty('--atmo-soften',
-      (MAX_SOFTEN_PX * Math.max(0, Math.min(1, detail || 0))).toFixed(2) + 'px');
+    // What the letters' glow is made of, and how far it reaches. The colour
+    // is the wash — the picture's own average, darkened — so the halo reads
+    // as the photograph in shadow rather than as a grey outline drawn over
+    // it. The reach grows with both brightness and busyness.
+    shell.style.setProperty('--atmo-halo', haloScale(luma, detail).toFixed(2));
     shell.style.setProperty('--atmo-ink', rgb);
     shell.style.setProperty('--atmo-glow', String(Math.min(1, 0.6 + 0.5 * luma)));
   }
