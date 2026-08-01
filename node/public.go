@@ -468,11 +468,19 @@ func (r *Runtime) collectPublicIngressBatch(addr string, tids []id.TerminalID) (
 	applied := map[id.TerminalID]int{}
 	// Roots per space, frozen spaces skipped (TRUE freeze: not read at all).
 	roots := map[id.TerminalID][32]byte{}
+	// The owner's signed contribution limit, read once per drain rather than
+	// per frame: ParsePolicy re-decodes the manifest on every call.
+	limits := map[id.TerminalID]int{}
 	r.mu.Lock()
 	for _, tid := range tids {
-		if st, ok := r.spaces[tid]; ok && !st.space.Policy().Frozen {
+		if st, ok := r.spaces[tid]; ok {
+			pol := st.space.Policy()
+			if pol.Frozen {
+				continue
+			}
 			if root, ok := st.space.IngressRoot(); ok {
 				roots[tid] = root
+				limits[tid] = pol.MaxFramesPerAuthor
 			}
 		}
 	}
@@ -539,7 +547,7 @@ func (r *Runtime) collectPublicIngressBatch(addr string, tids []id.TerminalID) (
 			continue // not one of the drained spaces
 		}
 		if budgets[tid] == nil {
-			budgets[tid] = newAuthorBudget()
+			budgets[tid] = newAuthorBudget(limits[tid])
 			accs[tid] = newWantAccumulator()
 		}
 		r.mu.Lock()
@@ -566,10 +574,27 @@ func (r *Runtime) collectPublicIngressBatch(addr string, tids []id.TerminalID) (
 			if !budgets[tid].admit(dev, len(f)) {
 				continue // over budget this cycle — arrives on a later one
 			}
+			// The owner's own limit, checked here so an over-limit frame
+			// costs no verification — but CHARGED only below, once the
+			// frame has proved whose it is. Charging on the claim would
+			// let a forged device id spend a real contributor's share.
+			if !budgets[tid].withinPolicy(dev) {
+				st.throttled++
+				continue // the owner's rate limit — arrives on a later cycle
+			}
 			n, err := st.space.Absorb(f)
 			if err != nil {
 				st.rejected.remember(eid, nowT)
 				continue // admission-refused or malformed: PolicyStats has it
+			}
+			if n > 0 {
+				// Charged for frames that actually became content, which is
+				// stricter than "Absorb did not error" in the one way that
+				// matters: a REPLAY of somebody's already-accepted frames
+				// absorbs cleanly and applies nothing, and charging it would
+				// let anyone spend a named contributor's allowance by
+				// re-pushing their own words back at the space.
+				budgets[tid].charge(dev)
 			}
 			applied[tid] += n
 		}
@@ -660,6 +685,10 @@ type PolicyDelta struct {
 	// Relays replaces the signed relay set (RR-5): RelayRef strings,
 	// first = primary, at most two. Nil = unchanged; empty = clear.
 	Relays *[]string
+	// MaxFramesPerAuthor sets the contribution limit (IC-1). Nil = unchanged;
+	// 0 = back to the built-in defence cap. The pointer is what keeps those
+	// two apart.
+	MaxFramesPerAuthor *int
 }
 
 // RevisePolicy re-signs the space manifest with the revised policy
@@ -695,6 +724,10 @@ func (r *Runtime) RevisePolicy(tid id.TerminalID, d PolicyDelta) error {
 			if !next.AllowsWriter(owner.Principal, owner.Device) {
 				next.Writers = append(next.Writers, owner)
 			}
+			// A contribution limit is an open-community control. Leaving it
+			// set here would make a later flip back to community silently
+			// resurrect a number the owner has long forgotten.
+			next.MaxFramesPerAuthor = 0
 		case "all", "": // → open community
 			next.Publish = terminals.PublishAll
 			next.Join = terminals.JoinOpen
@@ -735,6 +768,16 @@ func (r *Runtime) RevisePolicy(tid id.TerminalID, d PolicyDelta) error {
 			}
 		}
 		next.Relays = append([]string(nil), (*d.Relays)...)
+	}
+	if d.MaxFramesPerAuthor != nil {
+		// Bounded by SpacePolicy.Validate inside ReviseManifest; checked here
+		// too so the error names the field and its range.
+		if n := *d.MaxFramesPerAuthor; n != 0 &&
+			(n < terminals.MinFramesPerAuthor || n > terminals.MaxFramesPerAuthor) {
+			return fmt.Errorf("node: a contribution limit is %d..%d frames per cycle, or 0 for none",
+				terminals.MinFramesPerAuthor, terminals.MaxFramesPerAuthor)
+		}
+		next.MaxFramesPerAuthor = *d.MaxFramesPerAuthor
 	}
 	if err := st.space.ReviseManifest(title, character, next); err != nil {
 		return err
@@ -790,6 +833,7 @@ func (a *APIServer) handleRevisePolicy(w http.ResponseWriter, r *http.Request) {
 		RemoveCurator *struct{ Principal, Device string } `json:"remove_curator"`
 		Frozen        *bool                               `json:"frozen"`
 		Relays        *[]string                           `json:"relays"`
+		RatePerCycle  *int                                `json:"rate_per_cycle"`
 	}](r)
 	if err != nil {
 		httpErr(w, http.StatusBadRequest, err)
@@ -807,7 +851,8 @@ func (a *APIServer) handleRevisePolicy(w http.ResponseWriter, r *http.Request) {
 		return &terminals.WriterBinding{Principal: prin, Device: dev}, nil
 	}
 	delta := PolicyDelta{Visibility: body.Visibility, Publish: body.Publish,
-		Frozen: body.Frozen, Relays: body.Relays}
+		Frozen: body.Frozen, Relays: body.Relays,
+		MaxFramesPerAuthor: body.RatePerCycle}
 	if body.AddCurator != nil {
 		b, err := parseBinding(body.AddCurator.Principal, body.AddCurator.Device)
 		if err != nil {

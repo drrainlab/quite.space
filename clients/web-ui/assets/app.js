@@ -906,6 +906,9 @@ async function renderRelayPublicPanel() {
       if (s.pending_uplink)
         parts.push(`${s.pending_uplink} waiting for the publisher`);
       if (s.ignored_total) parts.push(`${s.ignored_total} ignored`);
+      // Deferred, not refused — and said with a different word, because a
+      // contribution that is coming back is not one that was thrown away.
+      if (s.throttled_total) parts.push(`${s.throttled_total} held back by your limit`);
       row.innerHTML = `<span class="rp-title">${esc(s.title || s.space_id.slice(0, 8))}</span>` +
         `<span class="rp-meta">${esc(parts.join(' · '))}</span>`;
       box.appendChild(row);
@@ -1022,6 +1025,14 @@ function openAccess(sp) {
   const mode = sp.publish === 'curated' ? 'curated' : 'all';
   document.querySelectorAll('#accMode button').forEach(b =>
     b.classList.toggle('sel', b.dataset.v === mode));
+  // A contribution limit is an open-community control: a broadcast space
+  // already admits only curators, so offering it there would be a second
+  // lock on a shut door.
+  const rateSec = document.getElementById('accRate');
+  rateSec.hidden = mode !== 'all';
+  const rate = Number(sp.rate_per_cycle || 0);
+  document.querySelectorAll('#accRateBtns button').forEach(b =>
+    b.classList.toggle('sel', Number(b.dataset.v) === rate));
   document.getElementById('accFreezeBtn').textContent =
     sp.frozen ? 'Unfreeze publication' : 'Freeze publication';
   document.getElementById('accMsg').textContent = '';
@@ -1103,6 +1114,10 @@ function setAccessMode(m) {
   reviseAccess({ publish: m });
 }
 function addCurator() { reviseAccess({ add_curator: curatorFields() }); }
+// Named levels rather than a number: the limit is per drain round, and a
+// round is 2 to 30 seconds depending on how busy the space is. "Six per
+// minute" would be a number we cannot stand behind; "strict" is one we can.
+function setContributionLimit(n) { reviseAccess({ rate_per_cycle: n }); }
 function toggleFreeze() {
   const sp = spacesCache.find(s => s.id === accessSpace);
   const next = !(sp && sp.frozen);

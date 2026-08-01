@@ -419,6 +419,14 @@ type PublicSpaceStatus struct {
 	PendingUplink int    `json:"pending_uplink,omitempty"`
 	AgoPublish    int    `json:"seconds_since_publish,omitempty"`
 	IgnoredTotal  uint64 `json:"ignored_total,omitempty"`
+	// ThrottledTotal counts frames DEFERRED by the owner's contribution
+	// limit (IC-1) — separate from IgnoredTotal, which means refused for
+	// good. An owner who sets a limit has to be able to see it working, and
+	// a deferral must never be reported as a rejection.
+	ThrottledTotal uint64 `json:"throttled_total,omitempty"`
+	// RatePerCycle echoes the signed limit, so the number in the UI comes
+	// from the manifest rather than from what was last typed into it.
+	RatePerCycle int `json:"rate_per_cycle,omitempty"`
 	// Relay is where this space's traffic actually goes (RR-4): the
 	// space's own relay for followed spaces, "" meaning the personal one.
 	Relay string `json:"relay,omitempty"`
@@ -486,6 +494,9 @@ func (r *Runtime) publicSpaceStatusesLocked() []PublicSpaceStatus {
 			Frozen:       pol.Frozen,
 			Seq:          r.ks.PublicPublish[tid].ProjectionSeq,
 			IgnoredTotal: st.space.PolicyStats.IgnoredTotal,
+
+			ThrottledTotal: st.throttled,
+			RatePerCycle:   pol.MaxFramesPerAuthor,
 			// "" = the personal relay (owner default); a followed space
 			// shows its publisher's address. Caller holds r.mu, so this is
 			// the meta view, not the resolver.

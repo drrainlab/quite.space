@@ -366,6 +366,10 @@ type spaceResp struct {
 	CanWrite        bool   `json:"can_write"`
 	Frozen          bool   `json:"frozen,omitempty"`
 	IgnoredByPolicy uint64 `json:"ignored_by_policy,omitempty"`
+	// RatePerCycle is the owner's signed contribution limit (IC-1), 0 for
+	// none. It comes from the manifest, so the control reflects what the
+	// space actually says rather than what was last typed at it.
+	RatePerCycle int `json:"rate_per_cycle,omitempty"`
 	// PH-3 availability roles this node has volunteered for. Neither confers
 	// any authority over the space.
 	Mirror bool `json:"mirror,omitempty"`
@@ -402,6 +406,7 @@ func (a *APIServer) handleSpaces(w http.ResponseWriter, r *http.Request) {
 				resp.Join = pol.Join
 				resp.Publish = pol.Publish
 				resp.Frozen = pol.Frozen
+				resp.RatePerCycle = pol.MaxFramesPerAuthor
 			}
 			resp.IgnoredByPolicy = st.space.PolicyStats.IgnoredTotal
 			meta := a.rt.ks.Spaces[s.ID]

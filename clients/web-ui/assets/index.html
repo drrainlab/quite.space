@@ -317,6 +317,16 @@
     <div class="row"><button class="btn-plain" onclick="addCurator()">Add curator device</button></div>
     <p class="hint">A curator is a specific device of a specific person — they can post the moment you add them.</p>
   </div>
+  <div class="settings-sec" id="accRate">
+    <p class="hint">How much one contributor may send</p>
+    <div class="segmented" id="accRateBtns">
+      <button data-v="0" onclick="setContributionLimit(0)">No limit</button>
+      <button data-v="24" onclick="setContributionLimit(24)">Relaxed</button>
+      <button data-v="16" onclick="setContributionLimit(16)">Steady</button>
+      <button data-v="8" onclick="setContributionLimit(8)">Strict</button>
+    </div>
+    <p class="hint" id="accRateHint">Nothing is ever lost: over the limit, a contribution simply waits and arrives on a later round. It applies per person, so one loud voice cannot crowd out the room.</p>
+  </div>
   <div class="settings-sec">
     <div class="row">
       <button class="btn-plain" id="accFreezeBtn" onclick="toggleFreeze()">Freeze publication</button>

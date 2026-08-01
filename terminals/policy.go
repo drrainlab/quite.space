@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/drrainlab/quiet_places/protocol/id"
@@ -49,6 +50,24 @@ const (
 	PublishCurated = "curated" // only attested writer bindings publish
 )
 
+// Bounds on the owner's contribution limit (IC-1).
+//
+// MaxFramesPerAuthor mirrors the node's built-in per-cycle defence cap and
+// is duplicated here for the same reason validRelayRefSyntax is: terminals
+// must not import node, and a signed policy has to be refusable before it is
+// signed. node has a test asserting the two still agree.
+//
+// MinFramesPerAuthor is the floor, and it is the load-bearing half. The
+// per-author budget is keyed on the CLAIMED signer device, read before any
+// signature is checked — so a limit small enough to be exhausted by forged
+// claims would hand anyone a way to silence a named contributor. Charging
+// only VERIFIED frames (node/ingress_guard.go) is what makes that safe, and
+// this floor is the second guard, not the first.
+const (
+	MinFramesPerAuthor = 8
+	MaxFramesPerAuthor = 48
+)
+
 // WriterBinding is one owner-attested authorized writer of a curated space:
 // the principal (product identity) and the signer device the owner vouches
 // for. The owner's own device rides here too (principal == controller).
@@ -76,6 +95,22 @@ type SpacePolicy struct {
 	// distribution, signature and anti-rollback are inherited — and old
 	// builds skip the label unread. Public spaces only.
 	Relays []string
+	// MaxFramesPerAuthor is the owner's contribution rate limit (IC-1): how
+	// many frames one contributor may have ADMITTED per drain cycle. Zero
+	// means the built-in defence cap, which is also the ceiling — this knob
+	// can only make a space stricter, never louder.
+	//
+	// It is expressed per cycle rather than per second because a cycle is
+	// what the drain actually has, and inventing a second unit would mean
+	// converting between one the owner can see and one nobody measures. A
+	// flood keeps its space on the hot cadence by definition (the log grows
+	// every tick), so the number means what it appears to mean exactly when
+	// it binds.
+	//
+	// Open-community spaces only: a curated space is already gated by
+	// attested writer bindings, and a rate limit there would be a second
+	// lock on a door that is already shut.
+	MaxFramesPerAuthor int
 }
 
 // validRelayRefSyntax is the SYNTACTIC half of the RelayRef grammar —
@@ -153,7 +188,7 @@ func (p SpacePolicy) Validate() error {
 	switch p.Effective() {
 	case VisibilityPrivate:
 		if p.Join != JoinNone || p.Publish != PublishAll || len(p.Writers) != 0 || p.Frozen ||
-			len(p.Relays) != 0 {
+			len(p.Relays) != 0 || p.MaxFramesPerAuthor != 0 {
 			return errors.New("terminals: private spaces carry no join/publish policy")
 		}
 		return nil
@@ -170,6 +205,16 @@ func (p SpacePolicy) Validate() error {
 			return fmt.Errorf("terminals: unreadable relay reference %q", ref)
 		}
 	}
+	// The contribution limit (IC-1) is bounded on both sides. The ceiling is
+	// the built-in defence cap, so a policy can only tighten it; the floor
+	// exists because the budget is keyed on the CLAIMED signer device, and a
+	// limit tight enough to be spent by a forged claim would turn an owner's
+	// rate control into a way to silence a named contributor.
+	if p.MaxFramesPerAuthor != 0 &&
+		(p.MaxFramesPerAuthor < MinFramesPerAuthor || p.MaxFramesPerAuthor > MaxFramesPerAuthor) {
+		return fmt.Errorf("terminals: contribution limit %d is outside %d..%d",
+			p.MaxFramesPerAuthor, MinFramesPerAuthor, MaxFramesPerAuthor)
+	}
 	switch p.Publish {
 	case PublishCurated: // broadcast
 		if p.Join != JoinNone {
@@ -177,6 +222,10 @@ func (p SpacePolicy) Validate() error {
 		}
 		if len(p.Writers) == 0 {
 			return errors.New("terminals: curated spaces need at least one attested writer")
+		}
+		if p.MaxFramesPerAuthor != 0 {
+			return errors.New("terminals: a contribution limit is for open communities — " +
+				"a curated space already admits only attested writers")
 		}
 	case PublishAll: // open community
 		if p.Join != JoinOpen {
@@ -211,6 +260,12 @@ func (p SpacePolicy) Labels() []string {
 	if q.Frozen {
 		out = append(out, charPrefix+"frozen=1")
 	}
+	// The first integer-valued qp.* label in the tree. Emitted only when set,
+	// like frozen and join, so a space that never touched it keeps a
+	// byte-identical manifest.
+	if q.MaxFramesPerAuthor != 0 {
+		out = append(out, charPrefix+"rate="+strconv.Itoa(q.MaxFramesPerAuthor))
+	}
 	for _, w := range q.Writers {
 		out = append(out, charPrefix+"writer="+
 			hex.EncodeToString(w.Principal[:])+":"+hex.EncodeToString(w.Device[:]))
@@ -240,7 +295,7 @@ func ParsePolicy(labels []string) SpacePolicy {
 			continue
 		}
 		switch kv[0] {
-		case "visibility", "join", "publish", "frozen":
+		case "visibility", "join", "publish", "frozen", "rate":
 			if seen[kv[0]] {
 				bad = true // conflicting duplicates: ambiguous, fail closed
 				continue
@@ -255,6 +310,17 @@ func ParsePolicy(labels []string) SpacePolicy {
 				p.Publish = kv[1]
 			case "frozen":
 				p.Frozen = kv[1] == "1"
+			case "rate":
+				// The one label that is a NUMBER, so it is the one that can
+				// be garbage in a way a string cannot. Out of range fails
+				// closed like a malformed relay ref: a policy nobody can read
+				// must never be read generously.
+				n, err := strconv.Atoi(kv[1])
+				if err != nil || n < MinFramesPerAuthor || n > MaxFramesPerAuthor {
+					bad = true
+					continue
+				}
+				p.MaxFramesPerAuthor = n
 			}
 		case "writer":
 			parts := strings.SplitN(kv[1], ":", 2)
