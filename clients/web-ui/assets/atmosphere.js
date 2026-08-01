@@ -1055,6 +1055,48 @@ if (typeof window !== 'undefined') {
 const ATMO_EDIT = (() => {
   /** Bounds restated from protocol/publication/atmosphere.go. */
   const MAX_PARAMS = 16, MAX_PALETTE = 4, MAX_FALLBACK = 200, MAX_FADE = 10000;
+  const MAX_STAGES = 12;
+
+  /**
+   * Every block of a document, in reading order, with something to call it.
+   *
+   * Stages anchor to block ids, and an author picking "b7f3a291" out of a
+   * list is not choosing a place in their own post. Nesting is walked because
+   * document order is what the contract requires of a sequence, and a section
+   * with a paragraph inside it has that paragraph AFTER it.
+   */
+  function blockChoices(doc) {
+    const out = [];
+    const walk = (list) => {
+      for (const b of list || []) {
+        if (!b || !b.id) continue;
+        const p = b.props || {};
+        const words = String(p.text || p.caption || '').trim().replace(/\s+/g, ' ');
+        out.push({
+          id: String(b.id),
+          label: b.type + (words ? ' — ' + words.slice(0, 44) : ''),
+        });
+        walk(b.children);
+      }
+    };
+    walk(doc.blocks);
+    return out;
+  }
+
+  /**
+   * Keep a sequence in document order, which the contract requires.
+   *
+   * Sorting rather than refusing: the author's intent when they anchor a
+   * picture to a block is "here", never "here, third". A stage whose block
+   * has been deleted sorts to the end, where the editor shows it as needing
+   * a new anchor instead of silently dropping the author's picture.
+   */
+  function sortStages(a, doc) {
+    const order = new Map(blockChoices(doc).map((c, i) => [c.id, i]));
+    (a.visual.stages || []).sort((x, y) =>
+      (order.has(x.anchor) ? order.get(x.anchor) : 1e6) -
+      (order.has(y.anchor) ? order.get(y.anchor) : 1e6));
+  }
 
   /** A fresh recipe: the default scene, a seed, and the space's own colours. */
   function blank() {
@@ -1133,14 +1175,59 @@ const ATMO_EDIT = (() => {
     }
 
     const a = doc.atmosphere;
+    // A post has ONE background, so the two forms are alternatives and the
+    // editor says so with a switch rather than letting an author fill in both
+    // and meet the refusal at the publish button. An empty scene id is what
+    // "this is a sequence" means on the wire, so it means that here too.
+    const isSeq = !a.visual.scene;
+
     const head = el('div', 'atmo-edit-head');
     head.appendChild(el('strong', null, 'Atmosphere'));
+    const mode = el('select', 'atmo-edit-mode');
+    for (const [v, label] of [['scene', 'A moving scene'], ['stages', 'Pictures as you read']]) {
+      const o = el('option', null, label);
+      o.value = v;
+      if ((v === 'stages') === isSeq) o.selected = true;
+      mode.appendChild(o);
+    }
+    mode.onchange = () => {
+      if (mode.value === 'stages') {
+        // Nothing generative survives: there is no scene left for a seed or
+        // a parameter to steer, and the contract refuses both.
+        a.visual.scene = '';
+        a.visual.seed = 0;
+        a.visual.params = [];
+        a.visual.stages = a.visual.stages || [];
+      } else {
+        delete a.visual.stages;
+        a.visual.scene = (typeof SCENES !== 'undefined' && SCENES.list()[0]) || 'drift@1';
+        a.visual.seed = rollSeed();
+        a.visual.params = [];
+      }
+      changed();
+    };
+    head.appendChild(mode);
     const drop = el('button', 'btn-plain', 'Remove');
     drop.type = 'button';
     drop.onclick = () => { delete doc.atmosphere; changed(); };
     head.appendChild(drop);
     host.appendChild(head);
 
+    if (isSeq) {
+      renderStages(host, doc, a, changed);
+    } else {
+      renderScene(host, a, changed, onChange);
+    }
+
+    // --- palette ----------------------------------------------------------
+    // In both forms: the palette's ground is what the readability scrim is
+    // made of, so a sequence needs one just as much as a scene does.
+    renderPalette(host, a, changed);
+    renderWordsSoundLineage(host, a, changed, onChange);
+  }
+
+  /** The generative half: scene, seed, parameters, and a live preview. */
+  function renderScene(host, a, changed, onChange) {
     // --- the live preview, through the SAME renderer the reader gets -------
     // Not a mock and not a screenshot: if the preview used anything else, the
     // safety cap and the mode ladder would be absent from it and an author
@@ -1199,8 +1286,119 @@ const ATMO_EDIT = (() => {
         host.appendChild(row(name, wrap));
       }
     }
+  }
 
-    // --- palette ----------------------------------------------------------
+  /**
+   * The sequence half: a picture per place in the post.
+   *
+   * Per-stage SOUND is deliberately not offered. The field is in the contract
+   * so a sequence authored today does not have to be re-signed when per-stage
+   * sound ships, but nothing plays it yet, and an editor that let an author
+   * attach audio no reader will hear would be selling something that does not
+   * exist.
+   */
+  function renderStages(host, doc, a, changed) {
+    a.visual.stages = a.visual.stages || [];
+    sortStages(a, doc);
+    const stages = a.visual.stages;
+    const choices = blockChoices(doc);
+
+    if (!choices.length) {
+      host.appendChild(el('p', 'hint warn',
+        'Write the post first — a picture is anchored to a block, and there are none yet.'));
+      return;
+    }
+
+    const list = el('div', 'atmo-edit-stages');
+    stages.forEach((s, i) => {
+      const r = el('div', 'atmo-edit-stage');
+
+      const thumb = el('img', 'atmo-edit-thumb');
+      thumb.alt = '';
+      if (typeof assetURL === 'function' && s.image) thumb.src = assetURL(s.image);
+      r.appendChild(thumb);
+
+      const where = el('select', 'atmo-edit-anchor');
+      // Every block is offered except the ones another stage already has:
+      // two pictures on one block have no defined meaning, and the contract
+      // refuses them.
+      const taken = new Set(stages.filter((_, j) => j !== i).map(x => x.anchor));
+      for (const c of choices) {
+        if (taken.has(c.id)) continue;
+        const o = el('option', null, c.label);
+        o.value = c.id;
+        if (c.id === s.anchor) o.selected = true;
+        where.appendChild(o);
+      }
+      if (!choices.some(c => c.id === s.anchor)) {
+        const o = el('option', null, '— this block is gone, pick another —');
+        o.value = ''; o.selected = true;
+        where.insertBefore(o, where.firstChild);
+      }
+      where.onchange = () => { s.anchor = where.value; changed(); };
+      r.appendChild(where);
+
+      const how = el('select', 'atmo-edit-transition');
+      for (const [v, label] of [['fade', 'fades in'], ['cut', 'cuts in']]) {
+        const o = el('option', null, label);
+        o.value = v;
+        if ((s.transition || 'fade') === v) o.selected = true;
+        how.appendChild(o);
+      }
+      how.onchange = () => {
+        s.transition = how.value;
+        if (s.transition === 'cut') delete s.duration_ms;
+        changed();
+      };
+      r.appendChild(how);
+
+      if ((s.transition || 'fade') !== 'cut') {
+        const ms = el('input', 'atmo-edit-ms');
+        ms.type = 'number'; ms.min = '0'; ms.max = String(MAX_FADE); ms.step = '100';
+        ms.value = String(s.duration_ms || 700);
+        ms.title = 'milliseconds';
+        ms.onchange = () => {
+          s.duration_ms = Math.max(0, Math.min(MAX_FADE, Number(ms.value) || 0));
+          changed();
+        };
+        r.appendChild(ms);
+      }
+
+      const rm = el('button', 'btn-plain', '✕');
+      rm.type = 'button';
+      rm.title = 'remove this picture';
+      rm.onclick = () => { stages.splice(i, 1); changed(); };
+      r.appendChild(rm);
+      list.appendChild(r);
+    });
+    host.appendChild(list);
+
+    if (stages.length < MAX_STAGES && stages.length < choices.length) {
+      const add = el('button', 'btn-plain', '+ Picture');
+      add.type = 'button';
+      add.onclick = () => chooseAsset('image/*', async f => {
+        const r = await uploadAssetFile(f);
+        const taken = new Set(stages.map(x => x.anchor));
+        const free = choices.find(c => !taken.has(c.id));
+        stages.push({
+          anchor: free ? free.id : choices[0].id,
+          image: r.asset_id, transition: 'fade', duration_ms: 700,
+        });
+        changed();
+      });
+      host.appendChild(add);
+    }
+    if (!stages.length) {
+      host.appendChild(el('p', 'hint warn',
+        'A sequence needs at least one picture, or this post has no atmosphere at all.'));
+    }
+    host.appendChild(el('p', 'hint',
+      'Each picture takes over when its block reaches the reader. They are kept ' +
+      'in the order the post is read.'));
+  }
+
+  function renderPalette(host, a, changed) {
+    a.visual.palette = a.visual.palette || [];
     const pal = el('div', 'atmo-edit-palette');
     (a.visual.palette || []).forEach((tok, i) => {
       const c = el('input', 'atmo-edit-colour');
@@ -1227,7 +1425,9 @@ const ATMO_EDIT = (() => {
       pal.appendChild(less);
     }
     host.appendChild(row('Palette', pal));
+  }
 
+  function renderWordsSoundLineage(host, a, changed, onChange) {
     // --- the words, which are required -----------------------------------
     // ADR-013 invariant 1: the renderer may degrade, the meaning may not. A
     // reader who gets no picture — old client, reduced motion, an id we do
