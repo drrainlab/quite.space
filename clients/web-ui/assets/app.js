@@ -2344,29 +2344,77 @@ const _mediaObserver = ('IntersectionObserver' in window)
       for (const ent of entries) {
         if (!ent.isIntersecting) continue;
         _mediaObserver.unobserve(ent.target);
-        const m = ent.target._autoMedia;
-        if (m) autoFetchAsset(m.assetId, m.onReady, m.onUnavailable);
+        runMedia(ent.target);
       }
     }, { rootMargin: '300px' })
   : null;
 
+// How long to wait before asking again, and how many times.
+//
+// A fetch that ends with nothing used to be the end of it: the observer
+// unobserved on the first sighting and autoFetchAsset returned on `failed`,
+// so the ONLY way to ask a second time was to reload the page. When the
+// holder was simply away — a relay outage at the other end — a person had
+// to work out for themselves that reloading was the remedy. It is not their
+// job to poll on our behalf.
+const MEDIA_RETRY_MS = [5000, 15000, 45000, 120000];
+const MEDIA_RETRY_MAX = 12; // ~20 minutes of asking, then the manual link
+
 function observeMedia(el, assetId, onReady, onUnavailable) {
   if (!assetId) return;
-  el._autoMedia = { assetId, onReady, onUnavailable };
+  el._autoMedia = { assetId, onReady, onUnavailable, tries: 0, timer: null };
+  armMedia(el);
+}
+
+/** Ask when it comes into view — or straight away without an observer. */
+function armMedia(el) {
   if (_mediaObserver) _mediaObserver.observe(el);
-  else autoFetchAsset(assetId, onReady, onUnavailable); // no observer: fetch eagerly
+  else runMedia(el);
+}
+
+function runMedia(el) {
+  const m = el && el._autoMedia;
+  if (!m) return;
+  autoFetchAsset(m.assetId, m.onReady, m.onUnavailable).then((ok) => {
+    if (ok) { clearUnavailable(el); m.tries = 0; return; }
+    retryMedia(el);
+  });
+}
+
+/** Ask again later, unless the element is gone or we have asked enough. */
+function retryMedia(el) {
+  const m = el && el._autoMedia;
+  // A render replaced this node: its timer would be asking on behalf of
+  // something nobody is looking at.
+  if (!m || m.timer || !el.isConnected || m.tries >= MEDIA_RETRY_MAX) return;
+  const wait = MEDIA_RETRY_MS[Math.min(m.tries, MEDIA_RETRY_MS.length - 1)];
+  m.tries++;
+  m.timer = setTimeout(() => {
+    m.timer = null;
+    if (el.isConnected) armMedia(el);
+  }, wait);
+}
+
+/** The bytes arrived after all — take the sentence back down. */
+function clearUnavailable(el) {
+  if (!el || !el._qsUnavailable) return;
+  el._qsUnavailable = false;
+  const n = el.nextSibling;
+  if (n && n.classList && n.classList.contains('media-unavailable')) n.remove();
 }
 
 // autoFetchAsset drives the relay fetch to completion, polling the idempotent
-// /fetch endpoint (RequestAsset dedups in-flight). Bails if the user navigates.
+// /fetch endpoint (RequestAsset dedups in-flight). Bails if the user
+// navigates. Resolves true only when the bytes are actually here — the
+// caller schedules another attempt for every other ending.
 async function autoFetchAsset(assetId, onReady, onUnavailable) {
   const sp = current;
   let toldUnavailable = false;
   try {
     for (let i = 0; i < 90; i++) {
       const r = await api(`/api/spaces/${sp}/assets/${assetId}/fetch`, { method: 'POST' });
-      if (r.state === 'complete') { onReady && onReady(); return; }
-      if (r.state === 'failed') { onUnavailable && onUnavailable(r.reason); return; }
+      if (r.state === 'complete') { onReady && onReady(); return true; }
+      if (r.state === 'failed') { onUnavailable && onUnavailable(r.reason); return false; }
       // The node reports "no source" while still asking. Surface it the
       // first time it says so — a person should not have to wait out the
       // whole deadline to learn that nobody is answering — and keep polling,
@@ -2376,9 +2424,10 @@ async function autoFetchAsset(assetId, onReady, onUnavailable) {
         onUnavailable && onUnavailable(r.reason);
       }
       await new Promise((res) => setTimeout(res, 1200));
-      if (current !== sp) return; // moved to another space; stop
+      if (current !== sp) return true; // moved to another space; not our business
     }
   } catch (e) { /* asset unknown here, or transient — leave the placeholder */ }
+  return false;
 }
 
 // autoMediaSrc / autoMediaBg point an <img>/<audio> or a background element at
