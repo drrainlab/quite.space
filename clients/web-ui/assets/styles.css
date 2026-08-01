@@ -877,7 +877,11 @@
      the one animation loop in this client belongs to the atmosphere stage.
      The same photosensitivity floor as everything else: opacity moves
      within a narrow band, slowly, with no flash and no luminance flip. */
-  .media-arriving { animation: qs-arriving 2.8s ease-in-out infinite; }
+  /* Held a touch back rather than breathing. A pulse on every arriving
+     picture is an animation per element for as long as the fetch takes, and
+     the SOFTNESS already says "a stand-in" without asking the compositor
+     for anything. */
+  .media-arriving { opacity: .82; }
   /* An <img> takes the blur directly — ::after does not render on a
      replaced element, and wrapping every thumbnail to hang one sheen on it
      would rebuild three renderers for a decoration. */
@@ -904,32 +908,15 @@
      stands in for. */
   .aplayer-blank { height: 34px; margin: 6px 0; border-radius: 8px;
     background: color-mix(in srgb, var(--fg, #fff) 6%, transparent); }
-  @keyframes qs-arriving {
-    0%, 100% { opacity: .72; }
-    50%      { opacity: 1; }
+  /* A container with no preview of its own is simply tinted while it waits.
+     It used to carry a drifting sheen; a sheen is an animation running for
+     the whole fetch, on every such row at once, to say what one flat tint
+     says for free. */
+  .media-arriving.qs-sheen {
+    background: color-mix(in srgb, var(--accent, #6cd3ff) 10%, transparent);
   }
-  /* Containers that have no preview of their own get a slow drift instead of
-     a blur — the same soft gradient language as the atmosphere. */
-  .media-arriving.qs-sheen { position: relative; overflow: hidden; }
-  .media-arriving.qs-sheen::after {
-    content: ''; position: absolute; inset: 0; pointer-events: none;
-    border-radius: inherit;
-    background: linear-gradient(100deg, transparent 20%,
-      color-mix(in srgb, var(--accent, #6cd3ff) 24%, transparent) 50%,
-      transparent 80%);
-    background-size: 260% 100%;
-    animation: qs-sheen-drift 3.4s ease-in-out infinite;
-  }
-  @keyframes qs-sheen-drift {
-    from { background-position: 200% 0; }
-    to   { background-position: -60% 0; }
-  }
-  /* Reduced motion keeps the MEANING and drops the movement: the preview
-     stays soft, so it still reads as a stand-in, and nothing drifts. */
   @media (prefers-reduced-motion: reduce) {
-    .media-arriving { animation: none; opacity: .82; }
-    .media-arriving.qs-sheen::after { animation: none; opacity: .5; }
-    .thumb, img.qs-materialises { transition: none; }
+    .thumb, .pub-cover img, .pub-block img { transition: none; }
   }
   /* drag-and-drop attach overlay */
   #dropOverlay { position: fixed; inset: 0; z-index: 500; display: none;
@@ -1983,16 +1970,19 @@ header .nav-act { padding: 5px 11px 5px 10px; min-height: 30px; }
 .pub-card-atmo-on .pub-title,
 .pub-card-atmo-on .pub-summary,
 .pub-card-atmo-on .pub-meta {
-  /* Three radii, one variable. The tight one gives the stroke its edge, the
-     middle one separates a word from what is behind it, the wide one sinks
-     the surroundings so a busy photograph cannot compete. --atmo-halo scales
-     all three with how bright the picture is (paintInk); the alphas are
-     fixed, because a wider halo IS the stronger halo and saying it twice
-     only made two numbers to keep in agreement. */
+  /* TWO SMALL RADII, and the reason is cost.
+     A blurred text-shadow is repainted with the text, on every scroll, and
+     its price grows with the square of the radius — so a 57px halo on every
+     block, title and comment of a long article is the most expensive thing
+     on the page by a wide margin. The scrim, by contrast, is ONE flat
+     rectangle the compositor draws once.
+     So the work moved to the cheap layer: the wash carries the strength
+     (see paintInk) and the halo does only what a wash cannot — hug the
+     glyph closely enough to keep its edge. Six layers at 30px became three
+     at 24px and now two at 6px, and the page reads the same. */
   text-shadow:
-    0 0 calc(2px * var(--atmo-halo, 1)) rgba(var(--atmo-ink, 11,16,32), .95),
-    0 0 calc(8px * var(--atmo-halo, 1)) rgba(var(--atmo-ink, 11,16,32), .85),
-    0 0 calc(24px * var(--atmo-halo, 1)) rgba(var(--atmo-ink, 11,16,32), .7);
+    0 0 calc(1px * var(--atmo-halo, 1)) rgba(var(--atmo-ink, 11,16,32), .95),
+    0 0 calc(6px * var(--atmo-halo, 1)) rgba(var(--atmo-ink, 11,16,32), .8);
 }
 /* Code keeps its own surface, so a halo on it would be a second background
    fighting the first. */
@@ -2016,19 +2006,18 @@ header .nav-act { padding: 5px 11px 5px 10px; min-height: 30px; }
 }
 .atmo-plate.on { opacity: 1; }
 .atmo-scrim { transition: opacity var(--atmo-fade, 700ms) linear; }
-/* A slow tide in the SPACE's own colour, over the readability wash.
+/* The SPACE's own colour, over the readability wash.
    ------------------------------------------------------------------
    The wash is a flat neutral by design, and a flat neutral over a
-   photograph reads as a sheet of plastic. This puts the room back into it:
-   two very wide gradients in --acc, drifting against each other so the
-   surface is never quite even and never quite still. It belongs to the
-   scrim rather than to a layer of its own, so there is no node to mount,
-   nothing to tear down, and it cannot outlive the thing it tints.
+   photograph reads as a sheet of plastic. Two very wide gradients in --acc
+   put the room back into it. It belongs to the scrim rather than to a layer
+   of its own, so there is no node to mount and nothing to tear down.
 
-   The numbers are the photosensitivity floor, not taste: alpha stays inside
-   a narrow band well under a tenth, one cycle is half a minute, and nothing
-   about it changes luminance abruptly — at this rate an eye reads it as the
-   page breathing rather than as anything happening. */
+   It used to drift, and the drift is gone. Uneven is what the tint was for;
+   MOVING was a separate wish, and an animated full-viewport layer with two
+   radial gradients in it is a full-screen recomposite for as long as the
+   post is open — paid continuously, for something a reader was never meant
+   to notice. Static, it is painted once and costs nothing after that. */
 .atmo-scrim::after {
   content: ''; position: absolute; inset: 0; pointer-events: none;
   background:
@@ -2037,11 +2026,6 @@ header .nav-act { padding: 5px 11px 5px 10px; min-height: 30px; }
     radial-gradient(70% 60% at 78% 82%,
       color-mix(in srgb, var(--acc, #7ab4e0) 22%, transparent), transparent 72%);
   opacity: .085;
-  animation: atmo-tide 34s ease-in-out infinite alternate;
-}
-@keyframes atmo-tide {
-  from { transform: translate3d(-2.5%, -1.5%, 0) scale(1.06); opacity: .06; }
-  to   { transform: translate3d(2.5%,  1.5%, 0) scale(1.12); opacity: .105; }
 }
 
 /* The controller: a slim in-flow row, not a panel. Before entry it holds the

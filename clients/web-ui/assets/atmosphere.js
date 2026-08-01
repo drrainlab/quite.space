@@ -950,7 +950,11 @@ const ATMO = (() => {
   function paintScrim(shell, scrim, ground, luma, mean) {
     const rgb = washColour(mean || null, ground).join(',');
     scrim.style.background = `linear-gradient(rgba(${rgb},0.9), rgba(${rgb},1))`;
-    scrim.style.opacity = String(Math.min(0.86, 0.24 + 0.78 * Math.max(0, luma)));
+    // A little stronger than it was, because the halo behind the letters got
+    // much smaller — and this is the layer that costs nothing. One flat
+    // rectangle, composited once, against a blurred shadow repainted with
+    // every glyph on every scroll.
+    scrim.style.opacity = String(Math.min(0.9, 0.3 + 0.8 * Math.max(0, luma)));
     paintInk(shell, ground, luma, mean);
   }
 
