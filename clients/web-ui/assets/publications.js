@@ -399,6 +399,10 @@ function renderPubBlock(b) {
   const p = b.props || {};
   const el = document.createElement('div');
   el.className = 'pub-block pub-' + b.type.replace(/[^a-z-]/g, '');
+  // The block's own id, in the DOM. An atmosphere sequence anchors its
+  // stages to block ids (AM-7), and a document position that exists only in
+  // the data cannot be found by anything that watches the page.
+  if (b.id) el.dataset.blockId = String(b.id);
   switch (b.type) {
     case 'heading': {
       const h = document.createElement('h3');

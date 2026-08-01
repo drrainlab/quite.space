@@ -54,7 +54,14 @@ function install(global, size) {
         toggle(c, on) { on ? this._s.add(c) : this._s.delete(c); },
         contains(c) { return this._s.has(c); },
       },
-      setAttribute() {}, getAttribute() { return null; },
+      // Attributes are real state. They were no-ops, and a no-op getAttribute
+      // does not fail a test — it returns null, which reads as "the element
+      // does not have it", so code that depends on one looks correct and does
+      // nothing. That is the shape of a stub that tests itself.
+      attrs: Object.create(null),
+      setAttribute(k, v) { el.attrs[k] = String(v); },
+      getAttribute(k) { return k in el.attrs ? el.attrs[k] : null; },
+      removeAttribute(k) { delete el.attrs[k]; },
       addEventListener() {}, removeEventListener() {},
       appendChild(c) { c.parentNode = el; el.children.push(c); return c; },
       prepend(c) { c.parentNode = el; el.children.unshift(c); return c; },
@@ -64,7 +71,13 @@ function install(global, size) {
         if (i >= 0) el.parentNode.children.splice(i, 1);
         el.parentNode = null;
       },
-      getBoundingClientRect: () => ({ width: W, height: H, top: 0, left: 0 }),
+      // `rect` is settable so a test can lay elements out along the page —
+      // which is the only way to assert "which stage is the reader in", a
+      // question that is entirely about geometry.
+      rect: null,
+      getBoundingClientRect() {
+        return Object.assign({ width: W, height: H, top: 0, left: 0 }, el.rect || {});
+      },
       getContext: tag === 'canvas' ? function () { return makeCtx(el); } : undefined,
       querySelectorAll(sel) { return findAll(el, sel); },
       querySelector(sel) { return findAll(el, sel)[0] || null; },
@@ -76,16 +89,48 @@ function install(global, size) {
       get() { return [...el.classList._s].join(' '); },
       set(v) { el.classList._s = new Set(String(v).split(/\s+/).filter(Boolean)); },
     });
+    if (String(tag).toLowerCase() === 'img') {
+      // An image decodes asynchronously, and the sequence renderer depends on
+      // that: it swaps plates on `load`, so a stub that reported a picture as
+      // present the instant src was assigned would test a path the browser
+      // never takes.
+      let src = '';
+      el.complete = false;
+      el.naturalWidth = 0;
+      el.onload = null;
+      Object.defineProperty(el, 'src', {
+        get() { return src; },
+        set(v) {
+          src = String(v);
+          el.complete = false;
+          el.naturalWidth = 0;
+          global.requestAnimationFrame(() => {
+            if (el.src !== src) return; // superseded before it arrived
+            el.complete = true;
+            el.naturalWidth = 1;
+            if (el.onload) el.onload();
+          });
+        },
+      });
+    }
     return el;
   }
 
-  /** Enough selector support for what the runtime actually asks: tag, .class. */
+  /** Enough selector support for what the runtime asks: tag, .class, [attr]. */
   function findAll(root, sel) {
     const want = String(sel).split(',').map(s => s.trim().replace(/^:scope\s*>\s*/, ''));
     const out = [];
     const walk = (n, depth) => {
       for (const c of n.children) {
         for (const w of want) {
+          const attr = /^\[([a-z-]+)\]$/.exec(w);
+          if (attr) {
+            // [data-block-id] → dataset.blockId
+            const key = attr[1].replace(/^data-/, '')
+              .replace(/-([a-z])/g, (_, ch) => ch.toUpperCase());
+            if (c.dataset[key] !== undefined) { out.push(c); break; }
+            continue;
+          }
           const [tag, cls] = w.includes('.') ? w.split('.') : [w, ''];
           const tagOK = !tag || c.tagName === tag.toUpperCase();
           const clsOK = !cls || c.classList.contains(cls);
@@ -118,12 +163,25 @@ function install(global, size) {
 
   const store = new Map();
   const observers = new Set();
+  // Timers ride the same synthetic clock as frames, so "no two background
+  // changes closer together than N milliseconds" is an assertion rather than
+  // a sleep.
+  let nextTimer = 1;
+  const timers = new Map(); // id -> {at, fn}
+  const winListeners = new Map(); // type -> Set<fn>
 
   Object.assign(global, {
     document: doc,
+    innerHeight: H,
     performance: { now: () => now },
     requestAnimationFrame(fn) { const id = nextRaf++; queue.set(id, fn); return id; },
     cancelAnimationFrame(id) { queue.delete(id); },
+    setTimeout(fn, ms) {
+      const id = nextTimer++;
+      timers.set(id, { at: now + (Number(ms) || 0), fn });
+      return id;
+    },
+    clearTimeout(id) { timers.delete(id); },
     localStorage: {
       getItem: k => (store.has(k) ? store.get(k) : null),
       setItem: (k, v) => store.set(k, String(v)),
@@ -131,7 +189,14 @@ function install(global, size) {
     },
     matchMedia: () => ({ matches: false, addEventListener() {} }),
     devicePixelRatio: 1,
-    addEventListener() {},
+    addEventListener(type, fn) {
+      if (!winListeners.has(type)) winListeners.set(type, new Set());
+      winListeners.get(type).add(fn);
+    },
+    removeEventListener(type, fn) {
+      const s = winListeners.get(type);
+      if (s) s.delete(fn);
+    },
     ResizeObserver: class {
       constructor(fn) { this.fn = fn; this.seen = new Set(); observers.add(this); }
       observe(el) { this.seen.add(el); }
@@ -151,14 +216,23 @@ function install(global, size) {
     document: doc,
     /** How many elements are still being watched, across every observer. */
     observed() { let n = 0; for (const o of observers) n += o.seen.size; return n; },
-    /** Advance the synthetic clock and run whatever rAF callbacks are due. */
+    /** Advance the synthetic clock and run whatever is due — frames, then timers. */
     tick(ms) {
       now += ms;
       const q = queue; queue = new Map();
       for (const fn of q.values()) fn(now);
+      for (const [id, t] of [...timers]) {
+        if (t.at <= now) { timers.delete(id); t.fn(); }
+      }
     },
     /** How many frame callbacks are outstanding. Zero means the loop stopped. */
     pending() { return queue.size; },
+    /** How many timers are still armed. */
+    timers() { return timers.size; },
+    /** Fire a window event, the way a scroll or a resize would. */
+    fire(type) { for (const fn of winListeners.get(type) || []) fn(); },
+    /** How many window listeners are registered for a type. */
+    listening(type) { return (winListeners.get(type) || new Set()).size; },
     now: () => now,
   };
 }

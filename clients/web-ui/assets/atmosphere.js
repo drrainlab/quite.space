@@ -70,6 +70,21 @@ const ATMO = (() => {
     } catch { return '#0b1020'; }
   }
 
+  /**
+   * The recipe's image sequence, or an empty list.
+   *
+   * A stage missing its anchor or its image is dropped rather than repaired:
+   * the authoring validator refuses both, so anything that gets here that way
+   * arrived from a client that does not agree with the contract, and guessing
+   * on its behalf is how two renderers start disagreeing.
+   */
+  function stagesOf(a) {
+    const list = (a && a.visual && a.visual.stages) || [];
+    if (!Array.isArray(list)) return [];
+    return list.filter(s => s && typeof s.anchor === 'string' && s.anchor &&
+      typeof s.image === 'string' && s.image);
+  }
+
   /** Recipe params arrive as a list of {name, value}; scenes want a map. */
   function paramsOf(a) {
     /** @type {Record<string, number>} */
@@ -137,6 +152,12 @@ const ATMO = (() => {
   // how a preview quietly stops being one. Set per-mount; reset on unmount.
   let srcFor = null;    // (assetId) => url — bed audio
   let posterInto = null; // (img, assetId) => void — the fall poster
+  // stageInto is the same seam for a sequence's plates, and it is separate
+  // from posterInto for one reason: the reader's posterInto reports failure
+  // by inserting a note beside the image and replacing it. In a background
+  // layer that would put visible text inside aria-hidden chrome and delete a
+  // plate. A stage that never arrives leaves the previous picture up instead.
+  let stageInto = null;  // (img, assetId) => void
   let ignoreRemembered = false;
   // soundGate(assetId, proceed): the reader's chance to FETCH the bed's
   // bytes after the sound consent and before the element needs them.
@@ -230,14 +251,18 @@ const ATMO = (() => {
   let mounted = null; // { shell, stage, scrim, bar, scene, atmosphere, postId }
   /** Keeps the still frame the same size as the stage it sits in. */
   let stillRO = null;
+  /** The running image sequence, when the recipe is one. */
+  let seq = null;
 
   /** Take down whatever is playing and undo the shell. Safe to call twice. */
   function unmount() {
     stopBed();
     srcFor = null;
     posterInto = null;
+    stageInto = null;
     ignoreRemembered = false;
     soundGate = null;
+    if (seq) { seq.dispose(); seq = null; }
     if (stillRO) { stillRO.disconnect(); stillRO = null; }
     if (typeof STAGE !== 'undefined') STAGE.clear();
     if (mounted) {
@@ -291,6 +316,11 @@ const ATMO = (() => {
     shell.prepend(mounted.stage);
     shell.classList.add('atmo-shell');
     mounted.shell = shell;
+    // The LAYERS survived, but every block node was rebuilt underneath them.
+    // A sequence anchored to the old nodes would be watching orphans from the
+    // first incoming message onward, and the background would freeze on
+    // whatever picture happened to be up.
+    if (seq) seq.arm(shell);
   }
 
   /**
@@ -315,6 +345,7 @@ const ATMO = (() => {
     const bar = (opts && opts.bar) || null;
     srcFor = (opts && opts.srcFor) || null;
     posterInto = (opts && opts.posterInto) || null;
+    stageInto = (opts && opts.stageInto) || null;
     soundGate = (opts && opts.soundGate) || null;
     // A remembered "always with sound" was recorded for HELD spaces; in a
     // transient preview it would be an audio fetch with no per-post
@@ -351,12 +382,16 @@ const ATMO = (() => {
                 // enough that an unchanged recipe stringifies identically.
                 recipeSig: JSON.stringify(atmosphere) };
 
-    // The poster (an author-supplied image) or the deterministic still — the
-    // first frame re-derived from the seed, nothing cached anywhere. Either
-    // way the post is atmospheric from its first paint, motionless and
-    // silent: this is also exactly what reduced motion, the minimal mode, a
-    // space that asked for stillness and an unknown scene id all resolve to.
-    if (fall.poster) {
+    // An image sequence takes the stage instead of a poster or a still: it IS
+    // the background, and it is already showing its first picture before the
+    // reader has moved. Switching atmosphere off skips it entirely and falls
+    // through to the poster/fallback below — that is the same answer this
+    // gave before sequences existed.
+    const wantsAtmosphere = typeof STAGE === 'undefined' || STAGE.wanted();
+    const isSequence = stagesOf(atmosphere).length > 0;
+    if (isSequence && wantsAtmosphere) {
+      seq = startSequence(shell, stage, scrim, atmosphere);
+    } else if (fall.poster) {
       const img = document.createElement('img');
       img.className = 'atmo-poster';
       img.alt = '';
@@ -455,10 +490,16 @@ const ATMO = (() => {
       const say = document.createElement('span');
       say.className = 'atmo-note';
       // No scene at all: the author's words carry the meaning (ADR-013 §1).
+      // A sequence has no scene BY DESIGN, so saying "this version does not
+      // know that scene" there would invent a fault out of a working post.
       const parts = [];
-      if (!scene && state !== 'live') {
+      if (!scene && !isSequence && state !== 'live') {
         if (fall.text) parts.push(String(fall.text));
         parts.push('this version does not know that scene');
+      }
+      if (isSequence && !seq && state !== 'live') {
+        if (fall.text) parts.push(String(fall.text));
+        parts.push('the pictures are not showing — ' + stageDeclinedBecause());
       }
       for (const n of notes || []) parts.push(n);
       say.textContent = parts.join(' \u2014 ');
@@ -563,6 +604,8 @@ const ATMO = (() => {
    *
    * The ladder, and why:
    *   poster        an <img>, no canvas at all
+   *   sequence      its FIRST picture as an <img> — the opening image is what
+   *                 the post opens on, and one image is cheaper than a canvas
    *   known scene   ONE canvas, drawn only while the card is in or near the
    *                 viewport and discarded when it scrolls far away — a long
    *                 feed must not accumulate a canvas per card
@@ -582,13 +625,15 @@ const ATMO = (() => {
     layer.className = 'pub-card-atmo';
     layer.setAttribute('aria-hidden', 'true');
 
+    const opening = stagesOf(atmosphere)[0];
     let dispose;
-    if (fall.poster) {
+    if (fall.poster || opening) {
       const img = document.createElement('img');
       img.className = 'atmo-poster';
       img.alt = '';
-      if (posterInto) posterInto(img, fall.poster);
-      else autoMediaSrc(img, fall.poster);
+      const id = fall.poster || opening.image;
+      if (posterInto) posterInto(img, id);
+      else autoMediaSrc(img, id);
       layer.appendChild(img);
       card.prepend(layer);
       dispose = () => layer.remove();
@@ -634,15 +679,277 @@ const ATMO = (() => {
    */
   function styleScrim(scrim, atmosphere) {
     const pal = paletteOf(atmosphere);
-    const ground = pal[0];
     let maxLuma = 0;
     for (const h of pal.slice(1)) maxLuma = Math.max(maxLuma, BRUSH.luminance(h));
-    const a = Math.min(0.8, 0.42 + 0.3 * maxLuma);
-    const n = parseInt(ground.slice(1), 16);
+    paintScrim(scrim, pal[0], Math.min(0.8, 0.42 + 0.3 * maxLuma));
+  }
+
+  /**
+   * Write the scrim: the gradient carries the SHAPE, `opacity` carries the
+   * strength.
+   *
+   * Splitting them is what lets the readability layer follow a stage change —
+   * opacity transitions natively and a gradient does not, so baking the alpha
+   * into the colour stops would mean the scrim jumping while the picture
+   * crossfaded under it. The product of the two is identical to writing the
+   * alpha into the stops, which is what this did before stages existed.
+   */
+  function paintScrim(scrim, ground, strength) {
+    const n = parseInt(String(ground).slice(1), 16);
     const rgb = `${(n >> 16) & 255},${(n >> 8) & 255},${n & 255}`;
     scrim.style.background =
-      `radial-gradient(130% 110% at 50% 30%, rgba(${rgb},${a.toFixed(3)}) 0%, ` +
-      `rgba(${rgb},${(a * 0.72).toFixed(3)}) 70%, rgba(${rgb},${(a * 0.45).toFixed(3)}) 100%)`;
+      `radial-gradient(130% 110% at 50% 30%, rgba(${rgb},1) 0%, ` +
+      `rgba(${rgb},0.72) 70%, rgba(${rgb},0.45) 100%)`;
+    scrim.style.opacity = String(strength);
+  }
+
+  // ---- the image sequence --------------------------------------------------
+  //
+  // A story's background follows the reader: each stage names a block, and
+  // when that block comes up the picture behind the article changes.
+  //
+  // Stages are CONTENT; the transition is DECORATION. So a person who turned
+  // atmosphere off gets no sequence at all — that is the same answer as
+  // before this existed — but reduced motion does NOT freeze the story on its
+  // first picture: it fixes the crossfade at a safe length, ignores the
+  // author's timing, and never moves anything. Opacity is not motion; an
+  // instant full-screen brightness step is the thing actually worth avoiding,
+  // which is why a `cut` becomes a fade there rather than the reverse.
+  //
+  // Three bounds do the safety work, and they are structural rather than
+  // measured: only opacity ever animates, no two changes may land closer
+  // together than MIN_STAGE_DWELL_MS, and a fast scroll coalesces to the
+  // stage it ends on instead of playing every one it flew past.
+
+  /** A fixed, calm crossfade for reduced motion and the poster rung. */
+  const SAFE_FADE_MS = 900;
+  /** What a stage that named no duration gets. */
+  const DEFAULT_FADE_MS = 700;
+  /** Mirrors publication.MaxFadeMs — the contract's own ceiling. */
+  const MAX_FADE_MS = 10000;
+  /** No two background changes may land closer together than this. */
+  const MIN_STAGE_DWELL_MS = 700;
+  /** A stage takes over when its block's top passes this much of the screen. */
+  const ACTIVATION_LINE = 0.4;
+
+  /** sRGB channel to linear, for relative luminance. */
+  function toLinear(c) {
+    const s = c / 255;
+    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+  }
+
+  /**
+   * Mean relative luminance of a loaded plate, 0..1, or -1 if unreadable.
+   *
+   * BRUSH.luminance answers this for a hex colour and there is no per-pixel
+   * entry point, so the coefficients are repeated here rather than the image
+   * being reduced to a palette it does not have. Assets come from this same
+   * origin, so the canvas is not tainted; a browser that disagrees returns -1
+   * and the recipe's own palette decides the scrim, exactly as before.
+   */
+  function plateLuminance(img) {
+    try {
+      const cv = document.createElement('canvas');
+      cv.width = 24; cv.height = 24;
+      const ctx = cv.getContext('2d', { willReadFrequently: true });
+      if (!ctx) return -1;
+      ctx.drawImage(img, 0, 0, 24, 24);
+      const d = ctx.getImageData(0, 0, 24, 24).data;
+      let sum = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        sum += 0.2126 * toLinear(d[i]) + 0.7152 * toLinear(d[i + 1]) +
+               0.0722 * toLinear(d[i + 2]);
+      }
+      return sum / (d.length / 4);
+    } catch { return -1; }
+  }
+
+  /** Point a background plate at an asset, without touching anything else. */
+  function plateSrc(img, assetId) {
+    if (stageInto) { stageInto(img, assetId); return; }
+    if (typeof assetURL !== 'function') return;
+    const base = assetURL(assetId);
+    img.src = base;
+    // Deliberately no unavailable callback: markUnavailable would insert a
+    // visible note as this plate's sibling, inside a layer the reader is
+    // never meant to read.
+    if (typeof observeMedia === 'function') {
+      observeMedia(img, assetId, () => { img.src = base + '&v=' + Date.now(); }, null);
+    }
+  }
+
+  /**
+   * Drive a sequence over one mounted article.
+   *
+   * Two stacked plates and a crossfade between them: the front one is
+   * showing, the back one is always already holding the NEXT stage's picture,
+   * so an ordinary forward read never waits for bytes.
+   *
+   * @param {HTMLElement} shell @param {HTMLElement} stage
+   * @param {HTMLElement} scrim @param {any} atmosphere
+   */
+  function startSequence(shell, stage, scrim, atmosphere) {
+    const list = stagesOf(atmosphere);
+    if (!list.length) return null;
+
+    const plates = [0, 1].map(() => {
+      const img = document.createElement('img');
+      img.className = 'atmo-plate';
+      img.alt = '';
+      img.setAttribute('aria-hidden', 'true');
+      stage.appendChild(img);
+      return img;
+    });
+    let front = 0;      // which plate is on screen
+    let idx = -1;       // which stage is on screen
+    let lastSwapAt = 0;
+    let dwellTimer = null;
+    let pending = false;
+    /** Catches layout that settles without a scroll — a late image, a font. */
+    let ro = null;
+    /** @type {{el: Element, i: number}[]} — resolvable anchors, in order. */
+    let anchors = [];
+
+    function fadeMs(s) {
+      const safe = (typeof MODES !== 'undefined' && MODES.reducedMotion()) ||
+        (typeof STAGE !== 'undefined' && STAGE.mode() === 'poster');
+      if (safe) return SAFE_FADE_MS;
+      if (s.transition === 'cut') return 0;
+      return Math.max(0, Math.min(MAX_FADE_MS,
+        Number(s.duration_ms) || DEFAULT_FADE_MS));
+    }
+
+    /** Put stage i's picture on the back plate, ready to be swapped in. */
+    function preload(i) {
+      if (i < 0 || i >= list.length) return;
+      const back = plates[1 - front];
+      if (back.dataset.asset === list[i].image) return;
+      back.dataset.asset = list[i].image;
+      back.classList.remove('on');
+      plateSrc(back, list[i].image);
+    }
+
+    function show(i) {
+      if (i === idx || i < 0 || i >= list.length) return;
+      const s = list[i];
+      const back = plates[1 - front];
+      shell.style.setProperty('--atmo-fade', fadeMs(s) + 'ms');
+      let swapped = false;
+      const swap = () => {
+        if (swapped || back.dataset.asset !== s.image) return;
+        swapped = true;
+        back.classList.add('on');
+        plates[front].classList.remove('on');
+        front = 1 - front;
+        idx = i;
+        lastSwapAt = performance.now();
+        // A photograph fills the whole layer at full strength, where a
+        // generative scene is soft gradients — so a bright picture needs more
+        // scrim than a bright palette token does, and the scrim has to be
+        // recomputed per stage rather than once at mount.
+        const l = plateLuminance(back);
+        if (l >= 0) {
+          paintScrim(scrim, paletteOf(atmosphere)[0], Math.min(0.86, 0.34 + 0.5 * l));
+        }
+        preload(i + 1);
+      };
+      if (back.dataset.asset !== s.image) {
+        back.dataset.asset = s.image;
+        back.onload = swap;
+        plateSrc(back, s.image);
+      }
+      // Already loaded (the usual case — this is the plate that was
+      // preloaded) — `load` will not fire again for bytes already there.
+      if (back.complete && back.naturalWidth > 0) swap();
+    }
+
+    /**
+     * Which stage the reader is in, read from the document rather than from
+     * intersection events: the active stage is the last anchor whose top has
+     * passed the line, which is the same answer going up as going down. The
+     * anchors are in document order — the validator guarantees it — so the
+     * scan stops at the first one still below.
+     */
+    function recompute() {
+      if (!anchors.length) return;
+      const line = window.innerHeight * ACTIVATION_LINE;
+      let want = 0;
+      for (const a of anchors) {
+        if (a.el.getBoundingClientRect().top <= line) want = a.i;
+        else break;
+      }
+      if (want === idx) return;
+      const wait = MIN_STAGE_DWELL_MS - (performance.now() - lastSwapAt);
+      if (wait > 0) {
+        // One trailing timer, never a queue: when it fires it shows whatever
+        // the reader has arrived at by then, so scrolling through six stages
+        // in a second is one change, not six.
+        if (!dwellTimer) {
+          dwellTimer = setTimeout(() => { dwellTimer = null; recompute(); }, wait);
+        }
+        return;
+      }
+      show(want);
+    }
+
+    function schedule() {
+      if (pending) return;
+      pending = true;
+      // A single coalescing frame, not a loop: it is armed only by a scroll
+      // or a resize, and it reads at most a dozen rectangles.
+      requestAnimationFrame(() => { pending = false; recompute(); });
+    }
+
+    /**
+     * Bind to the blocks of (a rebuilt) article. renderArticle keeps the
+     * atmosphere alive across a full rebuild of the content, so without
+     * re-arming on reattach this observer would be watching orphans after the
+     * first incoming message.
+     */
+    function arm(root) {
+      if (ro) { ro.disconnect(); ro = null; }
+      anchors = [];
+      const byId = new Map();
+      // One pass over the DOM rather than a selector per anchor: an anchor is
+      // an author-chosen string, and building a selector out of one is a
+      // quoting problem nobody needs to have.
+      root.querySelectorAll('[data-block-id]').forEach(el => {
+        const id = /** @type {HTMLElement} */ (el).dataset.blockId;
+        if (id && !byId.has(id)) byId.set(id, el);
+      });
+      list.forEach((s, i) => {
+        const el = byId.get(s.anchor);
+        // A stage whose block is not here is skipped, not repaired: the
+        // decoder accepts a dangling anchor deliberately, and the honest
+        // rendering of one is that the previous picture simply holds.
+        if (el) anchors.push({ el, i });
+      });
+      if (window.ResizeObserver) {
+        ro = new ResizeObserver(schedule);
+        ro.observe(root);
+      }
+      recompute();
+    }
+
+    function dispose() {
+      if (ro) { ro.disconnect(); ro = null; }
+      if (dwellTimer) { clearTimeout(dwellTimer); dwellTimer = null; }
+      window.removeEventListener('scroll', schedule, true);
+      window.removeEventListener('resize', schedule);
+      for (const p of plates) { p.onload = null; p.remove(); }
+      shell.style.removeProperty('--atmo-fade');
+    }
+
+    // Scroll does not bubble, so the capture phase is how one listener sees
+    // every scroller the article might be inside.
+    window.addEventListener('scroll', schedule, true);
+    window.addEventListener('resize', schedule);
+    // The opening picture is there from the first paint, with no transition
+    // to arrive through.
+    shell.style.setProperty('--atmo-fade', '0ms');
+    show(0);
+    arm(shell);
+    return { arm, dispose, at: () => idx, count: list.length };
   }
 
   /**

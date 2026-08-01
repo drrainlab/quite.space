@@ -113,6 +113,14 @@ const PREV = (() => {
         ignoreRemembered: true,
         srcFor: (aid) => prevAssetURL(r.preview_id, aid),
         posterInto: (img, aid) => fetchInto(r.preview_id, aid, img),
+        // A stage plate takes the quiet path, NOT fetchInto: that one
+        // reports failure by inserting a note beside the image and
+        // replacing it, which inside an aria-hidden background layer would
+        // mean visible prose and a deleted plate. A stage that never
+        // arrives simply never takes over, and the previous picture holds.
+        stageInto: (img, aid) => prevFetch(r.preview_id, aid, (ok) => {
+          if (ok) img.src = prevAssetURL(r.preview_id, aid);
+        }),
         soundGate: (aid, proceed) => prevFetch(r.preview_id, aid,
           (ok, state, reason) => proceed(ok, prevStateLine(state, reason))),
       });
@@ -141,9 +149,23 @@ const PREV = (() => {
     for (const b of doc.blocks || []) renderBlock(box, r, b);
   }
 
+  /**
+   * Each block gets its own container carrying the block id, matching the
+   * held reader. An atmosphere sequence anchors its stages to block ids, and
+   * a preview whose blocks are anonymous could show the post but never its
+   * story. The wrapper is deliberately class-less: margins collapse through
+   * it, so the reading rhythm is exactly what it was.
+   */
+  function renderBlock(box, r, b) {
+    const host = document.createElement('div');
+    if (b.id) host.dataset.blockId = String(b.id);
+    box.appendChild(host);
+    renderBlockInto(host, r, b);
+  }
+
   /** A deliberately small block renderer: text shows, images come from the
    *  session route, everything else degrades to a quiet line. */
-  function renderBlock(box, r, b) {
+  function renderBlockInto(box, r, b) {
     const props = b.props || {};
     switch (b.type) {
       case 'heading': {

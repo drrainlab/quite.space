@@ -1840,6 +1840,21 @@ header .nav-act { padding: 5px 11px 5px 10px; min-height: 30px; }
   object-fit: cover;
 }
 
+/* An image sequence (AM-7): two stacked plates, one showing, one already
+   holding the next picture. Only opacity ever animates — no transform, no
+   filter, nothing that moves — and the duration comes from --atmo-fade,
+   which the sequence sets per stage and clamps for reduced motion. The scrim
+   rides the same variable so readability follows the picture instead of
+   jumping ahead of it. */
+.atmo-plate {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  transition: opacity var(--atmo-fade, 700ms) linear;
+}
+.atmo-plate.on { opacity: 1; }
+.atmo-scrim { transition: opacity var(--atmo-fade, 700ms) linear; }
+
 /* The controller: a slim in-flow row, not a panel. Before entry it holds the
    doors; after, Pause / Mute / Leave. */
 .atmo-bar {
@@ -1874,6 +1889,19 @@ header .nav-act { padding: 5px 11px 5px 10px; min-height: 30px; }
 @media (prefers-reduced-transparency: reduce) {
   .atmo-scrim { background: var(--bg, #0b1020) !important; }
   .pub-card-atmo { opacity: .15; }
+}
+
+/* Reduced motion, for the one atmosphere layer that is CSS rather than JS.
+   Everything else here is gated by STAGE.allowed(), which a stylesheet
+   cannot reach; a plate crossfade would slip past that entirely.
+
+   It is a floor, not an off switch: the pictures are the post's content and
+   still change, at a fixed calm length the author cannot shorten. `animation:
+   none` would be the wrong tool — an instant full-screen brightness step is
+   worse for a photosensitive reader than a slow fade, and nothing here
+   moves. */
+@media (prefers-reduced-motion: reduce) {
+  .atmo-plate, .atmo-scrim { transition-duration: 900ms !important; }
 }
 
 /* ---- Atmosphere editor (AM-5) ---------------------------------------------
