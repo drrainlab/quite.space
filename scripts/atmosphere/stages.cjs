@@ -254,6 +254,44 @@ function dangling() {
   check('...and skips straight past the stage it cannot place', showing(shell), IMAGES[2]);
 }
 
+// ------------------------------------------------------------ the dead band
+
+// A reader who stops with an anchor resting on the activation line must not
+// be shown a slideshow. One line has no dead band: trackpad inertia moves
+// the page by a pixel, the answer flips, and the dwell timer does not stop
+// that — it paces it to one crossfade every 700ms, which is a flicker.
+function jitter() {
+  const { harness, shell, blocks } = article();
+  settle(harness);
+  harness.tick(2000);
+
+  // Put b2 exactly on the line: viewport 360, activation 0.4 -> 144.
+  scrollTo(blocks, 1000 - 144);
+  harness.fire('scroll');
+  settle(harness, 1500);
+  const landed = showing(shell);
+  check('an anchor ON the line takes over once', landed, IMAGES[1]);
+
+  // Now shiver around it, well past the dwell each time.
+  let changes = 0;
+  for (let i = 0; i < 8; i++) {
+    scrollTo(blocks, 1000 - 144 + (i % 2 ? 1 : -1));
+    harness.fire('scroll');
+    harness.tick(1500);
+    settle(harness);
+    if (showing(shell) !== landed) changes++;
+  }
+  check('...and a pixel of shiver never changes it again', changes, 0);
+
+  // A real move away still works — past the release line, not just the
+  // activation one.
+  scrollTo(blocks, 1000 - 220);
+  harness.fire('scroll');
+  harness.tick(1500);
+  settle(harness);
+  check('...while going properly back up still gives way', showing(shell), IMAGES[0]);
+}
+
 // ------------------------------------------------------------- no layout yet
 
 // An article measured before its pane has a size reports every anchor at
@@ -297,6 +335,7 @@ function noLayout() {
 // ----------------------------------------------------------------------- main
 
 reading();
+jitter();
 noLayout();
 dwell();
 teardown();

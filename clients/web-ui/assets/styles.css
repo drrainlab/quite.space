@@ -1830,13 +1830,17 @@ header .nav-act { padding: 5px 11px 5px 10px; min-height: 30px; }
    the top of the scrollport. The atmosphere is the background of the reading
    area, not of the document: stretched over a long post, a picture shows as
    a single flat slice and a crossfade cannot be seen at all. */
-/* clip-path, NOT overflow: hidden. An overflow ancestor becomes the nearest
-   scroll container, and a sticky child then sticks to a box that does not
-   scroll — the picture scrolled away with the text. clip-path rounds and
-   clips the same way without claiming to be a scrollport. */
+/* `overflow: clip`, and neither of the two obvious alternatives.
+   NOT overflow: hidden — that makes this the nearest scroll container, and
+   a sticky child then sticks to a box which does not scroll, so the picture
+   scrolled away with the text. NOT clip-path either: it clips correctly but
+   re-resolves the clip against the sticky subtree on every scroll frame,
+   which is a repaint per frame behind a full-screen layer. `clip` clips,
+   respects the radius, and is not a scrollport. */
 .atmo-veil {
   position: absolute; inset: 0; z-index: 0;
-  clip-path: inset(0 round var(--radius-md));
+  overflow: clip;
+  border-radius: var(--radius-md);
   pointer-events: none;
 }
 .atmo-stage, .atmo-scrim {
@@ -1852,43 +1856,37 @@ header .nav-act { padding: 5px 11px 5px 10px; min-height: 30px; }
   position: relative; z-index: 1;
 }
 
-/* THE TEXT'S OWN BACKING.
-   Dark where there are words, open where there are none — so the picture
-   shows through the margins, the gaps between paragraphs and the air around
-   a heading, and the openings take the irregular shape of the writing
-   itself. A mask that followed the reader would have to guess where the eye
-   is and would change brightness under text while it is being read; this
-   gets the same look from something already known, and never moves.
+/* THE TEXT'S OWN BACKING — a glow around the LETTERS, not a plate under
+   the paragraph.
+   A rectangle is the cheap answer and it costs the picture: a block of dark
+   the size of a paragraph hides most of what the author chose. A stack of
+   blurred shadows hugs the glyphs instead, so the photograph shows between
+   the lines, inside the counters of the letters and everywhere the writing
+   is not — and the openings take the shape of the writing itself, which is
+   the "open outside the reading" idea done with shape rather than motion.
 
-   A radial that fades to nothing at the edges rather than a card: no border
-   to notice, no filter to composite — it reads as mist. --atmo-ink and
-   --atmo-veil come from the measurement in paintScrim. */
-.atmo-shell .pub-block:not(.pub-image):not(.pub-gallery):not(.pub-video):not(.pub-separator),
+   Four radii, not one: the tight ones give the edge its contrast, the wide
+   ones sink the immediate surroundings so a busy photograph cannot compete
+   with the stroke. --atmo-ink and --atmo-glow come from the measurement in
+   paintScrim. Nothing here animates. */
+.atmo-shell .pub-block,
 .atmo-shell .pub-h1,
 .atmo-shell .pub-summary,
 .atmo-shell .pub-comment,
 .pub-card-atmo-on .pub-title,
 .pub-card-atmo-on .pub-summary,
 .pub-card-atmo-on .pub-meta {
-  position: relative;
-  isolation: isolate;
+  text-shadow:
+    0 0 1px rgba(var(--atmo-ink, 11,16,32), var(--atmo-glow, .8)),
+    0 0 2px rgba(var(--atmo-ink, 11,16,32), var(--atmo-glow, .8)),
+    0 0 4px rgba(var(--atmo-ink, 11,16,32), var(--atmo-glow, .8)),
+    0 0 8px rgba(var(--atmo-ink, 11,16,32), calc(var(--atmo-glow, .8) * .95)),
+    0 0 16px rgba(var(--atmo-ink, 11,16,32), calc(var(--atmo-glow, .8) * .85)),
+    0 0 30px rgba(var(--atmo-ink, 11,16,32), calc(var(--atmo-glow, .8) * .7));
 }
-.atmo-shell .pub-block:not(.pub-image):not(.pub-gallery):not(.pub-video):not(.pub-separator)::before,
-.atmo-shell .pub-h1::before,
-.atmo-shell .pub-summary::before,
-.atmo-shell .pub-comment::before,
-.pub-card-atmo-on .pub-title::before,
-.pub-card-atmo-on .pub-summary::before,
-.pub-card-atmo-on .pub-meta::before {
-  content: '';
-  position: absolute; inset: -10px -18px;
-  z-index: -1;
-  border-radius: 18px;
-  background: radial-gradient(120% 130% at 50% 50%,
-    rgba(var(--atmo-ink, 11,16,32), var(--atmo-veil, .6)) 0%,
-    rgba(var(--atmo-ink, 11,16,32), calc(var(--atmo-veil, .6) * .92)) 58%,
-    rgba(var(--atmo-ink, 11,16,32), 0) 100%);
-}
+/* Code keeps its own surface, so a halo on it would be a second background
+   fighting the first. */
+.atmo-shell .pub-code, .atmo-shell .pub-code * { text-shadow: none; }
 .atmo-poster {
   position: absolute; inset: 0; width: 100%; height: 100%;
   object-fit: cover;

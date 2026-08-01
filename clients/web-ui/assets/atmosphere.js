@@ -653,7 +653,7 @@ const ATMO = (() => {
       const n = parseInt(String(paletteOf(atmosphere)[0]).slice(1), 16);
       card.style.setProperty('--atmo-ink',
         `${(n >> 16) & 255},${(n >> 8) & 255},${n & 255}`);
-      card.style.setProperty('--atmo-veil', String(Math.min(0.9, 0.42 + 0.5 * luma)));
+      card.style.setProperty('--atmo-glow', String(Math.min(1, 0.6 + 0.5 * luma)));
       card.classList.add('pub-card-atmo-on');
     };
 
@@ -751,11 +751,11 @@ const ATMO = (() => {
     scrim.style.background = `linear-gradient(rgba(${rgb},0.9), rgba(${rgb},1))`;
     scrim.style.opacity = String(Math.min(0.62, 0.16 + 0.4 * luma));
     if (!shell) return;
-    // What the text's backing is made of. The measurement lives here, the
-    // shape lives in the stylesheet — a plate that follows the words rather
-    // than a rectangle over the whole page.
+    // What the letters' glow is made of. The measurement lives here, the
+    // shape lives in the stylesheet — a halo on the glyphs, so the picture
+    // survives between the lines instead of being covered by a plate.
     shell.style.setProperty('--atmo-ink', rgb);
-    shell.style.setProperty('--atmo-veil', String(Math.min(0.9, 0.42 + 0.5 * luma)));
+    shell.style.setProperty('--atmo-glow', String(Math.min(1, 0.6 + 0.5 * luma)));
   }
 
   // ---- the image sequence --------------------------------------------------
@@ -786,6 +786,17 @@ const ATMO = (() => {
   const MIN_STAGE_DWELL_MS = 700;
   /** A stage takes over when its block's top passes this much of the screen. */
   const ACTIVATION_LINE = 0.4;
+  /**
+   * ...and gives way only once its block has gone back past THIS much.
+   *
+   * A single line has no dead band, and a reader who stops with an anchor
+   * resting on it oscillates: trackpad inertia moves the page by a pixel,
+   * the answer flips, and the dwell timer does not prevent that — it paces
+   * it to one crossfade every 700ms, which is precisely a flicker. The gap
+   * between the two lines is what makes a stage that has taken over stay
+   * taken over. Same shape as the relay selector's hysteresis.
+   */
+  const RELEASE_LINE = 0.48;
 
   /**
    * How tall the reading area is, and zero when there is not one yet.
@@ -977,10 +988,13 @@ const ATMO = (() => {
       // observer calls back the moment there is something to measure.
       const h = viewportHeight();
       if (h <= 0) return;
-      const line = h * ACTIVATION_LINE;
       let want = 0;
       for (const a of anchors) {
-        if (a.el.getBoundingClientRect().top <= line) want = a.i;
+        // The stage that is already showing keeps the more generous line, so
+        // it holds until the reader has clearly gone back past it; anything
+        // further down has to earn its turn at the stricter one.
+        const limit = h * (a.i <= idx ? RELEASE_LINE : ACTIVATION_LINE);
+        if (a.el.getBoundingClientRect().top <= limit) want = a.i;
         else break;
       }
       if (want === idx) return;
