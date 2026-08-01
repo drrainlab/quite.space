@@ -1974,10 +1974,8 @@ header .nav-act { padding: 5px 11px 5px 10px; min-height: 30px; }
    is not — and the openings take the shape of the writing itself, which is
    the "open outside the reading" idea done with shape rather than motion.
 
-   Four radii, not one: the tight ones give the edge its contrast, the wide
-   ones sink the immediate surroundings so a busy photograph cannot compete
-   with the stroke. --atmo-ink and --atmo-glow come from the measurement in
-   paintScrim. Nothing here animates. */
+   --atmo-ink and --atmo-halo both come from paintInk, which is the only
+   place any of this is decided. Nothing here animates. */
 .atmo-shell .pub-block,
 .atmo-shell .pub-h1,
 .atmo-shell .pub-summary,
@@ -1985,20 +1983,16 @@ header .nav-act { padding: 5px 11px 5px 10px; min-height: 30px; }
 .pub-card-atmo-on .pub-title,
 .pub-card-atmo-on .pub-summary,
 .pub-card-atmo-on .pub-meta {
-  /* The radii are scaled by --atmo-halo, which paintScrim computes from how
-     BRIGHT and how BUSY the picture behind is. A bright, patterned surface
-     needs the surroundings of each stroke sunk further out; a calm dark one
-     needs almost nothing. Widening the halo does that where it matters and
-     leaves everything more than a few pixels from a glyph untouched — which
-     is why this, and not blurring the author's photograph, is the answer to
-     a picture that competes with the text. */
+  /* Three radii, one variable. The tight one gives the stroke its edge, the
+     middle one separates a word from what is behind it, the wide one sinks
+     the surroundings so a busy photograph cannot compete. --atmo-halo scales
+     all three with how bright the picture is (paintInk); the alphas are
+     fixed, because a wider halo IS the stronger halo and saying it twice
+     only made two numbers to keep in agreement. */
   text-shadow:
-    0 0 calc(1px * var(--atmo-halo, 1)) rgba(var(--atmo-ink, 11,16,32), var(--atmo-glow, .8)),
-    0 0 calc(2px * var(--atmo-halo, 1)) rgba(var(--atmo-ink, 11,16,32), var(--atmo-glow, .8)),
-    0 0 calc(4px * var(--atmo-halo, 1)) rgba(var(--atmo-ink, 11,16,32), var(--atmo-glow, .8)),
-    0 0 calc(8px * var(--atmo-halo, 1)) rgba(var(--atmo-ink, 11,16,32), calc(var(--atmo-glow, .8) * .95)),
-    0 0 calc(16px * var(--atmo-halo, 1)) rgba(var(--atmo-ink, 11,16,32), calc(var(--atmo-glow, .8) * .85)),
-    0 0 calc(30px * var(--atmo-halo, 1)) rgba(var(--atmo-ink, 11,16,32), calc(var(--atmo-glow, .8) * .7));
+    0 0 calc(2px * var(--atmo-halo, 1)) rgba(var(--atmo-ink, 11,16,32), .95),
+    0 0 calc(8px * var(--atmo-halo, 1)) rgba(var(--atmo-ink, 11,16,32), .85),
+    0 0 calc(24px * var(--atmo-halo, 1)) rgba(var(--atmo-ink, 11,16,32), .7);
 }
 /* Code keeps its own surface, so a halo on it would be a second background
    fighting the first. */

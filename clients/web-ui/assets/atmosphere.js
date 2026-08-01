@@ -796,12 +796,10 @@ const ATMO = (() => {
 
     // The card's own words need a backing too — a title over a bright
     // photograph is exactly as unreadable as a paragraph over one. Same
-    // mechanism, same measurement.
-    const inkFrom = (luma) => {
-      const n = parseInt(String(paletteOf(atmosphere)[0]).slice(1), 16);
-      card.style.setProperty('--atmo-ink',
-        `${(n >> 16) & 255},${(n >> 8) & 255},${n & 255}`);
-      card.style.setProperty('--atmo-glow', String(Math.min(1, 0.6 + 0.5 * luma)));
+    // function, so the two surfaces cannot drift apart.
+    const ground = paletteOf(atmosphere)[0];
+    const inkFrom = (luma, mean) => {
+      paintInk(card, ground, luma, mean);
       card.classList.add('pub-card-atmo-on');
     };
 
@@ -812,8 +810,8 @@ const ATMO = (() => {
       img.className = 'atmo-poster';
       img.alt = '';
       const id = fall.poster || opening.image;
-      inkFrom(0.5); // until the bytes are here, assume the awkward middle
-      img.onload = () => { const l = plateLuminance(img); if (l >= 0) inkFrom(l); };
+      inkFrom(0.5, null); // until the bytes are here, assume the awkward middle
+      img.onload = () => { const s = plateStats(img); if (s) inkFrom(s.luma, s.mean); };
       if (posterInto) posterInto(img, id);
       else autoMediaSrc(img, id);
       layer.appendChild(img);
@@ -834,7 +832,7 @@ const ATMO = (() => {
       for (const h of paletteOf(atmosphere).slice(1)) {
         maxLuma = Math.max(maxLuma, BRUSH.luminance(h));
       }
-      inkFrom(maxLuma);
+      inkFrom(maxLuma, null);
       card.prepend(layer);
       let io = null;
       if (window.IntersectionObserver) {
@@ -913,61 +911,47 @@ const ATMO = (() => {
   }
 
   /**
+   * Make a surface readable over a picture. ONE measurement, TWO variables.
+   *
+   * Everything about readability here comes from how BRIGHT the picture is,
+   * and it comes out as exactly two things: the colour the text's halo is
+   * made of, and how far that halo reaches. The colour is the wash — the
+   * picture's own average, darkened — so the halo reads as the photograph in
+   * shadow rather than as a grey outline drawn over it. The reach grows with
+   * brightness, which sinks the surroundings of every stroke precisely where
+   * a bright field would otherwise bleach it.
+   *
+   * The shape lives in the stylesheet; only the numbers live here. This is
+   * used by both surfaces that need it — the article's shell and a feed
+   * card — so the two cannot drift apart.
+   *
+   * @param {HTMLElement|null} el @param {string} ground the palette's first token
+   * @param {number} luma @param {[number,number,number]|null} [mean]
+   */
+  function paintInk(el, ground, luma, mean) {
+    if (!el) return;
+    const l = Math.max(0, Math.min(1, luma || 0));
+    el.style.setProperty('--atmo-ink', washColour(mean || null, ground).join(','));
+    el.style.setProperty('--atmo-halo', (1 + 1.5 * l).toFixed(2));
+  }
+
+  /**
+   * Write the scrim: the gradient carries the colour, `opacity` the strength.
+   *
+   * A dark photograph needs almost nothing and should keep its depth; a
+   * bright one needs a great deal. The ceiling stays below 1 on purpose — at
+   * some point the honest answer is that an atmosphere is a background, not
+   * a page colour.
+   *
    * @param {HTMLElement|null} shell @param {HTMLElement} scrim
    * @param {string} ground @param {number} luma
    * @param {[number,number,number]|null} [mean] the picture's average colour
    */
-  /**
-   * How far the letters' halo reaches, as a multiple of its base radii.
-   *
-   * A picture is hard to read over for two unrelated reasons: it is BRIGHT,
-   * and it is BUSY. Blurring the picture answered both and was rejected —
-   * the author published a photograph, and softening it to make room for
-   * text takes something that was not ours to take.
-   *
-   * The halo answers both and costs nothing of the picture. Widening it
-   * sinks the immediate surroundings of each stroke, which is exactly where
-   * a bright field bleaches a letter and where bark's own detail competes
-   * with it, and everything more than a few pixels from a glyph is left
-   * alone. So the picture stays a picture, at full resolution, and the text
-   * carries its own readability with it.
-   */
-  function haloScale(luma, detail) {
-    const l = Math.max(0, Math.min(1, luma || 0));
-    const d = Math.max(0, Math.min(1, detail || 0));
-    return Math.min(2.6, 1 + 1.15 * l + 0.55 * d);
-  }
-
-  function paintScrim(shell, scrim, ground, luma, mean, detail) {
+  function paintScrim(shell, scrim, ground, luma, mean) {
     const rgb = washColour(mean || null, ground).join(',');
-    // Even, not a spotlight. The old gradient was densest at 50% 30% and
-    // thinned to 0.45 by the bottom — its dark middle sat over the cover
-    // while the body text ran through its weakest part, which is why a
-    // bright photograph was unreadable exactly where the reading happens.
-    //
-    // The SHAPE of readability moved to the text's own backing, so this is
-    // only a calm even wash now, and it can be lighter than before: the
-    // picture stays a picture.
     scrim.style.background = `linear-gradient(rgba(${rgb},0.9), rgba(${rgb},1))`;
-    // The response curve, steeper than it was at the bright end. A dark
-    // photograph needs almost nothing and should keep its depth; a bright one
-    // needs a great deal, and the old slope ran out long before it got there
-    // — a bark photograph in full light measured 0.5 and was handed a wash of
-    // 0.36, which is a picture the text has to fight. The ceiling stays below
-    // 1 on purpose: at some point the honest answer is that the atmosphere is
-    // a background, not a page colour.
     scrim.style.opacity = String(Math.min(0.86, 0.24 + 0.78 * Math.max(0, luma)));
-    if (!shell) return;
-    // What the letters' glow is made of. The measurement lives here, the
-    // shape lives in the stylesheet — a halo on the glyphs, so the picture
-    // survives between the lines instead of being covered by a plate.
-    // What the letters' glow is made of, and how far it reaches. The colour
-    // is the wash — the picture's own average, darkened — so the halo reads
-    // as the photograph in shadow rather than as a grey outline drawn over
-    // it. The reach grows with both brightness and busyness.
-    shell.style.setProperty('--atmo-halo', haloScale(luma, detail).toFixed(2));
-    shell.style.setProperty('--atmo-ink', rgb);
-    shell.style.setProperty('--atmo-glow', String(Math.min(1, 0.6 + 0.5 * luma)));
+    paintInk(shell, ground, luma, mean);
   }
 
   // ---- the image sequence --------------------------------------------------
@@ -1048,12 +1032,7 @@ const ATMO = (() => {
    */
   function plateStats(img) {
     try {
-      // 48 rather than 24: brightness survives any downsample, but TEXTURE
-      // does not, and texture is the other half of what makes a picture hard
-      // to read over. Measured on a bark-like plate against a smooth
-      // gradient, the two separate by a factor of about twenty at this size
-      // — and 48×48 is still four thousand samples, which costs nothing.
-      const N = 48;
+      const N = 24;
       const cv = document.createElement('canvas');
       cv.width = N; cv.height = N;
       const ctx = cv.getContext('2d', { willReadFrequently: true });
@@ -1080,34 +1059,17 @@ const ATMO = (() => {
       const lo = Math.floor(N * 0.2), hi = Math.ceil(N * 0.8);
       const vals = [];
       const sum = [0, 0, 0];
-      const lum = new Float64Array(N * N);
       let count = 0;
       for (let y = 0; y < N; y++) {
         for (let x = lo; x < hi; x++) {
           const i = (y * N + x) * 4;
-          const l = 0.2126 * toLinear(d[i]) + 0.7152 * toLinear(d[i + 1]) +
-                    0.0722 * toLinear(d[i + 2]);
-          vals.push(l);
-          lum[y * N + x] = l;
+          vals.push(0.2126 * toLinear(d[i]) + 0.7152 * toLinear(d[i + 1]) +
+                    0.0722 * toLinear(d[i + 2]));
           sum[0] += d[i]; sum[1] += d[i + 1]; sum[2] += d[i + 2];
           count++;
         }
       }
       if (!vals.length) return null;
-      // How much the surface CHANGES, as opposed to how bright it is: the
-      // mean absolute step between neighbouring samples. This is the property
-      // a scrim cannot answer — bark measured a perfectly ordinary brightness
-      // and was still hard to read, because its detail sits at the same scale
-      // as the strokes of the letters and competes with them there.
-      let steps = 0, pairs = 0;
-      for (let y = 1; y < N; y++) {
-        for (let x = lo + 1; x < hi; x++) {
-          const i = y * N + x;
-          steps += Math.abs(lum[i] - lum[i - 1]) + Math.abs(lum[i] - lum[i - N]);
-          pairs += 2;
-        }
-      }
-      const step = pairs ? steps / pairs : 0;
       vals.sort((a, b) => a - b);
       return {
         // The 85th percentile: the brightest place a line of text is likely
@@ -1119,19 +1081,8 @@ const ATMO = (() => {
         mean: /** @type {[number,number,number]} */ ([
           Math.round(sum[0] / count), Math.round(sum[1] / count), Math.round(sum[2] / count),
         ]),
-        // 0 for a smooth gradient, 1 for a busy surface. The floor and the
-        // span come from measuring both against this exact statistic: a
-        // gradient lands near 0.002 and bark near 0.045, so anything under
-        // the floor is "calm" and the span carries the rest.
-        detail: Math.max(0, Math.min(1, (step - 0.006) / 0.040)),
       };
     } catch { return null; }
-  }
-
-  /** Just the readability number, for callers that colour nothing. */
-  function plateLuminance(img) {
-    const s = plateStats(img);
-    return s ? s.luma : -1;
   }
 
   /** Point a background plate at an asset, without touching anything else. */
@@ -1226,8 +1177,7 @@ const ATMO = (() => {
         if (seen) {
           // Both numbers come from the SAME crop of the SAME picture: how
           // strong the wash has to be, and what colour it is made of.
-          paintScrim(shell, scrim, paletteOf(atmosphere)[0],
-                     seen.luma, seen.mean, seen.detail);
+          paintScrim(shell, scrim, paletteOf(atmosphere)[0], seen.luma, seen.mean);
         }
         preload(i + 1);
       };
