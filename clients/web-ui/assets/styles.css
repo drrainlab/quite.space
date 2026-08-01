@@ -1851,6 +1851,44 @@ header .nav-act { padding: 5px 11px 5px 10px; min-height: 30px; }
 .atmo-shell > :not(.atmo-veil) {
   position: relative; z-index: 1;
 }
+
+/* THE TEXT'S OWN BACKING.
+   Dark where there are words, open where there are none — so the picture
+   shows through the margins, the gaps between paragraphs and the air around
+   a heading, and the openings take the irregular shape of the writing
+   itself. A mask that followed the reader would have to guess where the eye
+   is and would change brightness under text while it is being read; this
+   gets the same look from something already known, and never moves.
+
+   A radial that fades to nothing at the edges rather than a card: no border
+   to notice, no filter to composite — it reads as mist. --atmo-ink and
+   --atmo-veil come from the measurement in paintScrim. */
+.atmo-shell .pub-block:not(.pub-image):not(.pub-gallery):not(.pub-video):not(.pub-separator),
+.atmo-shell .pub-h1,
+.atmo-shell .pub-summary,
+.atmo-shell .pub-comment,
+.pub-card-atmo-on .pub-title,
+.pub-card-atmo-on .pub-summary,
+.pub-card-atmo-on .pub-meta {
+  position: relative;
+  isolation: isolate;
+}
+.atmo-shell .pub-block:not(.pub-image):not(.pub-gallery):not(.pub-video):not(.pub-separator)::before,
+.atmo-shell .pub-h1::before,
+.atmo-shell .pub-summary::before,
+.atmo-shell .pub-comment::before,
+.pub-card-atmo-on .pub-title::before,
+.pub-card-atmo-on .pub-summary::before,
+.pub-card-atmo-on .pub-meta::before {
+  content: '';
+  position: absolute; inset: -10px -18px;
+  z-index: -1;
+  border-radius: 18px;
+  background: radial-gradient(120% 130% at 50% 50%,
+    rgba(var(--atmo-ink, 11,16,32), var(--atmo-veil, .6)) 0%,
+    rgba(var(--atmo-ink, 11,16,32), calc(var(--atmo-veil, .6) * .92)) 58%,
+    rgba(var(--atmo-ink, 11,16,32), 0) 100%);
+}
 .atmo-poster {
   position: absolute; inset: 0; width: 100%; height: 100%;
   object-fit: cover;

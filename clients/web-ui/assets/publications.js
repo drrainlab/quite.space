@@ -95,12 +95,17 @@ async function refreshPosts() {
       card.appendChild(m);
       if (typeof ATMO !== 'undefined' && p.atmosphere) {
         ATMO.cardStill(card, p.atmosphere);
-        // Doors only for a scene this build can actually render: a door onto
-        // a picture that cannot exist is a false promise — the same honesty
-        // rule as the marker's label.
+        // A door has to open onto something. A KNOWN SCENE has motion to
+        // enter, so it gets the quiet door; SOUND is a consent, so it gets
+        // its own. A sequence has neither a scene nor motion — its pictures
+        // change by reading, not by entering — so it shows a door only when
+        // there is sound to say yes to. Offering "Open quiet" there would be
+        // a door onto nothing, which is the rule the marker already follows.
         const known = typeof SCENES !== 'undefined' && p.atmosphere.visual &&
           SCENES.get(String(p.atmosphere.visual.scene || ''));
-        if (known) {
+        const hasSound = !!(p.atmosphere.audio && p.atmosphere.audio.asset) &&
+          ATMO.soundMode() !== 'never';
+        if (known || hasSound) {
           const doors = document.createElement('div');
           doors.className = 'atmo-card-doors';
           const door = (long, short, mode, cls) => {
@@ -112,11 +117,8 @@ async function refreshPosts() {
             b.onclick = (e) => { e.stopPropagation(); openPub(p.document_id, mode); };
             doors.appendChild(b);
           };
-          door('Open quiet', 'Quiet', 'quiet', 'btn-tinted');
-          if (p.atmosphere.audio && p.atmosphere.audio.asset &&
-              ATMO.soundMode() !== 'never') {
-            door('Open with sound', 'Sound', 'sound', 'btn-filled');
-          }
+          if (known) door('Open quiet', 'Quiet', 'quiet', 'btn-tinted');
+          if (hasSound) door('Open with sound', 'Sound', 'sound', 'btn-filled');
           card.appendChild(doors);
         }
       }

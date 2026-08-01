@@ -113,7 +113,12 @@ const ATMO = (() => {
     const known = typeof SCENES !== 'undefined' &&
       SCENES.get(String(atmosphere.visual.scene || ''));
     const hasSound = !!(atmosphere.audio && atmosphere.audio.asset);
-    el.textContent = (known ? known.label : 'Atmosphere') + (hasSound ? ' · sound' : '');
+    // A sequence has no scene id, so SCENES has no name for it — saying
+    // "Atmosphere" would describe nothing. Say how many pictures instead.
+    const n = stagesOf(atmosphere).length;
+    const what = known ? known.label
+      : (n ? (n === 1 ? '1 picture' : n + ' pictures') : 'Atmosphere');
+    el.textContent = what + (hasSound ? ' · sound' : '');
     el.title = hasSound
       ? 'This post has an atmosphere and an ambient sound. Open it to enter.'
       : 'This post has an atmosphere. Open it to enter.';
@@ -381,7 +386,7 @@ const ATMO = (() => {
     veil.appendChild(scrim);
     shell.prepend(veil);
     shell.classList.add('atmo-shell');
-    styleScrim(scrim, atmosphere);
+    styleScrim(shell, scrim, atmosphere);
 
     mounted = { shell, veil, stage, scrim, bar, scene, atmosphere, postId,
                 // The recipe's identity, so a re-render can tell "the same
@@ -641,6 +646,17 @@ const ATMO = (() => {
     layer.className = 'pub-card-atmo';
     layer.setAttribute('aria-hidden', 'true');
 
+    // The card's own words need a backing too — a title over a bright
+    // photograph is exactly as unreadable as a paragraph over one. Same
+    // mechanism, same measurement.
+    const inkFrom = (luma) => {
+      const n = parseInt(String(paletteOf(atmosphere)[0]).slice(1), 16);
+      card.style.setProperty('--atmo-ink',
+        `${(n >> 16) & 255},${(n >> 8) & 255},${n & 255}`);
+      card.style.setProperty('--atmo-veil', String(Math.min(0.9, 0.42 + 0.5 * luma)));
+      card.classList.add('pub-card-atmo-on');
+    };
+
     const opening = stagesOf(atmosphere)[0];
     let dispose;
     if (fall.poster || opening) {
@@ -648,11 +664,14 @@ const ATMO = (() => {
       img.className = 'atmo-poster';
       img.alt = '';
       const id = fall.poster || opening.image;
+      inkFrom(0.5); // until the bytes are here, assume the awkward middle
+      img.onload = () => { const l = plateLuminance(img); if (l >= 0) inkFrom(l); };
       if (posterInto) posterInto(img, id);
       else autoMediaSrc(img, id);
       layer.appendChild(img);
       card.prepend(layer);
-      dispose = () => layer.remove();
+      dispose = () => { img.onload = null; layer.remove();
+                        card.classList.remove('pub-card-atmo-on'); };
     } else {
       const scene = typeof SCENES !== 'undefined'
         ? SCENES.make(String(atmosphere.visual.scene || ''), {
@@ -661,6 +680,13 @@ const ATMO = (() => {
           })
         : null;
       if (!scene) return null;
+      // A generative still is drawn from the palette, so the palette's own
+      // brightest token is the honest measure of it.
+      let maxLuma = 0;
+      for (const h of paletteOf(atmosphere).slice(1)) {
+        maxLuma = Math.max(maxLuma, BRUSH.luminance(h));
+      }
+      inkFrom(maxLuma);
       card.prepend(layer);
       let io = null;
       if (window.IntersectionObserver) {
@@ -679,7 +705,8 @@ const ATMO = (() => {
       } else {
         drawStill(layer, scene, atmosphere);
       }
-      dispose = () => { if (io) io.disconnect(); layer.remove(); };
+      dispose = () => { if (io) io.disconnect(); layer.remove();
+                        card.classList.remove('pub-card-atmo-on'); };
     }
     // The registry teardown contract, so whoever wipes the feed can run it.
     /** @type {any} */ (card).__unmount = dispose;
@@ -693,11 +720,11 @@ const ATMO = (() => {
    * the atmosphere stays most visible in the margins of the composition —
    * a state the post sits in, not wallpaper behind every letter.
    */
-  function styleScrim(scrim, atmosphere) {
+  function styleScrim(shell, scrim, atmosphere) {
     const pal = paletteOf(atmosphere);
     let maxLuma = 0;
     for (const h of pal.slice(1)) maxLuma = Math.max(maxLuma, BRUSH.luminance(h));
-    paintScrim(scrim, pal[0], Math.min(0.8, 0.42 + 0.3 * maxLuma));
+    paintScrim(shell, scrim, pal[0], maxLuma);
   }
 
   /**
@@ -710,13 +737,25 @@ const ATMO = (() => {
    * crossfaded under it. The product of the two is identical to writing the
    * alpha into the stops, which is what this did before stages existed.
    */
-  function paintScrim(scrim, ground, strength) {
+  function paintScrim(shell, scrim, ground, luma) {
     const n = parseInt(String(ground).slice(1), 16);
     const rgb = `${(n >> 16) & 255},${(n >> 8) & 255},${n & 255}`;
-    scrim.style.background =
-      `radial-gradient(130% 110% at 50% 30%, rgba(${rgb},1) 0%, ` +
-      `rgba(${rgb},0.72) 70%, rgba(${rgb},0.45) 100%)`;
-    scrim.style.opacity = String(strength);
+    // Even, not a spotlight. The old gradient was densest at 50% 30% and
+    // thinned to 0.45 by the bottom — its dark middle sat over the cover
+    // while the body text ran through its weakest part, which is why a
+    // bright photograph was unreadable exactly where the reading happens.
+    //
+    // The SHAPE of readability moved to the text's own backing, so this is
+    // only a calm even wash now, and it can be lighter than before: the
+    // picture stays a picture.
+    scrim.style.background = `linear-gradient(rgba(${rgb},0.9), rgba(${rgb},1))`;
+    scrim.style.opacity = String(Math.min(0.62, 0.16 + 0.4 * luma));
+    if (!shell) return;
+    // What the text's backing is made of. The measurement lives here, the
+    // shape lives in the stylesheet — a plate that follows the words rather
+    // than a rectangle over the whole page.
+    shell.style.setProperty('--atmo-ink', rgb);
+    shell.style.setProperty('--atmo-veil', String(Math.min(0.9, 0.42 + 0.5 * luma)));
   }
 
   // ---- the image sequence --------------------------------------------------
@@ -768,7 +807,15 @@ const ATMO = (() => {
   }
 
   /**
-   * Mean relative luminance of a loaded plate, 0..1, or -1 if unreadable.
+   * How bright a plate is WHERE THE TEXT WILL BE, 0..1, or -1 if unreadable.
+   *
+   * Two things this deliberately is not. It is not the MEAN — a photograph
+   * with a bright sky and a dark foreground averages to something middling
+   * while the words sit on the sky, and the average is what said a picture
+   * was fine when it was not. It takes a high percentile, so one bright
+   * region decides. And it is not the whole FRAME — the plate is object-fit:
+   * cover over the reading pane, so the outer columns are cropped away and
+   * only a middle band is ever behind the article.
    *
    * BRUSH.luminance answers this for a hex colour and there is no per-pixel
    * entry point, so the coefficients are repeated here rather than the image
@@ -778,18 +825,29 @@ const ATMO = (() => {
    */
   function plateLuminance(img) {
     try {
+      const N = 24;
       const cv = document.createElement('canvas');
-      cv.width = 24; cv.height = 24;
+      cv.width = N; cv.height = N;
       const ctx = cv.getContext('2d', { willReadFrequently: true });
       if (!ctx) return -1;
-      ctx.drawImage(img, 0, 0, 24, 24);
-      const d = ctx.getImageData(0, 0, 24, 24).data;
-      let sum = 0;
-      for (let i = 0; i < d.length; i += 4) {
-        sum += 0.2126 * toLinear(d[i]) + 0.7152 * toLinear(d[i + 1]) +
-               0.0722 * toLinear(d[i + 2]);
+      ctx.drawImage(img, 0, 0, N, N);
+      const d = ctx.getImageData(0, 0, N, N).data;
+      // The text column, in image terms: the middle band. Reading the edges
+      // would let a dark corner pay for a bright centre.
+      const lo = Math.floor(N * 0.2), hi = Math.ceil(N * 0.8);
+      const vals = [];
+      for (let y = 0; y < N; y++) {
+        for (let x = lo; x < hi; x++) {
+          const i = (y * N + x) * 4;
+          vals.push(0.2126 * toLinear(d[i]) + 0.7152 * toLinear(d[i + 1]) +
+                    0.0722 * toLinear(d[i + 2]));
+        }
       }
-      return sum / (d.length / 4);
+      if (!vals.length) return -1;
+      vals.sort((a, b) => a - b);
+      // The 85th percentile: the brightest place a line of text is likely to
+      // cross, without letting a single specular highlight black out the page.
+      return vals[Math.min(vals.length - 1, Math.floor(vals.length * 0.85))];
     } catch { return -1; }
   }
 
@@ -883,7 +941,7 @@ const ATMO = (() => {
         // recomputed per stage rather than once at mount.
         const l = plateLuminance(back);
         if (l >= 0) {
-          paintScrim(scrim, paletteOf(atmosphere)[0], Math.min(0.86, 0.34 + 0.5 * l));
+          paintScrim(shell, scrim, paletteOf(atmosphere)[0], l);
         }
         preload(i + 1);
       };
@@ -1076,7 +1134,11 @@ const ATMO = (() => {
   // reimplementing them, which is exactly how a preview drifts from a post.
   return { marker, mount, unmount, holds, detach, reattach, cardStill,
            level, soundMode, setSoundMode, stopBed,
-           paletteOf, paramsOf, declineReason: stageDeclinedBecause };
+           // stages so the feed can tell a sequence from a scene without a
+           // second reading of the recipe — the reason both directions live
+           // in this file.
+           paletteOf, paramsOf, stages: stagesOf,
+           declineReason: stageDeclinedBecause };
 })();
 
 if (typeof window !== 'undefined') {
