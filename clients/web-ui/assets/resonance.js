@@ -131,6 +131,15 @@ function renderResonanceRow(res, targetId, onChange) {
     row.appendChild(chip);
   }
 
+  // In a space this device cannot write to, there is no affordance at all.
+  // A resonance is an emitted event like any other, so the node refuses it —
+  // and offering the gesture anyway meant a reader tapped, nothing happened,
+  // and nothing said why. Existing resonances still show: they are what
+  // other people said, and they are worth seeing whether or not you can add
+  // to them.
+  const mayResonate =
+    !(typeof currentSpace === 'function' && currentSpace()?.can_write === false);
+
   // ✧ quick affordance: tap = default meaning (or release own);
   // hover/long-press = the palette picker.
   const add = document.createElement('span');
@@ -154,7 +163,9 @@ function renderResonanceRow(res, targetId, onChange) {
     }, 450);
   }, { passive: true });
   add.addEventListener('touchend', () => clearTimeout(pressT));
-  row.appendChild(add);
+  // The residue below still runs either way: what other people said is worth
+  // seeing whether or not this device may add to it.
+  if (mayResonate) row.appendChild(add);
   // Residue (RP-2A) refreshes on every render — calm state, no arrival here.
   //
   // Deliberately NOT the article: a message bubble wearing a faint ring

@@ -1150,8 +1150,11 @@
   .relay-public-row .rp-meta { color: var(--muted); font-family: ui-monospace, Menlo, monospace;
     font-size: 11px; }
   .pub-comment-empty { color: var(--dim); font-size: 13px; padding: 4px 2px; }
+  /* The plate follows the shape of what it holds: a pill input inside a
+     square box read as two unrelated things stacked. */
   .pub-comment-form { display: flex; gap: 8px; align-items: center; margin-top: 4px;
-    position: sticky; bottom: 0; padding: 6px 0; background: var(--bg); }
+    position: sticky; bottom: 0; padding: 6px 10px; background: var(--bg);
+    border-radius: 999px; }
   .pub-comment-input { flex: 1; min-width: 0; background: var(--bg); color: var(--fg);
     border: 1px solid var(--line); border-radius: 999px; padding: 10px 16px; font: inherit;
     transition: border-color .15s; }
@@ -1253,7 +1256,27 @@
   .pub-card:hover { border-color: var(--acc); }
   .pub-title { font-weight: 600; font-size: calc(15px * var(--font-scale)); }
   .pub-summary { color: var(--dim); font-size: 13px; margin-top: 2px; }
-  .pub-meta { color: var(--muted); font-size: 11px; margin-top: 4px; }
+  .pub-meta { color: var(--muted); font-size: 11px; margin-top: 4px;
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  /* WHAT SORT OF THING THIS IS, said once and in colour.
+     The kind is the one word that tells a reader what they are looking at
+     before they have read any of it, and as grey text among the tags it was
+     telling nobody. The hue belongs to the KIND, not to the author or the
+     space, so `release` is the same colour in every room — a thing you learn
+     once. Anything unlisted falls through to the neutral chip rather than
+     going uncoloured or, worse, unlabelled. */
+  .pub-kind {
+    font-family: var(--font-mono); font-size: 10px; letter-spacing: .08em;
+    text-transform: uppercase; padding: 2px 8px; border-radius: 999px;
+    color: var(--k-fg, var(--dim));
+    background: color-mix(in srgb, var(--k-fg, var(--dim)) 14%, transparent);
+    border: 1px solid color-mix(in srgb, var(--k-fg, var(--dim)) 35%, transparent);
+  }
+  .pub-kind[data-kind="release"] { --k-fg: #c88ce0; }
+  .pub-kind[data-kind="article"] { --k-fg: #7ab4e0; }
+  .pub-kind[data-kind="note"]    { --k-fg: #64d8a4; }
+  .pub-kind[data-kind="space"]   { --k-fg: #e8a862; }
+  .pub-tags { color: var(--muted); }
   /* Centred in whatever room it is given. With both panels open the column
      is barely wider than the article and this changes nothing; fold them and
      the reading column stays where the eye already is instead of clinging to

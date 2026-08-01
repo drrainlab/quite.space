@@ -256,7 +256,25 @@ function renderArticle(p, mode) {
   box.appendChild(h);
   const meta = document.createElement('div');
   meta.className = 'pub-meta';
-  meta.textContent = `${doc.kind}` + (doc.tags?.length ? ' · ' + doc.tags.join(', ') : '');
+  // The KIND gets a chip of its own. It is the one word that says what sort
+  // of thing this is before a reader has read any of it — a release is not
+  // an article is not a space-card — and as grey text at the same weight as
+  // the tags beside it, it was saying that to nobody. Colour comes from the
+  // kind itself (styles.css), so the same word is the same colour in every
+  // space rather than something an author chooses.
+  if (doc.kind) {
+    const k = document.createElement('span');
+    k.className = 'pub-kind';
+    k.dataset.kind = String(doc.kind);
+    k.textContent = String(doc.kind);
+    meta.appendChild(k);
+  }
+  if (doc.tags?.length) {
+    const tags = document.createElement('span');
+    tags.className = 'pub-tags';
+    tags.textContent = doc.tags.join(' · ');
+    meta.appendChild(tags);
+  }
   box.appendChild(meta);
   if (doc.summary) {
     const s = document.createElement('p');
@@ -301,38 +319,51 @@ function renderArticle(p, mode) {
   // Comments (thread-shaped model; flat render in v1). The list lives in its
   // own container so it can update LIVE without tearing down the listening
   // room or the comment box the reader is typing in.
-  const ch = document.createElement('h3');
-  ch.className = 'pub-comments-h'; ch.textContent = 'Comments';
-  box.appendChild(ch);
-  const clist = document.createElement('div');
-  clist.className = 'pub-comments'; clist.id = 'pubComments';
-  renderCommentList(clist, p.comments || []);
-  commentSig = commentsSignature(p.comments); // seed so polling only reacts to change
-  box.appendChild(clist);
-
-  const form = document.createElement('form');
-  form.className = 'pub-comment-form';
-  const inp = document.createElement('input');
-  inp.className = 'pub-comment-input';
-  inp.placeholder = 'Write a comment…';
-  form.appendChild(inp);
-  const send = document.createElement('button');
-  send.type = 'submit';
-  send.className = 'btn-tinted'; send.textContent = 'Send';
-  form.appendChild(send);
-  form.onsubmit = async (e) => {
-    e.preventDefault();
-    const text = inp.value.trim();
-    if (!text) return;
-    inp.value = ''; send.disabled = true;
-    try {
-      await api(`/api/spaces/${current}/publications/${openDocID}/comments`,
-        { method: 'POST', body: JSON.stringify({ text }) });
-      await refreshArticleComments();
-    } catch (err) { inp.value = text; }
-    send.disabled = false; inp.focus();
-  };
-  box.appendChild(form);
+  //
+  // In a space this device cannot write to, there is nothing here to offer.
+  // The form would refuse at the end of itself, and an empty "Comments"
+  // heading over a box nobody can use is the interface pretending there is a
+  // conversation to join. What ALREADY EXISTS is still shown — those are the
+  // post's own content, and hiding them would be a different lie.
+  const mayWrite = currentSpace()?.can_write !== false;
+  const existing = p.comments || [];
+  if (mayWrite || existing.length) {
+    const ch = document.createElement('h3');
+    ch.className = 'pub-comments-h'; ch.textContent = 'Comments';
+    box.appendChild(ch);
+    const clist = document.createElement('div');
+    clist.className = 'pub-comments'; clist.id = 'pubComments';
+    renderCommentList(clist, existing);
+    commentSig = commentsSignature(p.comments); // seed: polling reacts to change only
+    box.appendChild(clist);
+  }
+  if (mayWrite) {
+    const form = document.createElement('form');
+    form.className = 'pub-comment-form';
+    const inp = document.createElement('input');
+    inp.className = 'pub-comment-input';
+    inp.placeholder = 'Write a comment…';
+    form.appendChild(inp);
+    const send = document.createElement('button');
+    send.type = 'submit';
+    send.className = 'btn-tinted'; send.textContent = 'Send';
+    form.appendChild(send);
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      const text = inp.value.trim();
+      if (!text) return;
+      inp.value = ''; send.disabled = true;
+      try {
+        await api(`/api/spaces/${current}/publications/${openDocID}/comments`,
+          { method: 'POST', body: JSON.stringify({ text }) });
+        await refreshArticleComments();
+      } catch (err) { inp.value = text; }
+      send.disabled = false; inp.focus();
+    };
+    box.appendChild(form);
+  } else {
+    commentSig = commentsSignature(p.comments);
+  }
 
   document.getElementById('pubFeed').style.display = 'none';
   box.style.display = '';
