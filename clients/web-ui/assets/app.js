@@ -2375,7 +2375,16 @@ function armMedia(el) {
 function runMedia(el) {
   const m = el && el._autoMedia;
   if (!m) return;
+  // An article image or a cover has no server-side asset row in hand the way
+  // a feed block does, so here the arriving state is bounded by the fetch
+  // itself: on while we are asking, off the moment there is an answer either
+  // way. The background layers are left alone — a soft drifting picture IS
+  // the atmosphere, and softening it again would say nothing.
+  if (!el.classList.contains('atmo-plate') && !el.classList.contains('atmo-poster')) {
+    el.classList.add('media-arriving');
+  }
   autoFetchAsset(m.assetId, m.onReady, m.onUnavailable).then((ok) => {
+    el.classList.remove('media-arriving');
     if (ok) { clearUnavailable(el); m.tries = 0; return; }
     retryMedia(el);
   });
@@ -2445,6 +2454,27 @@ function assetURL(assetId) {
 // A media element whose bytes never arrive renders as nothing at all — an
 // empty rectangle that looks like a layout bug rather than an absence. When
 // there is no online source, put the sentence where the picture would be.
+/**
+ * Is this block's own media still on its way?
+ *
+ * Only while somebody is ANSWERING. `no_source` means the asking goes on but
+ * nothing is arriving, and a preview that keeps breathing under that sentence
+ * would be the interface disagreeing with itself.
+ *
+ * @param {any} asset the entry's asset projection
+ */
+function mediaArriving(asset) {
+  return !!asset && asset.state !== 'complete' && asset.state !== 'failed' &&
+    asset.reason !== 'no_source';
+}
+
+/** Mark a preview as a stand-in for bytes that are still coming. */
+function markArriving(el, asset, sheen) {
+  if (!el) return;
+  el.classList.toggle('media-arriving', mediaArriving(asset));
+  if (sheen) el.classList.add('qs-sheen');
+}
+
 function markUnavailable(el, reason) {
   if (!el || el._qsUnavailable) return;
   el._qsUnavailable = true;
@@ -2512,6 +2542,10 @@ function renderVideo(e) {
     const img = document.createElement('img');
     img.className = 'thumb'; img.alt = e.alt;
     img.src = `data:${e.thumb_mime};base64,${e.thumb_b64}`;
+    // A video's poster is its stand-in too — but only once somebody has been
+    // ASKED. A video is fetched on tap (PM-5), so a poster that breathed
+    // before anyone pressed play would promise work nobody had started.
+    if (e.asset && e.asset.state === 'fetching') markArriving(img, e.asset);
     holder.appendChild(img);
     const play = document.createElement('div');
     play.className = 'video-play';
@@ -2677,6 +2711,11 @@ function renderVisual(e) {
     const img = document.createElement('img');
     img.className = 'thumb'; img.alt = e.alt;
     img.src = `data:${e.thumb_mime};base64,${e.thumb_b64}`;
+    // The thumbnail IS the loading state: soft while the original is coming,
+    // sharp once it is here. The feed re-renders from server state, so the
+    // class arrives and leaves on its own — nothing to remember, nothing to
+    // clean up.
+    markArriving(img, e.asset);
     img.onclick = () => { if (e.asset?.state === 'complete')
       window.open(`/api/spaces/${current}/assets/${e.asset.id}?token=${token}`, '_blank'); };
     wrap.appendChild(img);
@@ -2701,7 +2740,20 @@ function renderVoiceAudio(e) {
       `/api/spaces/${current}/assets/${e.asset.id}?token=${token}`,
       e.waveform_b64, e.duration_ms));
   } else {
-    if (e.waveform_b64) wrap.appendChild(renderWave(e.waveform_b64)); // static preview
+    if (e.waveform_b64) {
+      // The waveform is a sound's thumbnail — the same materialisation, on
+      // the preview this block happens to carry.
+      const wave = renderWave(e.waveform_b64);
+      markArriving(wave, e.asset);
+      wrap.appendChild(wave);
+    } else {
+      // Nothing to soften: a bare row gets the drift instead, so a sound with
+      // no waveform still reads as on its way rather than as absent.
+      const holder = document.createElement('div');
+      holder.className = 'aplayer-blank';
+      markArriving(holder, e.asset, true);
+      wrap.appendChild(holder);
+    }
     wrap.appendChild(assetNote(e));
   }
   return wrap;

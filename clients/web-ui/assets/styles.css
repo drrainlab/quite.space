@@ -862,6 +862,75 @@
     animation: wfall-flow 1.1s linear infinite; }
   @keyframes wfall-flow { from { background-position: 220% 0; } to { background-position: 0 0; } }
   @media (prefers-reduced-motion: reduce) { .wfall { animation: none; } }
+
+  /* MEDIA ARRIVING — materialisation, not a spinner.
+     ------------------------------------------------------------------
+     A spinner says "something is happening somewhere". This says what is
+     actually true: the PREVIEW is here and the real thing is still coming.
+     Every media block already carries its own preview inside the signed
+     frame — a thumbnail for a picture, a waveform for a sound — so the
+     honest loading state is that preview, soft and unresolved, sharpening
+     into itself when the bytes land. Blurry means "a stand-in"; sharp means
+     "the file". Nobody has to be taught that.
+
+     Pure CSS: no timer to leak across the feed's 2s re-render, and no rAF —
+     the one animation loop in this client belongs to the atmosphere stage.
+     The same photosensitivity floor as everything else: opacity moves
+     within a narrow band, slowly, with no flash and no luminance flip. */
+  .media-arriving { animation: qs-arriving 2.8s ease-in-out infinite; }
+  /* An <img> takes the blur directly — ::after does not render on a
+     replaced element, and wrapping every thumbnail to hang one sheen on it
+     would rebuild three renderers for a decoration. */
+  img.media-arriving, .thumb.media-arriving {
+    filter: blur(7px) saturate(.9); transform: scale(1.015);
+    /* Softening is a STATE, not an event: a preview is a stand-in from the
+       first frame it is painted. Only the resolve is worth watching, and a
+       transition declared here would run in both directions — so a picture
+       that had just started arriving would be seen going out of focus. */
+    transition: none;
+  }
+  /* Sharpening is the moment the bytes land, so it is the ONE thing here
+     allowed to take its time. The transition belongs to the SETTLED rule
+     because CSS reads it from the destination of the change — and the
+     settled filter is written out as an IDENTITY LIST rather than left as
+     `none`, because a filter list cannot be interpolated against `none`:
+     the browser falls back to a discrete swap and the picture snaps into
+     focus half a second late instead of resolving. */
+  .thumb, .pub-cover img, .pub-block img {
+    filter: blur(0px) saturate(1); transform: scale(1);
+    transition: filter .8s ease, transform .8s ease;
+  }
+  /* A sound with no waveform: something to drift in, sized like the row it
+     stands in for. */
+  .aplayer-blank { height: 34px; margin: 6px 0; border-radius: 8px;
+    background: color-mix(in srgb, var(--fg, #fff) 6%, transparent); }
+  @keyframes qs-arriving {
+    0%, 100% { opacity: .72; }
+    50%      { opacity: 1; }
+  }
+  /* Containers that have no preview of their own get a slow drift instead of
+     a blur — the same soft gradient language as the atmosphere. */
+  .media-arriving.qs-sheen { position: relative; overflow: hidden; }
+  .media-arriving.qs-sheen::after {
+    content: ''; position: absolute; inset: 0; pointer-events: none;
+    border-radius: inherit;
+    background: linear-gradient(100deg, transparent 20%,
+      color-mix(in srgb, var(--accent, #6cd3ff) 24%, transparent) 50%,
+      transparent 80%);
+    background-size: 260% 100%;
+    animation: qs-sheen-drift 3.4s ease-in-out infinite;
+  }
+  @keyframes qs-sheen-drift {
+    from { background-position: 200% 0; }
+    to   { background-position: -60% 0; }
+  }
+  /* Reduced motion keeps the MEANING and drops the movement: the preview
+     stays soft, so it still reads as a stand-in, and nothing drifts. */
+  @media (prefers-reduced-motion: reduce) {
+    .media-arriving { animation: none; opacity: .82; }
+    .media-arriving.qs-sheen::after { animation: none; opacity: .5; }
+    .thumb, img.qs-materialises { transition: none; }
+  }
   /* drag-and-drop attach overlay */
   #dropOverlay { position: fixed; inset: 0; z-index: 500; display: none;
     align-items: center; justify-content: center; pointer-events: none;
