@@ -64,6 +64,17 @@ function install(global, size) {
       removeAttribute(k) { delete el.attrs[k]; },
       addEventListener() {}, removeEventListener() {},
       appendChild(c) { c.parentNode = el; el.children.push(c); return c; },
+      // Only `innerHTML = ''` is modelled, because that is the only form the
+      // client uses — as "empty this". Leaving it unimplemented was worse
+      // than absent: assignments silently did nothing, so a rebuilt bar kept
+      // every button it had ever drawn and a test clicking one by its label
+      // could reach a stale render.
+      set innerHTML(v) {
+        if (String(v) !== '') throw new Error('domstub: innerHTML only models clearing');
+        for (const c of el.children) c.parentNode = null;
+        el.children = [];
+      },
+      get innerHTML() { return ''; },
       prepend(c) { c.parentNode = el; el.children.unshift(c); return c; },
       remove() {
         if (!el.parentNode) return;
@@ -213,8 +224,16 @@ function install(global, size) {
     // WITH WHICH url. Nothing is decoded and nothing sounds; see the note at
     // the top about what this stub is and is not for.
     Audio: class {
-      constructor() { this.src = ''; this.volume = 1; this.loop = false; audios.push(this); }
-      play() { this.played = true; return Promise.resolve(); }
+      constructor() {
+        this.src = ''; this.volume = 1; this.loop = false;
+        // `paused` starts true and `currentTime` at zero, as a real element
+        // does — and play() clears the flag rather than only setting another,
+        // because "did this ever play" and "is it playing NOW" are different
+        // questions and a pause/resume test needs the second one.
+        this.paused = true; this.currentTime = 0; this.played = false;
+        audios.push(this);
+      }
+      play() { this.played = true; this.paused = false; return Promise.resolve(); }
       pause() { this.paused = true; }
       addEventListener() {} removeEventListener() {}
     },

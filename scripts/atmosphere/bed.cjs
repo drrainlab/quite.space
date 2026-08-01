@@ -59,13 +59,14 @@ function boot() {
   ctx.assetURL = (assetId) => '/api/spaces/S/assets/' + assetId + '?token=t';
   ctx.observeMedia = () => {};
   ctx.autoMediaSrc = (img, id) => { img.src = ctx.assetURL(id); };
-  for (const f of ['modes.js', 'audio.js', 'brush.js', 'scenes.js', 'stage.js', 'atmosphere.js']) {
+  for (const f of ['modes.js', 'audio.js', 'brush.js', 'scenes.js', 'scenes/field.js', 'stage.js', 'atmosphere.js']) {
     const p = path.join(ASSETS, f);
     vm.runInContext(fs.readFileSync(p, 'utf8'), ctx, { filename: p });
   }
   return {
     harness, asked,
     atmo: vm.runInContext('ATMO', ctx),
+    stage: vm.runInContext('STAGE', ctx),
     arrive: (ok) => { if (resolveFetch) { resolveFetch(ok); resolveFetch = null; } },
     /** Chunks landing mid-pass, the way a real poll reports them. */
     chunks: (have, total) => { if (report) report(have, total); },
@@ -91,6 +92,25 @@ function words(node) {
   let out = String(node.textContent || '');
   for (const c of node.children || []) out += ' ' + words(c);
   return out;
+}
+
+/** Click the bar's button with this label. */
+function press(bar, label) {
+  const found = [];
+  const walk = (n) => {
+    if (n.tagName === 'BUTTON') found.push(n);
+    for (const c of n.children || []) walk(c);
+  };
+  walk(bar);
+  const b = found.find(x => x.textContent === label);
+  if (!b) {
+    failures++;
+    console.error(`FAIL  press("${label}")\n      no such button; the bar had ` +
+      JSON.stringify(found.map(x => x.textContent)));
+    return false;
+  }
+  b.onclick();
+  return true;
 }
 
 function shell(harness) {
@@ -190,6 +210,60 @@ function shell(harness) {
     b.atmo.mount(shell(b.harness), withSound(), 'p1', { bar, enter: 'quiet' });
     assert('quiet fetches nothing', b.asked.length === 0,
       `asked for ${JSON.stringify(b.asked)} without being asked to`);
+    b.atmo.unmount();
+  }
+
+  // PAUSE AND MUTE BOTH KEEP THE PLAYHEAD.
+  //
+  // Reported: unmuting restarted the piece from its first second. The bed
+  // lives in an <audio> element, and the element is where the playhead is —
+  // so anything that makes sound again by REBUILDING it has silently thrown
+  // away where the listener was. Both controls hold the element instead, and
+  // the test that proves it is "how many elements were ever built".
+  //
+  // And Pause takes the whole atmosphere. A Pause that froze a slow gradient
+  // and left the music playing did nothing a person could notice, which is
+  // exactly how it was reported — as a button that does not work.
+  {
+    const b = boot();
+    const bar = b.harness.document.createElement('div');
+    b.atmo.mount(shell(b.harness), withSound(), 'p1', { bar, enter: 'sound' });
+    b.arrive(true);
+    await b.settle();
+
+    const built = () => b.harness.audios().length;
+    const el = b.harness.audios()[0];
+    assert('one element to begin with', built() === 1, `built ${built()}`);
+    el.currentTime = 42; // the listener is 42 seconds in
+
+    press(bar, 'Mute');
+    assert('mute does not rebuild the element', built() === 1,
+      `built ${built()} — a rebuilt element starts from zero`);
+    assert('mute stops the sound', el.paused === true, 'the element kept playing');
+
+    press(bar, 'Unmute');
+    await b.settle();
+    // The sharpest assertion in this block, and the one that fails against the
+    // old code: a bed that is merely held needs NOTHING from the network. If
+    // unmuting asks again, it is because it threw the element away — and the
+    // element is where the playhead was.
+    assert('unmuting a held bed asks for nothing', b.asked.length === 1,
+      `asked ${b.asked.length} times — the second ask means it was rebuilt`);
+    assert('unmute does not rebuild it either', built() === 1, `built ${built()}`);
+    assert('and continues where it was', el.currentTime === 42 && el.paused === false,
+      `playhead ${el.currentTime}, paused ${el.paused}`);
+
+    // Pause takes both halves; Resume gives both back.
+    press(bar, 'Pause');
+    assert('pause stops the scene', b.stage.running() === false, 'the scene kept drawing');
+    assert('pause holds the sound too', el.played && el.paused === true,
+      'the music played on through a pause');
+    assert('the bar says the sound is held', /sound held/.test(words(bar)),
+      `the bar said ${JSON.stringify(words(bar))}`);
+    press(bar, 'Resume');
+    assert('resume brings the scene back', b.stage.running() === true, 'the scene stayed frozen');
+    assert('resume keeps the playhead', built() === 1 && el.currentTime === 42,
+      `built ${built()}, playhead ${el.currentTime}`);
     b.atmo.unmount();
   }
 

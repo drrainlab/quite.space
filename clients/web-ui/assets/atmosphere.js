@@ -140,6 +140,40 @@ const ATMO = (() => {
   }
 
   /**
+   * Hold the sound where it is.
+   *
+   * Distinct from stopBed, which throws the element away — and the element is
+   * where the PLAYHEAD lives. Rebuilding it to make sound again starts the
+   * piece from its first second, which is not what anyone means by unmuting a
+   * background they were listening to.
+   *
+   * The audio floor IS released: while this is silent, a listening room or a
+   * voice note should be able to take it. Resuming asks for it back, and may
+   * be told no — which is the same answer starting would have got.
+   */
+  function pauseBed() {
+    if (!bed || bed.held) return;
+    bed.held = true;
+    try { bed.el.pause(); } catch { /* already gone */ }
+    AUDIO.release(bed.owner);
+  }
+
+  /** Continue from exactly where pauseBed held it. */
+  function resumeBed() {
+    if (!bed) return { ok: false, why: 'this post has no sound' };
+    if (!bed.held) return { ok: true };
+    if (!AUDIO.request(bed.owner, 'bed', () => stopBed())) {
+      return { ok: false, why: AUDIO.busyReason() || 'something else is playing' };
+    }
+    bed.held = false;
+    try { bed.el.play().catch(() => { /* the poster is still right */ }); } catch { /* gone */ }
+    return { ok: true };
+  }
+
+  /** Is a bed loaded and actually sounding? */
+  function bedSounding() { return !!(bed && !bed.held); }
+
+  /**
    * Start the post's own ambient bed, if anything else will let us.
    *
    * Returns a reason string when it declines, so the reader is told rather
@@ -305,7 +339,7 @@ const ATMO = (() => {
    * deliberate rather than broken.
    */
   function level() {
-    if (!bed || !bed.analyser || !bed.data) return 0;
+    if (!bedSounding() || !bed.analyser || !bed.data) return 0;
     try {
       bed.analyser.getByteFrequencyData(bed.data);
       let sum = 0;
@@ -524,11 +558,13 @@ const ATMO = (() => {
       const name = document.createElement('span');
       name.className = 'atmo-bar-label';
       if (state === 'live') {
-        // Say only what is true: a declined scene is not "moving", and a
-        // person's pause is its own state, not motion.
+        // Say only what is true: a declined scene is not "moving", a
+        // person's pause is its own state, and a bed that is loaded but
+        // held is not sounding.
         const bits = [label];
         if (sceneLive) bits.push(STAGE.paused() ? 'paused' : 'moving');
-        if (bed) bits.push('sound');
+        if (bedSounding()) bits.push('sound');
+        else if (bed) bits.push('sound held');
         name.textContent = bits.join(' \u00B7 ');
       } else {
         // A sequence's label is already a sentence; a scene's is a name.
@@ -548,17 +584,36 @@ const ATMO = (() => {
       };
 
       if (state === 'live') {
-        if (sceneLive) btn(STAGE.paused() ? 'Resume' : 'Pause', 'btn-plain', () => {
-          // Pause freezes ON THE CURRENT FRAME — the canvas keeps what it
-          // holds and nothing is redrawn. A pause that jumped back to the
-          // opening frame would read as the composition resetting, and a
-          // reset is what Leave is for.
-          if (STAGE.paused()) STAGE.resume(); else STAGE.pause();
-          renderBar('live', notes);
+        // Pause takes the WHOLE atmosphere, because that is what the bar
+        // calls it: one thing, named once, whose state reads "moving · sound".
+        // A Pause that froze a slow gradient and left the music playing did
+        // nothing a person could notice, which is how it was reported — as a
+        // button that does not work. Mute keeps its own job: the sound alone.
+        const anyLive = () => (sceneLive && !STAGE.paused()) || bedSounding();
+        if (sceneLive || bed) btn(anyLive() ? 'Pause' : 'Resume', 'btn-plain', () => {
+          // Freezing keeps the CURRENT frame and the CURRENT playhead: the
+          // canvas is not redrawn and the element is not rebuilt. A pause
+          // that jumped back to the opening frame — or the opening second —
+          // would read as the composition resetting, and a reset is Leave.
+          if (anyLive()) {
+            if (sceneLive) STAGE.pause();
+            pauseBed();
+            renderBar('live', notes);
+            return;
+          }
+          if (sceneLive) STAGE.resume();
+          const r = resumeBed();
+          renderBar('live', r.ok ? notes : ['quiet — ' + r.why]);
         });
         if (hasSound && soundMode() !== 'never') {
-          btn(bed ? 'Mute' : 'Unmute', 'btn-plain', () => {
-            if (bed) { stopBed(); renderBar('live', notes); return; }
+          btn(bedSounding() ? 'Mute' : 'Unmute', 'btn-plain', () => {
+            if (bedSounding()) { pauseBed(); renderBar('live', notes); return; }
+            // The bed is loaded but held: continue it, never rebuild it.
+            if (bed) {
+              const r = resumeBed();
+              renderBar('live', r.ok ? notes : ['quiet — ' + r.why]);
+              return;
+            }
             // Unmute asks for the bytes too. It usually returns at once —
             // they arrived when the reader first opened the sound — but a
             // reader who muted before they ever landed would otherwise get
