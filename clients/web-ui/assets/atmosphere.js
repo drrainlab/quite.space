@@ -1230,6 +1230,41 @@ const ATMO_EDIT = (() => {
     };
   }
 
+  // The words a reader gets when the picture cannot be shown are REQUIRED by
+  // the contract (ADR-013 invariant 1: the renderer may degrade, the meaning
+  // may not). That rule is about what a reader receives, not about what an
+  // author must invent — so the editor writes a true sentence about the
+  // recipe and the author edits it if they want better ones.
+  //
+  // A literal "default" would satisfy the validator and tell the reader
+  // nothing, which is the outcome the invariant exists to prevent. These say
+  // what is actually there.
+
+  /** The last sentence this editor wrote, so the author's own is never lost. */
+  let autoWords = '';
+
+  function describe(a) {
+    const v = (a && a.visual) || {};
+    if (!v.scene) {
+      const n = (v.stages || []).length;
+      if (n > 1) return n + ' pictures behind the text, changing as you read.';
+      return 'A picture behind the text.';
+    }
+    const known = typeof SCENES !== 'undefined' && SCENES.get(String(v.scene));
+    return known ? known.label + ' — a slow moving background.'
+                 : 'A slow moving background.';
+  }
+
+  /** Keep the description true to the recipe, unless the author wrote theirs. */
+  function refreshWords(a) {
+    if (!a) return;
+    a.fallback = a.fallback || { text: '' };
+    const now = a.fallback.text || '';
+    if (now && now !== autoWords) return; // theirs; leave it alone
+    a.fallback.text = describe(a);
+    autoWords = a.fallback.text;
+  }
+
   /**
    * A seed the author can re-roll. It is a uint64 on the wire; JavaScript
    * numbers are exact to 2^53, so this stays inside that — a seed that lost
@@ -1298,6 +1333,9 @@ const ATMO_EDIT = (() => {
     }
 
     const a = doc.atmosphere;
+    // Every structural change comes back through here, so this is the one
+    // place the description has to be kept true to what the recipe became.
+    refreshWords(a);
     // A post has ONE background, so the two forms are alternatives and the
     // editor says so with a switch rather than letting an author fill in both
     // and meet the refusal at the publish button. An empty scene id is what
@@ -1632,11 +1670,13 @@ const ATMO_EDIT = (() => {
     const fall = el('textarea', 'atmo-edit-text');
     fall.maxLength = MAX_FALLBACK;
     fall.rows = 2;
-    fall.placeholder = 'Describe it in words — this is what a reader sees when the picture cannot be shown';
+    fall.placeholder = 'What a reader gets when the picture cannot be shown';
     fall.value = a.fallback.text || '';
     host.appendChild(row('In words', fall));
+    // Only ever seen by someone who deliberately empties the field — the
+    // editor keeps a true sentence there otherwise.
     const warn = el('p', 'hint warn',
-      'A description in words is required — it is what a reader gets when the picture cannot be shown.');
+      'Without these words a reader who cannot see the picture gets nothing.');
     host.appendChild(warn);
     // Typing must not re-render: the editor rebuilds itself on structural
     // changes, and doing that per keystroke would take the caret away

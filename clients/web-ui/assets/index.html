@@ -782,24 +782,19 @@
   <div id="meGlyph" style="text-align:center;margin:8px 0"></div>
   <p class="out" id="meName" style="text-align:center;color:var(--fg);font-size:16px"></p>
   <p class="hint" id="meDeviceName" style="text-align:center"></p>
-  <p class="hint" style="margin-top:12px">Verification code — compare it out loud with someone to confirm you're talking to the right device:</p>
+  <p class="hint" style="margin-top:12px">Verification code — read it out loud to confirm the right device:</p>
   <p class="verify-phrase" id="meVerify" style="text-align:center;color:var(--accent)"></p>
   <!-- A quick link is the only sharing path here that touches a relay, so it
        says so, right where the choice is made. -->
   <div class="ql-block">
-    <p class="hint">Hand someone a way in — five words they can read out loud.
-      <b>These words open a new place.</b> They do not lead to any room you
-      already have; to let somebody into one of those, use invite from
-      inside it.</p>
-    <div class="list">
-      <div class="list-row">
-        <span class="lr-label">Name it
-          <span class="lr-sub">Leave this empty and the place will be called
-            after whoever is in it.</span>
-        </span>
-        <input type="text" id="qlTitle" placeholder="optional">
-      </div>
-    </div>
+    <!-- Two claims, and both are load-bearing: the words are SPOKEN, and
+         they open a NEW place. The second is the one people get wrong, and
+         it is why invite-from-inside is named right here. Everything else
+         this block used to explain — what an unnamed place ends up called —
+         the app shows the moment it happens. -->
+    <p class="hint">Five words someone can read out loud.
+      <b>They open a new place</b> — never a room you already have; for those,
+      use invite from inside it.</p>
     <!-- Two doors, and the explanation under each says DEVICES, because a
          verified person is not something this protocol can prove. Promising
          "one person" would promise a thing no signature backs. -->
@@ -827,17 +822,17 @@
         </select>
       </div>
       <div class="list-row">
-        <span class="lr-label">Who decides
-          <span class="lr-sub">Letting them in yourself means nobody enters
-            until you say so.</span>
-        </span>
+        <span class="lr-label">Who decides</span>
         <div class="segmented" id="qlApproval">
           <button data-v="" class="sel" onclick="qlSetApproval('')">They walk straight in</button>
           <button data-v="host" onclick="qlSetApproval('host')">Let them in myself</button>
         </div>
       </div>
     </div>
-    <div class="row"><button onclick="mintQuickLink()" id="qlMintBtn">Make a quick link</button></div>
+    <div class="row ql-make">
+      <input type="text" id="qlTitle" placeholder="name (optional)">
+      <button onclick="mintQuickLink()" id="qlMintBtn">Make a quick link</button>
+    </div>
     <div id="qlOut" style="display:none">
       <p class="ql-phrase" id="qlPhrase"></p>
       <p class="out" id="qlLink"></p>
@@ -852,13 +847,13 @@
        beside your identity, not buried in a settings tab. -->
   <div class="ql-block" id="backupBlock">
     <p class="hint" id="backupState"></p>
-    <p class="hint">A backup holds everything: your identity, your spaces, their
-      keys and their history. Choose a passphrase for the file itself — it can
-      be a different one from the passphrase that opens this app.</p>
+    <p class="hint">A backup holds everything: identity, spaces, keys, history.
+      The file gets its own passphrase — it need not be the one that opens
+      this app.</p>
     <input id="backupPass" type="password" placeholder="passphrase for the backup file" autocomplete="new-password">
     <div class="row"><button onclick="saveBackup()" id="backupBtn">Save a backup</button></div>
-    <p class="hint">Restoring is a separate, deliberate act — a running node
-      holds its own directory open, so it cannot restore into itself:
+    <p class="hint">Restoring is deliberate and separate: a running node holds
+      its own directory, so it cannot restore into itself.
       <span class="mono">terminal restore --in FILE --data NEW-DIR</span></p>
   </div>
   <div class="row" style="margin-top:10px">
