@@ -15,6 +15,7 @@ import (
 
 	"github.com/drrainlab/quiet_places/kernel/assets"
 	"github.com/drrainlab/quiet_places/kernel/reducers"
+	"github.com/drrainlab/quiet_places/protocol/codec"
 	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/protocol/publication"
 	"github.com/drrainlab/quiet_places/protocol/schemas"
@@ -74,6 +75,7 @@ type atmosphereJSON struct {
 	// The alternative is widening the wire shape twice for one feature, and a
 	// wire shape is the most expensive thing here to change twice.
 	DerivedFrom *atmoDerivedJSON `json:"derived_from,omitempty"`
+	Extra       []atmoExtraJSON  `json:"extra,omitempty"`
 }
 
 type atmoVisualJSON struct {
@@ -81,6 +83,34 @@ type atmoVisualJSON struct {
 	Seed    uint64           `json:"seed"`
 	Params  []atmoParamJSON  `json:"params,omitempty"`
 	Palette []atmoColourJSON `json:"palette,omitempty"`
+	Stages  []atmoStageJSON  `json:"stages,omitempty"`
+	Extra   []atmoExtraJSON  `json:"extra,omitempty"`
+}
+
+// atmoStageJSON is one step of an image sequence. `audio` crosses even though
+// nothing plays it yet: dropping it here would delete it on the next save,
+// which is exactly the class of bug the contract's own RawExtra exists to
+// stop one level down.
+type atmoStageJSON struct {
+	Anchor     string `json:"anchor"` // block id in this document
+	Image      string `json:"image"`
+	Audio      string `json:"audio,omitempty"`
+	Transition string `json:"transition,omitempty"` // fade | cut
+	DurationMs uint64 `json:"duration_ms,omitempty"`
+}
+
+// atmoExtraJSON carries a wire key this build does not understand, opaquely,
+// through the authoring round-trip.
+//
+// The contract retains unknown keys on the wire (publication.Extra), but the
+// composer does not edit wire bytes — it edits THIS shape, deep-cloned in the
+// browser and posted back. A key absent here is therefore deleted on the next
+// save no matter what the codec preserves, which would make the wire-level
+// promise true and useless. The client never looks inside; it echoes what it
+// was given.
+type atmoExtraJSON struct {
+	Key uint64 `json:"key"`
+	Raw string `json:"raw"` // base64 of one canonical CBOR item
 }
 
 type atmoParamJSON struct {
@@ -226,6 +256,42 @@ func documentToJSON(doc *publication.Document) documentJSON {
 	return dj
 }
 
+func extrasToJSON(list []publication.Extra) []atmoExtraJSON {
+	var out []atmoExtraJSON
+	for _, e := range list {
+		out = append(out, atmoExtraJSON{
+			Key: e.Key, Raw: base64.StdEncoding.EncodeToString(e.Raw),
+		})
+	}
+	return out
+}
+
+// extrasFromJSON takes the passengers back, and refuses anything that is not
+// EXACTLY one canonical CBOR item.
+//
+// The bytes are appended verbatim into a document this node then signs, so a
+// mangled passenger would produce a correctly signed, permanently undecodable
+// post. Everything else in this layer trusts publication.Validate to decide
+// what is legal; this cannot, because Validate never decodes the item either.
+func extrasFromJSON(list []atmoExtraJSON) ([]publication.Extra, error) {
+	var out []publication.Extra
+	for _, e := range list {
+		raw, err := base64.StdEncoding.DecodeString(e.Raw)
+		if err != nil {
+			return nil, errors.New("node: unreadable atmosphere passenger")
+		}
+		d := codec.NewDecoder(raw)
+		if err := d.SkipItem(); err != nil {
+			return nil, errors.New("node: atmosphere passenger is not a CBOR item")
+		}
+		if err := d.Done(); err != nil {
+			return nil, errors.New("node: atmosphere passenger is more than one item")
+		}
+		out = append(out, publication.Extra{Key: e.Key, Raw: raw})
+	}
+	return out, nil
+}
+
 // atmosphereToJSON projects the recipe, or nil when there is not one.
 func atmosphereToJSON(a *publication.Atmosphere) *atmosphereJSON {
 	if a == nil {
@@ -241,6 +307,14 @@ func atmosphereToJSON(a *publication.Atmosphere) *atmosphereJSON {
 	for _, c := range a.Visual.Palette {
 		aj.Visual.Palette = append(aj.Visual.Palette, atmoColourJSON{Name: c.Name, Hex: c.Hex})
 	}
+	for _, s := range a.Visual.Stages {
+		aj.Visual.Stages = append(aj.Visual.Stages, atmoStageJSON{
+			Anchor: s.Anchor, Image: s.Image, Audio: s.Audio,
+			Transition: s.Transition, DurationMs: s.DurationMs,
+		})
+	}
+	aj.Visual.Extra = extrasToJSON(a.Visual.RawExtra)
+	aj.Extra = extrasToJSON(a.RawExtra)
 	if a.Audio != nil {
 		aj.Audio = &atmoAudioJSON{
 			Asset: a.Audio.Asset, Mode: a.Audio.Mode, Gain: a.Audio.Gain,
@@ -279,6 +353,19 @@ func atmosphereFromJSON(aj *atmosphereJSON) (*publication.Atmosphere, error) {
 	}
 	for _, c := range aj.Visual.Palette {
 		a.Visual.Palette = append(a.Visual.Palette, publication.PaletteToken{Name: c.Name, Hex: c.Hex})
+	}
+	for _, s := range aj.Visual.Stages {
+		a.Visual.Stages = append(a.Visual.Stages, publication.Stage{
+			Anchor: s.Anchor, Image: s.Image, Audio: s.Audio,
+			Transition: s.Transition, DurationMs: s.DurationMs,
+		})
+	}
+	var err error
+	if a.Visual.RawExtra, err = extrasFromJSON(aj.Visual.Extra); err != nil {
+		return nil, err
+	}
+	if a.RawExtra, err = extrasFromJSON(aj.Extra); err != nil {
+		return nil, err
 	}
 	if aj.Audio != nil {
 		a.Audio = &publication.Audio{
