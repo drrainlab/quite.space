@@ -175,6 +175,17 @@ function renderArticle(p, mode) {
   if (!preserved && typeof ATMO !== 'undefined') ATMO.unmount();
   box.innerHTML = '';
   const doc = p.document;
+  // The post's own language, decided once from everything it says. It picks
+  // the reading face (styles.css :lang) and it is also simply true: screen
+  // readers switch voice on `lang`, and the browser takes its quotation
+  // marks from it.
+  if (typeof MD !== 'undefined') {
+    const words = [doc.title, doc.summary]
+      .concat((doc.blocks || []).map(b => (b.props || {}).text || ''))
+      .join(' ');
+    const lang = MD.scriptOf(words);
+    if (lang) box.setAttribute('lang', lang); else box.removeAttribute('lang');
+  }
 
   const bar = document.createElement('div');
   bar.className = 'row';

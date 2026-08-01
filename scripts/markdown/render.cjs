@@ -181,6 +181,32 @@ const text = (host) => {
     JSON.stringify(tags(h)));
 }
 
+
+// ---- which language a POST is in -----------------------------------------
+//
+// Asked once for a whole document, never per block: "Тишина." is six letters
+// and too short to call, so per-block would leave it in the default face
+// beside a paragraph that had switched. A post is written in a language.
+
+{
+  const cases = [
+    ['## Довольно тихое место\n\nСначала проект назывался Quiet Spaces.', 'ru'],
+    ['# About quite.space\n\nThe signal was detected on August 12.', 'en'],
+    ['Тишина здесь не означает пустоту. Пауза может быть вниманием.', 'ru'],
+    // Latin words inside Russian must not flip it — this is exactly the case
+    // per-character switching would get wrong.
+    ['Мы делаем quite.space и relay, а не messenger.', 'ru'],
+    ['...', ''],
+    // And the reverse must not be true: one Russian word in an English post
+    // does not make it Russian.
+    ['The signal was detected on August 12. Мы рядом. It kept going for a while after that.', 'en'],
+  ];
+  for (const [src, want] of cases) {
+    assert(`scriptOf ${JSON.stringify(src.slice(0, 26))} → ${want || 'undecided'}`,
+      MD.scriptOf(src) === want, `got ${JSON.stringify(MD.scriptOf(src))}`);
+  }
+}
+
 if (failures) {
   console.error(`\n${failures} failing`);
   process.exit(1);

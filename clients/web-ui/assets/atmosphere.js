@@ -372,9 +372,51 @@ const ATMO = (() => {
   /** The running image sequence, when the recipe is one. */
   let seq = null;
 
+  /** Watches the scrolling region so the stage is exactly as tall as it. */
+  let portRO = null;
+
+  /**
+   * Give the atmosphere the height of the REGION THE READER SEES.
+   *
+   * The stage is a sticky window inside the article, and it was a viewport
+   * tall — but the viewport is not what scrolls. Measured: a 720px window
+   * over a 540px reading region put the picture 72px above the top of that
+   * region and 12px short of its bottom, so the article's first and last
+   * lines sat outside their own background. There is no CSS unit for "the
+   * height of my scroll container", so it is measured — once here, and again
+   * only when that container actually changes size.
+   */
+  function fitToScrollport(shell) {
+    if (portRO) { portRO.disconnect(); portRO = null; }
+    let port = shell.parentElement;
+    while (port && port !== document.body) {
+      const oy = getComputedStyle(port).overflowY;
+      if (oy === 'auto' || oy === 'scroll') break;
+      port = port.parentElement;
+    }
+    if (!port || port === document.body) return;
+    // With SLACK, and deliberately: exactly the scrollport's height left a
+    // 12px strip of the reading region bare, because a sticky layer settles
+    // against the scroller's padding edge rather than its border edge and
+    // the two differ by whatever padding the scroller carries. Chasing that
+    // offset means encoding one container's padding into another file's
+    // sticky maths; overshooting does not, and the surplus is invisible —
+    // the scroller clips it. Being bigger than the hole is a whole class of
+    // alignment bug that cannot happen.
+    const SLACK = 64;
+    const apply = () =>
+      shell.style.setProperty('--atmo-port', (port.clientHeight + SLACK) + 'px');
+    apply();
+    if (window.ResizeObserver) {
+      portRO = new ResizeObserver(apply);
+      portRO.observe(port);
+    }
+  }
+
   /** Take down whatever is playing and undo the shell. Safe to call twice. */
   function unmount() {
     mountGen++;
+    if (portRO) { portRO.disconnect(); portRO = null; }
     stopBed();
     srcFor = null;
     posterInto = null;
@@ -500,6 +542,7 @@ const ATMO = (() => {
     veil.appendChild(scrim);
     shell.prepend(veil);
     shell.classList.add('atmo-shell');
+    fitToScrollport(shell);
     styleScrim(shell, scrim, atmosphere);
 
     mounted = { shell, veil, stage, scrim, bar, scene, atmosphere, postId,

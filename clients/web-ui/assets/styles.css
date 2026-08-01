@@ -48,6 +48,16 @@
     --font-read: "Charter", "Bitstream Charter", "Iowan Old Style",
                  "Source Serif 4", "Source Serif Pro", "Noto Serif",
                  Cambria, Constantia, Georgia, serif;
+    /* Cyrillic reads without serifs here, by choice. The serifs on the
+       families above are drawn for Latin and merely extended eastward, and
+       the difference shows over a page of Russian: the rhythm is fussier
+       than the same text set in a sans that was drawn with Cyrillic in
+       mind. Which face applies is decided per BLOCK from the text itself
+       (markdown.js scriptOf), never per character — a Russian paragraph is
+       full of Latin words, and switching on each of them would be worse
+       than either choice. */
+    --font-read-ru: "PT Sans", "Inter", "SF Pro Text", system-ui,
+                    "Segoe UI", "Noto Sans", "Cantarell", sans-serif;
   }
 
   /* ---- Light theme palette ---- */
@@ -1152,8 +1162,14 @@
      The mask is positioned against the element's own box, which does not
      move when the content scrolls, so the fade stays pinned to the top and
      bottom edges. */
+  /* No VERTICAL padding here, and that is load-bearing rather than taste.
+     The atmosphere is a sticky layer inside the article, and the article
+     lives in this container's content box — so any padding here is a strip
+     the background can never reach, and the first and last lines on screen
+     sit outside their own picture in it. The breathing room moved onto the
+     article, where the background covers it too. */
   #posts {
-    flex: 1; overflow-y: auto; padding: 12px 16px;
+    flex: 1; overflow-y: auto; padding: 0 16px;
     --edge-fade: 40px;
     -webkit-mask-image: linear-gradient(to bottom, transparent 0,
       #000 var(--edge-fade), #000 calc(100% - var(--edge-fade)), transparent 100%);
@@ -1167,7 +1183,10 @@
   .pub-title { font-weight: 600; font-size: calc(15px * var(--font-scale)); }
   .pub-summary { color: var(--dim); font-size: 13px; margin-top: 2px; }
   .pub-meta { color: var(--muted); font-size: 11px; margin-top: 4px; }
-  #pubArticle { max-width: 680px; overflow-wrap: break-word; }
+  #pubArticle { max-width: 680px; overflow-wrap: break-word; padding-block: 12px; }
+  /* The list keeps the same breathing room the scroller used to give it. */
+  #posts > .pub-card:first-child { margin-top: 12px; }
+  #posts > .pub-card:last-child { margin-bottom: 12px; }
   #pubArticle .pub-h1, #pubArticle .pub-summary,
   #pubArticle .md, #pubArticle .pub-block blockquote,
   #pubArticle .pub-comment {
@@ -1180,6 +1199,14 @@
     line-height: 1.72; hyphens: none; text-wrap: pretty;
   }
   #pubArticle .md { font-size: calc(16.5px * var(--font-scale)); }
+  /* A block the renderer read as Russian. A sans runs optically larger than
+     a serif at the same size, so it is set a shade smaller to keep the two
+     languages the same weight on the page. */
+  #pubArticle:lang(ru) .md, #pubArticle:lang(ru) .pub-summary {
+    font-family: var(--font-read-ru);
+    font-size: calc(15.8px * var(--font-scale));
+    line-height: 1.68;
+  }
   /* Code keeps the mono face — it is not prose and must not read as prose. */
   #pubArticle .md code, #pubArticle .md pre { font-family: var(--font-mono); }
   /* Content scales to its column — nothing busts out of the article. */
@@ -1990,13 +2017,18 @@ header .nav-act { padding: 5px 11px 5px 10px; min-height: 30px; }
   border-radius: var(--radius-md);
   pointer-events: none;
 }
+/* --atmo-port is the height of the region that actually SCROLLS, measured in
+   fitToScrollport. A viewport unit is the wrong size — the reading region is
+   the window minus the header and the composer — and being wrong by that
+   much put the article's first and last lines outside their own background.
+   100dvh remains only as the answer before the measurement lands. */
 .atmo-stage, .atmo-scrim {
   position: sticky; top: 0;
-  height: 100vh; height: 100dvh;
+  height: var(--atmo-port, 100dvh);
   overflow: hidden;
 }
 /* Pulled back over the stage it follows in the flow, and above it. */
-.atmo-scrim { margin-top: -100vh; margin-top: -100dvh; z-index: 1; }
+.atmo-scrim { margin-top: calc(-1 * var(--atmo-port, 100dvh)); z-index: 1; }
 /* Everything the article contains is forced above the veil — the same idiom
    as .sc-appearance > * . */
 .atmo-shell > :not(.atmo-veil) {

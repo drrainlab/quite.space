@@ -203,6 +203,41 @@ const MD = (() => {
   }
 
   /**
+   * Which script this text is mostly in, as a BCP-47 tag or ''.
+   *
+   * Asked once for a whole POST, never per character and never per block.
+   *
+   * CSS can switch faces per unicode-range and it is the wrong tool here: a
+   * Russian paragraph is full of Latin — quite.space, a URL, a borrowed word
+   * — and per-range switching would set those few words in another face
+   * mid-sentence. Per block is wrong too, one step up: "Тишина." is six
+   * letters and would be too short to call, so it would keep the default
+   * face while the paragraph under it changed. A post is written in a
+   * language, and that is the unit a reader experiences.
+   *
+   * Returns '' when there is too little to be sure, which for a whole
+   * document means it is not really prose in either.
+   *
+   * @param {string} s
+   */
+  function scriptOf(s) {
+    let cyr = 0, lat = 0;
+    for (const ch of String(s)) {
+      if (ch >= 'Ѐ' && ch <= 'ӿ') cyr++;
+      else if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')) lat++;
+    }
+    if (cyr + lat < 8) return '';        // too little to call; leave it alone
+    // Asymmetric, on purpose. An English post essentially never contains
+    // Cyrillic, while a Russian one routinely carries Latin — product names,
+    // URLs, borrowed words, technical terms often LONGER than the Russian
+    // around them. "Мы делаем quite.space и relay, а не messenger" has twice
+    // as many Latin letters as Cyrillic ones and is plainly a Russian
+    // sentence, so whichever-side-has-more is the wrong question. A fifth of
+    // the letters being Cyrillic is enough to decide.
+    return cyr * 4 >= lat ? 'ru' : 'en';
+  }
+
+  /**
    * Render into a host element, replacing whatever it held.
    * @param {HTMLElement} host @param {string} src
    */
@@ -212,7 +247,7 @@ const MD = (() => {
     return host;
   }
 
-  return { render, into };
+  return { render, into, scriptOf };
 })();
 
 if (typeof window !== 'undefined') window.MD = MD;
