@@ -29,6 +29,8 @@ func main() {
 		err = runInspect(os.Args[2:])
 	case "meshhub":
 		err = runMeshHub(os.Args[2:])
+	case "radio":
+		err = runRadio(os.Args[2:])
 	case "mirror":
 		err = runMirror(os.Args[2:])
 	case "custodian":
@@ -74,6 +76,8 @@ usage:
   terminal identity restore --passphrase P --in FILE
                                          restore an identity from a bundle
   terminal inspect --bundle FILE         list frames in a *.terminal-bundle
+  terminal radio list                    what is on each serial port
+  terminal radio flash [--port PATH]     install Meshtastic on a board (ERASES it)
   terminal meshhub [--listen ADDR]       run a fake Meshtastic mesh (dev tool):
                                          point nodes at it with --mesh tcp:ADDR
   terminal mirror add|list|remove        keep a public space reachable from

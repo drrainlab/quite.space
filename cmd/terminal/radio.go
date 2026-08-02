@@ -1,0 +1,791 @@
+// `terminal radio …` — finding a board and putting Meshtastic on it (RB-2).
+//
+// The shape of this command follows from one fact about the hardware: a
+// board that is not yet running Meshtastic can tell us its CHIP FAMILY and
+// nothing else. Dozens of different LoRa boards share one chip, with
+// different radio parts and different pin maps, and flashing the wrong
+// variant leaves a device that is silent or damaged.
+//
+// So the flow is: detect what can be detected, SHOW it as evidence, narrow
+// the list of variants to those the chip permits, and then ask. There is no
+// default selection and no --yes flag that skips the question. Auto-detecting
+// a port is helping; auto-choosing a board would be guessing with somebody
+// else's hardware.
+package main
+
+import (
+	"bufio"
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/drrainlab/quiet_places/transports/meshtastic"
+)
+
+func runRadio(args []string) error {
+	if len(args) < 1 {
+		return errors.New(`usage:
+  terminal radio list [--identify]       what is on each serial port
+                                         (--identify also RESETS silent ports
+                                          to read the chip off their boot ROM)
+  terminal radio flash [--port PATH]     install Meshtastic on a board
+  terminal radio region [NAME]           set the region (no name = show the choices)
+                                         [--preset NAME] [--hop N] [--port PATH]
+
+  terminal radio channel <name> --region NAME [--preset N] [--hop N]
+                [--port PATH …]          mint ONE shared channel and write it,
+                                         with matching LoRa settings, to every
+                                         radio named
+
+Flashing ERASES the board. It needs esptool installed.
+A radio transmits nothing until its region is set.`)
+	}
+	switch args[0] {
+	case "list":
+		return radioList(args[1:])
+	case "flash":
+		return radioFlash(args[1:])
+	case "region":
+		return radioRegion(args[1:])
+	case "channel":
+		return radioChannel(args[1:])
+	default:
+		return fmt.Errorf("unknown: terminal radio %s", args[0])
+	}
+}
+
+// radioCandidate is one port plus everything we managed to learn about it.
+type radioCandidate struct {
+	probe meshtastic.PortProbe
+	boot  meshtastic.BootROM
+}
+
+// findCandidates scans the ports, optionally pulsing reset on the silent ones
+// to read their boot ROM banner.
+//
+// THE BOOT PROBE IS OFF BY DEFAULT, and the reason is a defect this command
+// shipped with. The reset was gated on "the port reported itself silent",
+// which was assumed to mean "no Meshtastic node whose traffic could be
+// interrupted". It does not: the handshake produces false negatives on
+// native-USB boards, and every one of them turned into a listing that
+// REBOOTED a working radio. A command that reports what is attached must not
+// be able to interrupt what is attached.
+func findCandidates(withBootProbe bool) []radioCandidate {
+	var out []radioCandidate
+	for _, p := range meshtastic.ScanSerial(1500 * time.Millisecond) {
+		c := radioCandidate{probe: p}
+		if withBootProbe && p.Kind == meshtastic.ProbeSilent {
+			if b, err := meshtastic.ProbeBootROM(p.Port, 3*time.Second); err == nil {
+				c.boot = b
+			}
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+func (c radioCandidate) describe() string {
+	switch c.probe.Kind {
+	case meshtastic.ProbeRadio:
+		bits := []string{"Meshtastic node " + strconv.FormatUint(uint64(c.probe.NodeNum), 10)}
+		if c.probe.Firmware != "" {
+			bits = append(bits, "firmware "+c.probe.Firmware)
+		}
+		if c.probe.Region != "" {
+			bits = append(bits, "region "+c.probe.Region)
+		}
+		if c.probe.Preset != "" {
+			bits = append(bits, c.probe.Preset)
+		}
+		return strings.Join(bits, " · ")
+	case meshtastic.ProbeBusy:
+		return "busy — another program holds this port"
+	case meshtastic.ProbeSilent:
+		// "did not answer" is the honest wording. It is not the same claim as
+		// "there is no radio here": the handshake has false negatives, and
+		// this command must not send somebody off to reflash a working board.
+		if c.boot.Chip != "" || c.boot.Spoke() {
+			return "did not answer as Meshtastic · " + describeBoot(c.boot)
+		}
+		return "did not answer as Meshtastic"
+	default:
+		return c.probe.Detail
+	}
+}
+
+// describeBoot renders whatever the boot ROM said, as evidence.
+func describeBoot(b meshtastic.BootROM) string {
+	if b.Chip != "" {
+		return "chip " + b.Chip + " (from its boot banner)"
+	}
+	if b.Spoke() {
+		return "said something on reset, but not a chip banner"
+	}
+	return "said nothing on reset"
+}
+
+func radioList(args []string) error {
+	identify := false
+	for _, a := range args {
+		if a == "--identify" {
+			identify = true
+		}
+	}
+	fmt.Println("looking at every serial port…")
+	cands := findCandidates(identify)
+	if len(cands) == 0 {
+		fmt.Println("no serial ports at all — is the board plugged in?")
+		return nil
+	}
+	for _, c := range cands {
+		fmt.Printf("  %-32s %s\n", c.probe.Port, c.describe())
+	}
+	if !identify {
+		fmt.Println("\nA port with no Meshtastic on it can also name its chip, but only\n" +
+			"by being reset: `terminal radio list --identify`. That REBOOTS whatever\n" +
+			"is on the port, so it is not what a plain listing does.")
+	}
+	return nil
+}
+
+func radioFlash(args []string) error {
+	port := ""
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--port" && i+1 < len(args) {
+			port = args[i+1]
+			i++
+		}
+	}
+
+	// esptool first: discovering it is missing AFTER a 170 MB metadata dance
+	// and a set of questions would waste the person's time for nothing.
+	tool, err := meshtastic.FindEsptool()
+	if err != nil {
+		return err
+	}
+
+	var chip string
+	if port == "" {
+		fmt.Println("looking at every serial port…")
+		cands := findCandidates(false)
+		var pick []radioCandidate
+		for _, c := range cands {
+			if c.probe.Kind == meshtastic.ProbeSilent || c.probe.Kind == meshtastic.ProbeRadio {
+				pick = append(pick, c)
+			}
+		}
+		if len(pick) == 0 {
+			for _, c := range cands {
+				fmt.Printf("  %-32s %s\n", c.probe.Port, c.describe())
+			}
+			return errors.New("no board to flash. A port shown as busy is held by " +
+				"another program — close the Meshtastic app or a running node and try again")
+		}
+		fmt.Println()
+		for i, c := range pick {
+			fmt.Printf("  [%d] %-30s %s\n", i+1, c.probe.Port, c.describe())
+		}
+		fmt.Println()
+		n, err := askNumber("Which device? ", len(pick))
+		if err != nil {
+			return err
+		}
+		port = pick[n-1].probe.Port
+		// Identify the chip only NOW, on the one device the person chose.
+		// This resets it, which is acceptable for a board about to be erased
+		// and was never acceptable for the others in the list.
+		if pick[n-1].probe.Kind == meshtastic.ProbeSilent {
+			if b, err := meshtastic.ProbeBootROM(port, 3*time.Second); err == nil {
+				chip = b.Chip
+				fmt.Printf("  %s\n", describeBoot(b))
+			}
+		}
+		if pick[n-1].probe.Kind == meshtastic.ProbeRadio {
+			fmt.Println("\nNote: this device is ALREADY running Meshtastic. Flashing " +
+				"replaces it and erases its settings, channels and keys.")
+			if !askYes("Continue anyway?") {
+				return errors.New("stopped")
+			}
+		}
+	}
+
+	fmt.Println("\nasking Meshtastic which firmware is current…")
+	rel, err := meshtastic.LatestRelease(nil)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("latest release: %s\n", rel.Version)
+
+	targets := rel.TargetsForChip(chip)
+	if chip != "" {
+		fmt.Printf("the board's boot banner says %s, so %d of the %d variants "+
+			"in this release can run on it.\n", chip, len(targets), len(rel.Targets))
+	} else {
+		fmt.Printf("the board did not say which chip it has, so all %d variants "+
+			"are listed. Picking one that does not match will not work.\n", len(targets))
+	}
+	fmt.Println("\nThe chip does NOT identify the board — many boards share one chip.")
+	fmt.Println("Pick the model printed on YOUR board. Type part of the name to filter.")
+
+	target, err := chooseTarget(targets)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("\nreading the install recipe for %s…\n", target.Board)
+	plan, err := rel.PlanFor(nil, target.Board, target.MCU)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("\n  board    %s (%s)\n  version  %s\n  port     %s\n",
+		plan.Board, plan.MCU, plan.Version, port)
+	fmt.Println("  writes:")
+	for _, f := range plan.Files {
+		fmt.Printf("    0x%-8x %-52s %6.2f MB\n", f.Offset, f.Name, float64(f.Bytes)/(1<<20))
+	}
+	fmt.Printf("  %.2f MB downloaded from the Meshtastic release, each file checked\n"+
+		"  against the MD5 the release publishes before anything is written.\n",
+		float64(plan.TotalBytes())/(1<<20))
+	fmt.Println("\n⚠  The board is ERASED first. Anything on it now is gone.")
+	if !askYes("Flash it?") {
+		return errors.New("stopped — nothing was written")
+	}
+
+	dir, err := os.MkdirTemp("", "qp-firmware-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	paths := map[string]string{}
+	fmt.Println("\ndownloading…")
+	err = plan.Download(nil, func(name string, data []byte) error {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, data, 0o600); err != nil {
+			return err
+		}
+		paths[name] = p
+		fmt.Printf("  %s ✓ checksum matches\n", name)
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("\nflashing — this takes a few minutes, do not unplug the board:")
+	if err := meshtastic.Flash(context.Background(), tool, port, plan, paths, func(l string) {
+		fmt.Println(" ", l)
+	}); err != nil {
+		return err
+	}
+
+	// Read-after-write, the same rule the config writer follows: nothing is
+	// reported as done until the device itself says so.
+	fmt.Println("\nflashed. Waiting for the board to come up and answer as a Meshtastic node…")
+	deadline := time.Now().Add(45 * time.Second)
+	for time.Now().Before(deadline) {
+		time.Sleep(3 * time.Second)
+		for _, c := range findCandidates(false) {
+			if c.probe.Port == port && c.probe.Kind == meshtastic.ProbeRadio {
+				fmt.Printf("\n✓ %s is now a Meshtastic node (%s)\n", port, c.describe())
+				fmt.Println("\nNext: set the region — the board will not transmit until you do.")
+				fmt.Println("  docs/RADIO_SETUP.md, шаг 2")
+				return nil
+			}
+		}
+	}
+	return errors.New("the board was flashed, but it has not answered as a Meshtastic node yet.\n" +
+		"Unplug it, plug it back in, and run `terminal radio list`. If it still says\n" +
+		"nothing, the variant may be wrong for this board")
+}
+
+// chooseTarget asks which board this is. There is deliberately no default:
+// the answer cannot be derived from anything we measured.
+func chooseTarget(targets []meshtastic.FirmwareTarget) (meshtastic.FirmwareTarget, error) {
+	if len(targets) == 0 {
+		return meshtastic.FirmwareTarget{}, errors.New("this release has no firmware for that chip")
+	}
+	in := bufio.NewReader(os.Stdin)
+	shown := targets
+	for {
+		fmt.Println()
+		for i, t := range shown {
+			fmt.Printf("  [%2d] %s\n", i+1, t.Board)
+		}
+		fmt.Print("\nNumber to choose, or text to filter (empty = show all): ")
+		line, err := in.ReadString('\n')
+		if err != nil {
+			return meshtastic.FirmwareTarget{}, err
+		}
+		line = strings.TrimSpace(line)
+		if line == "" {
+			shown = targets
+			continue
+		}
+		if n, err := strconv.Atoi(line); err == nil {
+			if n >= 1 && n <= len(shown) {
+				return shown[n-1], nil
+			}
+			fmt.Printf("there is no [%d] in that list.\n", n)
+			continue
+		}
+		var filtered []meshtastic.FirmwareTarget
+		for _, t := range targets {
+			if strings.Contains(strings.ToLower(t.Board), strings.ToLower(line)) {
+				filtered = append(filtered, t)
+			}
+		}
+		if len(filtered) == 0 {
+			fmt.Printf("nothing matches %q — showing everything again.\n", line)
+			shown = targets
+			continue
+		}
+		shown = filtered
+	}
+}
+
+func askNumber(prompt string, max int) (int, error) {
+	in := bufio.NewReader(os.Stdin)
+	for {
+		fmt.Print(prompt)
+		line, err := in.ReadString('\n')
+		if err != nil {
+			return 0, err
+		}
+		n, err := strconv.Atoi(strings.TrimSpace(line))
+		if err == nil && n >= 1 && n <= max {
+			return n, nil
+		}
+		fmt.Printf("a number from 1 to %d, please.\n", max)
+	}
+}
+
+func askYes(prompt string) bool {
+	in := bufio.NewReader(os.Stdin)
+	fmt.Print(prompt + " type yes to continue: ")
+	line, err := in.ReadString('\n')
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(line), "yes")
+}
+
+// radioRegion sets the LoRa configuration on an attached radio.
+//
+// The region is not a preference. It decides which frequencies the device
+// transmits on, which is a question of the law where the person is standing
+// and of the band their antenna was built for — neither of which this program
+// can observe. So it is never defaulted, never guessed from a locale, and a
+// name this build does not recognise is an error rather than a zero value
+// (see ParseRegion: writing UNSET by accident stops the radio transmitting
+// altogether, which is the worst possible way to mistype something).
+func radioRegion(args []string) error {
+	var port, region, preset, hop string
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--port":
+			if i+1 < len(args) {
+				port = args[i+1]
+				i++
+			}
+		case "--preset":
+			if i+1 < len(args) {
+				preset = args[i+1]
+				i++
+			}
+		case "--hop":
+			if i+1 < len(args) {
+				hop = args[i+1]
+				i++
+			}
+		default:
+			if !strings.HasPrefix(args[i], "--") && region == "" {
+				region = args[i]
+			}
+		}
+	}
+
+	if port == "" {
+		var err error
+		port, err = pickRadioPort()
+		if err != nil {
+			return err
+		}
+	}
+
+	// Read first: a person about to change the air their device works on
+	// should see what it is set to now, from the device itself.
+	radio, err := openRadio(port)
+	if err != nil {
+		return fmt.Errorf("could not read the radio on %s: %w", port, err)
+	}
+	cfg := radio.Config()
+	radio.Close()
+	fmt.Printf("\n%s says it is set to:\n", port)
+	if cfg.LoRa != nil {
+		fmt.Printf("  region        %s\n  modem preset  %s\n  hop limit     %d\n",
+			cfg.LoRa.RegionName(), cfg.LoRa.PresetName(), cfg.LoRa.HopLimit)
+	} else {
+		fmt.Println("  (it did not report its LoRa settings — older firmware)")
+	}
+
+	if region == "" {
+		fmt.Println("\nRegions this build knows:")
+		fmt.Println("  " + strings.Join(meshtastic.RegionNames(), "  "))
+		return errors.New("\nname the region you are actually in, e.g. " +
+			"`terminal radio region EU_868`.\n" +
+			"It must match both the law where you are and the band your antenna\n" +
+			"was built for — usually printed on the antenna itself (433 or 868 MHz).\n" +
+			"This is not something this program can work out for you")
+	}
+
+	var set meshtastic.LoRaSetting
+	r, err := meshtastic.ParseRegion(region)
+	if err != nil {
+		return err
+	}
+	set.Region = &r
+	if preset != "" {
+		p, err := meshtastic.ParsePreset(preset)
+		if err != nil {
+			return err
+		}
+		set.ModemPreset = &p
+	}
+	if hop != "" {
+		n, err := strconv.ParseUint(hop, 10, 32)
+		if err != nil || n > 7 {
+			return fmt.Errorf("--hop must be 0..7, got %q", hop)
+		}
+		h := uint32(n)
+		set.HopLimit = &h
+	}
+
+	plan, err := meshtastic.PlanLoRaApply(set)
+	if err != nil {
+		return err
+	}
+	fmt.Println("\nwill write:")
+	for _, s := range plan.Summary {
+		fmt.Println("  · " + s)
+	}
+	fmt.Println("\n⚠  Transmitting on the wrong frequencies for where you are can be " +
+		"illegal,\n   and transmitting without an antenna attached can damage the board.")
+	if !askYes("Write this?") {
+		return errors.New("stopped — nothing was written")
+	}
+
+	radio, err = openRadio(port)
+	if err != nil {
+		return err
+	}
+	err = radio.Apply(plan)
+	radio.Close()
+	if err != nil {
+		return err
+	}
+
+	// Read-after-write. Apply deliberately does not verify — the radio is
+	// rebooting when it returns — so "what we asked for" and "what actually
+	// happened" stay two separate claims, and only the second one is
+	// reported as done.
+	fmt.Println("\nwritten. Waiting for the radio to reboot and say what it now holds…")
+	deadline := time.Now().Add(45 * time.Second)
+	for time.Now().Before(deadline) {
+		time.Sleep(3 * time.Second)
+		back, err := openRadio(port)
+		if err != nil {
+			continue
+		}
+		got := back.Config()
+		back.Close()
+		if got.LoRa == nil {
+			continue
+		}
+		fmt.Printf("\nthe radio now reports:\n  region        %s\n"+
+			"  modem preset  %s\n  hop limit     %d\n",
+			got.LoRa.RegionName(), got.LoRa.PresetName(), got.LoRa.HopLimit)
+		if got.LoRa.Region != r {
+			return fmt.Errorf("asked for region %s, the radio came back with %s "+
+				"— the write did not take", region, got.LoRa.RegionName())
+		}
+		// A region that landed is not a radio that can be heard. Two other
+		// settings decide that, and neither is changed by this command — so
+		// staying silent about them would report success for a device that
+		// cannot reach anybody. Naming them is the difference between "the
+		// write worked" and "this radio works".
+		var cannot []string
+		if !got.LoRa.UsePreset {
+			cannot = append(cannot, "the modem preset is OFF — this radio is on "+
+				"manual bandwidth/spreading-factor/coding-rate, and a peer set to a "+
+				"preset will never hear it. Give it one: --preset LONG_FAST")
+		}
+		if got.LoRa.HopLimit == 0 {
+			cannot = append(cannot, "the hop limit is 0 — nothing relays this "+
+				"radio's packets past a direct neighbour. Give it one: --hop 3")
+		}
+		if len(cannot) > 0 {
+			fmt.Println("\n⚠  The region landed, but this radio still cannot match a peer:")
+			for _, c := range cannot {
+				fmt.Println("   · " + c)
+			}
+			fmt.Println("\n   Two radios hear each other only when region, preset AND the\n" +
+				"   channel key all agree. Where they differ, both transmit happily\n" +
+				"   and neither hears anything — with no error on either side.")
+			return nil
+		}
+		fmt.Println("\n✓ region set. Next: give the radio a channel of its own — " +
+			"docs/RADIO_SETUP.md, шаг 3")
+		return nil
+	}
+	return errors.New("the radio has not answered since the reboot. Unplug it, " +
+		"plug it back in, and run `terminal radio region` with no arguments to " +
+		"see what it holds")
+}
+
+// pickRadioPort finds attached radios and asks which one, when there is a
+// choice to make.
+func pickRadioPort() (string, error) {
+	fmt.Println("looking for a radio…")
+	var live []radioCandidate
+	for _, c := range findCandidates(false) {
+		if c.probe.Kind == meshtastic.ProbeRadio {
+			live = append(live, c)
+		}
+	}
+	switch len(live) {
+	case 0:
+		return "", errors.New("no Meshtastic radio found. `terminal radio list` " +
+			"says what is on each port")
+	case 1:
+		fmt.Printf("  %s — %s\n", live[0].probe.Port, live[0].describe())
+		return live[0].probe.Port, nil
+	}
+	for i, c := range live {
+		fmt.Printf("  [%d] %-30s %s\n", i+1, c.probe.Port, c.describe())
+	}
+	n, err := askNumber("Which radio? ", len(live))
+	if err != nil {
+		return "", err
+	}
+	return live[n-1].probe.Port, nil
+}
+
+// radioChannel mints ONE segment channel and puts it on every radio named.
+//
+// One command for every radio, rather than one run per device, because of
+// what a channel key is: two radios are on the same segment only if they hold
+// the SAME key, and a key that has to survive between two invocations has to
+// be written down somewhere. Minting once and applying to each port in turn
+// keeps it in memory for the length of one command and nowhere else. The
+// fingerprint is what survives, and a fingerprint identifies a key without
+// revealing it.
+//
+// The LoRa settings ride along in the same batch. A shared channel on radios
+// that disagree about region or modem preset is silence with extra steps.
+// openRadio opens a radio, asking again when the device merely stayed quiet.
+//
+// The same distinction the node's attach path draws (SilentHandshake): a
+// wrong path or a busy port fails on the spot with its own message, while a
+// device that opened and said nothing is worth another try. Without this,
+// every one of these commands inherits the native-USB flakiness — measured at
+// roughly one answer in three per attempt — and a write that was about to
+// succeed reads as a radio that is not there.
+func openRadio(port string) (*meshtastic.Radio, error) {
+	var err error
+	for attempt := 0; attempt < 8; attempt++ {
+		var radio *meshtastic.Radio
+		radio, err = meshtastic.OpenSerial(port)
+		if err == nil {
+			return radio, nil
+		}
+		if !meshtastic.SilentHandshake(err) {
+			return nil, err
+		}
+		time.Sleep(700 * time.Millisecond)
+	}
+	return nil, err
+}
+
+func radioChannel(args []string) error {
+	var name, region, preset, hop string
+	var ports []string
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--port":
+			if i+1 < len(args) {
+				ports = append(ports, args[i+1])
+				i++
+			}
+		case "--region":
+			if i+1 < len(args) {
+				region = args[i+1]
+				i++
+			}
+		case "--preset":
+			if i+1 < len(args) {
+				preset = args[i+1]
+				i++
+			}
+		case "--hop":
+			if i+1 < len(args) {
+				hop = args[i+1]
+				i++
+			}
+		default:
+			if !strings.HasPrefix(args[i], "--") && name == "" {
+				name = args[i]
+			}
+		}
+	}
+	if name == "" || region == "" {
+		return errors.New("usage: terminal radio channel <name> --region NAME " +
+			"[--preset LONG_FAST] [--hop 3] --port PATH [--port PATH …]\n\n" +
+			"Mints one channel with a fresh private key and writes it, plus the\n" +
+			"matching LoRa settings, to every radio named. The region is yours to\n" +
+			"choose: it decides which frequencies these radios transmit on.")
+	}
+	if len(ports) == 0 {
+		fmt.Println("looking for radios…")
+		for _, c := range findCandidates(false) {
+			if c.probe.Kind == meshtastic.ProbeRadio {
+				ports = append(ports, c.probe.Port)
+				fmt.Printf("  %s — %s\n", c.probe.Port, c.describe())
+			}
+		}
+		if len(ports) == 0 {
+			return errors.New("no radio answered. `terminal radio list` says what " +
+				"is on each port; a busy one is held by a running node")
+		}
+	}
+
+	reg, err := meshtastic.ParseRegion(region)
+	if err != nil {
+		return err
+	}
+	pre := meshtastic.PresetValue("LONG_FAST")
+	if preset != "" {
+		if pre, err = meshtastic.ParsePreset(preset); err != nil {
+			return err
+		}
+	}
+	var hops uint32 = 3
+	if hop != "" {
+		n, err := strconv.ParseUint(hop, 10, 32)
+		if err != nil || n > 7 {
+			return fmt.Errorf("--hop must be 0..7, got %q", hop)
+		}
+		hops = uint32(n)
+	}
+
+	ch, err := meshtastic.MintSegmentChannel(name, reg, pre, hops)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("\nminted channel %q · fingerprint %s\n", ch.Name, ch.Fingerprint())
+	fmt.Printf("will write to %d radio(s):\n", len(ports))
+	for _, p := range ports {
+		fmt.Printf("  · %s — add the channel, and set region %s, preset %s, hop %d\n",
+			p, region, meshtastic.PresetNames()[pre], hops)
+	}
+	fmt.Println("\nExisting channels are NOT touched — the channel goes in a free slot.")
+	fmt.Println("Each radio reboots afterwards and is re-read to check what landed.")
+	if !askYes("Write it?") {
+		return errors.New("stopped — nothing was written")
+	}
+
+	// THE KEY IS SHOWN BEFORE ANYTHING IS WRITTEN, not after everything is.
+	//
+	// It exists from the moment it is minted, and the first successful write
+	// puts it on hardware. Printing it only after every radio succeeded meant
+	// that a failure on the SECOND radio destroyed the only copy of a key the
+	// FIRST one was already holding — leaving a channel nobody could ever
+	// join. Shown here, a partial run is recoverable.
+	fmt.Println("\nThis link carries the key. It is shown once and stored nowhere —")
+	fmt.Println("treat it like a password, and never send it through the mesh it")
+	fmt.Println("unlocks. Any other radio joins this segment with it:")
+	fmt.Println("\n  " + ch.URL() + "\n")
+
+	done := 0
+	for _, p := range ports {
+		if err := applyChannelTo(p, ch); err != nil {
+			if done > 0 {
+				fmt.Printf("\n%d of %d radios took the channel. The link above still\n"+
+					"joins the rest once you have dealt with this:\n", done, len(ports))
+			}
+			return fmt.Errorf("%s: %w", p, err)
+		}
+		done++
+	}
+
+	fmt.Printf("\n✓ %d radio(s) now share channel %q (fingerprint %s)\n",
+		len(ports), ch.Name, ch.Fingerprint())
+	return nil
+}
+
+// applyChannelTo writes the channel and the LoRa settings to one radio, then
+// re-reads the device to confirm what actually landed.
+func applyChannelTo(port string, ch *meshtastic.SegmentChannel) error {
+	radio, err := openRadio(port)
+	if err != nil {
+		return err
+	}
+	cfg := radio.Config()
+	slot, ok := meshtastic.FreeChannelSlot(cfg)
+	if !ok {
+		radio.Close()
+		return errors.New("all eight channel slots are in use — free one on the " +
+			"radio first; this command never overwrites somebody's channel")
+	}
+	plan, err := meshtastic.PlanSegmentApply(ch, slot, true)
+	if err != nil {
+		radio.Close()
+		return err
+	}
+	fmt.Printf("\n%s — slot %d\n", port, slot)
+	for _, s := range plan.Steps() {
+		fmt.Println("  · " + s)
+	}
+	err = radio.Apply(plan)
+	radio.Close()
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("  rebooting, then re-reading…")
+	deadline := time.Now().Add(60 * time.Second)
+	for time.Now().Before(deadline) {
+		time.Sleep(3 * time.Second)
+		back, err := openRadio(port)
+		if err != nil {
+			continue
+		}
+		got := back.Config()
+		back.Close()
+		info, ok := got.Channel(slot)
+		if !ok || got.LoRa == nil {
+			continue
+		}
+		// The fingerprint is the whole point: it says the radio holds the key
+		// we minted, without the key ever coming back out of the device.
+		if info.KeyFingerprint != ch.Fingerprint() {
+			return fmt.Errorf("slot %d came back with fingerprint %q, expected %q "+
+				"— the channel did not land", slot, info.KeyFingerprint, ch.Fingerprint())
+		}
+		if got.LoRa.Region != ch.Region {
+			return fmt.Errorf("region came back as %s, expected %s",
+				got.LoRa.RegionName(), meshtastic.RegionNames()[ch.Region])
+		}
+		fmt.Printf("  ✓ channel %q at slot %d · region %s · preset %s · hop %d\n",
+			info.Name, slot, got.LoRa.RegionName(), got.LoRa.PresetName(), got.LoRa.HopLimit)
+		return nil
+	}
+	return errors.New("the radio has not answered since the reboot — unplug it, " +
+		"plug it back in, and check with `terminal radio list`")
+}

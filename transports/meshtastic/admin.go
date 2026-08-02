@@ -215,3 +215,75 @@ func (r *Radio) sendAdmin(payload []byte) error {
 	}
 	return nil
 }
+
+// LoRaSetting is one field of the radio's LoRa configuration. A nil pointer
+// means "leave this alone": a person setting the region must not silently
+// have their modem preset rewritten to whatever this build defaults to.
+type LoRaSetting struct {
+	Region      *uint32
+	ModemPreset *uint32
+	HopLimit    *uint32
+}
+
+// PlanLoRaApply builds the writes for the LoRa settings alone.
+//
+// Separate from PlanSegmentApply because the two answer different questions.
+// That one puts a segment's CHANNEL on a radio and can match the LoRa
+// settings while it is there; this one changes only what it was asked to
+// change, which is what "set the region" has to mean — the region decides
+// which frequencies a device transmits on, and quietly moving a preset or a
+// hop limit alongside it would be changing the radio's behaviour on the air
+// beyond what was asked.
+func PlanLoRaApply(s LoRaSetting) (*ApplyPlan, error) {
+	if s.Region == nil && s.ModemPreset == nil && s.HopLimit == nil {
+		return nil, errors.New("meshtastic: nothing to set")
+	}
+	p := &ApplyPlan{Reboot: true}
+	var lora []byte
+	if s.ModemPreset != nil {
+		lora = appendBoolField(lora, 1, true) // use_preset
+		lora = appendVarintField(lora, 2, uint64(*s.ModemPreset))
+		p.Summary = append(p.Summary, "Set modem preset "+
+			enumName(presetNames, *s.ModemPreset)+".")
+	}
+	if s.Region != nil {
+		lora = appendVarintField(lora, 7, uint64(*s.Region))
+		p.Summary = append(p.Summary, "Set region "+
+			enumName(regionNames, *s.Region)+
+			" — this decides which frequencies the radio transmits on.")
+	}
+	if s.HopLimit != nil {
+		lora = appendVarintField(lora, 8, uint64(*s.HopLimit))
+		p.Summary = append(p.Summary, fmt.Sprintf("Set hop limit %d.", *s.HopLimit))
+	}
+	cfg := appendBytesField(nil, 6, lora) // Config.lora
+	p.steps = append(p.steps, applyStep{
+		what:    "set LoRa configuration",
+		payload: appendBytesField(nil, adminSetConfig, cfg),
+	})
+	p.Summary = append(p.Summary,
+		"Reboot the radio, then re-read it and check that what landed is "+
+			"what was asked for.")
+	return p, nil
+}
+
+// ParseRegion resolves a region NAME, and refuses one it does not know.
+//
+// RegionValue exists for dev tools and answers 0 (UNSET) for anything it
+// cannot resolve. That is the wrong answer here: a typo in a region name
+// would silently write "no region", which is the one value that stops a
+// radio transmitting at all. A person setting a region gets an error and the
+// list instead.
+func ParseRegion(name string) (uint32, error) {
+	return resolveEnum(regionNames, name, "region")
+}
+
+// ParsePreset is the same rule for the modem preset.
+func ParsePreset(name string) (uint32, error) {
+	return resolveEnum(presetNames, name, "modem preset")
+}
+
+// RegionNames and PresetNames list what this build understands, for a
+// command that has to show the choices.
+func RegionNames() []string { return sortedNames(regionNames) }
+func PresetNames() []string { return sortedNames(presetNames) }
