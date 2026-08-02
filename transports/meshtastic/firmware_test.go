@@ -202,3 +202,88 @@ func TestSettingTheRegionTouchesNothingElse(t *testing.T) {
 		t.Fatal("a plan that changes nothing was accepted")
 	}
 }
+
+// The radio tells us how much room it has, and we must believe the number it
+// gave MINUS what we handed over since. The report is a snapshot; every
+// packet sent against it ages it.
+func TestCreditCountsWhatWeSentSinceTheReport(t *testing.T) {
+	r := &Radio{opts: Options{}.withDefaults()}
+
+	// Before the radio has said anything: not zero, UNKNOWN. A sender must
+	// be allowed to proceed, because the first message is usually what
+	// makes the firmware report at all.
+	if c := r.Credit(); c.Known {
+		t.Fatalf("a radio that has not reported claimed to know: %+v", c)
+	}
+
+	r.absorb(&FromRadioMsg{Queue: &QueueStatus{Free: 3, Maxlen: 16}})
+	if c := r.Credit(); !c.Known || c.Packets != 3 {
+		t.Fatalf("after a report of 3 free, credit = %+v", c)
+	}
+
+	// Two packets handed over, no new report: two fewer than the radio said.
+	r.inFlight = 2
+	if c := r.Credit(); c.Packets != 1 {
+		t.Fatalf("credit = %d after sending 2 against a report of 3, want 1", c.Packets)
+	}
+
+	// Never negative, and a full queue says when to come back rather than
+	// leaving the sender to guess.
+	r.inFlight = 9
+	c := r.Credit()
+	if c.Packets != 0 {
+		t.Fatalf("credit = %d, want 0 — a queue cannot be less than empty", c.Packets)
+	}
+	if c.RetryAfter == 0 {
+		t.Fatal("a full radio gave no hint when to ask again; at ~2s of airtime " +
+			"per packet a sender that guesses will just burn wakeups")
+	}
+}
+
+// A refusal is the one thing the old counters could not see: txCount rose
+// whether or not the firmware took the packet.
+func TestARefusedPacketIsCountedAsRefused(t *testing.T) {
+	r := &Radio{opts: Options{}.withDefaults()}
+	r.absorb(&FromRadioMsg{Queue: &QueueStatus{Res: 0, Free: 5, Maxlen: 16}})
+	r.absorb(&FromRadioMsg{Queue: &QueueStatus{Res: 3, Free: 0, Maxlen: 16}})
+
+	free, maxlen, refused, known := r.QueueState()
+	if !known || free != 0 || maxlen != 16 {
+		t.Fatalf("queue state = (%d, %d, known %v)", free, maxlen, known)
+	}
+	if refused != 1 {
+		t.Fatalf("refused = %d, want 1 — a packet the firmware declined must "+
+			"not read as one that went on the air", refused)
+	}
+}
+
+// The wire shape, from the reference protobufs: res=1, free=2, maxlen=3,
+// mesh_packet_id=4, carried in FromRadio field 11.
+func TestQueueStatusIsReadFromFieldEleven(t *testing.T) {
+	inner := []byte{
+		0x08, 0x00, // res = 0
+		0x10, 0x07, // free = 7
+		0x18, 0x10, // maxlen = 16
+		0x20, 0x2a, // mesh_packet_id = 42
+	}
+	frame := append([]byte{0x5a, byte(len(inner))}, inner...) // field 11, wire type 2
+	msg, err := DecodeFromRadio(frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msg.Queue == nil {
+		t.Fatal("field 11 was skipped — this is the report that says the radio " +
+			"is full, and skipping it is what let us flood it")
+	}
+	if msg.Queue.Free != 7 || msg.Queue.Maxlen != 16 || msg.Queue.PacketID != 42 {
+		t.Fatalf("decoded %+v", msg.Queue)
+	}
+	if !msg.Queue.Accepted() {
+		t.Fatal("res 0 should read as accepted")
+	}
+	for _, f := range msg.Skipped {
+		if f == 11 {
+			t.Fatal("field 11 is still listed as skipped")
+		}
+	}
+}

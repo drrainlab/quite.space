@@ -295,6 +295,19 @@ func (s *Supervised) Channel() uint32 { return s.opts.withDefaults().Channel }
 
 // Capabilities are a property of the carrier, not of the particular device,
 // so they hold across a reconnect.
+// Credit forwards the live radio's backpressure, and reports NOTHING
+// KNOWN while the link is down — a sender must not read a reconnecting
+// radio as one with room.
+func (s *Supervised) Credit() transports.Credit {
+	s.mu.Lock()
+	r := s.radio
+	s.mu.Unlock()
+	if r == nil {
+		return transports.Credit{Known: false}
+	}
+	return r.Credit()
+}
+
 func (s *Supervised) Capabilities() transports.Capabilities {
 	return transports.Capabilities{
 		MaxPayload: s.opts.withDefaults().MaxPayload,

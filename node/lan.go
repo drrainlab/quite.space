@@ -295,12 +295,26 @@ func (r *Runtime) adoptLinkFiltered(c link, pump, summaryEvery time.Duration,
 					st.eng.AttemptToken = tok[:]
 				}
 			}
+			// A FULL CARRIER IS NOT A BROKEN ONE.
+			//
+			// sendErr feeds noteTransportResult, which decides whether this
+			// transport is healthy. A radio that is momentarily out of queue
+			// room is working exactly as intended — counting that as a
+			// failure would mark the busiest links unhealthy and eventually
+			// stop using them, which is the opposite of what backpressure is
+			// for. It is filtered here, once, rather than at each site.
 			var sendErr error
+			note := func(err error) {
+				if err == nil || errors.Is(err, kernelsync.ErrCarrierFull) {
+					return
+				}
+				if sendErr == nil {
+					sendErr = err
+				}
+			}
 			if time.Since(lastSummary) > summaryEvery {
 				for _, st := range active {
-					if err := st.eng.SendSummary(c); err != nil && sendErr == nil {
-						sendErr = err
-					}
+					note(st.eng.SendSummary(c))
 				}
 				lastSummary = time.Now()
 			}
@@ -337,8 +351,8 @@ func (r *Runtime) adoptLinkFiltered(c link, pump, summaryEvery time.Duration,
 					continue
 				}
 				if st := byTerm[term]; st != nil {
-					if _, _, err := st.eng.Handle(c, raw); err != nil && sendErr == nil {
-						sendErr = err
+					if _, _, err := st.eng.Handle(c, raw); err != nil {
+						note(err)
 					}
 				}
 			}

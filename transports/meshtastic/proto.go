@@ -128,11 +128,70 @@ type FromRadioMsg struct {
 	ConfigCompleteID *uint32
 	// Config carries config=5, channel=10 and metadata=13 (RB-2).
 	Config []ConfigField
+	// Queue is the radio's report on its own outgoing queue (field 11).
+	// It is the only place the firmware says whether it actually took the
+	// last packet, and how much room is left — the difference between a
+	// client that paces itself and one that pours fragments into a queue
+	// that quietly overflows.
+	Queue *QueueStatus
 	// Skipped lists the top-level field numbers this build did not read.
 	// Must-ignore is the rule, but silently ignoring is how a transcription
 	// error in a hand-written protobuf subset stays invisible: `--raw`
 	// prints these so real hardware can correct us.
 	Skipped []int
+}
+
+// QueueStatus mirrors meshtastic.QueueStatus (mesh.proto). Field numbers
+// transcribed from the reference protobufs:
+//
+//	res=1, free=2, maxlen=3, mesh_packet_id=4
+type QueueStatus struct {
+	// Res is the firmware's error code for the last queue attempt. Zero is
+	// success; anything else means that packet was NOT queued.
+	Res int32
+	// Free is how many entries remain in the outgoing queue, and Maxlen how
+	// many there are in total.
+	Free   int32
+	Maxlen int32
+	// PacketID names the packet this report answers for, so a caller can
+	// tell a refusal of ITS packet from a status that merely arrived.
+	PacketID uint32
+}
+
+// Accepted reports whether the packet this status answers for was queued.
+func (q QueueStatus) Accepted() bool { return q.Res == 0 }
+
+func decodeQueueStatus(b []byte) (*QueueStatus, error) {
+	q := &QueueStatus{}
+	r := &reader{b: b}
+	for !r.done() {
+		tag, err := r.varint()
+		if err != nil {
+			return nil, err
+		}
+		field, wt := int(tag>>3), int(tag&7)
+		if wt != wireVarint {
+			if err := r.skip(wt); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		v, err := r.varint()
+		if err != nil {
+			return nil, err
+		}
+		switch field {
+		case 1:
+			q.Res = int32(v)
+		case 2:
+			q.Free = int32(v)
+		case 3:
+			q.Maxlen = int32(v)
+		case 4:
+			q.PacketID = uint32(v)
+		}
+	}
+	return q, nil
 }
 
 type reader struct {
@@ -245,6 +304,16 @@ func DecodeFromRadio(b []byte) (*FromRadioMsg, error) {
 			}
 			u := uint32(v)
 			msg.ConfigCompleteID = &u
+		case field == 11 && wt == wireBytes: // queue_status
+			raw, err := r.bytes()
+			if err != nil {
+				return nil, err
+			}
+			q, err := decodeQueueStatus(raw)
+			if err != nil {
+				return nil, err
+			}
+			msg.Queue = q
 		case (field == 5 || field == 10 || field == 13) && wt == wireBytes:
 			// config / channel / metadata — decoded in config.go.
 			raw, err := r.bytes()

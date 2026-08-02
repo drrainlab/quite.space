@@ -94,7 +94,16 @@ type Radio struct {
 	nodeNum uint32
 	rxCount int
 	txCount int
-	cfg     NodeConfig
+	// txRefused counts packets the FIRMWARE declined to queue. It is the
+	// number that was missing: txCount says what we wrote to the port,
+	// which on a full queue is not what went on the air.
+	txRefused int
+	// queue is the radio's last report on its own outgoing queue, and
+	// inFlight is what we have handed over since that report. Credit is the
+	// difference — the report ages the moment we send against it.
+	queue    *QueueStatus
+	inFlight int
+	cfg      NodeConfig
 }
 
 // DialTCP connects to a WiFi/ethernet node or meshtasticd (port 4403).
@@ -198,6 +207,17 @@ func Connect(conn io.ReadWriteCloser, opts Options) (*Radio, error) {
 // re-sends the affected message when its configuration changes, so the
 // diagnostic keeps up with a radio someone is reconfiguring at the bench.
 func (r *Radio) absorb(msg *FromRadioMsg) {
+	if msg.Queue != nil {
+		r.mu.Lock()
+		r.queue = msg.Queue
+		// The report is a fresh count of free entries, so what we thought
+		// was in flight is now accounted for in it.
+		r.inFlight = 0
+		if !msg.Queue.Accepted() {
+			r.txRefused++
+		}
+		r.mu.Unlock()
+	}
 	if len(msg.Config) == 0 && len(msg.Skipped) == 0 && msg.MyNodeNum == nil {
 		return
 	}
@@ -300,6 +320,7 @@ func (r *Radio) Send(pkt []byte) error {
 		return errors.New("meshtastic: radio disconnected")
 	}
 	r.txCount++
+	r.inFlight++
 	r.mu.Unlock()
 	var idBytes [4]byte
 	if _, err := rand.Read(idBytes[:]); err != nil {
@@ -321,6 +342,51 @@ func (r *Radio) Poll() [][]byte {
 	out := r.inbox
 	r.inbox = nil
 	return out
+}
+
+// Credit reports how many more packets this radio will take, from what the
+// firmware itself last said (mesh.proto QueueStatus, FromRadio field 11).
+//
+// The report is a snapshot: every packet handed over since then has not been
+// counted by it, so the honest number is free-minus-in-flight. A radio that
+// has not reported yet answers Known=false, which lets a sender proceed —
+// on most links the first message is what makes the radio speak at all.
+//
+// RetryAfter is deliberately conservative. LongFast spends around two
+// seconds of airtime per packet, so a queue that is full now is not going to
+// be empty in a hundred milliseconds, and asking again that soon just burns
+// wakeups.
+func (r *Radio) Credit() transports.Credit {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.queue == nil {
+		return transports.Credit{Known: false}
+	}
+	free := int(r.queue.Free) - r.inFlight
+	if free < 0 {
+		free = 0
+	}
+	c := transports.Credit{Packets: free, Known: true}
+	if free == 0 {
+		c.RetryAfter = queueRetry
+	}
+	return c
+}
+
+// queueRetry is how long a full radio queue is given before being asked
+// again — a little over the airtime of one LongFast packet, so the answer
+// has had a chance to change.
+const queueRetry = 3 * time.Second
+
+// QueueState reports the radio's own view of its outgoing queue, and how
+// many packets it has refused (diagnostics).
+func (r *Radio) QueueState() (free, maxlen, refused int, known bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.queue == nil {
+		return 0, 0, r.txRefused, false
+	}
+	return int(r.queue.Free), int(r.queue.Maxlen), r.txRefused, true
 }
 
 // Capabilities: tiny payloads, not realtime, transport can prove nothing

@@ -53,6 +53,16 @@ type wrapped struct {
 	nextStream uint64
 }
 
+// Credit forwards the inner endpoint's backpressure.
+//
+// A wrapper that did not forward it would silently restore the flood: the
+// sender would ask the compact layer, hear "unmetered", and pour fragments
+// into a radio that is already full. Wrappers are exactly where a capability
+// gets lost, so this is stated rather than inherited.
+func (w *wrapped) Credit() transports.Credit {
+	return transports.CreditOf(w.inner)
+}
+
 func (w *wrapped) Capabilities() transports.Capabilities {
 	c := w.inner.Capabilities()
 	c.MaxPayload = effectiveMTU

@@ -353,10 +353,29 @@ func (e *Engine) SendSummary(ep transports.Endpoint) error {
 	return e.sendMsg(ep, e.encodeSummary())
 }
 
+// ErrCarrierFull says the endpoint has no room for this message right now.
+//
+// It is not a failure. The message was NOT started, nothing was spent, and
+// the caller should offer it again later — which is the whole point of
+// distinguishing it from a send error.
+var ErrCarrierFull = errors.New("sync: the carrier has no room for this message yet")
+
 func (e *Engine) sendMsg(ep transports.Endpoint, msg []byte) error {
 	pkts, err := e.fragment(msg, ep.Capabilities().MaxPayload)
 	if err != nil {
 		return err
+	}
+	// ASK FOR THE WHOLE MESSAGE, OR SEND NONE OF IT.
+	//
+	// Losing one fragment loses the message (kernel/routing.MaxRadioFragments
+	// says so in its own comment), so a message half-handed to a full radio
+	// is worse than one not started: the fragments that got through spent
+	// real airtime and can never be assembled. On a carrier that meters
+	// itself we therefore commit only when the room is there, and otherwise
+	// wait — the message keeps for the next pass, and the log is the durable
+	// copy either way.
+	if !transports.CreditOf(ep).Allows(len(pkts)) {
+		return ErrCarrierFull
 	}
 	for _, p := range pkts {
 		if err := ep.Send(p); err != nil {
