@@ -889,6 +889,19 @@ async function renderRelayPublicPanel() {
       bad.textContent = 'last sync error: ' + rs.last_error;
       box.appendChild(bad);
     }
+    // What is still HERE. A held space is not an error — the loop chose to
+    // wait rather than guess an address — but it is the one condition that
+    // used to look exactly like a delivered post, so it gets said in words
+    // and not left to a green light.
+    for (const h of rs.held || []) {
+      const p = document.createElement('p');
+      p.className = 'hint warn';
+      const who = h.title || h.space_id.slice(0, 8);
+      p.textContent = h.frames
+        ? `${who}: ${h.frames} still here — ${h.reason}`
+        : `${who}: ${h.reason}`;
+      box.appendChild(p);
+    }
     const rows = rs.public || [];
     if (!rows.length) return;
     const h = document.createElement('p');

@@ -8,6 +8,7 @@ package node
 import (
 	"errors"
 	"net/http"
+	"sort"
 	"sync"
 	"time"
 
@@ -39,7 +40,28 @@ type relaySyncState struct {
 	// space last showed activity. Quiet spaces sync on a slow cadence.
 	tick       uint64
 	lastChange map[id.TerminalID]time.Time
+	// held records, per space, why this cycle handed nothing over. Every
+	// reason below is a deliberate `continue` — the loop is right to hold
+	// rather than guess an address or mark unsent frames as handed off —
+	// but until now all of them looked identical from outside: the post
+	// stays local, no error is reported, and the next cycle repeats it
+	// forever. Rewritten each cycle, so it always describes NOW.
+	held map[id.TerminalID]heldReason
 }
+
+// heldReason is one space's answer to "why has this not left yet".
+type heldReason struct {
+	reason string
+	frames int // local frames still waiting, when the count is knowable
+}
+
+// The held reasons. Each is a state a person can act on — which is the
+// whole point of distinguishing them from silence.
+const (
+	heldNoRecipient = "nobody to send to yet"
+	heldNoRelay     = "no usable relay for this space"
+	heldNoReadRelay = "no usable relay to read this space from"
+)
 
 // Tiering policy (RR-2): a space with no observed change for quietAfter
 // syncs only every quietEvery-th tick (~30s at the 2s default), staggered
@@ -67,6 +89,7 @@ func (r *Runtime) applyRelaySync(addr string, interval time.Duration) {
 			lastPubBucket:  map[id.TerminalID]uint64{},
 			lastPubRefresh: map[id.TerminalID]time.Time{},
 			lastChange:     map[id.TerminalID]time.Time{},
+			held:           map[id.TerminalID]heldReason{},
 		}
 	}
 	rs := r.relaySync
@@ -225,6 +248,9 @@ func (r *Runtime) relaySyncOnce(addr string) {
 	spaces = active
 
 	var lastErr string
+	// Why each space handed nothing over this cycle. Rebuilt from scratch
+	// every pass so a space that recovers stops reporting instantly.
+	held := map[id.TerminalID]heldReason{}
 	pushed := 0
 	for _, sp := range spaces {
 		rs.mu.Lock()
@@ -250,6 +276,7 @@ func (r *Runtime) relaySyncOnce(addr string) {
 			// Nobody addressable yet (fresh joiner before its first pull, or a
 			// solo space): leave lastLen untouched so we retry once we learn a
 			// peer device, instead of marking these frames as handed off.
+			held[sp.tid] = heldReason{heldNoRecipient, sp.n - prev}
 			continue
 		}
 		pushed += n
@@ -300,6 +327,7 @@ func (r *Runtime) relaySyncOnce(addr string) {
 			// themselves); the relay is force-touched only on bucket
 			// rotation or the heartbeat.
 			if sp.writeAddr == "" {
+				held[sp.tid] = heldReason{heldNoRelay, r.unackedLocal(sp.tid)}
 				continue
 			}
 			touched, err := r.publishPublicProjectionForce(sp.writeAddr, sp.tid, rotated || stale)
@@ -323,6 +351,7 @@ func (r *Runtime) relaySyncOnce(addr string) {
 			// space's own relay (RR-4): a followed space stops being polled
 			// on YOUR relay where its publisher never writes.
 			if sp.readAddr == "" {
+				held[sp.tid] = heldReason{heldNoReadRelay, 0}
 				continue
 			}
 			if err := r.fetchPublicProjection(sp.readAddr, sp.tid); err != nil {
@@ -374,6 +403,7 @@ func (r *Runtime) relaySyncOnce(addr string) {
 
 	rs.mu.Lock()
 	rs.lastErr = lastErr
+	rs.held = held
 	if pushed > 0 {
 		rs.lastPush = time.Now()
 		rs.pushed += pushed
@@ -398,6 +428,20 @@ type RelaySyncStatus struct {
 	AgoPush    int                 `json:"seconds_since_push,omitempty"`
 	AgoPull    int                 `json:"seconds_since_pull,omitempty"`
 	Public     []PublicSpaceStatus `json:"public,omitempty"`
+	// Held names the spaces that handed nothing over on the last cycle,
+	// and why. Every entry is a state the loop chose deliberately — but
+	// each of them used to look exactly like a delivered message from
+	// outside, which is how a post can sit in a local log for a night
+	// while the relay light stays green.
+	Held []HeldSpace `json:"held,omitempty"`
+}
+
+// HeldSpace is one space whose local frames have nowhere to go right now.
+type HeldSpace struct {
+	SpaceID string `json:"space_id"`
+	Title   string `json:"title,omitempty"`
+	Reason  string `json:"reason"`
+	Frames  int    `json:"frames,omitempty"`
 }
 
 // PublicSpaceStatus is the per-public-space checkpoint/ingress diagnostic
@@ -437,6 +481,10 @@ func (r *Runtime) RelaySync() RelaySyncStatus {
 	r.mu.Lock()
 	rs := r.relaySync
 	public := r.publicSpaceStatusesLocked()
+	titles := map[id.TerminalID]string{}
+	for tid := range r.spaces {
+		titles[tid] = r.ks.Spaces[tid].Title
+	}
 	r.mu.Unlock()
 	if rs == nil {
 		return RelaySyncStatus{Public: public}
@@ -455,6 +503,13 @@ func (r *Runtime) RelaySync() RelaySyncStatus {
 	if !rs.lastPull.IsZero() {
 		st.AgoPull = int(time.Since(rs.lastPull).Seconds())
 	}
+	for tid, h := range rs.held {
+		st.Held = append(st.Held, HeldSpace{
+			SpaceID: tid.Hex(), Title: titles[tid],
+			Reason: h.reason, Frames: h.frames,
+		})
+	}
+	sort.Slice(st.Held, func(i, j int) bool { return st.Held[i].SpaceID < st.Held[j].SpaceID })
 	// Publisher freshness comes from the projection refresh timer.
 	for i := range st.Public {
 		if st.Public[i].Role != "publisher" {
@@ -507,4 +562,16 @@ func (r *Runtime) publicSpaceStatusesLocked() []PublicSpaceStatus {
 		}
 	}
 	return out
+}
+
+// unackedLocal counts this node's own frames that no peer has acknowledged
+// — the honest answer to "how much of what I wrote is still only here".
+func (r *Runtime) unackedLocal(tid id.TerminalID) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	st, ok := r.spaces[tid]
+	if !ok {
+		return 0
+	}
+	return len(st.space.UnackedLocalFrames())
 }
