@@ -674,31 +674,120 @@ func radioRegion(args []string) error {
 		return errors.New("stopped — nothing was written")
 	}
 
-	radio, err = openRadio(port)
-	if err != nil {
-		return err
-	}
-	// Re-read and re-plan against what the radio holds RIGHT NOW. The patch is
-	// only as good as the bytes it starts from, and those came from a session
-	// that has since been closed: between the two, the device could have been
-	// changed from a phone, or rebooted into something else.
-	fresh := radio.Config()
-	plan, err = meshtastic.PlanLoRaApply(fresh, set)
-	if err != nil {
+	// ATTEMPTED TWICE, because on real hardware the first write sometimes does
+	// not take.
+	//
+	// Observed repeatedly on a native-USB board: an identical write applied on
+	// the second attempt having done nothing on the first. The cause is not
+	// known — the likeliest candidate is the first admin message after a fresh
+	// serial session being dropped before the firmware is listening, which
+	// would leave begin_edit unheard and everything after it ignored.
+	//
+	// A repeat is safe by construction rather than by hope: each attempt
+	// RE-READS the radio and computes its patch from what is there now, so a
+	// write that partially landed is not applied twice — the second attempt
+	// simply asks for whatever is still missing. And the person already agreed
+	// to this exact change; making them type it again teaches them to distrust
+	// the verification instead of the radio.
+	var got meshtastic.NodeConfig
+	var verifyErr error
+	const attempts = 2
+	for attempt := 1; attempt <= attempts; attempt++ {
+		if attempt > 1 {
+			fmt.Println("\nnothing landed. Asking again — the same change, " +
+				"recomputed from what the radio holds now:")
+			for _, m := range plan.Summary[:len(plan.Summary)-1] {
+				fmt.Println("  · " + m)
+			}
+		}
+		radio, err = openRadio(port)
+		if err != nil {
+			return err
+		}
+		// Re-read and re-plan against what the radio holds RIGHT NOW. The
+		// patch is only as good as the bytes it starts from, and those came
+		// from a session that has since been closed: between the two, the
+		// device could have been changed from a phone, or rebooted into
+		// something else.
+		fresh := radio.Config()
+		plan, err = meshtastic.PlanLoRaApply(fresh, set)
+		if err != nil {
+			radio.Close()
+			return err
+		}
+		err = radio.Apply(plan)
 		radio.Close()
-		return err
-	}
-	err = radio.Apply(plan)
-	radio.Close()
-	if err != nil {
-		return err
-	}
+		if err != nil {
+			return err
+		}
 
-	// Read-after-write. Apply deliberately does not verify — the radio is
-	// rebooting when it returns — so "what we asked for" and "what actually
-	// happened" stay two separate claims, and only the second one is
-	// reported as done.
-	fmt.Println("\nwritten. Waiting for the radio to reboot and say what it now holds…")
+		// Read-after-write. Apply deliberately does not verify — the radio is
+		// rebooting when it returns — so "what we asked for" and "what
+		// actually happened" stay two separate claims, and only the second one
+		// is reported as done.
+		fmt.Println("\nwritten. Waiting for the radio to reboot and say what it now holds…")
+		got, verifyErr = readBackAndVerify(port, plan)
+		if verifyErr == nil {
+			break
+		}
+		if !errors.Is(verifyErr, meshtastic.ErrConfigInvalid) {
+			return verifyErr // it never came back at all; retrying wastes minutes
+		}
+	}
+	if verifyErr != nil {
+		return verifyErr
+	}
+	// A configuration that landed is not a radio that can be heard. Two
+	// other settings decide that, and neither is changed by this command —
+	// so staying silent about them would report success for a device that
+	// cannot reach anybody. Naming them is the difference between "the
+	// write worked" and "this radio works".
+	var cannot []string
+	if !got.LoRa.TxEnabled {
+		cannot = append(cannot, "the transmitter is OFF — the radio hears "+
+			"everything and sends nothing, which is indistinguishable from "+
+			"being out of range. Turn it on: --tx on")
+	}
+	if !got.LoRa.UsePreset {
+		cannot = append(cannot, "the modem preset is OFF — this radio is on "+
+			"manual bandwidth/spreading-factor/coding-rate, and a peer set to a "+
+			"preset will never hear it. Give it one: --preset LONG_FAST")
+	}
+	if got.LoRa.HopLimit == 0 {
+		cannot = append(cannot, "the hop limit is 0 — nothing relays this "+
+			"radio's packets past a direct neighbour. Give it one: --hop 3")
+	}
+	if len(cannot) > 0 {
+		fmt.Println("\n⚠  The write landed, but this radio still cannot match a peer:")
+		for _, c := range cannot {
+			fmt.Println("   · " + c)
+		}
+		fmt.Println("\n   Two radios hear each other only when region, preset AND the\n" +
+			"   channel key all agree. Where they differ, both transmit happily\n" +
+			"   and neither hears anything — with no error on either side.")
+		return nil
+	}
+	// Report what this run actually did. "✓ region set" was printed even
+	// when no region was asked for, which is the same class of untruth as
+	// the write it used to sit on top of.
+	if region != "" {
+		fmt.Println("\n✓ region set. Next: give the radio a channel of its own — " +
+			"docs/RADIO_SETUP.md, шаг 3")
+	} else {
+		fmt.Println("\n✓ written, and everything else came back unchanged.")
+	}
+	return nil
+}
+
+// readBackAndVerify waits for the radio to come back after a reboot, prints
+// what it now holds, and checks it against what the plan intended — every
+// field, the ones the write changed and the ones it was obliged to carry
+// across untouched.
+//
+// Checking only the first is how this command printed "✓ region set" while
+// its own writer switched the transmitter off: the asked-for field landed,
+// and took four others with it.
+func readBackAndVerify(port string, plan *meshtastic.ApplyPlan) (meshtastic.NodeConfig, error) {
 	deadline := time.Now().Add(45 * time.Second)
 	for time.Now().Before(deadline) {
 		time.Sleep(3 * time.Second)
@@ -718,57 +807,11 @@ func radioRegion(args []string) error {
 		if got.Device != nil {
 			fmt.Printf("  rebroadcast   %s\n", got.Device.RebroadcastName())
 		}
-		// Every field, the ones this write changed and the ones it was obliged
-		// to carry across untouched. Checking only the first is how a command
-		// printed "✓ region set" while its own writer switched the transmitter
-		// off — the asked-for field landed, and it took four others with it.
-		if err := plan.Verify(got); err != nil {
-			return err
-		}
-		// A configuration that landed is not a radio that can be heard. Two
-		// other settings decide that, and neither is changed by this command —
-		// so staying silent about them would report success for a device that
-		// cannot reach anybody. Naming them is the difference between "the
-		// write worked" and "this radio works".
-		var cannot []string
-		if !got.LoRa.TxEnabled {
-			cannot = append(cannot, "the transmitter is OFF — the radio hears "+
-				"everything and sends nothing, which is indistinguishable from "+
-				"being out of range. Turn it on: --tx on")
-		}
-		if !got.LoRa.UsePreset {
-			cannot = append(cannot, "the modem preset is OFF — this radio is on "+
-				"manual bandwidth/spreading-factor/coding-rate, and a peer set to a "+
-				"preset will never hear it. Give it one: --preset LONG_FAST")
-		}
-		if got.LoRa.HopLimit == 0 {
-			cannot = append(cannot, "the hop limit is 0 — nothing relays this "+
-				"radio's packets past a direct neighbour. Give it one: --hop 3")
-		}
-		if len(cannot) > 0 {
-			fmt.Println("\n⚠  The write landed, but this radio still cannot match a peer:")
-			for _, c := range cannot {
-				fmt.Println("   · " + c)
-			}
-			fmt.Println("\n   Two radios hear each other only when region, preset AND the\n" +
-				"   channel key all agree. Where they differ, both transmit happily\n" +
-				"   and neither hears anything — with no error on either side.")
-			return nil
-		}
-		// Report what this run actually did. "✓ region set" was printed even
-		// when no region was asked for, which is the same class of untruth as
-		// the write it used to sit on top of.
-		if region != "" {
-			fmt.Println("\n✓ region set. Next: give the radio a channel of its own — " +
-				"docs/RADIO_SETUP.md, шаг 3")
-		} else {
-			fmt.Println("\n✓ written, and everything else came back unchanged.")
-		}
-		return nil
+		return got, plan.Verify(got)
 	}
-	return errors.New("the radio has not answered since the reboot. Unplug it, " +
-		"plug it back in, and run `terminal radio region` with no arguments to " +
-		"see what it holds")
+	return meshtastic.NodeConfig{}, errors.New("the radio has not answered since " +
+		"the reboot. Unplug it, plug it back in, and run `terminal radio region` " +
+		"with no arguments to see what it holds")
 }
 
 // pickRadioPort finds attached radios and asks which one, when there is a
