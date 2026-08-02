@@ -273,7 +273,7 @@ func (a *APIServer) handleApplyRadio(w http.ResponseWriter, r *http.Request) {
 	}
 	// The radio's own region and preset are already what the segment will
 	// use, so there is nothing to change about them — write only the channel.
-	plan, err := meshtastic.PlanSegmentApply(ch, slot, false)
+	plan, err := meshtastic.PlanSegmentApply(cfg, ch, slot, false)
 	if err != nil {
 		httpErr(w, http.StatusInternalServerError, err)
 		return
@@ -301,6 +301,25 @@ func (a *APIServer) handleApplyRadio(w http.ResponseWriter, r *http.Request) {
 
 	// Read-after-write: what does the radio itself say now?
 	after := a.rt.MeshConfig()
+
+	// Two different questions, and merging them is how a report lies.
+	//
+	// The first: did the write disturb anything it was not supposed to?
+	// set_config replaces a whole sub-message, so a channel write that
+	// accidentally carried a LoRa message would silently reset the region,
+	// the slot and the transmitter. Verify compares the radio's own report
+	// against the exact bytes the plan intended to leave behind.
+	if err := plan.Verify(after); err != nil {
+		resp.Report = append(resp.Report, "WRONG · "+err.Error())
+		resp.Note = "The radio came back holding something the write did not " +
+			"ask for. Nothing on this node has been pointed at the new channel."
+		writeJSON(w, resp)
+		return
+	}
+
+	// The second: does this radio now MEET the segment — which includes
+	// settings this write never touched. A failure here is not a failed
+	// write; it is a radio that cannot talk to its peers yet.
 	prof := ch.Profile(slot)
 	verdict := prof.Check(after)
 	for _, c := range verdict {
@@ -325,9 +344,11 @@ func (a *APIServer) handleApplyRadio(w http.ResponseWriter, r *http.Request) {
 			"now transmits on channel " + itoa(slot) + ". Send the profile to " +
 			"whoever else is joining, and prepare their radio the same way."
 	} else {
-		resp.Note = "The radio came back but does not report what was asked " +
-			"for. Nothing on this node has been pointed at the new channel. " +
-			"The report above says which field differs."
+		resp.Note = "The channel was written, but this radio does not yet meet " +
+			"the segment. Nothing on this node has been pointed at the new " +
+			"channel. The report above says which setting differs — a radio " +
+			"whose transmitter is off, or whose preset is unset, cannot reach " +
+			"a peer however right its channel is."
 	}
 	writeJSON(w, resp)
 }

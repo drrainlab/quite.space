@@ -28,10 +28,11 @@
 // (config.proto, channel.proto, mesh.proto) and are wire-stable:
 //
 //	FromRadio:       config=5, channel=10, metadata=13
-//	Config:          lora=6
+//	Config:          device=1, lora=6
 //	LoRaConfig:      use_preset=1, modem_preset=2, bandwidth=3,
 //	                 spread_factor=4, coding_rate=5, region=7, hop_limit=8,
 //	                 tx_enabled=9, tx_power=10, channel_num=11
+//	DeviceConfig:    role=1, rebroadcast_mode=6
 //	Channel:         index=1, settings=2, role=3
 //	ChannelSettings: psk=2, name=3
 //	DeviceMetadata:  firmware_version=1
@@ -98,12 +99,58 @@ func enumValue(table map[uint32]string, name string) (uint32, bool) {
 	return 0, false
 }
 
+// LoRa field numbers, named where they are used rather than transcribed
+// again at every call site. patch.go writes by number; this table is what
+// lets a mismatch report say which setting disagreed.
+const (
+	loraUsePreset    = 1
+	loraModemPreset  = 2
+	loraBandwidth    = 3
+	loraSpreadFactor = 4
+	loraCodingRate   = 5
+	loraRegion       = 7
+	loraHopLimit     = 8
+	loraTxEnabled    = 9
+	loraTxPower      = 10
+	loraChannelNum   = 11
+)
+
+var loraFieldNames = map[int]string{
+	loraUsePreset: "use_preset", loraModemPreset: "modem_preset",
+	loraBandwidth: "bandwidth", loraSpreadFactor: "spread_factor",
+	loraCodingRate: "coding_rate", 6: "frequency_offset", loraRegion: "region",
+	loraHopLimit: "hop_limit", loraTxEnabled: "tx_enabled",
+	loraTxPower: "tx_power", loraChannelNum: "channel_num",
+	12: "sx126x_rx_boosted_gain", 13: "override_duty_cycle",
+	14: "override_frequency", 15: "pa_fan_disabled", 103: "ignore_incoming",
+	104: "ignore_mqtt", 105: "config_ok_to_mqtt",
+}
+
+// Device field numbers (config.proto, DeviceConfig).
+const (
+	deviceRole        = 1
+	deviceRebroadcast = 6
+)
+
+var deviceFieldNames = map[int]string{
+	deviceRole: "role", 2: "serial_enabled", 4: "button_gpio", 5: "buzzer_gpio",
+	deviceRebroadcast: "rebroadcast_mode", 7: "node_info_broadcast_secs",
+	8: "double_tap_as_button_press", 9: "is_managed", 10: "disable_triple_click",
+	11: "tzdef", 12: "led_heartbeat_disabled",
+}
+
 // LoRaSettings is what a node reports about its radio. A nil *LoRaSettings
 // means the node reported nothing — not that everything is zero.
 //
 // Within the message, proto3 omits fields at their default value, so an
 // absent scalar genuinely IS the default and reading it as such is correct.
 // The distinction that matters is one level up: message present or absent.
+//
+// This struct is a READING of the configuration, never the thing that gets
+// written back. It keeps ten varints and decodeLoRaConfig deliberately skips
+// everything else, so re-encoding it would erase whatever a device holds that
+// this build has not heard of. Writes go through the raw bytes — see
+// NodeConfig.LoRaRaw and patch.go.
 type LoRaSettings struct {
 	UsePreset    bool
 	ModemPreset  uint32
@@ -122,6 +169,37 @@ func (l LoRaSettings) RegionName() string { return enumName(regionNames, l.Regio
 
 // PresetName renders the modem preset, by name when we know it.
 func (l LoRaSettings) PresetName() string { return enumName(presetNames, l.ModemPreset) }
+
+// DeviceSettings is the part of DeviceConfig this build reads.
+//
+// It exists because `--quiet-neighbours` WRITES rebroadcast_mode and, until
+// now, nothing could read it: decodeConfigLoRa returned only for Config.lora
+// and dropped every other Config variant on the floor. A write nobody can
+// read back is a write nobody can verify, and the measurement that rested on
+// it was worthless.
+type DeviceSettings struct {
+	Role        uint32
+	Rebroadcast uint32
+}
+
+var roleNames = map[uint32]string{
+	0: "CLIENT", 1: "CLIENT_MUTE", 2: "ROUTER", 3: "ROUTER_CLIENT",
+	4: "REPEATER", 5: "TRACKER", 6: "SENSOR", 7: "TAK", 8: "CLIENT_HIDDEN",
+	9: "LOST_AND_FOUND", 10: "TAK_TRACKER", 11: "ROUTER_LATE",
+}
+
+var rebroadcastNames = map[uint32]string{
+	0: "ALL", 1: "ALL_SKIP_DECODING", 2: "LOCAL_ONLY", 3: "KNOWN_ONLY",
+	4: "NONE", 5: "CORE_PORTNUMS_ONLY",
+}
+
+// RoleName renders the device role, by name when we know it.
+func (d DeviceSettings) RoleName() string { return enumName(roleNames, d.Role) }
+
+// RebroadcastName renders the rebroadcast mode, by name when we know it.
+func (d DeviceSettings) RebroadcastName() string {
+	return enumName(rebroadcastNames, d.Rebroadcast)
+}
 
 // ChannelRole is Channel.Role.
 type ChannelRole uint32
@@ -189,8 +267,21 @@ type NodeConfig struct {
 	NodeNum  uint32
 	Firmware string
 	// LoRa is nil when the node reported no LoRaConfig.
-	LoRa     *LoRaSettings
-	Channels []ChannelInfo
+	LoRa *LoRaSettings
+	// LoRaRaw is the byte-exact LoRaConfig sub-message the node last sent,
+	// including every field this build cannot read.
+	//
+	// It is kept because changing one setting means REPLACING this whole
+	// message on the device, and anything not carried over is erased —
+	// tx_enabled, a licensed operator's override_frequency, a field a newer
+	// firmware added last month. A change is applied to these bytes rather
+	// than to the decoded struct above. See patch.go.
+	LoRaRaw []byte
+	// Device and DeviceRaw are the same two things for DeviceConfig, which
+	// carries the rebroadcast mode.
+	Device    *DeviceSettings
+	DeviceRaw []byte
+	Channels  []ChannelInfo
 	// Unrecognised counts top-level FromRadio fields this build skipped,
 	// keyed by field number. It is what `--raw` prints, and what makes a
 	// transcription error in this file visible against real hardware.
@@ -236,7 +327,16 @@ func (c NodeConfig) Report() string {
 				l.Bandwidth, l.SpreadFactor, l.CodingRate)
 		}
 		fmt.Fprintf(&b, "hop limit   %d\n", l.HopLimit)
+		if l.ChannelNum == 0 {
+			b.WriteString("slot        from the primary channel's name\n")
+		} else {
+			fmt.Fprintf(&b, "slot        %d\n", l.ChannelNum)
+		}
 		fmt.Fprintf(&b, "tx          %s\n", enabledWord(l.TxEnabled))
+	}
+	if c.Device != nil {
+		fmt.Fprintf(&b, "role        %s\n", c.Device.RoleName())
+		fmt.Fprintf(&b, "rebroadcast %s\n", c.Device.RebroadcastName())
 	}
 	if len(c.Channels) == 0 {
 		b.WriteString("channels    not reported by this node\n")
@@ -288,12 +388,27 @@ func keyFingerprint(psk []byte) (KeyClass, string) {
 func (c *NodeConfig) absorbConfig(field int, raw []byte) bool {
 	switch field {
 	case 5: // Config
-		lora, ok := decodeConfigLoRa(raw)
+		which, sub, ok := decodeConfigVariant(raw)
 		if !ok {
 			return false
 		}
-		c.LoRa = lora
-		return true
+		switch which {
+		case configLoRa:
+			lora, ok := decodeLoRaConfig(sub)
+			if !ok {
+				return false
+			}
+			c.LoRa, c.LoRaRaw = lora, cloneRaw(sub)
+			return true
+		case configDevice:
+			dev, ok := decodeDeviceConfig(sub)
+			if !ok {
+				return false
+			}
+			c.Device, c.DeviceRaw = dev, cloneRaw(sub)
+			return true
+		}
+		return false
 	case 10: // Channel
 		ch, ok := decodeChannel(raw)
 		if !ok {
@@ -319,10 +434,43 @@ func (c *NodeConfig) absorbConfig(field int, raw []byte) bool {
 	return false
 }
 
-// decodeConfigLoRa reads Config, returning the LoRaConfig if it carried one.
-// A Config that describes something else (display, bluetooth, position) is
-// not evidence about the radio and returns nothing.
-func decodeConfigLoRa(b []byte) (*LoRaSettings, bool) {
+// Config one-of members this build reads (config.proto).
+const (
+	configDevice = 1
+	configLoRa   = 6
+)
+
+// decodeConfigVariant reads Config and reports WHICH variant it carried plus
+// that variant's byte-exact sub-message.
+//
+// A Config describing something else (display, bluetooth, position) is not
+// evidence about the radio and returns nothing. Until this function existed
+// the same was true of DeviceConfig, so the rebroadcast mode `radio region
+// --quiet-neighbours` writes could never be read back.
+func decodeConfigVariant(b []byte) (int, []byte, bool) {
+	r := &reader{b: b}
+	for !r.done() {
+		tag, err := r.varint()
+		if err != nil {
+			return 0, nil, false
+		}
+		field, wt := int(tag>>3), int(tag&7)
+		if wt == wireBytes && (field == configLoRa || field == configDevice) {
+			raw, err := r.bytes()
+			if err != nil {
+				return 0, nil, false
+			}
+			return field, raw, true
+		}
+		if err := r.skip(wt); err != nil {
+			return 0, nil, false
+		}
+	}
+	return 0, nil, false
+}
+
+func decodeDeviceConfig(b []byte) (*DeviceSettings, bool) {
+	d := &DeviceSettings{}
 	r := &reader{b: b}
 	for !r.done() {
 		tag, err := r.varint()
@@ -330,18 +478,24 @@ func decodeConfigLoRa(b []byte) (*LoRaSettings, bool) {
 			return nil, false
 		}
 		field, wt := int(tag>>3), int(tag&7)
-		if field == 6 && wt == wireBytes { // Config.lora
-			raw, err := r.bytes()
-			if err != nil {
+		if wt != wireVarint {
+			if err := r.skip(wt); err != nil {
 				return nil, false
 			}
-			return decodeLoRaConfig(raw)
+			continue
 		}
-		if err := r.skip(wt); err != nil {
+		v, err := r.varint()
+		if err != nil {
 			return nil, false
 		}
+		switch field {
+		case deviceRole:
+			d.Role = uint32(v)
+		case deviceRebroadcast:
+			d.Rebroadcast = uint32(v)
+		}
 	}
-	return nil, false
+	return d, true
 }
 
 func decodeLoRaConfig(b []byte) (*LoRaSettings, bool) {
@@ -366,25 +520,25 @@ func decodeLoRaConfig(b []byte) (*LoRaSettings, bool) {
 			return nil, false
 		}
 		switch field {
-		case 1:
+		case loraUsePreset:
 			l.UsePreset = v != 0
-		case 2:
+		case loraModemPreset:
 			l.ModemPreset = uint32(v)
-		case 3:
+		case loraBandwidth:
 			l.Bandwidth = uint32(v)
-		case 4:
+		case loraSpreadFactor:
 			l.SpreadFactor = uint32(v)
-		case 5:
+		case loraCodingRate:
 			l.CodingRate = uint32(v)
-		case 7:
+		case loraRegion:
 			l.Region = uint32(v)
-		case 8:
+		case loraHopLimit:
 			l.HopLimit = uint32(v)
-		case 9:
+		case loraTxEnabled:
 			l.TxEnabled = v != 0
-		case 10:
+		case loraTxPower:
 			l.TxPower = int32(v)
-		case 11:
+		case loraChannelNum:
 			l.ChannelNum = uint32(v)
 		}
 	}
@@ -503,3 +657,12 @@ func PresetValue(name string) uint32 {
 	v, _ := resolveEnum(presetNames, name, "modem preset")
 	return v
 }
+
+// RegionName and PresetName render one value.
+//
+// They exist because two call sites reached into RegionNames()/PresetNames()
+// with the enum value as a SLICE INDEX — a sorted list of names addressed by
+// a number that is not its position in that list. It read correctly only by
+// coincidence, and only for the values somebody happened to try.
+func RegionName(v uint32) string { return enumName(regionNames, v) }
+func PresetName(v uint32) string { return enumName(presetNames, v) }

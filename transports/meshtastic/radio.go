@@ -271,6 +271,22 @@ func (r *Radio) Config() NodeConfig {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	out := r.cfg
+	// LoRa and Device are POINTERS into live state. Copying the struct copies
+	// the pointer, so a caller adjusting one field of what it thinks is its
+	// own snapshot would be writing into the radio's picture of itself,
+	// outside this mutex and from whichever goroutine happened to hold it.
+	if r.cfg.LoRa != nil {
+		l := *r.cfg.LoRa
+		out.LoRa = &l
+	}
+	if r.cfg.Device != nil {
+		d := *r.cfg.Device
+		out.Device = &d
+	}
+	// Same for the retained bytes — a patch writes a new slice, but nothing
+	// stops a caller from editing one in place.
+	out.LoRaRaw = cloneRaw(r.cfg.LoRaRaw)
+	out.DeviceRaw = cloneRaw(r.cfg.DeviceRaw)
 	out.Channels = append([]ChannelInfo(nil), r.cfg.Channels...)
 	out.Unrecognised = make(map[int]int, len(r.cfg.Unrecognised))
 	for k, v := range r.cfg.Unrecognised {

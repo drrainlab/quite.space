@@ -181,13 +181,20 @@ func TestAMistypedRegionIsRefusedRatherThanWrittenAsUnset(t *testing.T) {
 	}
 }
 
-// Setting the region must change the region and nothing else. A person who
-// asked for one thing must not have their preset or hop limit rewritten to
-// whatever this build happens to default to — those decide how the radio
-// behaves on shared air.
-func TestSettingTheRegionTouchesNothingElse(t *testing.T) {
+// A plan says what it will do, and says it only about what it was asked for.
+//
+// This test used to be the whole guarantee that "setting the region touches
+// nothing else", and it checked the SUMMARY TEXT. It passed every single day
+// the writer underneath it was resetting tx_enabled, tx_power and channel_num
+// on every run — because a sentence about a region is not a claim about
+// bytes. The real guarantee now lives in
+// TestSettingTheRegionPreservesEverythingElse, which reads the patch. What is
+// left here is the narrower thing this test can honestly prove: that the
+// person is told what is about to happen.
+func TestThePlanDescribesOnlyWhatWasAskedFor(t *testing.T) {
 	r := regionEU868
-	plan, err := PlanLoRaApply(LoRaSetting{Region: &r})
+	cur := NodeConfig{LoRaRaw: realisticLoRaRaw()}
+	plan, err := PlanLoRaApply(cur, LoRaSetting{Region: &r})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,13 +202,13 @@ func TestSettingTheRegionTouchesNothingElse(t *testing.T) {
 	if !strings.Contains(joined, "EU_868") {
 		t.Fatalf("the summary does not name the region: %q", joined)
 	}
-	for _, word := range []string{"preset", "hop limit"} {
-		if strings.Contains(joined, word) {
+	for _, word := range []string{"modem preset", "hop limit"} {
+		if strings.Contains(joined, "Set "+word) {
 			t.Fatalf("asked only for a region, but the plan also sets the %s: %q",
 				word, joined)
 		}
 	}
-	if _, err := PlanLoRaApply(LoRaSetting{}); err == nil {
+	if _, err := PlanLoRaApply(cur, LoRaSetting{}); err == nil {
 		t.Fatal("a plan that changes nothing was accepted")
 	}
 }
@@ -391,7 +398,11 @@ func TestWithoutReliabilityNothingIsReported(t *testing.T) {
 func TestASegmentCanLeaveACrowdedBandWithoutMoving(t *testing.T) {
 	slot := uint32(3)
 	mode := RebroadcastLocalOnly
-	plan, err := PlanLoRaApply(LoRaSetting{ChannelNum: &slot, Rebroadcast: &mode})
+	cur := NodeConfig{
+		LoRaRaw:   realisticLoRaRaw(),
+		DeviceRaw: appendVarintField(nil, deviceRole, 2), // ROUTER
+	}
+	plan, err := PlanLoRaApply(cur, LoRaSetting{ChannelNum: &slot, Rebroadcast: &mode})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -412,7 +423,11 @@ func TestASegmentCanLeaveACrowdedBandWithoutMoving(t *testing.T) {
 // write — a config message with no fields is a change nobody asked for.
 func TestRebroadcastAloneWritesOnlyTheDeviceConfig(t *testing.T) {
 	mode := RebroadcastLocalOnly
-	plan, err := PlanLoRaApply(LoRaSetting{Rebroadcast: &mode})
+	cur := NodeConfig{
+		LoRaRaw:   realisticLoRaRaw(),
+		DeviceRaw: appendVarintField(nil, deviceRole, 2), // ROUTER
+	}
+	plan, err := PlanLoRaApply(cur, LoRaSetting{Rebroadcast: &mode})
 	if err != nil {
 		t.Fatal(err)
 	}

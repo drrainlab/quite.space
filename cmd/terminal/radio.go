@@ -407,6 +407,16 @@ func askYes(prompt string) bool {
 	return strings.EqualFold(strings.TrimSpace(line), "yes")
 }
 
+// txWord says whether the radio may transmit, in the loudest available way.
+// "off" is not a detail: a receiving-only radio is indistinguishable from a
+// radio with nobody in range, and that ambiguity cost nine days.
+func txWord(on bool) string {
+	if on {
+		return "on"
+	}
+	return "OFF — this radio cannot send"
+}
+
 // radioRegion sets the LoRa configuration on an attached radio.
 //
 // The region is not a preference. It decides which frequencies the device
@@ -417,10 +427,15 @@ func askYes(prompt string) bool {
 // (see ParseRegion: writing UNSET by accident stops the radio transmitting
 // altogether, which is the worst possible way to mistype something).
 func radioRegion(args []string) error {
-	var port, region, preset, hop, slot string
+	var port, region, preset, hop, slot, tx string
 	quiet := false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
+		case "--tx":
+			if i+1 < len(args) {
+				tx = args[i+1]
+				i++
+			}
 		case "--slot":
 			if i+1 < len(args) {
 				slot = args[i+1]
@@ -468,28 +483,54 @@ func radioRegion(args []string) error {
 	radio.Close()
 	fmt.Printf("\n%s says it is set to:\n", port)
 	if cfg.LoRa != nil {
-		fmt.Printf("  region        %s\n  modem preset  %s\n  hop limit     %d\n",
-			cfg.LoRa.RegionName(), cfg.LoRa.PresetName(), cfg.LoRa.HopLimit)
+		fmt.Printf("  region        %s\n  modem preset  %s\n  hop limit     %d\n"+
+			"  transmitter   %s\n",
+			cfg.LoRa.RegionName(), cfg.LoRa.PresetName(), cfg.LoRa.HopLimit,
+			txWord(cfg.LoRa.TxEnabled))
 	} else {
 		fmt.Println("  (it did not report its LoRa settings — older firmware)")
 	}
+	if cfg.Device != nil {
+		fmt.Printf("  rebroadcast   %s\n", cfg.Device.RebroadcastName())
+	}
+	if cfg.LoRa != nil && !cfg.LoRa.TxEnabled {
+		fmt.Println("\n⚠  This radio's transmitter is OFF. It hears everything and " +
+			"sends\n   nothing, which looks exactly like being out of range.")
+		fmt.Println("   Earlier versions of this command switched it off as a side " +
+			"effect\n   of setting the region. Turn it back on with:  --tx on")
+	}
 
-	if region == "" {
+	if region == "" && tx == "" && preset == "" && hop == "" && slot == "" && !quiet {
 		fmt.Println("\nRegions this build knows:")
 		fmt.Println("  " + strings.Join(meshtastic.RegionNames(), "  "))
 		return errors.New("\nname the region you are actually in, e.g. " +
 			"`terminal radio region EU_868`.\n" +
 			"It must match both the law where you are and the band your antenna\n" +
 			"was built for — usually printed on the antenna itself (433 or 868 MHz).\n" +
-			"This is not something this program can work out for you")
+			"This is not something this program can work out for you.\n" +
+			"\nTo change only the transmitter, without touching the region:" +
+			"\n  terminal radio region --tx on")
 	}
 
 	var set meshtastic.LoRaSetting
-	r, err := meshtastic.ParseRegion(region)
-	if err != nil {
-		return err
+	if region != "" {
+		r, err := meshtastic.ParseRegion(region)
+		if err != nil {
+			return err
+		}
+		set.Region = &r
 	}
-	set.Region = &r
+	switch tx {
+	case "":
+	case "on":
+		v := true
+		set.TxEnabled = &v
+	case "off":
+		v := false
+		set.TxEnabled = &v
+	default:
+		return fmt.Errorf("--tx takes on or off, got %q", tx)
+	}
 	if slot != "" {
 		n, err := strconv.ParseUint(slot, 10, 32)
 		if err != nil || n == 0 {
@@ -518,7 +559,7 @@ func radioRegion(args []string) error {
 		set.HopLimit = &h
 	}
 
-	plan, err := meshtastic.PlanLoRaApply(set)
+	plan, err := meshtastic.PlanLoRaApply(cfg, set)
 	if err != nil {
 		return err
 	}
@@ -534,6 +575,16 @@ func radioRegion(args []string) error {
 
 	radio, err = openRadio(port)
 	if err != nil {
+		return err
+	}
+	// Re-read and re-plan against what the radio holds RIGHT NOW. The patch is
+	// only as good as the bytes it starts from, and those came from a session
+	// that has since been closed: between the two, the device could have been
+	// changed from a phone, or rebooted into something else.
+	fresh := radio.Config()
+	plan, err = meshtastic.PlanLoRaApply(fresh, set)
+	if err != nil {
+		radio.Close()
 		return err
 	}
 	err = radio.Apply(plan)
@@ -560,18 +611,30 @@ func radioRegion(args []string) error {
 			continue
 		}
 		fmt.Printf("\nthe radio now reports:\n  region        %s\n"+
-			"  modem preset  %s\n  hop limit     %d\n",
-			got.LoRa.RegionName(), got.LoRa.PresetName(), got.LoRa.HopLimit)
-		if got.LoRa.Region != r {
-			return fmt.Errorf("asked for region %s, the radio came back with %s "+
-				"— the write did not take", region, got.LoRa.RegionName())
+			"  modem preset  %s\n  hop limit     %d\n  transmitter   %s\n",
+			got.LoRa.RegionName(), got.LoRa.PresetName(), got.LoRa.HopLimit,
+			txWord(got.LoRa.TxEnabled))
+		if got.Device != nil {
+			fmt.Printf("  rebroadcast   %s\n", got.Device.RebroadcastName())
 		}
-		// A region that landed is not a radio that can be heard. Two other
-		// settings decide that, and neither is changed by this command — so
-		// staying silent about them would report success for a device that
+		// Every field, the ones this write changed and the ones it was obliged
+		// to carry across untouched. Checking only the first is how a command
+		// printed "✓ region set" while its own writer switched the transmitter
+		// off — the asked-for field landed, and it took four others with it.
+		if err := plan.Verify(got); err != nil {
+			return err
+		}
+		// A configuration that landed is not a radio that can be heard. Two
+		// other settings decide that, and neither is changed by this command —
+		// so staying silent about them would report success for a device that
 		// cannot reach anybody. Naming them is the difference between "the
 		// write worked" and "this radio works".
 		var cannot []string
+		if !got.LoRa.TxEnabled {
+			cannot = append(cannot, "the transmitter is OFF — the radio hears "+
+				"everything and sends nothing, which is indistinguishable from "+
+				"being out of range. Turn it on: --tx on")
+		}
 		if !got.LoRa.UsePreset {
 			cannot = append(cannot, "the modem preset is OFF — this radio is on "+
 				"manual bandwidth/spreading-factor/coding-rate, and a peer set to a "+
@@ -582,7 +645,7 @@ func radioRegion(args []string) error {
 				"radio's packets past a direct neighbour. Give it one: --hop 3")
 		}
 		if len(cannot) > 0 {
-			fmt.Println("\n⚠  The region landed, but this radio still cannot match a peer:")
+			fmt.Println("\n⚠  The write landed, but this radio still cannot match a peer:")
 			for _, c := range cannot {
 				fmt.Println("   · " + c)
 			}
@@ -795,7 +858,7 @@ func applyChannelTo(port string, ch *meshtastic.SegmentChannel) error {
 		return errors.New("all eight channel slots are in use — free one on the " +
 			"radio first; this command never overwrites somebody's channel")
 	}
-	plan, err := meshtastic.PlanSegmentApply(ch, slot, true)
+	plan, err := meshtastic.PlanSegmentApply(cfg, ch, slot, true)
 	if err != nil {
 		radio.Close()
 		return err
@@ -832,10 +895,17 @@ func applyChannelTo(port string, ch *meshtastic.SegmentChannel) error {
 		}
 		if got.LoRa.Region != ch.Region {
 			return fmt.Errorf("region came back as %s, expected %s",
-				got.LoRa.RegionName(), meshtastic.RegionNames()[ch.Region])
+				got.LoRa.RegionName(), meshtastic.RegionName(ch.Region))
 		}
-		fmt.Printf("  ✓ channel %q at slot %d · region %s · preset %s · hop %d\n",
-			info.Name, slot, got.LoRa.RegionName(), got.LoRa.PresetName(), got.LoRa.HopLimit)
+		// Everything the write was obliged to leave alone, checked too. The
+		// region landing says the write reached the device; it says nothing
+		// about what the write took with it.
+		if err := plan.Verify(got); err != nil {
+			return err
+		}
+		fmt.Printf("  ✓ channel %q at slot %d · region %s · preset %s · hop %d · tx %s\n",
+			info.Name, slot, got.LoRa.RegionName(), got.LoRa.PresetName(),
+			got.LoRa.HopLimit, txWord(got.LoRa.TxEnabled))
 		return nil
 	}
 	return errors.New("the radio has not answered since the reboot — unplug it, " +

@@ -24,6 +24,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -63,6 +64,104 @@ type ApplyPlan struct {
 	Reboot bool
 	// Summary is what to show a person before they commit to it.
 	Summary []string
+	// expectLoRa and expectDevice are the byte-exact sub-messages this plan
+	// intends the radio to be holding afterwards — the fields it changes AND
+	// every field it is obliged to carry across untouched. Verify compares
+	// the radio's own report against them.
+	//
+	// Nil means the plan does not write that sub-message, and Verify makes no
+	// claim about it. That distinction matters: silence about a message we
+	// never wrote is honest, silence about one we did is how a muted
+	// transmitter went unnoticed.
+	expectLoRa   []byte
+	expectDevice []byte
+}
+
+// ErrConfigInvalid names the state where a radio came back holding something
+// other than what a transaction intended.
+//
+// It is a STATE, not a hiccup. The device is now in a configuration nobody
+// chose, and the honest thing to report is which field differs — not "the
+// command seemed to work", which is what `radio region` printed for nine days
+// while its own writer was switching the transmitter off.
+var ErrConfigInvalid = errors.New("radio_config_invalid")
+
+// ConfigInvalidError carries what disagreed, so a caller can name the field
+// rather than telling somebody to go and look.
+type ConfigInvalidError struct{ Mismatches []ConfigMismatch }
+
+func (e *ConfigInvalidError) Error() string {
+	if len(e.Mismatches) == 0 {
+		return ErrConfigInvalid.Error()
+	}
+	parts := make([]string, 0, len(e.Mismatches))
+	for _, m := range e.Mismatches {
+		parts = append(parts, m.String())
+	}
+	return ErrConfigInvalid.Error() + ": " + strings.Join(parts, "; ")
+}
+
+func (e *ConfigInvalidError) Unwrap() error { return ErrConfigInvalid }
+
+// Verify compares what the radio reports NOW against what the plan intended
+// to leave it holding.
+//
+// Both halves matter and neither is optional: the fields the plan CHANGED
+// prove the write took, and the fields it PRESERVED prove the write did not
+// take anything else with it. Checking only the first is exactly the mistake
+// that made `radio region` report success on a radio it had just muted.
+func (p *ApplyPlan) Verify(after NodeConfig) error {
+	var bad []ConfigMismatch
+	if p.expectLoRa != nil {
+		if after.LoRaRaw == nil {
+			return fmt.Errorf("%w: the radio did not report its LoRa settings "+
+				"back, so nothing about this write is confirmed", ErrConfigInvalid)
+		}
+		diff, err := compareConfig(p.expectLoRa, after.LoRaRaw, loraFieldNames)
+		if err != nil {
+			return err
+		}
+		bad = append(bad, diff...)
+	}
+	if p.expectDevice != nil {
+		if after.DeviceRaw == nil {
+			return fmt.Errorf("%w: the radio did not report its device settings "+
+				"back, so the rebroadcast mode is unconfirmed", ErrConfigInvalid)
+		}
+		diff, err := compareConfig(p.expectDevice, after.DeviceRaw, deviceFieldNames)
+		if err != nil {
+			return err
+		}
+		bad = append(bad, diff...)
+	}
+	if len(bad) > 0 {
+		return &ConfigInvalidError{Mismatches: bad}
+	}
+	return nil
+}
+
+// planConfigWrite patches one Config sub-message and records both the step
+// and what the result is expected to be.
+//
+// current is the byte-exact sub-message the radio reported. Without it there
+// is nothing to preserve, and a write would be a blind full replacement —
+// which is refused rather than guessed at, because the fields at risk include
+// the one that decides whether the radio transmits at all.
+func planConfigWrite(configField int, current []byte, set map[int]uint64,
+	what string) (payload, expect []byte, err error) {
+	if current == nil {
+		return nil, nil, fmt.Errorf("meshtastic: this node never reported its %s, "+
+			"so changing one setting would replace the whole message and erase "+
+			"whatever else it holds — including whether the radio may transmit. "+
+			"Re-read the radio first; if it still reports nothing, its firmware is "+
+			"too old for this to be done safely", what)
+	}
+	patched, err := patchVarints(current, set)
+	if err != nil {
+		return nil, nil, err
+	}
+	cfg := appendBytesField(nil, configField, patched)
+	return appendBytesField(nil, adminSetConfig, cfg), patched, nil
 }
 
 // PlanSegmentApply builds the writes that put a segment channel on a radio.
@@ -70,8 +169,9 @@ type ApplyPlan struct {
 // slot is the free index found by FreeChannelSlot: add-only, so a channel
 // somebody already configured is never overwritten. matchLoRa adds the region
 // and preset writes, which are only needed when the radio does not already
-// agree with the segment.
-func PlanSegmentApply(ch *SegmentChannel, slot int, matchLoRa bool) (*ApplyPlan, error) {
+// agree with the segment — and when it does, cur must carry that radio's own
+// reported LoRa settings so everything else survives the write.
+func PlanSegmentApply(cur NodeConfig, ch *SegmentChannel, slot int, matchLoRa bool) (*ApplyPlan, error) {
 	if ch == nil {
 		return nil, errors.New("meshtastic: nothing to apply")
 	}
@@ -96,18 +196,28 @@ func PlanSegmentApply(ch *SegmentChannel, slot int, matchLoRa bool) (*ApplyPlan,
 			"(slots already in use are not touched).", ch.Name, slot))
 
 	if matchLoRa {
-		lora := appendBoolField(nil, 1, true)                     // use_preset
-		lora = appendVarintField(lora, 2, uint64(ch.ModemPreset)) // modem_preset
-		lora = appendVarintField(lora, 7, uint64(ch.Region))      // region
-		lora = appendVarintField(lora, 8, uint64(ch.HopLimit))    // hop_limit
-		lora = appendBoolField(lora, 9, true)                     // tx_enabled
-		cfg := appendBytesField(nil, 6, lora)                     // Config.lora
+		// A patch, not a fresh message: this used to encode five fields and
+		// thereby zero channel_num, tx_power and the manual bandwidth /
+		// spreading-factor / coding-rate triple, along with anything a newer
+		// firmware holds that this build cannot read.
+		payload, expect, err := planConfigWrite(configLoRa, cur.LoRaRaw, map[int]uint64{
+			loraUsePreset:   1,
+			loraModemPreset: uint64(ch.ModemPreset),
+			loraRegion:      uint64(ch.Region),
+			loraHopLimit:    uint64(ch.HopLimit),
+			loraTxEnabled:   1,
+		}, "LoRa settings")
+		if err != nil {
+			return nil, err
+		}
 		p.steps = append(p.steps, applyStep{
 			what:    "set region, modem preset and hop limit",
-			payload: appendBytesField(nil, adminSetConfig, cfg),
+			payload: payload,
 		})
+		p.expectLoRa = expect
 		p.Summary = append(p.Summary, fmt.Sprintf(
-			"Set region %s, preset %s, hop limit %d.",
+			"Set region %s, preset %s, hop limit %d, and leave every other LoRa "+
+				"setting exactly as it is.",
 			enumName(regionNames, ch.Region), enumName(presetNames, ch.ModemPreset),
 			ch.HopLimit))
 	}
@@ -240,6 +350,15 @@ type LoRaSetting struct {
 	// strangers. LOCAL_ONLY keeps the mesh working for its own channels
 	// and stops carrying the neighbourhood.
 	Rebroadcast *uint32
+	// TxEnabled turns the transmitter on or off (LoRaConfig field 9).
+	//
+	// It is here because this file switched it OFF on real hardware and left
+	// it that way: set_config replaces the whole sub-message, so every write
+	// that omitted this field set it to its proto3 default, false. The patch
+	// now preserves it — but a board already muted needs a way back, and an
+	// explicit setting is the only honest one. Nothing here turns a
+	// transmitter on as a side effect of some other command.
+	TxEnabled *bool
 }
 
 // Rebroadcast modes (config.proto RebroadcastMode). Only the two a segment
@@ -259,49 +378,75 @@ const (
 // which frequencies a device transmits on, and quietly moving a preset or a
 // hop limit alongside it would be changing the radio's behaviour on the air
 // beyond what was asked.
-func PlanLoRaApply(s LoRaSetting) (*ApplyPlan, error) {
+//
+// cur is the radio's OWN last report, and it is required rather than
+// optional. "Change only what was asked" is not something this function can
+// promise on its own: the write it produces replaces a whole sub-message, so
+// every setting it does not carry across is erased on the device. The
+// promise lives in the bytes it starts from.
+func PlanLoRaApply(cur NodeConfig, s LoRaSetting) (*ApplyPlan, error) {
 	if s.Region == nil && s.ModemPreset == nil && s.HopLimit == nil &&
-		s.ChannelNum == nil && s.Rebroadcast == nil {
+		s.ChannelNum == nil && s.Rebroadcast == nil && s.TxEnabled == nil {
 		return nil, errors.New("meshtastic: nothing to set")
 	}
 	p := &ApplyPlan{Reboot: true}
-	var lora []byte
+	lora := map[int]uint64{}
 	if s.ModemPreset != nil {
-		lora = appendBoolField(lora, 1, true) // use_preset
-		lora = appendVarintField(lora, 2, uint64(*s.ModemPreset))
+		lora[loraUsePreset] = 1
+		lora[loraModemPreset] = uint64(*s.ModemPreset)
 		p.Summary = append(p.Summary, "Set modem preset "+
 			enumName(presetNames, *s.ModemPreset)+".")
 	}
 	if s.Region != nil {
-		lora = appendVarintField(lora, 7, uint64(*s.Region))
+		lora[loraRegion] = uint64(*s.Region)
 		p.Summary = append(p.Summary, "Set region "+
 			enumName(regionNames, *s.Region)+
 			" — this decides which frequencies the radio transmits on.")
 	}
 	if s.HopLimit != nil {
-		lora = appendVarintField(lora, 8, uint64(*s.HopLimit))
+		lora[loraHopLimit] = uint64(*s.HopLimit)
 		p.Summary = append(p.Summary, fmt.Sprintf("Set hop limit %d.", *s.HopLimit))
 	}
 	if s.ChannelNum != nil {
-		lora = appendVarintField(lora, 11, uint64(*s.ChannelNum))
+		lora[loraChannelNum] = uint64(*s.ChannelNum)
 		p.Summary = append(p.Summary, fmt.Sprintf(
 			"Set frequency slot %d — this moves the radio off the slot its "+
 				"primary channel's name would have chosen.", *s.ChannelNum))
 	}
+	if s.TxEnabled != nil {
+		lora[loraTxEnabled] = boolVarint(*s.TxEnabled)
+		if *s.TxEnabled {
+			p.Summary = append(p.Summary, "Enable the transmitter.")
+		} else {
+			p.Summary = append(p.Summary,
+				"DISABLE the transmitter — the radio will still receive, and "+
+					"nothing it is asked to send will leave the board.")
+		}
+	}
 	if len(lora) > 0 {
-		cfg := appendBytesField(nil, 6, lora) // Config.lora
+		payload, expect, err := planConfigWrite(configLoRa, cur.LoRaRaw, lora,
+			"LoRa settings")
+		if err != nil {
+			return nil, err
+		}
 		p.steps = append(p.steps, applyStep{
 			what:    "set LoRa configuration",
-			payload: appendBytesField(nil, adminSetConfig, cfg),
+			payload: payload,
 		})
+		p.expectLoRa = expect
 	}
 	if s.Rebroadcast != nil {
-		dev := appendVarintField(nil, 6, uint64(*s.Rebroadcast)) // rebroadcast_mode
-		cfg := appendBytesField(nil, 1, dev)                     // Config.device
+		payload, expect, err := planConfigWrite(configDevice, cur.DeviceRaw,
+			map[int]uint64{deviceRebroadcast: uint64(*s.Rebroadcast)},
+			"device settings")
+		if err != nil {
+			return nil, err
+		}
 		p.steps = append(p.steps, applyStep{
 			what:    "set rebroadcast mode",
-			payload: appendBytesField(nil, adminSetConfig, cfg),
+			payload: payload,
 		})
+		p.expectDevice = expect
 		word := "ALL (repeat everything observed)"
 		if *s.Rebroadcast == RebroadcastLocalOnly {
 			word = "LOCAL_ONLY (stop repeating other meshes' traffic)"
@@ -309,9 +454,19 @@ func PlanLoRaApply(s LoRaSetting) (*ApplyPlan, error) {
 		p.Summary = append(p.Summary, "Set rebroadcast mode "+word+".")
 	}
 	p.Summary = append(p.Summary,
+		"Leave every other setting on the radio exactly as it is — including "+
+			"whether it may transmit.")
+	p.Summary = append(p.Summary,
 		"Reboot the radio, then re-read it and check that what landed is "+
-			"what was asked for.")
+			"what was asked for, AND that nothing else moved.")
 	return p, nil
+}
+
+func boolVarint(v bool) uint64 {
+	if v {
+		return 1
+	}
+	return 0
 }
 
 // ParseRegion resolves a region NAME, and refuses one it does not know.
