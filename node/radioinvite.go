@@ -466,3 +466,44 @@ func sortByHeard(out []RadioNeighbour) {
 		}
 	}
 }
+
+// StartLineOverRadio opens a NEW space for the two of you and offers it.
+//
+// This is the shape a radio meeting actually has, and the shape the rest of
+// this project already settled on. QL-1's rule is that a link never picks a
+// space implicitly — it opens a new place — and QL-3's is that a DM is a
+// presentation mode rather than a data type: a space with one other person in
+// it renders as that person's name. Two radios that just found each other are
+// exactly that case.
+//
+// Inviting into whatever space happened to be OPEN was the wrong default. It
+// made the result depend on where somebody's cursor was, and it fell over
+// entirely when the open space was public — a public space has no epoch to
+// seal an invitation to, which is a true sentence about the wrong question.
+func (r *Runtime) StartLineOverRadio(dev id.DeviceID) (id.TerminalID, error) {
+	// Checked BEFORE a space is created, so a segment with no radio does not
+	// leave an empty room behind as the price of finding out.
+	if _, err := r.radioControl(); err != nil {
+		return id.TerminalID{}, err
+	}
+	r.radioMeetOnce()
+	r.meet.mu.Lock()
+	_, known := r.meet.neighbour[dev]
+	r.meet.mu.Unlock()
+	if !known {
+		return id.TerminalID{}, fmt.Errorf("node: no radio neighbour %s has been "+
+			"heard — they have to announce themselves before an invitation can be "+
+			"sealed to them", dev.String()[:8])
+	}
+	// Unnamed on purpose: QL-3 projects the name from who is in it, so once
+	// they accept, the row reads as their name rather than as a title
+	// somebody had to invent for a person they just met.
+	tid, err := r.CreateSpace("")
+	if err != nil {
+		return id.TerminalID{}, err
+	}
+	if err := r.InviteOverRadio(tid, dev); err != nil {
+		return id.TerminalID{}, err
+	}
+	return tid, nil
+}

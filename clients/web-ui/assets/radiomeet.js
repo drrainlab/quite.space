@@ -111,45 +111,57 @@ function rmNeighboursBlock(list) {
   if (!list.length) {
     return head + `<p class="hint">${esc(t('radio.meet.nobody'))}</p></div>`;
   }
-  // The space an invitation would be into is the one that is open. Saying so
-  // on every row is what stops somebody inviting a stranger into the wrong
-  // room and finding out afterwards.
+  // The space that is OPEN is the secondary option, never the primary one.
+  //
+  // Meeting somebody over the radio means the two of you now have a line —
+  // that is QL-1's rule (a link opens a NEW place, never one picked
+  // implicitly) and QL-3's (a space with one other person in it IS that
+  // person). Offering "whatever you happen to be looking at" made the result
+  // depend on where a cursor was, and collapsed entirely when that space was
+  // public, which has no epoch to seal an invitation to.
   const sp = spacesCache.find(s => s.id === current);
+  const canAlsoInvite = sp && !(sp.visibility && sp.visibility !== 'private');
+  const alsoName = canAlsoInvite
+    ? ((sp.title && sp.title.trim()) ? sp.title.trim() : null) : null;
+
   const rows = list.map(n => {
     const who = n.name || t('radio.meet.unnamed');
-    // The space's DISPLAY name can be a whole sentence — an unnamed space
-    // reads "waiting for someone" — and interpolating a sentence into a
-    // sentence produced "invite into waiting for someone". A title is used
-    // when there is one, and the button says plainly what it does when
-    // there is not.
-    //
-    // The label is built INSIDE the guard. Reading sp.title before checking
-    // that sp exists threw, and a throw here takes the whole list with it:
-    // with no space open the screen showed nothing at all rather than the
-    // neighbour plus a line saying to open one.
-    // A PUBLIC space cannot be offered this way, and the reason is worth
-    // saying before the press rather than as an error after it. A sealed
-    // invitation carries epoch key material; a public space has none,
-    // because its content is signed plaintext anybody with the address may
-    // read. The way in is the address, and that route wants a relay.
-    const isPublic = sp && sp.visibility && sp.visibility !== 'private';
-    let btn;
-    if (sp && isPublic) {
-      btn = `<span class="hint">${esc(t('radio.meet.public_space'))}</span>`;
-    } else if (sp) {
-      const label = (sp.title && sp.title.trim())
-        ? t('radio.meet.invite_into', { space: sp.title.trim() })
-        : t('radio.meet.invite_here');
-      btn = `<button class="btn-tinted" data-dev="${esc(n.device)}"
-          onclick="inviteOverRadio(this)">${esc(label)}</button>`;
-    } else {
-      btn = `<span class="hint">${esc(t('radio.meet.open_a_space'))}</span>`;
-    }
+    const also = canAlsoInvite
+      ? `<div class="hint"><a href="#" data-dev="${esc(n.device)}"
+          onclick="inviteOverRadio(this); return false">${
+            esc(alsoName ? t('radio.meet.also_into', { space: alsoName })
+                         : t('radio.meet.also_here'))}</a></div>`
+      : '';
     return `<div class="gw-row">
-      <span>${esc(who)} <span class="dim mono">${esc(n.device.slice(0, 8))}</span></span>
-      ${btn}</div>`;
+      <span>${esc(who)} <span class="dim mono">${esc(n.device.slice(0, 8))}</span>${also}</span>
+      <button class="btn-tinted" data-dev="${esc(n.device)}"
+        onclick="startLineOverRadio(this)">${
+          esc(t('radio.meet.start_line', { who }))}</button></div>`;
   }).join('');
   return head + `<p class="hint">${esc(t('radio.meet.heard_hint'))}</p>${rows}</div>`;
+}
+
+// The primary action: a new line, for the two of you.
+async function startLineOverRadio(btn) {
+  const info = document.getElementById('rmInfo');
+  const device = btn && btn.dataset ? btn.dataset.dev : btn;
+  if (info) info.textContent = t('radio.meet.offering');
+  if (btn && btn.disabled !== undefined) {
+    btn.disabled = true;
+    btn.textContent = t('radio.meet.offering_short');
+  }
+  try {
+    const r = await api('/api/radio/meet', {
+      method: 'POST',
+      body: JSON.stringify({ device }),
+    });
+    // The line exists here already; it becomes theirs when they accept.
+    current = r.space;
+    await refresh();
+  } catch (err) {
+    if (info) info.textContent = t('radio.meet.failed', { why: err.message });
+    if (btn && btn.disabled !== undefined) btn.disabled = false;
+  }
 }
 
 async function announceOnRadio() {

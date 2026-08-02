@@ -518,3 +518,27 @@ func (a *APIServer) handleRadioAccept(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, map[string]string{"joined": tid.String()})
 }
+
+// handleRadioMeet opens a line with a neighbour and offers it over the air.
+func (a *APIServer) handleRadioMeet(w http.ResponseWriter, r *http.Request) {
+	body, err := readBody[struct {
+		Device string `json:"device"`
+	}](r)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	dev, err := id.ParseDeviceID(body.Device)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	tid, err := a.rt.StartLineOverRadio(dev)
+	if err != nil {
+		httpErr(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, map[string]string{"space": tid.String(),
+		"note": "a new line, for the two of you. The invitation is sealed to " +
+			"their device and is on the air now; they still have to accept it."})
+}
