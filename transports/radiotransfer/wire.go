@@ -80,6 +80,20 @@ const (
 	keyBase     = 10
 	keyBitmap   = 11
 	keyReason   = 12
+	keyStream   = 13
+)
+
+// Streams separate kinds of traffic that must not be confused on one carrier.
+//
+// The sync engine's messages and a node's own control traffic — announcing a
+// device, offering an invite — travel the same radio and must not be handed
+// to each other's parsers. A stream tag is one varint, omitted at its default,
+// so ordinary sync traffic costs nothing for the distinction.
+const (
+	// StreamSync is the default: whatever the layer above hands down.
+	StreamSync uint64 = 0
+	// StreamControl is the node's own traffic about the segment itself.
+	StreamControl uint64 = 1
 )
 
 // ProtocolVersion is the grammar this build speaks. A frame announcing a
@@ -109,6 +123,11 @@ type Frame struct {
 
 	// CANCEL and REPAIR
 	Reason uint64
+
+	// Stream separates sync traffic from a node's own control traffic. It is
+	// carried on DATA and echoed nowhere else: SACK and COMMIT name a
+	// transfer, and a transfer already knows which stream it is.
+	Stream uint64
 }
 
 // DigestLen is how much of the message digest travels.
@@ -180,6 +199,9 @@ func (f *Frame) Encode(key *TransferKey) ([]byte, error) {
 		add(keyDigest, func(b []byte) []byte { return codec.AppendBytes(b, f.Digest[:]) })
 		add(keyCRC, func(b []byte) []byte { return codec.AppendUint(b, uint64(ChunkCRC(f.Chunk))) })
 		add(keyChunk, func(b []byte) []byte { return codec.AppendBytes(b, f.Chunk) })
+		if f.Stream != StreamSync {
+			add(keyStream, func(b []byte) []byte { return codec.AppendUint(b, f.Stream) })
+		}
 	case KindSACK:
 		add(keyCount, func(b []byte) []byte { return codec.AppendUint(b, f.Count) })
 		add(keyBase, func(b []byte) []byte { return codec.AppendUint(b, f.Base) })
@@ -288,6 +310,8 @@ func Decode(b []byte, key *TransferKey) (*Frame, error) {
 			}
 		case keyReason:
 			f.Reason, er = d.ReadUint()
+		case keyStream:
+			f.Stream, er = d.ReadUint()
 		default:
 			// Unknown key: skipped, so a newer sender can add one without
 			// this build refusing the frame. It is still covered by the MAC,

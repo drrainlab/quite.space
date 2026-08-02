@@ -40,6 +40,7 @@ type inbound struct {
 	count    int
 	total    int
 	digest   [DigestLen]byte
+	stream   uint64
 	chunks   map[int][]byte
 	bytes    int
 	lastSeen time.Time
@@ -75,6 +76,7 @@ func NewReceiver(lim Limits) *Receiver {
 // Delivered is a completed message, with what to say back about it.
 type Delivered struct {
 	Transfer TransferID
+	Stream   uint64
 	Message  []byte
 }
 
@@ -118,14 +120,14 @@ func (r *Receiver) Accept(peer string, f *Frame, now time.Time) (*Delivered, *Fr
 		}
 		in = &inbound{
 			id: f.Transfer, peer: peer, count: int(f.Count), total: int(f.Total),
-			digest: f.Digest, chunks: map[int][]byte{},
+			digest: f.Digest, stream: f.Stream, chunks: map[int][]byte{},
 		}
 		r.open[f.Transfer] = in
 	}
 	// A transfer's shape is fixed by its first frame. A later frame claiming
 	// a different count or digest under the same id is either a collision or
 	// somebody splicing; either way it is not part of this transfer.
-	if int(f.Count) != in.count || f.Digest != in.digest {
+	if int(f.Count) != in.count || f.Digest != in.digest || f.Stream != in.stream {
 		return nil, nil, fmt.Errorf("radiotransfer: transfer %s changed shape "+
 			"mid-flight", f.Transfer.Short())
 	}
@@ -153,7 +155,7 @@ func (r *Receiver) Accept(peer string, f *Frame, now time.Time) (*Delivered, *Fr
 	}
 	r.forget(f.Transfer)
 	r.done[f.Transfer] = now.Add(r.lim.DedupTTL)
-	return &Delivered{Transfer: f.Transfer, Message: msg},
+	return &Delivered{Transfer: f.Transfer, Stream: in.stream, Message: msg},
 		r.commitFrame(f.Transfer, in.digest), nil
 }
 

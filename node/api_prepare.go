@@ -29,6 +29,7 @@ import (
 
 	qrcode "github.com/skip2/go-qrcode"
 
+	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/transports/meshtastic"
 )
 
@@ -446,4 +447,74 @@ func (a *APIServer) handleAttachRadio(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"ok": true, "attached": target})
+}
+
+// ---- meeting over the radio (MR-1) ----
+//
+// Four routes, because a meeting on a radio segment has four moments: say who
+// I am, see who is here, offer somebody a way in, and answer an offer. None
+// of them touches a relay or the internet, which is the whole point — a LoRa
+// segment in a field has neither.
+
+func (a *APIServer) handleRadioAnnounce(w http.ResponseWriter, r *http.Request) {
+	if err := a.rt.AnnounceOnRadio(); err != nil {
+		httpErr(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, map[string]string{"announced": a.rt.DisplayName(),
+		"note": "everyone within radio range now knows this device exists and " +
+			"what it is called. That is what somebody needs in order to seal an " +
+			"invitation to it."})
+}
+
+func (a *APIServer) handleRadioNeighbours(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, map[string]any{"neighbours": a.rt.RadioNeighbours()})
+}
+
+func (a *APIServer) handleRadioInvite(w http.ResponseWriter, r *http.Request) {
+	body, err := readBody[struct {
+		Space  string `json:"space"`
+		Device string `json:"device"`
+	}](r)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	tid, err := id.ParseTerminalID(body.Space)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	dev, err := id.ParseDeviceID(body.Device)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := a.rt.InviteOverRadio(tid, dev); err != nil {
+		httpErr(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, map[string]string{"offered": body.Device,
+		"note": "the invitation is sealed to that device's key, so it is safe " +
+			"on the air: everyone in range hears bytes only they can open."})
+}
+
+func (a *APIServer) handleRadioOffers(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, map[string]any{"invitations": a.rt.RadioOffers()})
+}
+
+func (a *APIServer) handleRadioAccept(w http.ResponseWriter, r *http.Request) {
+	body, err := readBody[struct {
+		ID string `json:"id"`
+	}](r)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	tid, err := a.rt.AcceptRadioOffer(body.ID)
+	if err != nil {
+		httpErr(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, map[string]string{"joined": tid.String()})
 }

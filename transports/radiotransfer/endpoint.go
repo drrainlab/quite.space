@@ -33,9 +33,11 @@ type Endpoint struct {
 	s   *Session
 	dst RadioAddress
 
-	out    chan []byte
-	stop   chan struct{}
-	closed sync.Once
+	out       chan []byte
+	ctrl      chan []byte
+	onControl func([]byte)
+	stop      chan struct{}
+	closed    sync.Once
 
 	mu    sync.Mutex
 	inbox [][]byte
@@ -59,6 +61,10 @@ type EndpointOptions struct {
 	// Log, when set, is told about transfers that fail. Nothing here is
 	// silent about a message that did not arrive.
 	Log *log.Logger
+	// OnControl receives messages sent on the control stream. Nil means this
+	// node has no use for them, and they are dropped rather than queued —
+	// holding traffic nobody reads is a leak with a schedule.
+	OnControl func(msg []byte)
 }
 
 // Wrap turns a carrier into an Endpoint that delivers whole messages.
@@ -71,6 +77,7 @@ func Wrap(carrier RadioDatagram, key *TransferKey, o EndpointOptions) (*Endpoint
 		o.Queue = 16
 	}
 	e := &Endpoint{s: s, dst: o.Dst, out: make(chan []byte, o.Queue),
+		ctrl: make(chan []byte, o.Queue), onControl: o.OnControl,
 		stop: make(chan struct{})}
 	go e.readLoop()
 	go e.sendLoop(o.Log)
@@ -89,13 +96,54 @@ func (e *Endpoint) Send(msg []byte) error {
 		return errors.New("radiotransfer: the endpoint is closed")
 	default:
 	}
+	b := append([]byte(nil), msg...)
 	select {
-	case e.out <- append([]byte(nil), msg...):
+	case e.out <- b:
+		return nil
+	default:
+	}
+	// The queue is full, so something has to go — and it must be the OLDEST,
+	// not this one.
+	//
+	// What travels here is the sync engine's summaries, and a summary is a
+	// SNAPSHOT: a newer one describes everything an older one did and more.
+	// Refusing the newest while holding a queue of stale ones is how a link
+	// that is merely slow becomes a link that never converges — on a carrier
+	// moving one message every few seconds, the queue is always full, so the
+	// message that would have finished the job is always the one refused.
+	select {
+	case <-e.out:
+		e.mu.Lock()
+		e.dropped++
+		e.mu.Unlock()
+	default:
+	}
+	select {
+	case e.out <- b:
 		return nil
 	default:
 		e.mu.Lock()
 		e.dropped++
 		e.mu.Unlock()
+		return ErrCarrierFull
+	}
+}
+
+// SendControl queues a message on the control stream.
+//
+// Separate from Send so a node's own traffic about the segment never reaches
+// the sync engine's parser, and so a busy sync queue cannot starve an invite
+// — the two have their own queues and the worker alternates.
+func (e *Endpoint) SendControl(msg []byte) error {
+	select {
+	case <-e.stop:
+		return errors.New("radiotransfer: the endpoint is closed")
+	default:
+	}
+	select {
+	case e.ctrl <- append([]byte(nil), msg...):
+		return nil
+	default:
 		return ErrCarrierFull
 	}
 }
@@ -169,9 +217,16 @@ func (e *Endpoint) readLoop() {
 		}
 		if err == nil {
 			if got, _ := e.s.Deliver(ctx, src, raw); got != nil {
-				e.mu.Lock()
-				e.inbox = append(e.inbox, got.Message)
-				e.mu.Unlock()
+				switch got.Stream {
+				case StreamControl:
+					if e.onControl != nil {
+						e.onControl(got.Message)
+					}
+				default:
+					e.mu.Lock()
+					e.inbox = append(e.inbox, got.Message)
+					e.mu.Unlock()
+				}
 			}
 		}
 		// SACKs are pushed from here rather than from a timer of their own:
@@ -193,11 +248,28 @@ func (e *Endpoint) sendLoop(lg *log.Logger) {
 	go func() { <-e.stop; cancel() }()
 
 	for {
+		var msg []byte
+		stream := StreamSync
 		select {
 		case <-e.stop:
 			return
-		case msg := <-e.out:
-			if err := e.s.Send(ctx, e.dst, msg); err != nil {
+		// Control first when both are waiting: an invite is a few hundred
+		// bytes and somebody is standing there watching for it, while sync
+		// traffic is a background that has all day.
+		case m := <-e.ctrl:
+			msg, stream = m, StreamControl
+		default:
+			select {
+			case <-e.stop:
+				return
+			case m := <-e.ctrl:
+				msg, stream = m, StreamControl
+			case m := <-e.out:
+				msg = m
+			}
+		}
+		{
+			if err := e.s.SendOn(ctx, stream, e.dst, msg); err != nil {
 				if ctx.Err() != nil {
 					return
 				}

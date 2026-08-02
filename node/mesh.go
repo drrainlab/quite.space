@@ -167,7 +167,7 @@ func (r *Runtime) startMeshWire(target string, wire meshWire) error {
 				"shares: %w", err)
 		}
 		ep, err := radiotransfer.Wrap(meshtastic.NewDatagram(radio), key,
-			radiotransfer.EndpointOptions{})
+			radiotransfer.EndpointOptions{OnControl: r.onRadioControl})
 		if err != nil {
 			radio.Close()
 			return err

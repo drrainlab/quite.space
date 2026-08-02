@@ -32,7 +32,11 @@ type Outbound struct {
 	// transfer to a peer that has gone away ends rather than retrying until
 	// the process does.
 	round int
-	lim   Limits
+	// lastBase is how far the window had advanced when the budget was last
+	// reset, so progress can be told from repetition.
+	lastBase int
+	stream   uint64
+	lim      Limits
 }
 
 // ErrTooLarge is a message that cannot be sent within the limits.
@@ -44,6 +48,11 @@ var ErrTooLarge = errors.New("radiotransfer: the message does not fit the transf
 
 // NewOutbound cuts a message into fragments sized for the carrier.
 func NewOutbound(msg []byte, mtu int, lim Limits, key *TransferKey) (*Outbound, error) {
+	return NewOutboundOn(StreamSync, msg, mtu, lim, key)
+}
+
+// NewOutboundOn cuts a message for a named stream.
+func NewOutboundOn(stream uint64, msg []byte, mtu int, lim Limits, key *TransferKey) (*Outbound, error) {
 	lim = lim.withDefaults()
 	if err := lim.check(); err != nil {
 		return nil, err
@@ -60,7 +69,11 @@ func NewOutbound(msg []byte, mtu int, lim Limits, key *TransferKey) (*Outbound, 
 		return nil, err
 	}
 	digest := MessageDigest(msg)
-	chunkSize, err := maxChunk(mtu, id, digest, len(msg), key)
+	// The probe carries the STREAM too. A control frame is two bytes longer
+	// than a sync one, and measuring the smaller shape would put every control
+	// fragment over the MTU — on a carrier that enforces it, that reads as a
+	// busy radio rather than as a frame this build built wrong.
+	chunkSize, err := maxChunk(mtu, id, digest, len(msg), stream, key)
 	if err != nil {
 		return nil, err
 	}
@@ -71,7 +84,7 @@ func NewOutbound(msg []byte, mtu int, lim Limits, key *TransferKey) (*Outbound, 
 			"a transfer that cannot finish",
 			ErrTooLarge, len(msg), count, chunkSize, lim.MaxFragmentsPerTransfer)
 	}
-	o := &Outbound{ID: id, total: len(msg), digest: digest,
+	o := &Outbound{ID: id, total: len(msg), digest: digest, stream: stream,
 		acked: make([]bool, count), lim: lim}
 	for i := range count {
 		start := i * chunkSize
@@ -89,6 +102,7 @@ func (o *Outbound) Frame(i int) *Frame {
 		Kind: KindData, Transfer: o.ID,
 		Index: uint64(i), Count: uint64(len(o.chunks)),
 		Total: uint64(o.total), Digest: o.digest, Chunk: o.chunks[i],
+		Stream: o.stream,
 	}
 }
 
@@ -142,10 +156,23 @@ func (o *Outbound) NoteSACK(f *Frame) {
 	}
 }
 
-// NextRound advances the repair counter and reports whether there is budget
-// left. Exhausting it is a real outcome — the peer is not answering — and it
-// must be reported as such rather than retried forever.
+// NextRound spends a REPAIR from the budget, and reports whether there is any
+// left.
+//
+// A round is only spent when the window did NOT advance. Counting every
+// send-and-wait cycle instead — which is what this did first — makes the
+// budget a limit on MESSAGE LENGTH rather than on futility: a forty-fragment
+// message needs ten windows before any repair happens, so on a carrier losing
+// nothing at all it would run out and report that the peer had stopped
+// answering. Observed exactly that way, at 5% loss, 131 frames spent.
+//
+// Progress resets the budget, so the meaning stays what the error says it is:
+// the peer is not answering.
 func (o *Outbound) NextRound() bool {
+	if base := o.base(); base > o.lastBase {
+		o.lastBase, o.round = base, 0
+		return true
+	}
 	o.round++
 	return o.round <= o.lim.MaxRounds
 }
@@ -163,7 +190,7 @@ func (o *Outbound) Rounds() int { return o.round }
 // LARGEST values this transfer will actually carry, so no later fragment can
 // encode bigger than the first.
 func maxChunk(mtu int, id TransferID, digest [DigestLen]byte, total int,
-	key *TransferKey) (int, error) {
+	stream uint64, key *TransferKey) (int, error) {
 	if mtu < minFrame {
 		return 0, fmt.Errorf("radiotransfer: a carrier MTU of %d cannot hold a "+
 			"frame header; the minimum this layer can work with is %d", mtu, minFrame)
@@ -175,7 +202,7 @@ func maxChunk(mtu int, id TransferID, digest [DigestLen]byte, total int,
 			// the whole size.
 			Index: uint64(MaxFragments - 1), Count: MaxFragments,
 			Total: uint64(total), Digest: digest,
-			Chunk: make([]byte, n),
+			Chunk: make([]byte, n), Stream: stream,
 		}
 		b, err := f.Encode(key)
 		if err != nil {

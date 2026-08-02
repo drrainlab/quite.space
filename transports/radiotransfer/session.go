@@ -112,7 +112,15 @@ func (e *ErrRefusedByPeer) Error() string {
 // SACK comes back addressed, which is what keeps a group from answering all
 // at once.
 func (s *Session) Send(ctx context.Context, dst RadioAddress, msg []byte) error {
-	o, err := NewOutbound(msg, s.carrier.MTU(), s.lim, s.key)
+	return s.SendOn(ctx, StreamSync, dst, msg)
+}
+
+// SendOn delivers a message on a named stream. Control traffic — a node
+// announcing itself, offering an invite — travels the same radio as sync and
+// must not be handed to the sync engine's parser.
+func (s *Session) SendOn(ctx context.Context, stream uint64, dst RadioAddress,
+	msg []byte) error {
+	o, err := NewOutboundOn(stream, msg, s.carrier.MTU(), s.lim, s.key)
 	if err != nil {
 		return err
 	}

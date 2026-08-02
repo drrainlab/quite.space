@@ -86,7 +86,12 @@ type Runtime struct {
 	// rather than in the keystore because MR-2 replaces it with the seed
 	// carried in the ordinary Quiet invite, and persisting an interim shape
 	// is how an interim shape becomes permanent.
-	meshSeed       []byte
+	meshSeed []byte
+	// meet is what has been heard on the radio segment: neighbours who
+	// announced themselves, and invitations waiting for an answer. Memory
+	// only and bounded — this is a room somebody walked into, not a
+	// directory.
+	meet           *radioMeet
 	gateways       map[string]*GatewayPresence
 	foreignBeacons int
 	// radioProfile is what this segment's radios are expected to be set to,
