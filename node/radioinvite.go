@@ -206,6 +206,29 @@ func (r *Runtime) InviteOverRadio(tid id.TerminalID, dev id.DeviceID) error {
 			"have to announce themselves before an invite can be sealed to them",
 			dev.String()[:8])
 	}
+	// A PUBLIC space is not entered by a sealed invitation, and saying so is
+	// the difference between a person changing what they do and a person
+	// staring at "private space has no epoch yet" about a space they created
+	// as public.
+	//
+	// A sealed invite carries epoch key material, which is exactly what a
+	// public space does not have: its content is signed plaintext that
+	// anybody holding the address may read. The way in is the address, and
+	// today that route needs a relay to fetch the projection from — which is
+	// the one thing a radio segment in a field does not have. Carrying a
+	// public space over the radio alone is real work and is not pretended at
+	// here.
+	r.mu.Lock()
+	st, known := r.spaces[tid]
+	r.mu.Unlock()
+	if known && st.space.Policy().IsPublic() {
+		return fmt.Errorf("node: %q is a public space, and a public space is not "+
+			"entered by an invitation — its content is signed plaintext that "+
+			"anyone holding the address can read, so there is nothing to seal to "+
+			"one device. Meeting over the radio works for an ordinary space: make "+
+			"one, open it, and invite from there", r.spaceTitle(tid))
+	}
+
 	inviteB64, err := r.MintInvite(tid, dev, n.x25519)
 	if err != nil {
 		return err

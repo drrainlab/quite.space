@@ -31,6 +31,7 @@ const I18N = {
     'radio.meet.unnamed': 'a radio with no name',
     'radio.meet.invite_into': ({ space }) => `invite into \u201c${space}\u201d`,
     'radio.meet.invite_here': 'invite into this space',
+    'radio.meet.public_space': 'This space is public, so there is nothing to seal to one device \u2014 anyone with its address can read it. Open an ordinary space to invite somebody over the radio.',
     'radio.meet.offering_short': 'going out\u2026',
     'radio.meet.open_a_space': 'Open the space you want to invite them into first.',
     'radio.meet.announcing': 'Going out over the radio. LoRa is slow \u2014 give it half a minute, and watch \u201con the air\u201d below for movement. Everyone within range will know this device is here.',

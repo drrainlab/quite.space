@@ -127,8 +127,16 @@ function rmNeighboursBlock(list) {
     // that sp exists threw, and a throw here takes the whole list with it:
     // with no space open the screen showed nothing at all rather than the
     // neighbour plus a line saying to open one.
+    // A PUBLIC space cannot be offered this way, and the reason is worth
+    // saying before the press rather than as an error after it. A sealed
+    // invitation carries epoch key material; a public space has none,
+    // because its content is signed plaintext anybody with the address may
+    // read. The way in is the address, and that route wants a relay.
+    const isPublic = sp && sp.visibility && sp.visibility !== 'private';
     let btn;
-    if (sp) {
+    if (sp && isPublic) {
+      btn = `<span class="hint">${esc(t('radio.meet.public_space'))}</span>`;
+    } else if (sp) {
       const label = (sp.title && sp.title.trim())
         ? t('radio.meet.invite_into', { space: sp.title.trim() })
         : t('radio.meet.invite_here');
