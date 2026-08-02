@@ -19,6 +19,24 @@ const I18N = {
     'conn.details': 'Connection details',
     'conn.mesh_node': ({ node }) => `mesh · node ${node}`,
 
+    // meeting over the radio (MR-1) — no relay, no internet
+    'radio.meet.intro': 'Two radios and nobody else. Saying who you are puts this device\u2019s name and public key on the air, where everyone in range hears it \u2014 that is what somebody needs in order to seal an invitation to you. Nothing is joined until you answer it.',
+    'radio.meet.offers': 'waiting for your answer',
+    'radio.meet.offers_hint': 'Sealed to this device, so nobody else in range could open it. Accepting is what joins you \u2014 until then it has cost you nothing.',
+    'radio.meet.offer': ({ from, space }) => `${from} offers a way into ${space}`,
+    'radio.meet.accept': 'accept',
+    'radio.meet.heard': 'heard on this segment',
+    'radio.meet.heard_hint': 'Everything here is what a radio claimed about itself. An invitation is sealed to the key it announced, so somebody claiming another name receives an invitation they cannot open.',
+    'radio.meet.nobody': 'Nobody has announced themselves yet. They press \u201csay who I am\u201d on their side, and LoRa is slow \u2014 give it a few seconds.',
+    'radio.meet.unnamed': 'a radio with no name',
+    'radio.meet.invite_into': ({ space }) => `invite into ${space}`,
+    'radio.meet.open_a_space': 'Open the space you want to invite them into first.',
+    'radio.meet.announced': 'Announced. Everyone within radio range now knows this device is here.',
+    'radio.meet.offered': 'Offered. It is sealed to their device \u2014 they still have to accept it.',
+    'radio.meet.joined': 'Joined.',
+    'radio.meet.failed': ({ why }) => `Did not work: ${why}`,
+    'radio.meet.unavailable': ({ why }) => `Cannot read the segment: ${why}`,
+
     // relay topology (RR wave)
     'relay.mode.auto': 'Relays are chosen by measuring the real path from this device. The best one is used, a second is kept as a backup.',
     'relay.mode.custom': 'Only the relay you name below is used — never an official one behind your back.',

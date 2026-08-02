@@ -910,9 +910,22 @@
   <input id="meshTarget" placeholder="tcp:192.168.1.42  or  serial:/dev/tty.usbserial-0001">
   <div class="row"><button onclick="meshConnect()">connect</button>
   <button onclick="refreshGateway()">refresh</button>
+  <button class="btn-tinted" onclick="dlgMesh.close(); openRadioMeet()">meet over the radio</button>
   <button onclick="dlgMesh.close()">close</button></div>
   <p class="hint" id="meshInfo"></p>
   <div id="gwBody"></div>
+</dialog>
+
+<dialog id="dlgRadioMeet" class="sheet">
+  <h3>meet over the radio</h3>
+  <p class="hint" id="rmIntro"></p>
+  <div class="row">
+    <button onclick="announceOnRadio()">say who I am</button>
+    <button onclick="refreshRadioMeet()">refresh</button>
+    <button onclick="dlgRadioMeet.close()">close</button>
+  </div>
+  <p class="hint" id="rmInfo"></p>
+  <div id="rmBody"></div>
 </dialog>
 
 <dialog id="dlgInvite">
@@ -992,6 +1005,7 @@
 <script src="starfield.js"></script>
 <script src="audiopass.js"></script>
 <script src="gateway.js"></script>
+<script src="radiomeet.js"></script>
 <script src="navigator.js"></script>
 <script src="preview.js"></script>
 <script src="catalog.js"></script>
