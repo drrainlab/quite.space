@@ -22,6 +22,7 @@
 package node
 
 import (
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -205,7 +206,18 @@ func (r *Runtime) InviteOverRadio(tid id.TerminalID, dev id.DeviceID) error {
 			"have to announce themselves before an invite can be sealed to them",
 			dev.String()[:8])
 	}
-	invite, err := r.MintInvite(tid, dev, n.x25519)
+	inviteB64, err := r.MintInvite(tid, dev, n.x25519)
+	if err != nil {
+		return err
+	}
+	// RAW bytes on the air, not base64.
+	//
+	// MintInvite hands back a base64 string because that is what travels in a
+	// link somebody pastes. Putting it inside a BINARY message costs a third
+	// more bytes for nothing — and on this carrier bytes are frames and
+	// frames are seconds: measured, the offer was 8 frames at 2.5s apart, so
+	// the padding alone was costing about five seconds of a person's evening.
+	invite, err := base64.StdEncoding.DecodeString(inviteB64)
 	if err != nil {
 		return err
 	}
@@ -227,7 +239,7 @@ func (r *Runtime) InviteOverRadio(tid id.TerminalID, dev id.DeviceID) error {
 	b = codec.AppendUint(b, rkDevice)
 	b = codec.AppendBytes(b, dev[:])
 	b = codec.AppendUint(b, rkInvite)
-	b = codec.AppendBytes(b, []byte(invite))
+	b = codec.AppendBytes(b, invite)
 	b = codec.AppendUint(b, rkSpace)
 	b = codec.AppendBytes(b, tid[:])
 	b = codec.AppendUint(b, rkTitle)
@@ -374,7 +386,9 @@ func (r *Runtime) onRadioControl(msg []byte) {
 		key := tid.String()[:16]
 		r.meet.offers[key] = &RadioOffer{
 			ID: key, Space: tid, Title: title, From: from, Heard: time.Now(),
-			invite: string(invite),
+			// Back into the form JoinInvite reads. The saving is on the AIR,
+			// which is the only place it mattered.
+			invite: base64.StdEncoding.EncodeToString(invite),
 		}
 	}
 }

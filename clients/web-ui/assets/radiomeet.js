@@ -46,11 +46,22 @@ async function refreshRadioMeet() {
     box.innerHTML = `<p class="hint">${esc(t('radio.meet.unavailable', { why: err.message }))}</p>`;
     return;
   }
-  box.innerHTML = [
+  const html = [
     rmOffersBlock(offers.invitations || []),
     rmNeighboursBlock(near.neighbours || []),
     rmAirBlock(st && st.mesh),
   ].join('');
+  // ONLY when it changed.
+  //
+  // This redrew everything every four seconds, so a click that landed in the
+  // same instant hit a button that no longer existed — pressing "invite" and
+  // getting nothing at all. The sidebar learned this in NAV-1 and wrote it
+  // down ("a wholesale innerHTML every two seconds destroys focus, drag
+  // state, an open menu"); this screen repeated it anyway.
+  if (html !== box.dataset.sig) {
+    box.innerHTML = html;
+    box.dataset.sig = html;
+  }
 }
 
 // What the radio is actually doing.
@@ -106,11 +117,26 @@ function rmNeighboursBlock(list) {
   const sp = spacesCache.find(s => s.id === current);
   const rows = list.map(n => {
     const who = n.name || t('radio.meet.unnamed');
-    const canInvite = !!sp;
-    const btn = canInvite
-      ? `<button class="btn-tinted" onclick="inviteOverRadio('${esc(n.device)}')">${
-          esc(t('radio.meet.invite_into', { space: spaceName(sp) }))}</button>`
-      : `<span class="hint">${esc(t('radio.meet.open_a_space'))}</span>`;
+    // The space's DISPLAY name can be a whole sentence — an unnamed space
+    // reads "waiting for someone" — and interpolating a sentence into a
+    // sentence produced "invite into waiting for someone". A title is used
+    // when there is one, and the button says plainly what it does when
+    // there is not.
+    //
+    // The label is built INSIDE the guard. Reading sp.title before checking
+    // that sp exists threw, and a throw here takes the whole list with it:
+    // with no space open the screen showed nothing at all rather than the
+    // neighbour plus a line saying to open one.
+    let btn;
+    if (sp) {
+      const label = (sp.title && sp.title.trim())
+        ? t('radio.meet.invite_into', { space: sp.title.trim() })
+        : t('radio.meet.invite_here');
+      btn = `<button class="btn-tinted" data-dev="${esc(n.device)}"
+          onclick="inviteOverRadio(this)">${esc(label)}</button>`;
+    } else {
+      btn = `<span class="hint">${esc(t('radio.meet.open_a_space'))}</span>`;
+    }
     return `<div class="gw-row">
       <span>${esc(who)} <span class="dim mono">${esc(n.device.slice(0, 8))}</span></span>
       ${btn}</div>`;
@@ -133,20 +159,29 @@ async function announceOnRadio() {
   refreshRadioMeet();
 }
 
-async function inviteOverRadio(device) {
+async function inviteOverRadio(btn) {
   const info = document.getElementById('rmInfo');
+  const device = btn && btn.dataset ? btn.dataset.dev : btn;
   if (!current) {
     if (info) info.textContent = t('radio.meet.open_a_space');
     return;
+  }
+  // Say something BEFORE the request, not after. On this carrier the gap
+  // between pressing and anything visible is tens of seconds, and a button
+  // that looks inert is a button somebody presses again.
+  if (info) info.textContent = t('radio.meet.offering');
+  if (btn && btn.disabled !== undefined) {
+    btn.disabled = true;
+    btn.textContent = t('radio.meet.offering_short');
   }
   try {
     await api('/api/radio/invite', {
       method: 'POST',
       body: JSON.stringify({ space: current, device }),
     });
-    if (info) info.textContent = t('radio.meet.offering');
   } catch (err) {
     if (info) info.textContent = t('radio.meet.failed', { why: err.message });
+    if (btn && btn.disabled !== undefined) btn.disabled = false;
   }
 }
 
