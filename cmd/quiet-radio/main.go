@@ -34,6 +34,7 @@ import (
 
 const usage = `usage: quiet-radio --radio tcp:HOST[:PORT]|serial:/dev/PATH
                    [--profile FILE] [--save-profile FILE] [--raw]
+                   [--snapshot | --diff | --restore] [--store FILE]
 
   --profile FILE       check this node against a segment profile
   --save-profile FILE  capture a profile from this (correctly configured) node
@@ -42,9 +43,16 @@ const usage = `usage: quiet-radio --radio tcp:HOST[:PORT]|serial:/dev/PATH
                        pass your own channel's index instead)
   --raw                also list the message types the node sent
 
-Set one radio up by hand, capture its profile, then check the others
-against it. The channel key stays on the radios; only its fingerprint
-travels in the profile.`
+  --snapshot           record what this radio holds now, as the known-good state
+  --diff               name every setting that has moved since the snapshot
+  --restore            put the snapshot back on the radio (asks first)
+  --store FILE         where snapshots live (default ./radio-config.json)
+
+A profile says what a SEGMENT requires and travels between people. A
+snapshot says what ONE DEVICE held at one moment and belongs to that
+device — it is what answers "what was this set to before?", which is the
+first question after a write goes wrong and the one nothing could answer
+when a bad write muted two boards. Neither file contains a channel key.`
 
 func main() {
 	os.Exit(run(os.Args[1:]))
@@ -70,6 +78,10 @@ func run(args []string) int {
 
 	if flags["raw"] != "" {
 		printRaw(cfg)
+	}
+
+	if flags["snapshot"] != "" || flags["diff"] != "" || flags["restore"] != "" {
+		return runSnapshot(flags, radio, cfg)
 	}
 
 	if path := flags["save-profile"]; path != "" {

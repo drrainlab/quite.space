@@ -453,9 +453,17 @@ func PlanLoRaApply(cur NodeConfig, s LoRaSetting) (*ApplyPlan, error) {
 		}
 		p.Summary = append(p.Summary, "Set rebroadcast mode "+word+".")
 	}
-	p.Summary = append(p.Summary,
-		"Leave every other setting on the radio exactly as it is — including "+
-			"whether it may transmit.")
+	// Named separately from the general promise, because "leave everything
+	// else alone, including whether it may transmit" reads as a contradiction
+	// on the one command whose whole subject is the transmitter.
+	if s.TxEnabled == nil {
+		p.Summary = append(p.Summary,
+			"Leave every other setting on the radio exactly as it is — including "+
+				"whether it may transmit.")
+	} else {
+		p.Summary = append(p.Summary,
+			"Leave every other setting on the radio exactly as it is.")
+	}
 	p.Summary = append(p.Summary,
 		"Reboot the radio, then re-read it and check that what landed is "+
 			"what was asked for, AND that nothing else moved.")

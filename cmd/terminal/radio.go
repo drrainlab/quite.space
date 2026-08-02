@@ -81,6 +81,12 @@ A radio transmits nothing until its region is set.`)
 type radioCandidate struct {
 	probe meshtastic.PortProbe
 	boot  meshtastic.BootROM
+	// bootErr is why the boot probe learned nothing, when one was asked for.
+	// Somebody who typed --identify has agreed to reset a board in exchange
+	// for an answer; giving them back the same line they had before the reset
+	// spends the reset for nothing.
+	bootErr error
+	probed  bool
 }
 
 // findCandidates scans the ports, optionally pulsing reset on the silent ones
@@ -94,12 +100,29 @@ type radioCandidate struct {
 // REBOOTED a working radio. A command that reports what is attached must not
 // be able to interrupt what is attached.
 func findCandidates(withBootProbe bool) []radioCandidate {
+	return findCandidatesOn("", withBootProbe)
+}
+
+// findCandidatesOn narrows the scan to one port when asked.
+//
+// This matters only for the boot probe, and it matters a lot: identifying a
+// chip requires RESETTING it, and a bench usually holds one dead board and
+// one working one. Without a way to name the port, the only diagnostic for
+// the dead board reboots the good one too — which is how a debugging session
+// ends up with two broken radios instead of one.
+func findCandidatesOn(only string, withBootProbe bool) []radioCandidate {
 	var out []radioCandidate
 	for _, p := range meshtastic.ScanSerial(1500 * time.Millisecond) {
+		if only != "" && p.Port != only {
+			continue
+		}
 		c := radioCandidate{probe: p}
 		if withBootProbe && p.Kind == meshtastic.ProbeSilent {
+			c.probed = true
 			if b, err := meshtastic.ProbeBootROM(p.Port, 3*time.Second); err == nil {
 				c.boot = b
+			} else {
+				c.bootErr = err
 			}
 		}
 		out = append(out, c)
@@ -130,6 +153,13 @@ func (c radioCandidate) describe() string {
 		if c.boot.Chip != "" || c.boot.Spoke() {
 			return "did not answer as Meshtastic · " + describeBoot(c.boot)
 		}
+		if c.bootErr != nil {
+			return "did not answer as Meshtastic · and did not answer a reset " +
+				"either: " + c.bootErr.Error()
+		}
+		if c.probed {
+			return "did not answer as Meshtastic · said nothing on reset either"
+		}
 		return "did not answer as Meshtastic"
 	default:
 		return c.probe.Detail
@@ -148,15 +178,30 @@ func describeBoot(b meshtastic.BootROM) string {
 }
 
 func radioList(args []string) error {
-	identify := false
-	for _, a := range args {
-		if a == "--identify" {
+	identify, only := false, ""
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--identify":
 			identify = true
+		case "--port":
+			if i+1 < len(args) {
+				only = args[i+1]
+				i++
+			}
 		}
 	}
-	fmt.Println("looking at every serial port…")
-	cands := findCandidates(identify)
+	if only != "" {
+		fmt.Printf("looking at %s…\n", only)
+	} else {
+		fmt.Println("looking at every serial port…")
+	}
+	cands := findCandidatesOn(only, identify)
 	if len(cands) == 0 {
+		if only != "" {
+			fmt.Printf("no serial port called %s — check the name with "+
+				"`terminal radio list`\n", only)
+			return nil
+		}
 		fmt.Println("no serial ports at all — is the board plugged in?")
 		return nil
 	}
@@ -165,8 +210,9 @@ func radioList(args []string) error {
 	}
 	if !identify {
 		fmt.Println("\nA port with no Meshtastic on it can also name its chip, but only\n" +
-			"by being reset: `terminal radio list --identify`. That REBOOTS whatever\n" +
-			"is on the port, so it is not what a plain listing does.")
+			"by being reset: `terminal radio list --identify --port /dev/…`. That\n" +
+			"REBOOTS whatever is on the port, so it is not what a plain listing does —\n" +
+			"and name the port, or every other radio on the bench is reset with it.")
 	}
 	return nil
 }
@@ -654,8 +700,15 @@ func radioRegion(args []string) error {
 				"   and neither hears anything — with no error on either side.")
 			return nil
 		}
-		fmt.Println("\n✓ region set. Next: give the radio a channel of its own — " +
-			"docs/RADIO_SETUP.md, шаг 3")
+		// Report what this run actually did. "✓ region set" was printed even
+		// when no region was asked for, which is the same class of untruth as
+		// the write it used to sit on top of.
+		if region != "" {
+			fmt.Println("\n✓ region set. Next: give the radio a channel of its own — " +
+				"docs/RADIO_SETUP.md, шаг 3")
+		} else {
+			fmt.Println("\n✓ written, and everything else came back unchanged.")
+		}
 		return nil
 	}
 	return errors.New("the radio has not answered since the reboot. Unplug it, " +
