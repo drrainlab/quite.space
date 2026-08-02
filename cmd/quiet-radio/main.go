@@ -46,7 +46,9 @@ const usage = `usage: quiet-radio --radio tcp:HOST[:PORT]|serial:/dev/PATH
   --snapshot           record what this radio holds now, as the known-good state
   --diff               name every setting that has moved since the snapshot
   --restore            put the snapshot back on the radio (asks first)
-  --store FILE         where snapshots live (default ./radio-config.json)
+  --store FILE         where snapshots live (default: the data directory,
+                       not the current one — a recovery record must be
+                       findable from wherever you happen to be standing)
 
 A profile says what a SEGMENT requires and travels between people. A
 snapshot says what ONE DEVICE held at one moment and belongs to that
@@ -151,13 +153,7 @@ func run(args []string) int {
 }
 
 func dial(target string) (*meshtastic.Radio, error) {
-	switch {
-	case strings.HasPrefix(target, "tcp:"):
-		return meshtastic.DialTCP(strings.TrimPrefix(target, "tcp:"))
-	case strings.HasPrefix(target, "serial:"):
-		return meshtastic.OpenSerial(strings.TrimPrefix(target, "serial:"))
-	}
-	return nil, fmt.Errorf("radio target must be tcp:HOST[:PORT] or serial:/dev/PATH, got %q", target)
+	return meshtastic.Open(target, meshtastic.Options{})
 }
 
 // printRaw lists the FromRadio members this build skipped. The protobuf

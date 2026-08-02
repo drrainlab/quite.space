@@ -8,10 +8,28 @@ import (
 	"strings"
 	"time"
 
+	"github.com/drrainlab/quiet_places/node"
 	"github.com/drrainlab/quiet_places/transports/meshtastic"
 )
 
-const defaultStore = "radio-config.json"
+// storePath is where snapshots live when nobody says otherwise.
+//
+// Deliberately NOT the current directory. A record kept for the day something
+// goes wrong is worthless if it is only findable from the directory it
+// happened to be taken in — and the day it is needed is exactly the day
+// somebody is running the command from somewhere else, in a hurry.
+func storePath() string {
+	dir := node.DefaultDataDir()
+	if dir == "" {
+		return "radio-config.json"
+	}
+	// Best effort: if the directory cannot be made, fall back to the current
+	// one rather than refusing to record anything at all.
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "radio-config.json"
+	}
+	return filepath.Join(dir, "radio-config.json")
+}
 
 // runSnapshot handles --snapshot, --diff and --restore.
 //
@@ -22,7 +40,7 @@ func runSnapshot(flags map[string]string, radio *meshtastic.Radio,
 	cfg meshtastic.NodeConfig) int {
 	path := flags["store"]
 	if path == "" || path == "1" {
-		path = defaultStore
+		path = storePath()
 	}
 	file, err := loadStore(path)
 	if err != nil {

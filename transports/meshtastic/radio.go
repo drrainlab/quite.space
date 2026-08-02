@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -136,6 +137,24 @@ type Radio struct {
 
 // DialTCP connects to a WiFi/ethernet node or meshtasticd (port 4403).
 func DialTCP(addr string) (*Radio, error) { return dialTCP(addr, Options{}) }
+
+// Open connects to a radio named the way the rest of this project names one:
+// "serial:/dev/cu.usbserial-0001" or "tcp:host[:port]".
+//
+// The dispatch existed in two commands already, each with its own copy of the
+// prefixes and its own error sentence, and neither could pass Options — so a
+// tool that needed a channel index or want_ack had to reach for the
+// supervised link and its reconnect machinery whether it wanted them or not.
+func Open(target string, opts Options) (*Radio, error) {
+	switch {
+	case strings.HasPrefix(target, "serial:"):
+		return openSerial(strings.TrimPrefix(target, "serial:"), opts)
+	case strings.HasPrefix(target, "tcp:"):
+		return dialTCP(strings.TrimPrefix(target, "tcp:"), opts)
+	}
+	return nil, fmt.Errorf("meshtastic: a radio is named serial:/dev/PATH or "+
+		"tcp:HOST[:PORT], got %q", target)
+}
 
 func dialTCP(addr string, opts Options) (*Radio, error) {
 	if _, _, err := net.SplitHostPort(addr); err != nil {
