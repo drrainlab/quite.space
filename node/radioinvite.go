@@ -128,12 +128,16 @@ type radioMeet struct {
 	mu        sync.Mutex
 	neighbour map[id.DeviceID]*RadioNeighbour
 	offers    map[string]*RadioOffer
+	// lines remembers which space was opened for which neighbour, so a second
+	// press re-sends that invitation instead of opening another room.
+	lines map[id.DeviceID]id.TerminalID
 }
 
 func newRadioMeet() *radioMeet {
 	return &radioMeet{
 		neighbour: map[id.DeviceID]*RadioNeighbour{},
 		offers:    map[string]*RadioOffer{},
+		lines:     map[id.DeviceID]id.TerminalID{},
 	}
 }
 
@@ -495,6 +499,26 @@ func (r *Runtime) StartLineOverRadio(dev id.DeviceID) (id.TerminalID, error) {
 			"heard — they have to announce themselves before an invitation can be "+
 			"sealed to them", dev.String()[:8])
 	}
+	// A SECOND press re-offers the SAME line rather than minting another.
+	//
+	// On this carrier an offer takes tens of seconds and there is nothing to
+	// see while it travels, so a person presses again — and the first version
+	// answered that by creating a second empty room, then a third. Observed:
+	// six spaces, five of them empty, none of them wanted. Pressing again
+	// means "I do not think they got it", and the honest answer to that is to
+	// send it again.
+	r.meet.mu.Lock()
+	tid, existing := r.meet.lines[dev]
+	r.meet.mu.Unlock()
+	if existing {
+		r.mu.Lock()
+		_, alive := r.spaces[tid]
+		r.mu.Unlock()
+		if alive {
+			return tid, r.InviteOverRadio(tid, dev)
+		}
+	}
+
 	// Unnamed on purpose: QL-3 projects the name from who is in it, so once
 	// they accept, the row reads as their name rather than as a title
 	// somebody had to invent for a person they just met.
@@ -505,5 +529,8 @@ func (r *Runtime) StartLineOverRadio(dev id.DeviceID) (id.TerminalID, error) {
 	if err := r.InviteOverRadio(tid, dev); err != nil {
 		return id.TerminalID{}, err
 	}
+	r.meet.mu.Lock()
+	r.meet.lines[dev] = tid
+	r.meet.mu.Unlock()
 	return tid, nil
 }
