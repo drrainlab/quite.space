@@ -7,11 +7,13 @@ package node
 
 import (
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/drrainlab/quiet_places/transports"
 	"github.com/drrainlab/quiet_places/transports/compact"
 	"github.com/drrainlab/quiet_places/transports/meshtastic"
+	"github.com/drrainlab/quiet_places/transports/radiotransfer"
 )
 
 // Mesh cadence; vars so tests can accelerate them.
@@ -54,12 +56,28 @@ func (r *Runtime) StartMeshtasticTable(target string) error {
 	return r.startMeshWire(target, wireTable)
 }
 
+// StartMeshtasticTransfer attaches a radio with the Quiet Radio Transfer
+// layer (MR-1): whole messages, fragmented to the carrier's real MTU,
+// selectively repaired when a fragment goes missing.
+//
+// seed is the SEGMENT SEED. Every radio in a segment must hold the same one,
+// because the frame-authentication key is derived from it — a peer with a
+// different seed is not a peer, and its frames will not verify. Carrying it
+// inside the ordinary Quiet invite is MR-2's job; until then it is passed in.
+func (r *Runtime) StartMeshtasticTransfer(target string, seed []byte) error {
+	r.mu.Lock()
+	r.meshSeed = append([]byte(nil), seed...)
+	r.mu.Unlock()
+	return r.startMeshWire(target, wireTransfer)
+}
+
 type meshWire int
 
 const (
 	wireRaw meshWire = iota
 	wireCompact
 	wireTable
+	wireTransfer
 )
 
 // How hard the FIRST attach tries before reporting a radio absent. Only the
@@ -95,6 +113,7 @@ func (r *Runtime) startMeshWire(target string, wire meshWire) error {
 	r.mu.Lock()
 	channel := r.meshChannel
 	reliable := r.meshReliable
+	seed := r.meshSeed
 	r.mu.Unlock()
 
 	// A device that opened and said NOTHING is not the same as one that is
@@ -135,10 +154,45 @@ func (r *Runtime) startMeshWire(target string, wire meshWire) error {
 		lk = compactLink{Endpoint: compact.Wrap(radio), radio: radio}
 	case wireTable:
 		lk = compactLink{Endpoint: compact.WrapStateful(radio), radio: radio}
+	case wireTransfer:
+		// want_ack is redundant under Radio Transfer and costs real airtime:
+		// the firmware's implicit acknowledgement only says a NEIGHBOUR
+		// rebroadcast the packet, while a SACK says which fragments the PEER
+		// actually holds. Paying for both buys nothing and spends the band
+		// this layer exists to use carefully.
+		key, err := radiotransfer.DeriveTransferKey(seed, radiotransfer.KDFVersion)
+		if err != nil {
+			radio.Close()
+			return fmt.Errorf("radio transfer needs a segment seed every radio "+
+				"shares: %w", err)
+		}
+		ep, err := radiotransfer.Wrap(meshtastic.NewDatagram(radio), key,
+			radiotransfer.EndpointOptions{})
+		if err != nil {
+			radio.Close()
+			return err
+		}
+		lk = transferLink{Endpoint: ep, radio: radio, transfer: ep}
 	}
 	r.adoptLink(lk, meshPumpEvery, meshSummaryEvery, "radio")
 	return nil
 }
+
+// transferLink pairs the Radio Transfer endpoint with the link's liveness,
+// for the same reason compactLink does: liveness is a property of the
+// SUPERVISED link, not of whichever device is behind it at this instant.
+type transferLink struct {
+	transports.Endpoint
+	radio    *meshtastic.Supervised
+	transfer *radiotransfer.Endpoint
+}
+
+func (l transferLink) Closed() (bool, error) { return l.radio.Closed() }
+func (l transferLink) Close() error          { l.transfer.Close(); return l.radio.Close() }
+
+// TransferStats reports whole-message delivery, which is the number this
+// layer exists to move — packet counts belong to the carrier below it.
+func (l transferLink) TransferStats() radiotransfer.Stats { return l.transfer.Stats() }
 
 // compactLink pairs the compact-wrapped endpoint with the link's liveness.
 // Liveness comes from the SUPERVISED link, not from whichever device is

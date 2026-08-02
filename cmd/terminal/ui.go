@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,6 +14,7 @@ import (
 	"github.com/drrainlab/quiet_places/node"
 	"github.com/drrainlab/quiet_places/transports/lan"
 	"github.com/drrainlab/quiet_places/transports/meshtastic"
+	"github.com/drrainlab/quiet_places/transports/radiotransfer"
 )
 
 // runUI starts the node runtime, the local API, and (unless --no-browser)
@@ -85,19 +88,44 @@ func runUI(args []string, withUI bool) error {
 	if target := flags["mesh"]; target != "" {
 		start := rt.StartMeshtastic
 		wire := "raw"
-		switch flags["compact"] {
-		case "table", "2b":
-			start = rt.StartMeshtasticTable
-			wire = "compact+idtable"
-		case "", "0":
-			// raw default for real radios
-			if flags["compact"] != "" {
+		// --mesh-seed opts this radio into the Quiet Radio Transfer layer:
+		// whole messages, fragmented to the carrier's real MTU, and repaired
+		// when a fragment goes missing.
+		//
+		// The seed is what makes a segment a segment — every radio derives
+		// the same frame-authentication key from it, so a peer with a
+		// different seed is not a peer. It is a flag rather than something
+		// carried in the invite because MR-2 is what puts it in the invite,
+		// and shipping an interim shape into the keystore is how an interim
+		// shape becomes permanent.
+		if seed := flags["mesh-seed"]; seed != "" {
+			if len(seed) < radiotransfer.MinSeedLen {
+				return fmt.Errorf("--mesh-seed must be at least %d characters: a "+
+					"shorter one derives a key that looks exactly as strong as a "+
+					"real one", radiotransfer.MinSeedLen)
+			}
+			sum := sha256.Sum256([]byte("quiet-radio-segment:" + seed))
+			start = func(t string) error { return rt.StartMeshtasticTransfer(t, sum[:]) }
+			wire = "radio-transfer"
+		}
+		// compact is decided AFTER the transfer layer, and only where the
+		// transfer layer was not asked for: two fragmentation layers on one
+		// carrier would each repair what the other broke up.
+		if wire != "radio-transfer" {
+			switch flags["compact"] {
+			case "", "0":
+				// raw default for real radios
+			case "table", "2b":
+				start = rt.StartMeshtasticTable
+				wire = "compact+idtable"
+			default:
 				start = rt.StartMeshtasticCompact
 				wire = "compact"
 			}
-		default:
-			start = rt.StartMeshtasticCompact
-			wire = "compact"
+		} else if c := flags["compact"]; c != "" && c != "0" {
+			return errors.New("--compact and --mesh-seed are two fragmentation " +
+				"layers on one radio: the transfer layer already cuts messages to " +
+				"the carrier's MTU and repairs what goes missing. Pick one")
 		}
 		if err := start(target); err != nil {
 			fmt.Println("mesh: connection failed:", err)

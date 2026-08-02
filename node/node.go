@@ -80,7 +80,13 @@ type Runtime struct {
 	meshChannel uint32
 	// meshReliable asks the radio for retransmission (want_ack). Set true
 	// in Open; see SetMeshReliable for the measurement behind that.
-	meshReliable   bool
+	meshReliable bool
+	// meshSeed is the SEGMENT SEED for Radio Transfer: every radio in a
+	// segment derives the same frame-authentication key from it. Held here
+	// rather than in the keystore because MR-2 replaces it with the seed
+	// carried in the ordinary Quiet invite, and persisting an interim shape
+	// is how an interim shape becomes permanent.
+	meshSeed       []byte
 	gateways       map[string]*GatewayPresence
 	foreignBeacons int
 	// radioProfile is what this segment's radios are expected to be set to,

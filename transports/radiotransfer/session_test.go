@@ -99,29 +99,32 @@ func (l *lossyAir) fail(format string, args ...any) {
 	panic("lossyAir: " + fmt.Sprintf(format, args...))
 }
 
-// peer runs a receiving session: it takes frames off the air, folds them in,
-// and pushes SACKs when they come due.
-func peer(t *testing.T, ctx context.Context, s *Session, air *lossyAir,
-	out chan<- []byte) {
-	t.Helper()
+// drive runs the ONE read loop a session is entitled to.
+//
+// Every session needs one, including a sending one: acknowledgements for our
+// own transfer arrive on the same receiver as somebody else's data, and
+// Session deliberately does not read the carrier itself — two consumers of
+// one Receive steal each other's frames, and the loss looks exactly like the
+// carrier losing them.
+func drive(ctx context.Context, s *Session, air *lossyAir, out chan<- []byte) {
 	go func() {
 		for {
-			rctx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+			rctx, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
 			_, raw, err := air.Receive(rctx)
 			cancel()
 			if ctx.Err() != nil {
 				return
 			}
 			if err == nil {
-				got, _ := s.Deliver(ctx, RadioAddress("sender"), raw)
-				if got != nil {
+				got, _ := s.Deliver(ctx, RadioAddress("peer"), raw)
+				if got != nil && out != nil {
 					select {
 					case out <- got.Message:
 					default:
 					}
 				}
 			}
-			s.PumpSACKs(ctx, RadioAddress("sender"))
+			s.PumpSACKs(ctx, RadioAddress("peer"))
 		}
 	}()
 }
@@ -155,7 +158,8 @@ func TestAMessageSurvivesACarrierThatLosesFrames(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	arrived := make(chan []byte, 8)
-	peer(t, ctx, receiver, peerAir, arrived)
+	drive(ctx, receiver, peerAir, arrived)
+	drive(ctx, sender, air, nil)
 
 	msg := bytes.Repeat([]byte("a quiet event travelling by radio. "), 40) // ~1.4 KiB
 	if err := sender.Send(ctx, RadioAddress("peer"), msg); err != nil {
@@ -386,7 +390,8 @@ func TestAFullCarrierDelaysAFrameRatherThanDroppingIt(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	arrived := make(chan []byte, 4)
-	peer(t, ctx, receiver, peerAir, arrived)
+	drive(ctx, receiver, peerAir, arrived)
+	drive(ctx, sender, air, nil)
 
 	msg := bytes.Repeat([]byte("paced. "), 100)
 	if err := sender.Send(ctx, RadioAddress("peer"), msg); err != nil {
