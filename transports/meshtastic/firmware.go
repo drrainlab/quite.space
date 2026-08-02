@@ -83,6 +83,38 @@ func (p FlashPlan) TotalBytes() int64 {
 
 const releaseAPI = "https://api.github.com/repos/meshtastic/firmware/releases/latest"
 
+// ReleaseByTag builds a release from a tag that is already known, without
+// asking the API which one is current. The variant manifest is fetched from
+// the release ASSETS, which are plain downloads and not rate-limited.
+func ReleaseByTag(client *http.Client, tag string) (FirmwareRelease, error) {
+	if client == nil {
+		client = &http.Client{Timeout: 60 * time.Second}
+	}
+	version := strings.TrimPrefix(tag, "v")
+	url := fmt.Sprintf(
+		"https://github.com/meshtastic/firmware/releases/download/%s/firmware-%s.json",
+		tag, version)
+	resp, err := client.Get(url)
+	if err != nil {
+		return FirmwareRelease{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return FirmwareRelease{}, fmt.Errorf(
+			"no variant manifest for release %q (%s) — check the tag", tag, resp.Status)
+	}
+	var man struct {
+		Version string           `json:"version"`
+		Targets []FirmwareTarget `json:"targets"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&man); err != nil {
+		return FirmwareRelease{}, err
+	}
+	out := FirmwareRelease{Version: man.Version, Tag: tag, Targets: man.Targets}
+	sort.Slice(out.Targets, func(i, j int) bool { return out.Targets[i].Board < out.Targets[j].Board })
+	return out, nil
+}
+
 // LatestRelease asks GitHub for the newest published firmware and reads the
 // variant list out of it.
 func LatestRelease(client *http.Client) (FirmwareRelease, error) {
@@ -95,6 +127,24 @@ func LatestRelease(client *http.Client) (FirmwareRelease, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		// Anonymous GitHub API calls are rate-limited per address, and
+		// preparing several boards in a sitting is exactly how a person
+		// reaches the limit. "403 Forbidden" tells them nothing they can act
+		// on; the reset time and the way around it do.
+		if resp.StatusCode == http.StatusForbidden &&
+			resp.Header.Get("X-RateLimit-Remaining") == "0" {
+			wait := ""
+			if ts, err := strconv.ParseInt(resp.Header.Get("X-RateLimit-Reset"), 10, 64); err == nil {
+				if d := time.Until(time.Unix(ts, 0)); d > 0 {
+					wait = fmt.Sprintf(" It resets in about %d minutes.", int(d.Minutes())+1)
+				}
+			}
+			return FirmwareRelease{}, fmt.Errorf(
+				"GitHub is rate-limiting anonymous requests, so the current "+
+					"firmware version cannot be looked up.%s\nTo carry on now, "+
+					"name the release yourself: --release <tag>, e.g. the one this "+
+					"machine last used.", wait)
+		}
 		return FirmwareRelease{}, fmt.Errorf("meshtastic release api: %s", resp.Status)
 	}
 	var rel struct {

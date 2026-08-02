@@ -27,13 +27,25 @@ import (
 	"github.com/drrainlab/quiet_places/transports/meshtastic"
 )
 
+// stdinReader is shared by every prompt in this file, and must be.
+//
+// A bufio.Reader reads AHEAD: it pulls whatever is available into its buffer,
+// not just the line it was asked for. So a second reader built over os.Stdin
+// starts at whatever the first one did not consume — which is nothing, the
+// bytes are in the first one's buffer. With a person typing, each answer
+// arrives after its prompt and the loss is invisible; with input piped in,
+// every answer after the first disappears and the command reports a refusal
+// nobody made.
+var stdinReader = bufio.NewReader(os.Stdin)
+
 func runRadio(args []string) error {
 	if len(args) < 1 {
 		return errors.New(`usage:
   terminal radio list [--identify]       what is on each serial port
                                          (--identify also RESETS silent ports
                                           to read the chip off their boot ROM)
-  terminal radio flash [--port PATH]     install Meshtastic on a board
+  terminal radio flash [--port PATH] [--release TAG]
+                                         install Meshtastic on a board
   terminal radio region [NAME]           set the region (no name = show the choices)
                                          [--preset NAME] [--hop N] [--port PATH]
 
@@ -154,11 +166,19 @@ func radioList(args []string) error {
 }
 
 func radioFlash(args []string) error {
-	port := ""
+	port, release := "", ""
 	for i := 0; i < len(args); i++ {
-		if args[i] == "--port" && i+1 < len(args) {
-			port = args[i+1]
-			i++
+		switch args[i] {
+		case "--port":
+			if i+1 < len(args) {
+				port = args[i+1]
+				i++
+			}
+		case "--release":
+			if i+1 < len(args) {
+				release = args[i+1]
+				i++
+			}
 		}
 	}
 
@@ -214,12 +234,18 @@ func radioFlash(args []string) error {
 		}
 	}
 
-	fmt.Println("\nasking Meshtastic which firmware is current…")
-	rel, err := meshtastic.LatestRelease(nil)
+	var rel meshtastic.FirmwareRelease
+	if release != "" {
+		fmt.Printf("\nusing the release you named: %s\n", release)
+		rel, err = meshtastic.ReleaseByTag(nil, release)
+	} else {
+		fmt.Println("\nasking Meshtastic which firmware is current…")
+		rel, err = meshtastic.LatestRelease(nil)
+	}
 	if err != nil {
 		return err
 	}
-	fmt.Printf("latest release: %s\n", rel.Version)
+	fmt.Printf("release: %s\n", rel.Version)
 
 	targets := rel.TargetsForChip(chip)
 	if chip != "" {
@@ -310,7 +336,7 @@ func chooseTarget(targets []meshtastic.FirmwareTarget) (meshtastic.FirmwareTarge
 	if len(targets) == 0 {
 		return meshtastic.FirmwareTarget{}, errors.New("this release has no firmware for that chip")
 	}
-	in := bufio.NewReader(os.Stdin)
+	in := stdinReader
 	shown := targets
 	for {
 		fmt.Println()
@@ -350,7 +376,7 @@ func chooseTarget(targets []meshtastic.FirmwareTarget) (meshtastic.FirmwareTarge
 }
 
 func askNumber(prompt string, max int) (int, error) {
-	in := bufio.NewReader(os.Stdin)
+	in := stdinReader
 	for {
 		fmt.Print(prompt)
 		line, err := in.ReadString('\n')
@@ -366,7 +392,7 @@ func askNumber(prompt string, max int) (int, error) {
 }
 
 func askYes(prompt string) bool {
-	in := bufio.NewReader(os.Stdin)
+	in := stdinReader
 	fmt.Print(prompt + " type yes to continue: ")
 	line, err := in.ReadString('\n')
 	if err != nil {
