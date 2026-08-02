@@ -60,6 +60,7 @@ type Session struct {
 	completed int
 	givenUp   int
 	framesOut int
+	framesIn  int
 	refused   int
 }
 
@@ -136,7 +137,15 @@ func (s *Session) SendOn(ctx context.Context, stream uint64, dst RadioAddress,
 	}()
 
 	for {
-		for _, i := range o.Pending() {
+		for k, i := range o.Pending() {
+			if k > 0 {
+				// The gap between frames is what makes a window arrive. See
+				// Limits.FrameGap: back-to-back frames measured ~9% delivery
+				// on the same boards where paced ones measured 96-99%.
+				if err := sleep(ctx, s.lim.FrameGap); err != nil {
+					return err
+				}
+			}
 			if err := s.sendFrame(ctx, dst, o.Frame(i)); err != nil {
 				return err
 			}
@@ -198,33 +207,49 @@ func (s *Session) awaitCommit(ctx context.Context, o *Outbound, ch <-chan *Frame
 
 // sendFrame offers one frame, waiting out a carrier that is full.
 //
-// Credit is consulted as a HINT and the result of Send is what decides. A
-// carrier can fill between the two — another goroutine, the firmware's own
-// traffic, a neighbour's rebroadcast — so treating Credit as a reservation
-// would be trusting a snapshot of somebody else's queue.
+// IT ALWAYS ATTEMPTS THE SEND. Credit is used only to decide how long to wait
+// after a REFUSAL — which is the contract this layer states in datagram.go
+// and, in the first version, did not keep: it gated the send on Credit and
+// never offered a frame the carrier claimed no room for.
+//
+// That wedged on real hardware. Meshtastic's credit is the firmware's last
+// queue report minus what we have handed over since, so it decays with every
+// send and only recovers when the firmware reports again. When those reports
+// stopped, credit sat at zero, no frame was ever offered, nothing was refused
+// — and a transfer showed 45 frames out, 0 completed, 0 given up, frozen for
+// minutes with no error anywhere. A stall with a clean-looking counter is
+// exactly the failure this project keeps paying for.
+//
+// A carrier that genuinely has no room says so by REFUSING, and a refusal is
+// counted, paced and retried. Deciding not to ask is how you never find out.
 func (s *Session) sendFrame(ctx context.Context, dst RadioAddress, f *Frame) error {
 	b, err := f.Encode(s.key)
 	if err != nil {
 		return err
 	}
+	// Bounded, so a carrier that refuses forever ends the transfer with an
+	// error rather than holding the queue behind it for the life of the
+	// process.
+	deadline := time.Now().Add(s.lim.AckTimeout * time.Duration(s.lim.MaxRounds))
 	for {
-		c := s.carrier.Credit()
-		if c.Allows(1) {
-			err := s.carrier.Send(ctx, dst, b)
-			if err == nil {
-				s.mu.Lock()
-				s.framesOut++
-				s.mu.Unlock()
-				return nil
-			}
-			if !errors.Is(err, ErrCarrierFull) {
-				return err
-			}
+		err := s.carrier.Send(ctx, dst, b)
+		if err == nil {
 			s.mu.Lock()
-			s.refused++
+			s.framesOut++
 			s.mu.Unlock()
+			return nil
 		}
-		if err := sleep(ctx, pace(c, s.lim.SendFloor)); err != nil {
+		if !errors.Is(err, ErrCarrierFull) {
+			return err
+		}
+		s.mu.Lock()
+		s.refused++
+		s.mu.Unlock()
+		if time.Now().After(deadline) {
+			return fmt.Errorf("%w: the carrier refused every frame for %s",
+				ErrCarrierFull, s.lim.AckTimeout*time.Duration(s.lim.MaxRounds))
+		}
+		if err := sleep(ctx, pace(s.carrier.Credit(), s.lim.SendFloor)); err != nil {
 			return err
 		}
 	}
@@ -241,6 +266,9 @@ func (s *Session) Deliver(ctx context.Context, src RadioAddress, raw []byte) (*D
 	if err != nil {
 		return nil, nil
 	}
+	s.mu.Lock()
+	s.framesIn++
+	s.mu.Unlock()
 	// A control frame for a transfer WE are sending goes to that Send.
 	if f.Kind != KindData {
 		s.mu.Lock()
@@ -303,6 +331,14 @@ type Stats struct {
 	GaveUp    int
 	FramesOut int
 	Refused   int
+	// FramesIn counts authentic frames from the segment, and Inbound the
+	// transfers part-assembled here right now. Without them a stalled
+	// transfer cannot be told from a deaf one — the sender's counters look
+	// identical either way, which is the ambiguity this whole layer exists
+	// to remove.
+	FramesIn    int
+	Inbound     int
+	InboundHave int
 }
 
 // CompleteTransferRate is the headline. Packet delivery is a property of the
@@ -318,8 +354,10 @@ func (st Stats) CompleteTransferRate() float64 {
 func (s *Session) Stats() Stats {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	n, b := s.rx.Inflight()
 	return Stats{Attempted: s.attempted, Completed: s.completed,
-		GaveUp: s.givenUp, FramesOut: s.framesOut, Refused: s.refused}
+		GaveUp: s.givenUp, FramesOut: s.framesOut, Refused: s.refused,
+		FramesIn: s.framesIn, Inbound: n, InboundHave: b}
 }
 
 // sleep waits, or gives up when the caller does.

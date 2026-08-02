@@ -188,7 +188,17 @@ type transferLink struct {
 }
 
 func (l transferLink) Closed() (bool, error) { return l.radio.Closed() }
-func (l transferLink) Close() error          { l.transfer.Close(); return l.radio.Close() }
+
+// SendControl is forwarded EXPLICITLY, not inherited.
+//
+// transferLink embeds transports.Endpoint — an INTERFACE — so only that
+// interface's own methods are promoted. SendControl is not one of them, so
+// the control channel compiled, ran, and reported "no radio is attached with
+// the transfer layer" on a node whose banner said radio-transfer. Found by
+// running it against two real boards; a type assertion that silently does not
+// match is invisible until something asks.
+func (l transferLink) SendControl(msg []byte) error { return l.transfer.SendControl(msg) }
+func (l transferLink) Close() error                 { l.transfer.Close(); return l.radio.Close() }
 
 // TransferStats reports whole-message delivery, which is the number this
 // layer exists to move — packet counts belong to the carrier below it.
@@ -237,6 +247,13 @@ type MeshStatus struct {
 	// because "which channel am I actually on?" must never be a question
 	// someone answers by guessing.
 	Channel uint32
+
+	// Transfer is whole-MESSAGE delivery, which is the number this project
+	// spent nine days unable to see. Everything above counts packets, and a
+	// packet count cannot tell a carrier problem from a reassembly one.
+	// Present only on a link running the transfer layer.
+	Transfer      *radiotransfer.Stats
+	TransferQueue [3]int // waiting, dropped for want of room, failed outright
 }
 
 // Mesh reports radio state.
@@ -250,24 +267,38 @@ func (r *Runtime) Mesh() MeshStatus {
 	s := radio.Status()
 	acked, gaveUp, outstanding := radio.Delivery()
 	qFree, qMax, refused, qKnown := radio.QueueState()
+	var transfer *radiotransfer.Stats
+	var tq [3]int
+	r.mu.Lock()
+	for _, l := range r.links {
+		if tl, ok := l.c.(transferLink); ok {
+			st := tl.TransferStats()
+			transfer = &st
+			w, d, f := tl.transfer.Queued()
+			tq = [3]int{w, d, f}
+		}
+	}
+	r.mu.Unlock()
 	return MeshStatus{
-		Acked:        acked,
-		GaveUp:       gaveUp,
-		Outstanding:  outstanding,
-		QueueFree:    qFree,
-		QueueMax:     qMax,
-		Refused:      refused,
-		QueueKnown:   qKnown,
-		Channel:      radio.Channel(),
-		Connected:    s.Connected,
-		NodeNum:      s.NodeNum,
-		TX:           s.TX,
-		RX:           s.RX,
-		Err:          s.Err,
-		Reconnecting: s.Reconnecting,
-		Attempts:     s.Attempts,
-		Reconnects:   s.Reconnects,
-		NextRetryIn:  s.NextRetryIn,
+		Transfer:      transfer,
+		TransferQueue: tq,
+		Acked:         acked,
+		GaveUp:        gaveUp,
+		Outstanding:   outstanding,
+		QueueFree:     qFree,
+		QueueMax:      qMax,
+		Refused:       refused,
+		QueueKnown:    qKnown,
+		Channel:       radio.Channel(),
+		Connected:     s.Connected,
+		NodeNum:       s.NodeNum,
+		TX:            s.TX,
+		RX:            s.RX,
+		Err:           s.Err,
+		Reconnecting:  s.Reconnecting,
+		Attempts:      s.Attempts,
+		Reconnects:    s.Reconnects,
+		NextRetryIn:   s.NextRetryIn,
 	}
 }
 

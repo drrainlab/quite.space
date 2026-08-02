@@ -260,10 +260,11 @@ type statusResp struct {
 		Outstanding int `json:"outstanding"`
 		// The radio's own queue, and how many packets it REFUSED. A refusal
 		// never reached the air however healthy tx looked.
-		QueueFree  int  `json:"queue_free"`
-		QueueMax   int  `json:"queue_max"`
-		Refused    int  `json:"refused"`
-		QueueKnown bool `json:"queue_known"`
+		QueueFree  int            `json:"queue_free"`
+		QueueMax   int            `json:"queue_max"`
+		Refused    int            `json:"refused"`
+		QueueKnown bool           `json:"queue_known"`
+		Transfer   map[string]any `json:"transfer,omitempty"`
 	} `json:"mesh"`
 }
 
@@ -312,6 +313,24 @@ func (a *APIServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 	resp.Mesh.Acked, resp.Mesh.GaveUp, resp.Mesh.Outstanding = m.Acked, m.GaveUp, m.Outstanding
 	resp.Mesh.QueueFree, resp.Mesh.QueueMax = m.QueueFree, m.QueueMax
 	resp.Mesh.Refused, resp.Mesh.QueueKnown = m.Refused, m.QueueKnown
+	// Whole-message delivery. Everything above counts PACKETS, and a packet
+	// count cannot tell a carrier problem from a reassembly one — which is
+	// what nine days of measurement proved the expensive way.
+	if m.Transfer != nil {
+		resp.Mesh.Transfer = map[string]any{
+			"attempted":   m.Transfer.Attempted,
+			"completed":   m.Transfer.Completed,
+			"gaveUp":      m.Transfer.GaveUp,
+			"framesOut":   m.Transfer.FramesOut,
+			"refused":     m.Transfer.Refused,
+			"framesIn":    m.Transfer.FramesIn,
+			"inbound":     m.Transfer.Inbound,
+			"inboundHave": m.Transfer.InboundHave,
+			"queued":      m.TransferQueue[0],
+			"dropped":     m.TransferQueue[1],
+			"failed":      m.TransferQueue[2],
+		}
+	}
 	writeJSON(w, resp)
 }
 

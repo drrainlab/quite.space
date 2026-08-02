@@ -121,7 +121,7 @@ func (p *ApplyPlan) Verify(after NodeConfig) error {
 		if err != nil {
 			return err
 		}
-		bad = append(bad, diff...)
+		bad = append(bad, dropDerived(diff, p.expectLoRa)...)
 	}
 	if p.expectDevice != nil {
 		if after.DeviceRaw == nil {
@@ -138,6 +138,37 @@ func (p *ApplyPlan) Verify(after NodeConfig) error {
 		return &ConfigInvalidError{Mismatches: bad}
 	}
 	return nil
+}
+
+// dropDerived removes disagreements about fields the DEVICE computes rather
+// than stores.
+//
+// When use_preset is on, bandwidth, spreading factor and coding rate are
+// outputs of the modem preset, not independent settings: the firmware
+// recomputes them whenever the preset changes and ignores whatever was
+// written. Carrying the old values across is still right — they are what the
+// radio holds if the preset is ever switched off — but DEMANDING they come
+// back unchanged is not, and the demand is what fails.
+//
+// Found on hardware, and only there: switching a board from MEDIUM_FAST back
+// to LONG_FAST reported "spread_factor: asked for 9, radio holds 11". The
+// radio was correct and the verification was wrong.
+func dropDerived(diff []ConfigMismatch, expect []byte) []ConfigMismatch {
+	l, ok := decodeLoRaConfig(expect)
+	if !ok || !l.UsePreset {
+		return diff // nothing is derived while the PHY is set by hand
+	}
+	derived := map[int]bool{
+		loraBandwidth: true, loraSpreadFactor: true, loraCodingRate: true,
+	}
+	out := diff[:0]
+	for _, m := range diff {
+		if derived[m.Field] {
+			continue
+		}
+		out = append(out, m)
+	}
+	return out
 }
 
 // planConfigWrite patches one Config sub-message and records both the step

@@ -22,6 +22,8 @@
 package node
 
 import (
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -72,21 +74,51 @@ const (
 // the invite safe is that it is sealed TO that key: an impostor who claims
 // somebody else's name receives an invite they cannot open.
 type RadioNeighbour struct {
-	Device id.DeviceID `json:"device"`
+	Device id.DeviceID `json:"-"`
 	Name   string      `json:"name"`
 	Heard  time.Time   `json:"heard"`
 	x25519 [32]byte
+}
+
+// MarshalJSON writes the device id as HEX.
+//
+// id.DeviceID is [32]byte, and Go marshals an array as a list of numbers. The
+// screen then showed a row of integers, and the invite it posted back carried
+// that list where the node expects the hex string ParseDeviceID reads — so
+// the button could never have worked. Found by running two nodes over a real
+// radio; both sides compiled and neither was wrong on its own.
+func (n RadioNeighbour) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Device string    `json:"device"`
+		Name   string    `json:"name"`
+		Heard  time.Time `json:"heard"`
+		// FULL hex, not String(). String() is a DISPLAY form — "device:"
+		// plus a truncated digest — and feeding it back to ParseDeviceID
+		// fails on the colon. The screen posts this value straight back, so
+		// the two have to be the same alphabet.
+	}{hex.EncodeToString(n.Device[:]), n.Name, n.Heard})
 }
 
 // RadioOffer is an invite that arrived over the air and is waiting for an
 // answer.
 type RadioOffer struct {
 	ID     string        `json:"id"`
-	Space  id.TerminalID `json:"space"`
+	Space  id.TerminalID `json:"-"`
 	Title  string        `json:"title"`
 	From   string        `json:"from"`
 	Heard  time.Time     `json:"heard"`
 	invite string
+}
+
+// MarshalJSON writes the space id as hex, for the same reason as above.
+func (o RadioOffer) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		ID    string    `json:"id"`
+		Space string    `json:"space"`
+		Title string    `json:"title"`
+		From  string    `json:"from"`
+		Heard time.Time `json:"heard"`
+	}{o.ID, hex.EncodeToString(o.Space[:]), o.Title, o.From, o.Heard})
 }
 
 // radioMeet holds what has been heard on the segment. It is memory-only and

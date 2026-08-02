@@ -102,7 +102,7 @@ func TestTwoPeopleTalkOverALossyRadioSegment(t *testing.T) {
 	aAir, bAir := newSegment(200, 0.2, 99)
 	lim := radiotransfer.Limits{Window: 4, MaxRounds: 30,
 		AckTimeout: 300 * time.Millisecond, SACKDelay: 10 * time.Millisecond,
-		SendFloor: 5 * time.Millisecond}
+		SendFloor: 5 * time.Millisecond, FrameGap: time.Millisecond}
 
 	aEP, err := radiotransfer.Wrap(aAir, key, radiotransfer.EndpointOptions{
 		Options: radiotransfer.Options{Limits: lim}})
@@ -170,7 +170,7 @@ func TestARadioWithAnotherSeedIsNotAPeer(t *testing.T) {
 	aAir, bAir := newSegment(200, 0, 5) // a perfect carrier: only the key differs
 	lim := radiotransfer.Limits{Window: 4, MaxRounds: 2,
 		AckTimeout: 100 * time.Millisecond, SACKDelay: 5 * time.Millisecond,
-		SendFloor: 5 * time.Millisecond}
+		SendFloor: 5 * time.Millisecond, FrameGap: time.Millisecond}
 
 	aEP, _ := radiotransfer.Wrap(aAir, ourKey, radiotransfer.EndpointOptions{
 		Options: radiotransfer.Options{Limits: lim}})
@@ -250,7 +250,7 @@ func TestTwoPeopleMeetOverTheRadioWithNoRelay(t *testing.T) {
 	aAir, bAir := newSegment(200, 0.05, 4242)
 	lim := radiotransfer.Limits{Window: 4, MaxRounds: 30,
 		AckTimeout: 300 * time.Millisecond, SACKDelay: 10 * time.Millisecond,
-		SendFloor: 5 * time.Millisecond}
+		SendFloor: 5 * time.Millisecond, FrameGap: time.Millisecond}
 
 	aEP, err := radiotransfer.Wrap(aAir, key, radiotransfer.EndpointOptions{
 		Options: radiotransfer.Options{Limits: lim}, OnControl: alice.onRadioControl})

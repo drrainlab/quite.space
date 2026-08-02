@@ -59,6 +59,17 @@ type Limits struct {
 	// SendFloor is the shortest wait before offering a frame again to a
 	// carrier that said it was full and gave no RetryAfter of its own.
 	SendFloor time.Duration
+	// FrameGap is the pause between consecutive DATA frames of one window.
+	//
+	// Measured, not theorised. On the real boards, single frames spaced
+	// three seconds apart arrived 96-99% of the time; the same frames
+	// offered back-to-back arrived about 9% of the time — the firmware
+	// queued all of them happily (queue 14/16 free, refused 0) and the far
+	// radio simply did not hear most of what went on the air in a burst.
+	// Bursts of fragments are precisely what the original nine-day failure
+	// was made of, and a repair layer that reproduces the burst reproduces
+	// the failure with better bookkeeping.
+	FrameGap time.Duration
 }
 
 // DefaultLimits are sized for the carrier this was measured on: LoRa
@@ -83,10 +94,13 @@ func DefaultLimits() Limits {
 		Window:    8,
 		MaxRounds: 6,
 
-		SACKDelay:  1500 * time.Millisecond,
-		AckTimeout: 20 * time.Second,
+		SACKDelay: 1500 * time.Millisecond,
+		// Must exceed Window×FrameGap, or the sender times out while its own
+		// window is still leaving the antenna.
+		AckTimeout: 45 * time.Second,
 		DedupTTL:   10 * time.Minute,
 		SendFloor:  500 * time.Millisecond,
+		FrameGap:   2500 * time.Millisecond,
 	}
 }
 
@@ -127,6 +141,11 @@ func (l Limits) withDefaults() Limits {
 	}
 	if l.SendFloor <= 0 {
 		l.SendFloor = d.SendFloor
+	}
+	if l.FrameGap < 0 {
+		l.FrameGap = 0
+	} else if l.FrameGap == 0 {
+		l.FrameGap = d.FrameGap
 	}
 	// A caller who lowered the fragment cap and said nothing about the window
 	// meant a smaller transfer, not an incoherent budget. Clamping here is

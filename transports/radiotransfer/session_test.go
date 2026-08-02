@@ -143,7 +143,7 @@ func TestAMessageSurvivesACarrierThatLosesFrames(t *testing.T) {
 	const loss = 0.2
 	key := testKey(t)
 	lim := Limits{Window: 4, MaxRounds: 20, AckTimeout: 400 * time.Millisecond,
-		SACKDelay: 10 * time.Millisecond, SendFloor: time.Millisecond}
+		SACKDelay: 10 * time.Millisecond, SendFloor: time.Millisecond, FrameGap: time.Millisecond}
 
 	air, peerAir := newAir(200, loss, 42)
 	sender, err := NewSession(air, key, Options{Limits: lim})
@@ -381,7 +381,7 @@ func TestARedeliveryIsAnsweredButNotDeliveredTwice(t *testing.T) {
 func TestAFullCarrierDelaysAFrameRatherThanDroppingIt(t *testing.T) {
 	key := testKey(t)
 	lim := Limits{Window: 4, AckTimeout: 2 * time.Second,
-		SACKDelay: 10 * time.Millisecond, SendFloor: time.Millisecond}
+		SACKDelay: 10 * time.Millisecond, SendFloor: time.Millisecond, FrameGap: time.Millisecond}
 	air, peerAir := newAir(200, 0, 7)
 	air.full = 3 // every third offer is refused
 
@@ -416,7 +416,7 @@ func TestAFullCarrierDelaysAFrameRatherThanDroppingIt(t *testing.T) {
 func TestAPeerThatStopsAnsweringIsReportedAsSuch(t *testing.T) {
 	key := testKey(t)
 	lim := Limits{Window: 4, MaxRounds: 2, AckTimeout: 50 * time.Millisecond,
-		SendFloor: time.Millisecond}
+		SendFloor: time.Millisecond, FrameGap: time.Millisecond}
 	air, _ := newAir(200, 0, 3) // nobody is listening on the other side
 
 	sender, _ := NewSession(air, key, Options{Limits: lim})

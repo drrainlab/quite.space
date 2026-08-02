@@ -337,3 +337,46 @@ func asConfigInvalid(err error, out **ConfigInvalidError) bool {
 	}
 	return false
 }
+
+// Some fields are DERIVED, and demanding they come back unchanged is the
+// verification being wrong rather than the radio.
+//
+// With use_preset on, bandwidth, spreading factor and coding rate are outputs
+// of the modem preset: the firmware recomputes them whenever the preset
+// changes and ignores what was written. Found on hardware — switching a board
+// from MEDIUM_FAST back to LONG_FAST reported "spread_factor: asked for 9,
+// radio holds 11", and the radio was right.
+func TestTheRadioMayRecomputeWhatThePresetGoverns(t *testing.T) {
+	// A board on MEDIUM_FAST: the preset is on, and the PHY fields it
+	// implies are stored alongside it.
+	cur := appendVarintField(nil, loraUsePreset, 1)
+	cur = appendVarintField(cur, loraModemPreset, 4) // MEDIUM_FAST
+	cur = appendVarintField(cur, loraSpreadFactor, 9)
+	cur = appendVarintField(cur, loraRegion, uint64(regionRU))
+	cur = appendVarintField(cur, loraTxEnabled, 1)
+
+	long := presetLongFast
+	plan, err := PlanLoRaApply(NodeConfig{LoRaRaw: cur}, LoRaSetting{ModemPreset: &long})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// What the radio comes back with: the new preset, and a spreading factor
+	// IT chose.
+	after := appendVarintField(nil, loraUsePreset, 1)
+	after = appendVarintField(after, loraSpreadFactor, 11)
+	after = appendVarintField(after, loraRegion, uint64(regionRU))
+	after = appendVarintField(after, loraTxEnabled, 1)
+
+	if err := plan.Verify(NodeConfig{LoRaRaw: after}); err != nil {
+		t.Fatalf("a field the preset governs was reported as a failed write: %v", err)
+	}
+
+	// And the exemption is NARROW: something the preset does not govern is
+	// still a real mismatch.
+	muted := appendVarintField(nil, loraUsePreset, 1)
+	muted = appendVarintField(muted, loraSpreadFactor, 11)
+	muted = appendVarintField(muted, loraRegion, uint64(regionRU))
+	if err := plan.Verify(NodeConfig{LoRaRaw: muted}); err == nil {
+		t.Fatal("tx_enabled vanished and the derived-field exemption swallowed it")
+	}
+}
