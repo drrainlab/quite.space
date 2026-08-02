@@ -379,3 +379,47 @@ func TestWithoutReliabilityNothingIsReported(t *testing.T) {
 			acked, gaveUp, outstanding)
 	}
 }
+
+// The two ways a segment leaves a crowded band without moving.
+//
+// The frequency slot is normally a hash of the PRIMARY channel's NAME, and
+// every secondary channel rides the primary's frequency. So a segment that
+// keeps the stock public primary transmits on exactly the frequency its
+// neighbours use, however private its own channel is. Setting the slot
+// explicitly is the way out; refusing to repeat foreign traffic is the way
+// to stop spending airtime on it.
+func TestASegmentCanLeaveACrowdedBandWithoutMoving(t *testing.T) {
+	slot := uint32(3)
+	mode := RebroadcastLocalOnly
+	plan, err := PlanLoRaApply(LoRaSetting{ChannelNum: &slot, Rebroadcast: &mode})
+	if err != nil {
+		t.Fatal(err)
+	}
+	steps := strings.Join(plan.Steps(), " | ")
+	if !strings.Contains(steps, "LoRa configuration") {
+		t.Fatalf("the frequency slot was not written: %s", steps)
+	}
+	if !strings.Contains(steps, "rebroadcast") {
+		t.Fatalf("the rebroadcast mode was not written: %s", steps)
+	}
+	joined := strings.Join(plan.Summary, " ")
+	if !strings.Contains(joined, "slot 3") || !strings.Contains(joined, "LOCAL_ONLY") {
+		t.Fatalf("the summary does not say what will change: %q", joined)
+	}
+}
+
+// Asking for only the rebroadcast mode must not smuggle in an empty LoRa
+// write — a config message with no fields is a change nobody asked for.
+func TestRebroadcastAloneWritesOnlyTheDeviceConfig(t *testing.T) {
+	mode := RebroadcastLocalOnly
+	plan, err := PlanLoRaApply(LoRaSetting{Rebroadcast: &mode})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Steps()) != 1 {
+		t.Fatalf("steps = %v, want just the rebroadcast write", plan.Steps())
+	}
+	if strings.Contains(plan.Steps()[0], "LoRa") {
+		t.Fatal("an empty LoRa configuration was written alongside")
+	}
+}

@@ -48,6 +48,12 @@ func runRadio(args []string) error {
                                          install Meshtastic on a board
   terminal radio region [NAME]           set the region (no name = show the choices)
                                          [--preset NAME] [--hop N] [--port PATH]
+                                         [--slot N]  pick the frequency slot rather
+                                            than letting the primary channel's name
+                                            hash choose it — how a segment leaves a
+                                            crowded frequency without moving
+                                         [--quiet-neighbours]  stop repeating other
+                                            meshes' traffic (rebroadcast LOCAL_ONLY)
 
   terminal radio channel <name> --region NAME [--preset N] [--hop N]
                 [--port PATH …]          mint ONE shared channel and write it,
@@ -411,9 +417,17 @@ func askYes(prompt string) bool {
 // (see ParseRegion: writing UNSET by accident stops the radio transmitting
 // altogether, which is the worst possible way to mistype something).
 func radioRegion(args []string) error {
-	var port, region, preset, hop string
+	var port, region, preset, hop, slot string
+	quiet := false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
+		case "--slot":
+			if i+1 < len(args) {
+				slot = args[i+1]
+				i++
+			}
+		case "--quiet-neighbours":
+			quiet = true
 		case "--port":
 			if i+1 < len(args) {
 				port = args[i+1]
@@ -476,6 +490,18 @@ func radioRegion(args []string) error {
 		return err
 	}
 	set.Region = &r
+	if slot != "" {
+		n, err := strconv.ParseUint(slot, 10, 32)
+		if err != nil || n == 0 {
+			return fmt.Errorf("--slot must be a frequency slot number from 1 up, got %q", slot)
+		}
+		v := uint32(n)
+		set.ChannelNum = &v
+	}
+	if quiet {
+		v := meshtastic.RebroadcastLocalOnly
+		set.Rebroadcast = &v
+	}
 	if preset != "" {
 		p, err := meshtastic.ParsePreset(preset)
 		if err != nil {

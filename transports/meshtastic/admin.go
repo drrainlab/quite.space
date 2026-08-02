@@ -223,7 +223,32 @@ type LoRaSetting struct {
 	Region      *uint32
 	ModemPreset *uint32
 	HopLimit    *uint32
+	// ChannelNum picks the frequency SLOT explicitly (LoRaConfig field 11:
+	// "A channel number between 1 and NUM_CHANNELS. If ZERO then use the
+	// old channel name hash-based algorithm").
+	//
+	// This is how a segment gets off a busy frequency without moving. By
+	// default the slot is a hash of the PRIMARY channel's name, and every
+	// secondary channel rides the primary's frequency — so a segment that
+	// keeps the stock public primary transmits on precisely the frequency
+	// its neighbours are using, however private its own channel is.
+	ChannelNum *uint32
+	// Rebroadcast decides whether this radio repeats other people's
+	// traffic (DeviceConfig field 6). The default is ALL — "rebroadcast
+	// any observed message ... or from another mesh with the same lora
+	// params" — which on a busy band spends a segment's airtime relaying
+	// strangers. LOCAL_ONLY keeps the mesh working for its own channels
+	// and stops carrying the neighbourhood.
+	Rebroadcast *uint32
 }
+
+// Rebroadcast modes (config.proto RebroadcastMode). Only the two a segment
+// realistically chooses between are named; the rest are passed as numbers
+// by whoever needs them.
+const (
+	RebroadcastAll       uint32 = 0
+	RebroadcastLocalOnly uint32 = 2
+)
 
 // PlanLoRaApply builds the writes for the LoRa settings alone.
 //
@@ -235,7 +260,8 @@ type LoRaSetting struct {
 // hop limit alongside it would be changing the radio's behaviour on the air
 // beyond what was asked.
 func PlanLoRaApply(s LoRaSetting) (*ApplyPlan, error) {
-	if s.Region == nil && s.ModemPreset == nil && s.HopLimit == nil {
+	if s.Region == nil && s.ModemPreset == nil && s.HopLimit == nil &&
+		s.ChannelNum == nil && s.Rebroadcast == nil {
 		return nil, errors.New("meshtastic: nothing to set")
 	}
 	p := &ApplyPlan{Reboot: true}
@@ -256,11 +282,32 @@ func PlanLoRaApply(s LoRaSetting) (*ApplyPlan, error) {
 		lora = appendVarintField(lora, 8, uint64(*s.HopLimit))
 		p.Summary = append(p.Summary, fmt.Sprintf("Set hop limit %d.", *s.HopLimit))
 	}
-	cfg := appendBytesField(nil, 6, lora) // Config.lora
-	p.steps = append(p.steps, applyStep{
-		what:    "set LoRa configuration",
-		payload: appendBytesField(nil, adminSetConfig, cfg),
-	})
+	if s.ChannelNum != nil {
+		lora = appendVarintField(lora, 11, uint64(*s.ChannelNum))
+		p.Summary = append(p.Summary, fmt.Sprintf(
+			"Set frequency slot %d — this moves the radio off the slot its "+
+				"primary channel's name would have chosen.", *s.ChannelNum))
+	}
+	if len(lora) > 0 {
+		cfg := appendBytesField(nil, 6, lora) // Config.lora
+		p.steps = append(p.steps, applyStep{
+			what:    "set LoRa configuration",
+			payload: appendBytesField(nil, adminSetConfig, cfg),
+		})
+	}
+	if s.Rebroadcast != nil {
+		dev := appendVarintField(nil, 6, uint64(*s.Rebroadcast)) // rebroadcast_mode
+		cfg := appendBytesField(nil, 1, dev)                     // Config.device
+		p.steps = append(p.steps, applyStep{
+			what:    "set rebroadcast mode",
+			payload: appendBytesField(nil, adminSetConfig, cfg),
+		})
+		word := "ALL (repeat everything observed)"
+		if *s.Rebroadcast == RebroadcastLocalOnly {
+			word = "LOCAL_ONLY (stop repeating other meshes' traffic)"
+		}
+		p.Summary = append(p.Summary, "Set rebroadcast mode "+word+".")
+	}
 	p.Summary = append(p.Summary,
 		"Reboot the radio, then re-read it and check that what landed is "+
 			"what was asked for.")
