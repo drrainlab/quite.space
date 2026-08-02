@@ -321,3 +321,61 @@ func TestRetriesAreNotAnAcknowledgement(t *testing.T) {
 			"acknowledgement, so claiming one would be a delivery we did not see", got)
 	}
 }
+
+// The firmware's verdict on our packets must be read, and must be read as
+// OURS. On a shared channel most Routing packets are about somebody else's
+// traffic, and counting those would turn a neighbour's failures into ours.
+func TestOnlyOurOwnPacketsFateIsCounted(t *testing.T) {
+	r := &Radio{opts: Options{Reliable: true}.withDefaults()}
+	r.mu.Lock()
+	r.rememberSent(0x1111)
+	r.rememberSent(0x2222)
+	r.mu.Unlock()
+
+	ack := func(id uint32, code uint64) *RxPacket {
+		return &RxPacket{Portnum: PortRoutingApp, RequestID: id,
+			Payload: []byte{0x18, byte(code)}} // field 3, varint
+	}
+	r.noteRouting(ack(0x1111, RoutingNone))
+	r.noteRouting(ack(0x2222, RoutingMaxRetransmit))
+	r.noteRouting(ack(0x9999, RoutingNone)) // a stranger's packet
+
+	acked, gaveUp, outstanding := r.Delivery()
+	if acked != 1 || gaveUp != 1 {
+		t.Fatalf("acked=%d gaveUp=%d, want 1 and 1", acked, gaveUp)
+	}
+	if outstanding != 0 {
+		t.Fatalf("outstanding=%d, want 0 — both of ours were answered", outstanding)
+	}
+	// The stranger's ack must not have been counted as our success.
+	if acked > 1 {
+		t.Fatal("a packet we never sent was counted as ours")
+	}
+}
+
+// A route request is not an outcome, and must not be read as one.
+func TestARouteRequestIsNotAVerdict(t *testing.T) {
+	r := &Radio{opts: Options{Reliable: true}.withDefaults()}
+	r.mu.Lock()
+	r.rememberSent(0x33)
+	r.mu.Unlock()
+	// Routing{route_request=1}, no error_reason at all.
+	r.noteRouting(&RxPacket{Portnum: PortRoutingApp, RequestID: 0x33,
+		Payload: []byte{0x0a, 0x00}})
+	acked, gaveUp, outstanding := r.Delivery()
+	if acked != 0 || gaveUp != 0 {
+		t.Fatalf("a route request was scored as a verdict: acked=%d gaveUp=%d", acked, gaveUp)
+	}
+	if outstanding != 1 {
+		t.Fatalf("outstanding=%d, want 1 — the packet is still unanswered", outstanding)
+	}
+}
+
+// Nothing is claimed when nothing was asked.
+func TestWithoutReliabilityNothingIsReported(t *testing.T) {
+	r := &Radio{opts: Options{}.withDefaults()}
+	if acked, gaveUp, outstanding := r.Delivery(); acked|gaveUp|outstanding != 0 {
+		t.Fatalf("delivery counters moved with want_ack off: %d %d %d",
+			acked, gaveUp, outstanding)
+	}
+}

@@ -308,6 +308,28 @@ func (s *Supervised) Credit() transports.Credit {
 	return r.Credit()
 }
 
+// Delivery forwards the live radio's reliable-send outcomes.
+func (s *Supervised) Delivery() (acked, gaveUp, outstanding int) {
+	s.mu.Lock()
+	r := s.radio
+	s.mu.Unlock()
+	if r == nil {
+		return 0, 0, 0
+	}
+	return r.Delivery()
+}
+
+// QueueState forwards the live radio's own view of its outgoing queue.
+func (s *Supervised) QueueState() (free, maxlen, refused int, known bool) {
+	s.mu.Lock()
+	r := s.radio
+	s.mu.Unlock()
+	if r == nil {
+		return 0, 0, 0, false
+	}
+	return r.QueueState()
+}
+
 func (s *Supervised) Capabilities() transports.Capabilities {
 	return transports.Capabilities{
 		MaxPayload: s.opts.withDefaults().MaxPayload,

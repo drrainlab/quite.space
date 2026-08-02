@@ -119,6 +119,18 @@ type Radio struct {
 	// difference — the report ages the moment we send against it.
 	queue    *QueueStatus
 	inFlight int
+	// sentIDs remembers the ids of packets we asked to be delivered
+	// reliably, so a Routing report can be matched to OUR packet rather
+	// than to somebody else's traffic on the same channel. Bounded: the
+	// firmware answers within its retry window or not at all.
+	sentIDs  map[uint32]struct{}
+	sentRing []uint32
+	// txAcked and txGaveUp are the outcome of reliable sends, as the
+	// FIRMWARE reported them. Until these existed, retransmission was
+	// invisible: tx counted what we wrote, and whether the radio then
+	// tried once or five times or gave up was not observable at all.
+	txAcked  int
+	txGaveUp int
 	cfg      NodeConfig
 }
 
@@ -283,6 +295,10 @@ func (r *Radio) readLoop(br *bufio.Reader) {
 			continue
 		}
 		p := msg.Packet
+		if p.Portnum == PortRoutingApp && p.RequestID != 0 {
+			r.noteRouting(p)
+			continue // an outcome, not a payload
+		}
 		if p.Portnum != r.opts.Portnum || p.Encrypted || len(p.Payload) == 0 {
 			continue // not ours, or the radio could not decrypt for us
 		}
@@ -342,8 +358,14 @@ func (r *Radio) Send(pkt []byte) error {
 	if _, err := rand.Read(idBytes[:]); err != nil {
 		return err
 	}
+	packetID := binary.BigEndian.Uint32(idBytes[:])
+	if r.opts.Reliable {
+		r.mu.Lock()
+		r.rememberSent(packetID)
+		r.mu.Unlock()
+	}
 	frame := EncodeDataPacket(Broadcast, r.opts.Channel, r.opts.Portnum,
-		pkt, binary.BigEndian.Uint32(idBytes[:]), r.opts.HopLimit, r.opts.Reliable)
+		pkt, packetID, r.opts.HopLimit, r.opts.Reliable)
 	if err := writeFrame(r.conn, frame); err != nil {
 		r.fail(err)
 		return err
@@ -358,6 +380,62 @@ func (r *Radio) Poll() [][]byte {
 	out := r.inbox
 	r.inbox = nil
 	return out
+}
+
+// noteRouting records the fate the firmware reported for one of our
+// packets. Reports about anyone else's traffic are ignored: on a shared
+// channel most Routing packets are not about us, and counting them would
+// turn a neighbour's failures into ours.
+func (r *Radio) noteRouting(p *RxPacket) {
+	code, ok := DecodeRoutingError(p.Payload)
+	if !ok {
+		return // a route request or reply, not an outcome
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, mine := r.sentIDs[p.RequestID]; !mine {
+		return
+	}
+	delete(r.sentIDs, p.RequestID)
+	switch code {
+	case RoutingNone:
+		r.txAcked++
+	default:
+		// MAX_RETRANSMIT and every other refusal share a meaning here: the
+		// firmware stopped trying. The specific code is not mapped onto a
+		// name this build might have wrong.
+		r.txGaveUp++
+	}
+}
+
+// rememberSent records a packet id we expect a Routing answer for, keeping
+// the set bounded by age of issue.
+func (r *Radio) rememberSent(id uint32) {
+	if r.sentIDs == nil {
+		r.sentIDs = map[uint32]struct{}{}
+	}
+	r.sentIDs[id] = struct{}{}
+	r.sentRing = append(r.sentRing, id)
+	if len(r.sentRing) > maxTrackedSends {
+		drop := r.sentRing[0]
+		r.sentRing = r.sentRing[1:]
+		delete(r.sentIDs, drop)
+	}
+}
+
+// maxTrackedSends bounds the outstanding-outcome set. The firmware answers
+// within its retry window; anything older is not coming.
+const maxTrackedSends = 64
+
+// Delivery reports what the FIRMWARE said became of the packets we asked it
+// to deliver reliably: acknowledged, given up on, and still outstanding.
+//
+// With want_ack off these stay zero, which is honest — nothing was asked,
+// so nothing was reported.
+func (r *Radio) Delivery() (acked, gaveUp, outstanding int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.txAcked, r.txGaveUp, len(r.sentIDs)
 }
 
 // Credit reports how many more packets this radio will take, from what the

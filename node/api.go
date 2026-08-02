@@ -244,6 +244,19 @@ type statusResp struct {
 		TX        int    `json:"tx"`
 		RX        int    `json:"rx"`
 		Err       string `json:"err,omitempty"`
+		// What became of the packets we asked to be delivered reliably, as
+		// the firmware reported it. TX says what we handed over; these say
+		// what happened next, and until they existed a retry that worked
+		// and one that never ran looked identical from here.
+		Acked       int `json:"acked"`
+		GaveUp      int `json:"gave_up"`
+		Outstanding int `json:"outstanding"`
+		// The radio's own queue, and how many packets it REFUSED. A refusal
+		// never reached the air however healthy tx looked.
+		QueueFree  int  `json:"queue_free"`
+		QueueMax   int  `json:"queue_max"`
+		Refused    int  `json:"refused"`
+		QueueKnown bool `json:"queue_known"`
 	} `json:"mesh"`
 }
 
@@ -289,6 +302,9 @@ func (a *APIServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 	m := a.rt.Mesh()
 	resp.Mesh.Connected, resp.Mesh.NodeNum = m.Connected, m.NodeNum
 	resp.Mesh.TX, resp.Mesh.RX, resp.Mesh.Err = m.TX, m.RX, m.Err
+	resp.Mesh.Acked, resp.Mesh.GaveUp, resp.Mesh.Outstanding = m.Acked, m.GaveUp, m.Outstanding
+	resp.Mesh.QueueFree, resp.Mesh.QueueMax = m.QueueFree, m.QueueMax
+	resp.Mesh.Refused, resp.Mesh.QueueKnown = m.Refused, m.QueueKnown
 	writeJSON(w, resp)
 }
 

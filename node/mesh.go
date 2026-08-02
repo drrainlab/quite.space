@@ -158,6 +158,17 @@ type MeshStatus struct {
 	TX, RX    int
 	Err       string
 
+	// What the FIRMWARE said became of the packets we asked it to deliver
+	// reliably. TX counts what we handed over; these count what happened
+	// to it. Retransmission used to be entirely invisible from here, so a
+	// run could not tell a retry that worked from one that never ran.
+	Acked, GaveUp, Outstanding int
+	// The radio's own view of its outgoing queue, and how many packets it
+	// REFUSED to take. A refusal never went on the air, however healthy
+	// the tx counter looked.
+	QueueFree, QueueMax, Refused int
+	QueueKnown                   bool
+
 	// Reconnecting distinguishes "there is no radio configured" from "the
 	// radio is gone and we are trying to get it back". Both show as not
 	// connected, and they call for different reactions.
@@ -183,7 +194,16 @@ func (r *Runtime) Mesh() MeshStatus {
 		return MeshStatus{}
 	}
 	s := radio.Status()
+	acked, gaveUp, outstanding := radio.Delivery()
+	qFree, qMax, refused, qKnown := radio.QueueState()
 	return MeshStatus{
+		Acked:        acked,
+		GaveUp:       gaveUp,
+		Outstanding:  outstanding,
+		QueueFree:    qFree,
+		QueueMax:     qMax,
+		Refused:      refused,
+		QueueKnown:   qKnown,
 		Channel:      radio.Channel(),
 		Connected:    s.Connected,
 		NodeNum:      s.NodeNum,

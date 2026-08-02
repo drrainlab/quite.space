@@ -22,6 +22,46 @@ import (
 // PortPrivateApp is the Meshtastic portnum for third-party apps.
 const PortPrivateApp = 256
 
+// PortRoutingApp carries the mesh's own control messages. It is how the
+// firmware reports the FATE of a packet we asked it to deliver reliably:
+// a Routing message whose error_reason is NONE for an acknowledgement, or
+// MAX_RETRANSMIT when it gave up after its retries. Without reading it, a
+// client that sets want_ack cannot tell a retry that worked from one that
+// never happened.
+const PortRoutingApp = 5
+
+// Routing.Error values we act on (mesh.proto). Others are recorded by
+// number rather than mapped onto a name we do not have.
+const (
+	RoutingNone          = 0
+	RoutingMaxRetransmit = 5
+)
+
+// DecodeRoutingError reads a Routing payload's error_reason (field 3).
+// Reports false when the payload carries a route request or reply instead,
+// which is a different message and not an outcome for anything we sent.
+func DecodeRoutingError(b []byte) (int32, bool) {
+	r := &reader{b: b}
+	for !r.done() {
+		tag, err := r.varint()
+		if err != nil {
+			return 0, false
+		}
+		field, wt := int(tag>>3), int(tag&7)
+		if field == 3 && wt == wireVarint {
+			v, err := r.varint()
+			if err != nil {
+				return 0, false
+			}
+			return int32(v), true
+		}
+		if err := r.skip(wt); err != nil {
+			return 0, false
+		}
+	}
+	return 0, false
+}
+
 // Broadcast is MeshPacket.to for channel-wide delivery.
 const Broadcast = 0xFFFFFFFF
 
@@ -105,12 +145,16 @@ func EncodeHeartbeat() []byte {
 
 // RxPacket is a received mesh packet we could decode.
 type RxPacket struct {
-	From      uint32
-	To        uint32
-	Channel   uint32
-	Portnum   uint32
-	Payload   []byte
-	ID        uint32
+	From    uint32
+	To      uint32
+	Channel uint32
+	Portnum uint32
+	Payload []byte
+	ID      uint32
+	// RequestID names the packet this one answers for (Data field 6). On a
+	// ROUTING_APP packet it is the id of OUR packet whose fate is being
+	// reported.
+	RequestID uint32
 	Encrypted bool // decoded absent: the radio gave us ciphertext only
 }
 
@@ -392,6 +436,18 @@ func decodeData(b []byte, p *RxPacket) error {
 				return err
 			}
 			p.Payload = append([]byte(nil), raw...)
+		case field == 6 && wt == wireVarint: // request_id
+			v, err := r.varint()
+			if err != nil {
+				return err
+			}
+			p.RequestID = uint32(v)
+		case field == 6 && wt == wireFixed32: // request_id, some builds
+			v, err := r.fixed32()
+			if err != nil {
+				return err
+			}
+			p.RequestID = v
 		default:
 			if err := r.skip(wt); err != nil {
 				return err
