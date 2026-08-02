@@ -191,3 +191,25 @@ func TestFreeSlotNeverStepsOnAConfiguredChannel(t *testing.T) {
 		t.Fatal("offered a slot on a radio whose channels are all in use")
 	}
 }
+
+// A shared link must ADD the channel, never replace what a radio already has.
+//
+// Found against the reference CLI, which refused the link we generated with a
+// bare "Invalid URL" — and would, in the phone app, have replaced every
+// channel on the device instead. The prefix carries that meaning, so it is
+// worth a test of its own rather than a constant nobody reads.
+func TestTheSharedLinkAddsRatherThanReplaces(t *testing.T) {
+	c, err := MintSegmentChannel("segment", regionRU, presetLongFast, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := c.URL()
+	if !strings.Contains(u, "add=true") {
+		t.Fatalf("the sharing link does not say add: %s\n"+
+			"Without it the reference client refuses it, and a phone scanning "+
+			"the QR wipes the radio's other channels.", u)
+	}
+	if !strings.HasPrefix(u, "https://meshtastic.org/e/") || !strings.Contains(u, "#") {
+		t.Fatalf("link is not in the reference sharing format: %s", u)
+	}
+}

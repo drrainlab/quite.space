@@ -31,7 +31,14 @@ import (
 )
 
 // ChannelURLPrefix is the reference client's sharing format.
-const ChannelURLPrefix = "https://meshtastic.org/e/#"
+//
+// `?add=true` is not decoration — it is the difference between a link that
+// ADDS this channel and one that REPLACES every channel the radio has.
+// Without it the reference CLI refuses the link outright ("Invalid URL"),
+// and a phone scanning the QR would silently wipe channels their owner
+// cares about. That is the same rule AddCommands states for the CLI path:
+// adding is the only safe default, replacing has to be somebody's decision.
+const ChannelURLPrefix = "https://meshtastic.org/e/?add=true#"
 
 // pskLen is 32 bytes — AES-256, the strongest a Meshtastic channel takes.
 const pskLen = 32
