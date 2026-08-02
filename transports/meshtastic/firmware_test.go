@@ -438,3 +438,26 @@ func TestRebroadcastAloneWritesOnlyTheDeviceConfig(t *testing.T) {
 		t.Fatal("an empty LoRa configuration was written alongside")
 	}
 }
+
+// esptool's "could not connect" has one common cause on the boards this
+// project uses, and one fix. Printing the raw exit status sends somebody
+// looking for a broken cable instead.
+func TestAFailedConnectSaysHowToEnterDownloadMode(t *testing.T) {
+	real := "esptool v5.2.0\nConnecting......................................\n\n" +
+		"A fatal error occurred: Failed to connect to Espressif device: " +
+		"No serial data received."
+	hint := connectHint(real)
+	if hint == "" {
+		t.Fatal("the one failure a person can actually act on produced no advice")
+	}
+	for _, want := range []string{"BOOT", "RST", "CHANGES"} {
+		if !strings.Contains(hint, want) {
+			t.Fatalf("the advice does not mention %s: %s", want, hint)
+		}
+	}
+	// And it stays quiet about failures it does not understand: advice that
+	// fires on everything is advice nobody reads.
+	if connectHint("A fatal error occurred: MD5 of file does not match") != "" {
+		t.Fatal("download-mode advice was offered for an unrelated failure")
+	}
+}

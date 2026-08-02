@@ -60,6 +60,38 @@ func FlashCommands(tool, port string, plan FlashPlan, pathOf map[string]string) 
 	return [][]string{erase, write}
 }
 
+// connectHint turns esptool's "could not connect" into the one thing that
+// actually fixes it.
+//
+// esptool normally puts a board into download mode itself, by toggling DTR
+// and RTS. That works through a USB-to-serial BRIDGE, which holds those lines
+// in hardware. A board with NATIVE USB has no bridge: the USB device is
+// produced by the firmware, so the automatic reset depends on the firmware
+// still running — and a board that needs reflashing is usually one whose
+// firmware does not.
+//
+// The board then enumerates, esptool opens the port, and nothing answers.
+// Which is exactly the state that sends somebody looking for a broken cable.
+func connectHint(output string) string {
+	low := strings.ToLower(output)
+	if !strings.Contains(low, "no serial data received") &&
+		!strings.Contains(low, "failed to connect") {
+		return ""
+	}
+	return "The board did not enter download mode on its own. On a board with " +
+		"native USB\nthat is normal once its firmware has stopped running — " +
+		"there is no USB-serial\nchip to pull the reset lines, so esptool " +
+		"cannot do it for you.\n\n" +
+		"Put it there by hand:\n" +
+		"  1. hold BOOT (sometimes labelled IO0, or PRG)\n" +
+		"  2. press and release RST (or EN) while still holding BOOT\n" +
+		"  3. release BOOT\n\n" +
+		"The port name usually CHANGES when it does — the bootloader is a " +
+		"different\nUSB device from the firmware. Check with `ls /dev/cu.usb*` " +
+		"and pass the new\nname to --port, or the flash will keep talking to a " +
+		"port nothing is behind."
+}
+
 // Flash runs the plan. Output is streamed through `line` as it arrives —
 // erasing and writing take minutes, and a progress-free wait is
 // indistinguishable from a hang.
@@ -77,7 +109,18 @@ func Flash(ctx context.Context, tool, port string, plan FlashPlan,
 			}
 		}
 		if err != nil {
-			return fmt.Errorf("%s failed: %w", argv[1], err)
+			// argv[1] is "--port", so naming it reported that a FLAG had
+			// failed. The subcommand is the operation somebody can act on.
+			op := argv[len(argv)-1]
+			for _, a := range argv {
+				if a == "erase-flash" || a == "write-flash" {
+					op = a
+				}
+			}
+			if hint := connectHint(string(out)); hint != "" {
+				return fmt.Errorf("%s failed: %w\n\n%s", op, err, hint)
+			}
+			return fmt.Errorf("%s failed: %w", op, err)
 		}
 	}
 	return nil
