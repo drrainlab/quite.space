@@ -35,11 +35,12 @@ function openRadioMeet() {
 async function refreshRadioMeet() {
   const box = document.getElementById('rmBody');
   if (!box) return;
-  let near, offers;
+  let near, offers, st;
   try {
-    [near, offers] = await Promise.all([
+    [near, offers, st] = await Promise.all([
       api('/api/radio/neighbours'),
       api('/api/radio/invitations'),
+      api('/api/status'),
     ]);
   } catch (err) {
     box.innerHTML = `<p class="hint">${esc(t('radio.meet.unavailable', { why: err.message }))}</p>`;
@@ -48,7 +49,37 @@ async function refreshRadioMeet() {
   box.innerHTML = [
     rmOffersBlock(offers.invitations || []),
     rmNeighboursBlock(near.neighbours || []),
+    rmAirBlock(st && st.mesh),
   ].join('');
+}
+
+// What the radio is actually doing.
+//
+// Without this the screen was silent between pressing a button and something
+// appearing — and on LoRa that gap is half a minute, which is long enough to
+// conclude nothing happened. A person waiting deserves to see the difference
+// between "in flight" and "nothing is moving", and those are exactly the two
+// states the transfer counters distinguish.
+function rmAirBlock(mesh) {
+  if (!mesh) return '';
+  const head = `<div class="gw-section"><h4>${esc(t('radio.meet.air'))}</h4>`;
+  if (!mesh.connected) {
+    return head + `<p class="hint">${esc(t('radio.meet.no_radio'))}</p></div>`;
+  }
+  const tr = mesh.transfer;
+  if (!tr) {
+    return head + `<p class="hint">${esc(t('radio.meet.no_seed'))}</p></div>`;
+  }
+  const moving = tr.attempted > tr.completed + tr.gaveUp;
+  const line = moving
+    ? t('radio.meet.in_flight', { done: tr.completed, all: tr.attempted })
+    : t('radio.meet.idle', { done: tr.completed });
+  return head + `<div class="gw-kv"><span>${esc(t('radio.meet.messages'))}</span>
+    <span>${esc(line)}</span></div>
+    <div class="gw-kv"><span>${esc(t('radio.meet.frames'))}</span>
+    <span class="mono">${tr.framesOut} out · ${tr.framesIn} in</span></div>
+    ${tr.gaveUp ? `<p class="hint">${esc(t('radio.meet.gave_up', { n: tr.gaveUp }))}</p>` : ''}
+    </div>`;
 }
 
 // Invitations come FIRST, because an invitation is somebody waiting for an
@@ -91,7 +122,10 @@ async function announceOnRadio() {
   const info = document.getElementById('rmInfo');
   try {
     await api('/api/radio/announce', { method: 'POST' });
-    if (info) info.textContent = t('radio.meet.announced');
+    // QUEUED, not sent. The node hands it to the radio and the radio takes
+    // its time — claiming it happened would be the same overstatement as
+    // reporting handed-to-transport as delivery.
+    if (info) info.textContent = t('radio.meet.announcing');
   } catch (err) {
     if (info) info.textContent = t('radio.meet.failed', { why: err.message });
     return;
@@ -110,7 +144,7 @@ async function inviteOverRadio(device) {
       method: 'POST',
       body: JSON.stringify({ space: current, device }),
     });
-    if (info) info.textContent = t('radio.meet.offered');
+    if (info) info.textContent = t('radio.meet.offering');
   } catch (err) {
     if (info) info.textContent = t('radio.meet.failed', { why: err.message });
   }
