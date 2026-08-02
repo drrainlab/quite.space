@@ -218,7 +218,7 @@ func radioList(args []string) error {
 }
 
 func radioFlash(args []string) error {
-	port, release := "", ""
+	port, release, variant := "", "", ""
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--port":
@@ -229,6 +229,11 @@ func radioFlash(args []string) error {
 		case "--release":
 			if i+1 < len(args) {
 				release = args[i+1]
+				i++
+			}
+		case "--variant":
+			if i+1 < len(args) {
+				variant = args[i+1]
 				i++
 			}
 		}
@@ -307,12 +312,32 @@ func radioFlash(args []string) error {
 		fmt.Printf("the board did not say which chip it has, so all %d variants "+
 			"are listed. Picking one that does not match will not work.\n", len(targets))
 	}
-	fmt.Println("\nThe chip does NOT identify the board — many boards share one chip.")
-	fmt.Println("Pick the model printed on YOUR board. Type part of the name to filter.")
-
-	target, err := chooseTarget(targets)
-	if err != nil {
-		return err
+	var target meshtastic.FirmwareTarget
+	if variant != "" {
+		// Named outright. This is how a flash gets repeated after a failure
+		// that had nothing to do with the choice — the first attempt on this
+		// board died at "could not connect", and re-answering a filter every
+		// time invites picking a different board by accident.
+		found := false
+		for _, t := range targets {
+			if strings.EqualFold(t.Board, variant) {
+				target, found = t, true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("this release has no variant called %q for that "+
+				"chip. Run without --variant to see the list", variant)
+		}
+		fmt.Printf("\nusing the variant you named: %s\n", target.Board)
+	} else {
+		fmt.Println("\nThe chip does NOT identify the board — many boards share one chip.")
+		fmt.Println("Pick the model printed on YOUR board. Type part of the name to filter.")
+		var err error
+		target, err = chooseTarget(targets)
+		if err != nil {
+			return err
+		}
 	}
 
 	fmt.Printf("\nreading the install recipe for %s…\n", target.Board)
@@ -364,22 +389,52 @@ func radioFlash(args []string) error {
 
 	// Read-after-write, the same rule the config writer follows: nothing is
 	// reported as done until the device itself says so.
+	// Watch EVERY port, not the one just written to. A board flashed through
+	// its ROM bootloader comes back as a different USB device — the running
+	// firmware makes its own — so the port that was flashed is frequently not
+	// the port the node appears on. Waiting only on the flashed one reports a
+	// failure for a board that worked.
 	fmt.Println("\nflashed. Waiting for the board to come up and answer as a Meshtastic node…")
+	before := map[string]bool{}
+	for _, c := range findCandidates(false) {
+		before[c.probe.Port] = true
+	}
 	deadline := time.Now().Add(45 * time.Second)
 	for time.Now().Before(deadline) {
 		time.Sleep(3 * time.Second)
 		for _, c := range findCandidates(false) {
-			if c.probe.Port == port && c.probe.Kind == meshtastic.ProbeRadio {
-				fmt.Printf("\n✓ %s is now a Meshtastic node (%s)\n", port, c.describe())
-				fmt.Println("\nNext: set the region — the board will not transmit until you do.")
-				fmt.Println("  docs/RADIO_SETUP.md, шаг 2")
-				return nil
+			if c.probe.Kind != meshtastic.ProbeRadio {
+				continue
 			}
+			if c.probe.Port != port && before[c.probe.Port] {
+				continue // somebody else's radio, already there before this
+			}
+			fmt.Printf("\n✓ %s is now a Meshtastic node (%s)\n", c.probe.Port, c.describe())
+			if c.probe.Port != port {
+				fmt.Printf("  (it came back on a different port — it was flashed "+
+					"through %s)\n", port)
+			}
+			fmt.Println("\nNext: set the region — the board will not transmit until you do.")
+			fmt.Println("  docs/RADIO_SETUP.md, шаг 2")
+			return nil
 		}
 	}
-	return errors.New("the board was flashed, but it has not answered as a Meshtastic node yet.\n" +
-		"Unplug it, plug it back in, and run `terminal radio list`. If it still says\n" +
-		"nothing, the variant may be wrong for this board")
+	// The old sentence here guessed "the variant may be wrong", which is the
+	// LEAST likely of the three and the most expensive to act on — it sends
+	// somebody to erase the board again with a different guess. The first
+	// cause is mechanical, and it is the one that has actually happened:
+	// a board whose BOOT pin is still held cannot start what was just
+	// written to it, however correct the firmware is.
+	return errors.New("the board was flashed and verified, but it has not started.\n\n" +
+		"Most likely it is STILL HELD IN DOWNLOAD MODE. A BOOT jumper left in\n" +
+		"place, or a BOOT button still pressed, keeps the chip in its ROM\n" +
+		"bootloader — where it cannot run the firmware it now holds. Move the\n" +
+		"jumper back (or just power-cycle with nothing held) and run\n" +
+		"`terminal radio list`.\n\n" +
+		"Failing that: unplug it, plug it back in, and look again. Only if it\n" +
+		"still says nothing is the variant worth questioning — and re-flashing\n" +
+		"with a different one erases the board a second time, so it is the last\n" +
+		"thing to try, not the first")
 }
 
 // chooseTarget asks which board this is. There is deliberately no default:
