@@ -58,6 +58,22 @@ type Options struct {
 	HopLimit   uint32 // default 3
 	MaxPayload int    // default 200 (≤ DataPayloadMax)
 	Serial     bool   // send the serial wake sequence before handshake
+	// Reliable asks the firmware to retransmit what is not acknowledged
+	// (MeshPacket.want_ack). For a BROADCAST — which is what this transport
+	// sends — Meshtastic suppresses the ordinary ack to avoid flooding, and
+	// instead treats a REBROADCAST BY ANOTHER NODE as an implicit
+	// acknowledgement; hearing none, the sender times out and retransmits.
+	//
+	// On a shared channel this is the difference between arriving and not:
+	// measured loss there ran 70-90%, and losing one fragment loses the
+	// whole message. It is not free — a retransmission is more airtime, on
+	// the very channel that was already congested — so it is a decision,
+	// not a default buried in a constant.
+	//
+	// It buys RETRIES, not proof. Capabilities.Ack stays AckNone: nothing
+	// here observes an acknowledgement or reports one upward, and a
+	// transport must never claim a delivery it did not see (ADR-007).
+	Reliable bool
 	// Idle bounds how long the config dump may go QUIET. Zero means the
 	// package default. It lives here rather than in a package variable
 	// because the port scanner probes several devices CONCURRENTLY, and a
@@ -327,7 +343,7 @@ func (r *Radio) Send(pkt []byte) error {
 		return err
 	}
 	frame := EncodeDataPacket(Broadcast, r.opts.Channel, r.opts.Portnum,
-		pkt, binary.BigEndian.Uint32(idBytes[:]), r.opts.HopLimit, false)
+		pkt, binary.BigEndian.Uint32(idBytes[:]), r.opts.HopLimit, r.opts.Reliable)
 	if err := writeFrame(r.conn, frame); err != nil {
 		r.fail(err)
 		return err

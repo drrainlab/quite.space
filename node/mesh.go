@@ -94,6 +94,7 @@ func (r *Runtime) startMeshWire(target string, wire meshWire) error {
 	// those are worth retrying.
 	r.mu.Lock()
 	channel := r.meshChannel
+	reliable := r.meshReliable
 	r.mu.Unlock()
 
 	// A device that opened and said NOTHING is not the same as one that is
@@ -107,7 +108,7 @@ func (r *Runtime) startMeshWire(target string, wire meshWire) error {
 	var err error
 	for attempt := 0; attempt < meshOpenAttempts; attempt++ {
 		radio, err = meshtastic.Supervise(target,
-			meshtastic.Options{Channel: channel}, meshtastic.Backoff{
+			meshtastic.Options{Channel: channel, Reliable: reliable}, meshtastic.Backoff{
 				Min: meshBackoffMin, Max: meshBackoffMax, Stable: meshStableFor,
 			})
 		if err == nil || !meshtastic.SilentHandshake(err) {
@@ -309,4 +310,19 @@ func (r *Runtime) MeshConfig() meshtastic.NodeConfig {
 		return meshtastic.NodeConfig{}
 	}
 	return radio.Config()
+}
+
+// SetMeshReliable asks the radio to retransmit what goes unacknowledged.
+//
+// Default ON, and the reason is a measurement rather than a preference: on
+// a shared LoRa channel 70-90% of packets were lost to other people's
+// airtime, and with no retry a multi-fragment message never assembled — not
+// one delivery in twenty minutes. Retransmission costs airtime on an
+// already busy channel, so a node that would rather be quiet than heard can
+// turn it off; a node that wants its messages to arrive should not have to
+// discover this setting first.
+func (r *Runtime) SetMeshReliable(on bool) {
+	r.mu.Lock()
+	r.meshReliable = on
+	r.mu.Unlock()
 }

@@ -77,7 +77,10 @@ type Runtime struct {
 	meshNetworkID string
 	// meshChannel is the Meshtastic channel index this node transmits on.
 	// 0 is a node's PRIMARY channel, usually the shared public one.
-	meshChannel    uint32
+	meshChannel uint32
+	// meshReliable asks the radio for retransmission (want_ack). Set true
+	// in Open; see SetMeshReliable for the measurement behind that.
+	meshReliable   bool
 	gateways       map[string]*GatewayPresence
 	foreignBeacons int
 	// radioProfile is what this segment's radios are expected to be set to,
@@ -279,7 +282,12 @@ func Open(dataDir string, passphrase []byte, displayName string) (rt *Runtime, e
 	r := &Runtime{root: root, lock: lock, dataDir: dataDir, spaces: map[id.TerminalID]*spaceState{},
 		assetIdx: newAssetIndex(), passes: newPassRegistry(),
 		joins: map[string]*joinAttempt{}, stop: make(chan struct{}),
-		relayWants: map[id.TerminalID]map[id.Hash]struct{}{}}
+		relayWants: map[id.TerminalID]map[id.Hash]struct{}{},
+		// Radios ask for retransmission unless told otherwise. See
+		// SetMeshReliable: without it, nothing arrived at all on a shared
+		// channel, and a person should not have to find a setting before
+		// their messages can land.
+		meshReliable: true}
 	rt = r // from here the abort defer unwinds through Close
 
 	// The delivery ledger lives beside the store, not inside the encrypted

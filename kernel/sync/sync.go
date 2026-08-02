@@ -485,16 +485,38 @@ func (e *Engine) RequestBlobs(ep transports.Endpoint, hashes []id.Hash) error {
 // PendingBlobs reports how many requested blobs have not arrived yet.
 func (e *Engine) PendingBlobs() int { return len(e.pending) }
 
+// messageBudget is how large one protocol message may get before it is
+// fragmented, given what the carrier will carry in a single packet.
+//
+// It used to be four packets' worth, described as "keep messages a few
+// fragments long". Measurement on a shared LoRa channel says that guess is
+// expensive: with roughly 80% of packets lost to other people's airtime, and
+// with the rule that losing ONE fragment loses the whole message, a
+// five-fragment message lands about once in three thousand attempts. A
+// single-fragment message lands about once in five.
+//
+// So on a radio-scale carrier a message is aimed at ONE packet. The cost is
+// more messages, each paying the fragment header again; the benefit is that
+// they converge at all. A single event larger than the MTU still fragments —
+// this bounds BATCHING, not the size of what must be carried.
+func messageBudget(ep transports.Endpoint) int {
+	mtu := ep.Capabilities().MaxPayload
+	if mtu <= 0 {
+		return framesBudget // unmetered carrier: batch freely
+	}
+	if mtu >= framesBudget {
+		return framesBudget
+	}
+	return mtu
+}
+
 // serveBlobs answers a request with everything this space legitimately
 // publishes and has locally, batched under the transport budget.
 func (e *Engine) serveBlobs(ep transports.Endpoint, hashes []id.Hash) error {
 	if e.Blobs == nil || e.BlobAllowed == nil {
 		return nil // this node does not serve assets; silence, not oracle
 	}
-	budget := framesBudget
-	if mtu := ep.Capabilities().MaxPayload; mtu > 0 {
-		budget = min(framesBudget, max(mtu*4, 512))
-	}
+	budget := messageBudget(ep)
 	var batch [][]byte
 	size := 0
 	flush := func() error {
@@ -556,13 +578,7 @@ const maxChainBurst = 16
 // ADR-015 §5) with a per-chain burst cap and round-robin among the
 // eligible heads.
 func (e *Engine) pushMissing(ep transports.Endpoint, sum *summary) error {
-	// On tiny MTUs keep messages a few fragments long: losing one fragment
-	// loses the whole message, so smaller messages converge faster on lossy
-	// links.
-	budget := framesBudget
-	if mtu := ep.Capabilities().MaxPayload; mtu > 0 {
-		budget = min(framesBudget, max(mtu*4, 512))
-	}
+	budget := messageBudget(ep)
 	var batch [][]byte
 	var batchIDs []id.EventID
 	batchSize := 0

@@ -1,8 +1,11 @@
 package meshtastic
 
 import (
+	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/drrainlab/quiet_places/transports"
 )
 
 // The boot banner is the only evidence an unflashed board gives, so reading
@@ -285,5 +288,36 @@ func TestQueueStatusIsReadFromFieldEleven(t *testing.T) {
 		if f == 11 {
 			t.Fatal("field 11 is still listed as skipped")
 		}
+	}
+}
+
+// Reliability is a decision, and the wire must carry it.
+//
+// For a BROADCAST — which is all this transport sends — Meshtastic
+// suppresses the ordinary acknowledgement and treats a rebroadcast by
+// another node as an implicit one; hearing none, the sender retransmits.
+// That retry is the whole point, and it lives in one bit.
+func TestReliabilityReachesTheWire(t *testing.T) {
+	const wantAckField = 0x50 // field 10, varint
+
+	plain := EncodeDataPacket(Broadcast, 1, PortPrivateApp, []byte("x"), 7, 3, false)
+	reliable := EncodeDataPacket(Broadcast, 1, PortPrivateApp, []byte("x"), 7, 3, true)
+
+	if bytes.Contains(plain, []byte{wantAckField, 0x01}) {
+		t.Fatal("an unreliable packet asked for acknowledgement anyway")
+	}
+	if !bytes.Contains(reliable, []byte{wantAckField, 0x01}) {
+		t.Fatal("want_ack did not reach the wire — the firmware will not retry, " +
+			"and on a shared channel a multi-fragment message then never lands")
+	}
+}
+
+// Retries are not proof. The transport must keep saying it cannot witness a
+// delivery, however many times the firmware tries (ADR-007).
+func TestRetriesAreNotAnAcknowledgement(t *testing.T) {
+	r := &Radio{opts: Options{Reliable: true}.withDefaults()}
+	if got := r.Capabilities().Ack; got != transports.AckNone {
+		t.Fatalf("Ack = %v with retransmission on — nothing here observes an "+
+			"acknowledgement, so claiming one would be a delivery we did not see", got)
 	}
 }
