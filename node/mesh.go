@@ -62,6 +62,14 @@ const (
 	wireTable
 )
 
+// How hard the FIRST attach tries before reporting a radio absent. Only the
+// "opened but said nothing" failure is retried (see SilentHandshake), so a
+// mistyped device path still fails immediately.
+const (
+	meshOpenAttempts = 8
+	meshOpenRetryGap = 700 * time.Millisecond
+)
+
 func (r *Runtime) startMesh(target string, compactOn bool) error {
 	wire := wireRaw
 	if compactOn {
@@ -88,10 +96,25 @@ func (r *Runtime) startMeshWire(target string, wire meshWire) error {
 	channel := r.meshChannel
 	r.mu.Unlock()
 
-	radio, err := meshtastic.Supervise(target,
-		meshtastic.Options{Channel: channel}, meshtastic.Backoff{
-			Min: meshBackoffMin, Max: meshBackoffMax, Stable: meshStableFor,
-		})
+	// A device that opened and said NOTHING is not the same as one that is
+	// not there, and only the first is worth asking again. A wrong path or a
+	// busy port still fails on the spot with its own message, so the
+	// distinction the comment above draws survives intact — what changes is
+	// that a radio which is present and merely slow to speak no longer reads
+	// as absent. Measured on a native-USB board: a single attempt answers
+	// about a third of the time; the link, once up, is stable.
+	var radio *meshtastic.Supervised
+	var err error
+	for attempt := 0; attempt < meshOpenAttempts; attempt++ {
+		radio, err = meshtastic.Supervise(target,
+			meshtastic.Options{Channel: channel}, meshtastic.Backoff{
+				Min: meshBackoffMin, Max: meshBackoffMax, Stable: meshStableFor,
+			})
+		if err == nil || !meshtastic.SilentHandshake(err) {
+			break
+		}
+		time.Sleep(meshOpenRetryGap)
+	}
 	if err != nil {
 		return err
 	}

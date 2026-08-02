@@ -58,6 +58,12 @@ type Options struct {
 	HopLimit   uint32 // default 3
 	MaxPayload int    // default 200 (≤ DataPayloadMax)
 	Serial     bool   // send the serial wake sequence before handshake
+	// Idle bounds how long the config dump may go QUIET. Zero means the
+	// package default. It lives here rather than in a package variable
+	// because the port scanner probes several devices CONCURRENTLY, and a
+	// shared variable made each probe's deadline depend on what the others
+	// were doing at that moment.
+	Idle time.Duration
 }
 
 func (o Options) withDefaults() Options {
@@ -69,6 +75,9 @@ func (o Options) withDefaults() Options {
 	}
 	if o.MaxPayload == 0 || o.MaxPayload > DataPayloadMax {
 		o.MaxPayload = 200
+	}
+	if o.Idle <= 0 {
+		o.Idle = handshakeIdle
 	}
 	return o
 }
@@ -135,17 +144,17 @@ func Connect(conn io.ReadWriteCloser, opts Options) (*Radio, error) {
 	d, canDeadline := conn.(deadliner)
 	extend := func() {
 		if canDeadline {
-			d.SetReadDeadline(time.Now().Add(handshakeIdle))
+			d.SetReadDeadline(time.Now().Add(r.opts.Idle))
 		}
 	}
 	extend()
-	deadline := time.Now().Add(handshakeIdle)
+	deadline := time.Now().Add(r.opts.Idle)
 	frames := 0
 	for {
 		if time.Now().After(deadline) {
 			conn.Close()
 			return nil, fmt.Errorf("meshtastic: the node went quiet during the "+
-				"config handshake after %d frames (waited %s)", frames, handshakeIdle)
+				"config handshake after %d frames (waited %s)", frames, r.opts.Idle)
 		}
 		frame, err := readFrame(br)
 		if err != nil {
@@ -155,7 +164,7 @@ func Connect(conn io.ReadWriteCloser, opts Options) (*Radio, error) {
 		}
 		// Progress: the device is talking, so give it another window.
 		frames++
-		deadline = time.Now().Add(handshakeIdle)
+		deadline = time.Now().Add(r.opts.Idle)
 		extend()
 		msg, err := DecodeFromRadio(frame)
 		if err != nil {
@@ -169,8 +178,14 @@ func Connect(conn io.ReadWriteCloser, opts Options) (*Radio, error) {
 			break
 		}
 	}
+	// The handshake is over: from here the node is allowed to be silent, and
+	// a deadline left in place would kill an idle-but-healthy link. TCP drops
+	// its deadline; serial lifts its read timeout the same way.
 	if d, ok := conn.(deadliner); ok {
 		d.SetReadDeadline(time.Time{})
+	}
+	if h, ok := conn.(interface{ HandshakeDone() }); ok {
+		h.HandshakeDone()
 	}
 
 	go r.readLoop(br)

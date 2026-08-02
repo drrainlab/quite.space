@@ -85,7 +85,7 @@ func ScanSerial(idle time.Duration) []PortProbe {
 			defer wg.Done()
 			sema <- struct{}{}
 			defer func() { <-sema }()
-			pr := probeOne(port, idle)
+			pr := probePort(port, idle)
 			mu.Lock()
 			out = append(out, pr)
 			mu.Unlock()
@@ -130,16 +130,40 @@ func skipPort(port string) (string, bool) {
 	return "not a USB serial device", true
 }
 
+// probePort asks a port what it is, and asks TWICE before saying "nothing".
+//
+// Measured on a native-USB ESP32-S3 running Meshtastic: consecutive attempts
+// alternate cleanly between answering and timing out "after 0 frames", and
+// the length of the patience makes no difference — an eight-second wait fails
+// where a one-and-a-half-second one succeeds. Whatever the device is doing
+// between opens, ONE ATTEMPT IS NOT EVIDENCE, and this function's whole job
+// is to report what is on a port.
+//
+// The cost is paid only where it is owed: a port that answers costs one
+// attempt, and a genuinely empty one costs a second short timeout.
+func probePort(port string, idle time.Duration) PortProbe {
+	pr := probeOne(port, idle)
+	if pr.Kind != ProbeSilent {
+		return pr
+	}
+	time.Sleep(300 * time.Millisecond)
+	again := probeOne(port, idle)
+	if again.Kind == ProbeRadio {
+		return again
+	}
+	return pr
+}
+
 // probeOne opens a port, asks the node to identify itself, and closes.
 func probeOne(port string, idle time.Duration) PortProbe {
 	pr := PortProbe{Port: port}
 
 	// A probe uses a shorter patience than a real attach: we are identifying
-	// a device, not waiting out a hundred-node database.
-	old := handshakeIdle
-	handshakeIdle = idle
-	radio, err := openSerial(port, Options{})
-	handshakeIdle = old
+	// a device, not waiting out a hundred-node database. The deadline rides
+	// in Options because probes run CONCURRENTLY — when this was a package
+	// variable each probe's patience depended on what the others happened to
+	// be doing at that instant.
+	radio, err := openSerial(port, Options{Idle: idle})
 
 	if err != nil {
 		msg := err.Error()
