@@ -26,8 +26,19 @@ const (
 	ModeAuto ConnectivityMode = "auto"
 	// ModeInternetOnly: relay and LAN, never the radio.
 	ModeInternetOnly ConnectivityMode = "internet"
-	// ModeMeshtasticOnly: the radio and nothing else. No relay connection
-	// is opened at all.
+	// ModeRadioOnly: the radio and nothing else. No relay connection is
+	// opened at all.
+	//
+	// The value used to be "meshtastic", which named one CARRIER inside an
+	// enum about transports. A second radio driver would have had to either
+	// answer to another vendor's name or need a migration of everybody's
+	// settings file; renaming the value now, while the old spelling is still
+	// accepted on read forever, costs nothing and closes both.
+	ModeRadioOnly ConnectivityMode = "radio"
+
+	// ModeMeshtasticOnly is the original spelling, kept as an alias so a
+	// settings file written by any earlier build keeps meaning what it meant.
+	// It is never WRITTEN again — see normalizeMode.
 	ModeMeshtasticOnly ConnectivityMode = "meshtastic"
 	// ModeOffline: nothing leaves the device. Messages are still written
 	// and still tracked; they wait.
@@ -37,10 +48,19 @@ const (
 // Valid reports whether a mode is one this build understands.
 func (m ConnectivityMode) Valid() bool {
 	switch m {
-	case ModeAuto, ModeInternetOnly, ModeMeshtasticOnly, ModeOffline:
+	case ModeAuto, ModeInternetOnly, ModeRadioOnly, ModeMeshtasticOnly, ModeOffline:
 		return true
 	}
 	return false
+}
+
+// normalizeMode folds the legacy spelling onto the current one, so everything
+// downstream compares against a single value.
+func normalizeMode(m ConnectivityMode) ConnectivityMode {
+	if m == ModeMeshtasticOnly {
+		return ModeRadioOnly
+	}
+	return m
 }
 
 // ErrBadConnectivityMode refuses a mode this build does not understand,
@@ -90,9 +110,11 @@ type Connectivity struct {
 // neither, and would be discovered by the relay operator rather than by
 // the person who set it.
 func (c Connectivity) modeFor(tid id.TerminalID) ConnectivityMode {
+	// NORMALISED at the one place every read passes through, so the legacy
+	// spelling never has to be remembered anywhere else.
 	if m, ok := c.PerSpace[tid.Hex()]; ok {
 		if m.Valid() {
-			return m
+			return normalizeMode(m)
 		}
 		return ModeOffline
 	}
@@ -100,7 +122,7 @@ func (c Connectivity) modeFor(tid id.TerminalID) ConnectivityMode {
 	case c.Mode == "":
 		return ModeAuto
 	case c.Mode.Valid():
-		return c.Mode
+		return normalizeMode(c.Mode)
 	}
 	return ModeOffline
 }
@@ -132,7 +154,7 @@ func (c Connectivity) allows(k TransportKind, tid id.TerminalID) bool {
 	switch c.modeFor(tid) {
 	case ModeOffline:
 		return false
-	case ModeMeshtasticOnly:
+	case ModeRadioOnly:
 		return k == TransportRadio
 	case ModeInternetOnly:
 		return k == TransportRelay || k == TransportLAN

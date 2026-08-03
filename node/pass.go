@@ -390,6 +390,16 @@ const (
 	// has to decide. Different from waiting_for_owner, which only says
 	// nothing has come back — we do not even know whether they are online.
 	JoinWaitingHost JoinState = "waiting_for_host"
+	// JoinSegmentEnded: the exchange was happening over a radio, and the
+	// radio went quiet before it finished.
+	//
+	// Its own state, not a shade of JoinExpiredWaiting. All three of the
+	// existing deadlines are the wrong clock for a live-only rendezvous:
+	// the pass may live an hour and the collect window a further day, but a
+	// segment two people walked out of an hour ago holds nothing and will
+	// never answer. A spinner that turns for a day is not patience, it is a
+	// screen that does not know.
+	JoinSegmentEnded JoinState = "segment_ended"
 	// JoinDeclined: somebody decided. This must never render as an error,
 	// a timeout or "unknown" — that is the whole reason a decline is a
 	// sealed message rather than silence.

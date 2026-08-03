@@ -89,6 +89,18 @@ type RadioNeighbour struct {
 	eph        [32]byte
 	generation uint64
 	expires    time.Time
+	// Link is what we can honestly say about REACHING them right now. Nil
+	// when nothing has been asked. Filled by RadioNeighbours, never stored.
+	Link *NeighbourLink `json:"link,omitempty"`
+}
+
+// NeighbourLink is the peer link, reduced to what a screen may say.
+//
+// Direct is separate from State on purpose: "addressed" and "direct" are
+// different claims, and only observed zero hops earns the second.
+type NeighbourLink struct {
+	State  string `json:"state"`
+	Direct bool   `json:"direct"`
 }
 
 // MarshalJSON writes the device id as HEX.
@@ -107,7 +119,8 @@ func (n RadioNeighbour) MarshalJSON() ([]byte, error) {
 		// plus a truncated digest — and feeding it back to ParseDeviceID
 		// fails on the colon. The screen posts this value straight back, so
 		// the two have to be the same alphabet.
-	}{hex.EncodeToString(n.Device[:]), n.Name, n.Heard})
+		Link *NeighbourLink `json:"link,omitempty"`
+	}{hex.EncodeToString(n.Device[:]), n.Name, n.Heard, n.Link})
 }
 
 // RadioOffer is an invite that arrived over the air and is waiting for an
@@ -119,6 +132,10 @@ type RadioOffer struct {
 	From   string        `json:"from"`
 	Heard  time.Time     `json:"heard"`
 	invite string
+	// offerer is the device that made this offer. A grant is accepted only
+	// from the same device, or anybody in range who overheard an invitation id
+	// could hand us a space.
+	offerer id.DeviceID
 }
 
 // MarshalJSON writes the space id as hex, for the same reason as above.
@@ -138,9 +155,6 @@ type radioMeet struct {
 	mu        sync.Mutex
 	neighbour map[id.DeviceID]*RadioNeighbour
 	offers    map[string]*RadioOffer
-	// lines remembers which space was opened for which neighbour, so a second
-	// press re-sends that invitation instead of opening another room.
-	lines map[id.DeviceID]id.TerminalID
 	// peers holds the live peer links. Memory-only and short-lived: a link is
 	// a fact about right now, and a durable one would be a claim about a radio
 	// that may since have been switched off.
@@ -160,7 +174,6 @@ func newRadioMeet() *radioMeet {
 	return &radioMeet{
 		neighbour: map[id.DeviceID]*RadioNeighbour{},
 		offers:    map[string]*RadioOffer{},
-		lines:     map[id.DeviceID]id.TerminalID{},
 	}
 }
 
@@ -178,9 +191,25 @@ func (r *Runtime) RadioNeighbours() []RadioNeighbour {
 	r.radioMeetOnce()
 	r.meet.mu.Lock()
 	defer r.meet.mu.Unlock()
+	now := time.Now()
 	out := make([]RadioNeighbour, 0, len(r.meet.neighbour))
-	for _, n := range r.meet.neighbour {
-		out = append(out, *n)
+	for dev, n := range r.meet.neighbour {
+		cp := *n
+		// Resolve the link the same way PeerLink does, so a screen and an API
+		// never disagree about whether somebody is reachable.
+		if l := r.meet.peers[dev]; l != nil {
+			state := l.State
+			if now.After(l.ExpiresAt) {
+				switch state {
+				case PeerLinkProbing:
+					state = PeerLinkNoAnswer
+				case PeerLinkUp:
+					state = PeerLinkGone
+				}
+			}
+			cp.Link = &NeighbourLink{State: string(state), Direct: l.Direct()}
+		}
+		out = append(out, cp)
 	}
 	sortByHeard(out)
 	return out
@@ -327,6 +356,18 @@ func (r *Runtime) onRadioControl(src radiotransfer.RadioAddress, msg []byte) {
 		case radioMsgAck:
 			r.onRadioAck(src, msg)
 			return
+		case radioMsgLineOffer:
+			r.onRadioLineOffer(src, msg)
+			return
+		case radioMsgAccept:
+			r.onRadioAccept(src, msg)
+			return
+		case radioMsgGrant:
+			r.onRadioGrant(src, msg)
+			return
+		case radioMsgCommit:
+			r.onRadioCommit(src, msg)
+			return
 		}
 	}
 	d := codec.NewDecoder(msg)
@@ -440,6 +481,7 @@ func (r *Runtime) radioControl() (radioControlEndpoint, error) {
 type radioControlEndpoint interface {
 	SendControl([]byte) error
 	SendControlWithin([]byte, time.Duration) error
+	SendControlTagged(string, []byte, time.Duration) error
 }
 
 func (r *Runtime) radioMeetOnce() {
@@ -512,15 +554,19 @@ func (r *Runtime) StartLineOverRadio(dev id.DeviceID) (id.TerminalID, error) {
 	// six spaces, five of them empty, none of them wanted. Pressing again
 	// means "I do not think they got it", and the honest answer to that is to
 	// send it again.
-	r.meet.mu.Lock()
-	tid, existing := r.meet.lines[dev]
-	r.meet.mu.Unlock()
-	if existing {
-		r.mu.Lock()
-		_, alive := r.spaces[tid]
-		r.mu.Unlock()
-		if alive {
-			return tid, r.InviteOverRadio(tid, dev)
+	//
+	// It reads from the DURABLE journal now. The memory-only map this replaces
+	// forgot everything on restart, so the very first press after one opened
+	// yet another room — the same bug, merely rarer and therefore harder to
+	// believe.
+	if rec, existing := r.liveTargetedInvitation(dev); existing {
+		if tid, err := id.ParseTerminalID(rec.Space); err == nil {
+			r.mu.Lock()
+			_, alive := r.spaces[tid]
+			r.mu.Unlock()
+			if alive {
+				return tid, r.InviteOverRadio(tid, dev)
+			}
 		}
 	}
 
@@ -534,8 +580,19 @@ func (r *Runtime) StartLineOverRadio(dev id.DeviceID) (id.TerminalID, error) {
 	if err := r.InviteOverRadio(tid, dev); err != nil {
 		return id.TerminalID{}, err
 	}
-	r.meet.mu.Lock()
-	r.meet.lines[dev] = tid
-	r.meet.mu.Unlock()
+	// TARGETED: it names one device and has no mailbox anywhere, so it mints
+	// no pass. A pass exists to solve the problem of an unknown future
+	// redeemer, and pressing somebody's name means that problem does not
+	// exist here.
+	if err := r.recordInvitation(InvitationRecord{
+		ID: newInvitationID(), Mode: InvitationTargeted, Space: tid.Hex(),
+		Target: hex.EncodeToString(dev[:]), IssuedAt: time.Now().Unix(),
+		State: InvitationOffered,
+	}); err != nil {
+		// The offer is on the air whether or not we wrote it down, so say so
+		// rather than pretending the press did nothing.
+		return tid, fmt.Errorf("node: the invitation went out but could not be "+
+			"recorded locally, so pressing again will open a second room: %w", err)
+	}
 	return tid, nil
 }

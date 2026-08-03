@@ -256,7 +256,11 @@ func TestUnknownModeIsRefusedAndNeverWidens(t *testing.T) {
 	if _, bad := err.(ErrBadConnectivityMode); !bad {
 		t.Fatalf("the refusal was not a validation error: %v", err)
 	}
-	if got := rt.Connectivity(); got.Mode != ModeMeshtasticOnly || got.Unreadable {
+	// ModeRadioOnly, not ModeMeshtasticOnly: the stored value is still the
+	// legacy spelling and still means the same thing, but the STATUS surface
+	// reports the canonical name — which is the whole point of the rename, so
+	// that a screen and a second carrier both have one word to use.
+	if got := rt.Connectivity(); got.Mode != ModeRadioOnly || got.Unreadable {
 		t.Fatalf("a refused write disturbed the stored policy: %+v", got)
 	}
 	if rt.TransportAllowed(TransportRelay, tid) {
@@ -667,5 +671,39 @@ func TestPumpFailsOverAndReturnsUnderAuto(t *testing.T) {
 	got, ok := alice.SelectTransport(in, later)
 	if !ok || got != TransportLAN {
 		t.Fatalf("a stable recovered link was never promoted back: %v %v", got, ok)
+	}
+}
+
+// The old spelling keeps working, forever.
+//
+// "meshtastic" named one CARRIER inside an enum about transports, and it is
+// written into settings files that already exist. Renaming the value without
+// accepting the old one would have meant either a migration of everybody's
+// settings or a second carrier answering to another vendor's name.
+func TestTheLegacyMeshtasticModeStillMeansRadioOnly(t *testing.T) {
+	rt := openRuntime(t, t.TempDir(), "alice")
+	defer rt.Close()
+	tid, err := rt.CreateSpace("field")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	setMode(t, rt, ModeMeshtasticOnly)
+	if !rt.TransportAllowed(TransportRadio, tid) {
+		t.Fatal("the legacy spelling stopped permitting the radio")
+	}
+	if rt.TransportAllowed(TransportRelay, tid) {
+		t.Fatal("the legacy spelling started permitting the relay")
+	}
+	if got := rt.Connectivity(); got.Mode != ModeRadioOnly {
+		t.Fatalf("the legacy spelling reports as %q, want the canonical %q",
+			got.Mode, ModeRadioOnly)
+	}
+
+	// And the new spelling behaves identically.
+	setMode(t, rt, ModeRadioOnly)
+	if !rt.TransportAllowed(TransportRadio, tid) ||
+		rt.TransportAllowed(TransportRelay, tid) {
+		t.Fatal("the canonical spelling does not behave like the legacy one")
 	}
 }

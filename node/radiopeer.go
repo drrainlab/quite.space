@@ -30,6 +30,7 @@ import (
 	"crypto/hkdf"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
@@ -693,7 +694,7 @@ func (r *Runtime) LinkToPeer(dev id.DeviceID) error {
 	// Its OWN deadline. Inheriting the sync give-up budget would make the
 	// cheap question cost 270 seconds, which is the expense it exists to
 	// avoid.
-	return ep.SendControlWithin(
+	return ep.SendControlTagged(tagProbe+hex.EncodeToString(dev[:]),
 		signedRadio(radioMsgProbe, domainProbe, body, r.Device.SignKey()),
 		probeDeadline)
 }

@@ -185,11 +185,19 @@ func (r *Runtime) DecideEntry(reqIDShort string, admit bool, reason string) erro
 	}
 	r.passes.mu.Unlock()
 
-	if addr == "" {
+	// ONLY for a relay-shaped record. A live-only rendezvous that fell back
+	// to the configured relay would seal this decision somewhere the guest has
+	// never looked, and then report success.
+	if addr == "" && relayShaped(addr) {
 		addr = r.GetSettings().Relay
 	}
 	if addr == "" {
 		return errors.New("node: deciding needs the relay the link was made on")
+	}
+	if !relayShaped(addr) {
+		return errors.New("node: this entry was asked for over the radio, and a " +
+			"radio holds nothing for somebody who is not here — decide while they " +
+			"are on the air")
 	}
 	client, err := r.dialRelay(addr)
 	if err != nil {
@@ -374,10 +382,10 @@ func (r *Runtime) declinePendingForPass(passIDShort, reason string) {
 	if len(waiting) == 0 {
 		return
 	}
-	if addr == "" {
+	if addr == "" && relayShaped(addr) {
 		addr = r.GetSettings().Relay // legacy records minted before RR-0
 	}
-	if addr == "" {
+	if addr == "" || !relayShaped(addr) {
 		return
 	}
 	client, err := r.dialRelay(addr)

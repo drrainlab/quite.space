@@ -106,6 +106,25 @@ function rmOffersBlock(offers) {
     <p class="hint">${esc(t('radio.meet.offers_hint'))}</p>${rows}</div>`;
 }
 
+// What we can honestly say about reaching one neighbour.
+//
+// "Radio link established" and "Direct radio link" are DIFFERENT sentences and
+// only the second requires observed zero hops — an addressed Meshtastic packet
+// is exactly what a mesh forwards, so its arrival proves who, never how far.
+// And "nobody answered" is not "they were here and went quiet": a person
+// standing in a field is owed the one that is true.
+function rmLinkLine(link) {
+  if (!link) return '';
+  switch (link.state) {
+    case 'up':
+      return link.direct ? t('radio.meet.link_direct') : t('radio.meet.link_up');
+    case 'probing': return t('radio.meet.link_probing');
+    case 'no_answer': return t('radio.meet.link_none');
+    case 'gone': return t('radio.meet.link_gone');
+  }
+  return '';
+}
+
 function rmNeighboursBlock(list) {
   const head = `<div class="gw-section"><h4>${esc(t('radio.meet.heard'))}</h4>`;
   if (!list.length) {
@@ -132,8 +151,10 @@ function rmNeighboursBlock(list) {
             esc(alsoName ? t('radio.meet.also_into', { space: alsoName })
                          : t('radio.meet.also_here'))}</a></div>`
       : '';
+    const linkLine = rmLinkLine(n.link);
     return `<div class="gw-row">
-      <span>${esc(who)} <span class="dim mono">${esc(n.device.slice(0, 8))}</span>${also}</span>
+      <span>${esc(who)} <span class="dim mono">${esc(n.device.slice(0, 8))}</span>${also}${
+        linkLine ? `<div class="hint">${esc(linkLine)}</div>` : ''}</span>
       <button class="btn-tinted" data-dev="${esc(n.device)}"
         onclick="startLineOverRadio(this)">${
           esc(t('radio.meet.start_line', { who }))}</button></div>`;
@@ -208,13 +229,14 @@ async function inviteOverRadio(btn) {
 async function acceptRadioOffer(id) {
   const info = document.getElementById('rmInfo');
   try {
-    const r = await api('/api/radio/invitations/accept', {
+    await api('/api/radio/invitations/accept', {
       method: 'POST',
       body: JSON.stringify({ id }),
     });
-    if (info) info.textContent = t('radio.meet.joined');
-    // Land in the space they were let into, the way every other join does.
-    current = r.joined;
+    // Accepting is an ANSWER, not a join. The space arrives when the other
+    // side grants it, which on this carrier is seconds away and sometimes
+    // more — so this must not land anybody in a room that is not there yet.
+    if (info) info.textContent = t('radio.meet.answered');
     await refresh();
   } catch (err) {
     if (info) info.textContent = t('radio.meet.failed', { why: err.message });

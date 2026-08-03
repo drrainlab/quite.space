@@ -39,6 +39,11 @@ import (
 type ctrlMsg struct {
 	msg    []byte
 	within time.Duration // 0 = the session's own budget
+	// tag names this message for the caller's own bookkeeping, and is what
+	// makes an OUTCOME reportable at all: SendControl returns when the message
+	// is QUEUED, and the only thing that knows whether it actually arrived is
+	// the transfer that carried it, several seconds later.
+	tag string
 }
 
 // Endpoint is a transports.Endpoint backed by Radio Transfer.
@@ -49,6 +54,7 @@ type Endpoint struct {
 	out       chan []byte
 	ctrl      chan ctrlMsg
 	onControl func(RadioAddress, []byte)
+	onSent    func(string, error)
 	stop      chan struct{}
 	closed    sync.Once
 
@@ -84,6 +90,14 @@ type EndpointOptions struct {
 	// Log, when set, is told about transfers that fail. Nothing here is
 	// silent about a message that did not arrive.
 	Log *log.Logger
+	// OnControlSent reports what became of a TAGGED control message: nil when
+	// the peer assembled it, an error when it was given up on.
+	//
+	// Without this the layer above can only say "queued", which on this
+	// carrier is indistinguishable from "gone" for minutes — and a screen that
+	// cannot tell those apart is the screen this whole wave exists because of.
+	OnControlSent func(tag string, err error)
+
 	// OnControl receives messages sent on the control stream, WITH the peer
 	// they came from. Nil means this node has no use for them, and they are
 	// dropped rather than queued — holding traffic nobody reads is a leak with
@@ -106,7 +120,7 @@ func Wrap(carrier RadioDatagram, key *TransferKey, o EndpointOptions) (*Endpoint
 	}
 	e := &Endpoint{s: s, dst: o.Dst, out: make(chan []byte, o.Queue),
 		ctrl: make(chan ctrlMsg, o.Queue), onControl: o.OnControl,
-		stop: make(chan struct{})}
+		onSent: o.OnControlSent, stop: make(chan struct{})}
 	go e.readLoop()
 	go e.sendLoop(o.Log)
 	return e, nil
@@ -175,13 +189,20 @@ func (e *Endpoint) SendControl(msg []byte) error {
 // frame, and letting it inherit MaxRounds × AckTimeout would make the cheap
 // question cost as much as the expensive one it exists to avoid.
 func (e *Endpoint) SendControlWithin(msg []byte, within time.Duration) error {
+	return e.SendControlTagged("", msg, within)
+}
+
+// SendControlTagged queues a control message and names it, so its OUTCOME can
+// be reported later through OnControlSent. An empty tag means nobody is
+// waiting to be told.
+func (e *Endpoint) SendControlTagged(tag string, msg []byte, within time.Duration) error {
 	select {
 	case <-e.stop:
 		return errors.New("radiotransfer: the endpoint is closed")
 	default:
 	}
 	select {
-	case e.ctrl <- ctrlMsg{msg: append([]byte(nil), msg...), within: within}:
+	case e.ctrl <- ctrlMsg{msg: append([]byte(nil), msg...), within: within, tag: tag}:
 		// A sync transfer already on the air would otherwise hold this behind
 		// it for up to MaxRounds × AckTimeout — 270 seconds by default. That is
 		// how an invitation reached nobody while the counters read "still
@@ -337,6 +358,7 @@ func (e *Endpoint) sendLoop(lg *log.Logger) {
 		var msg []byte
 		stream := StreamSync
 		var within time.Duration
+		var tag string
 		select {
 		case <-e.stop:
 			return
@@ -349,13 +371,13 @@ func (e *Endpoint) sendLoop(lg *log.Logger) {
 		// is usually already inside a sync transfer and will not look here
 		// again for minutes.
 		case m := <-e.ctrl:
-			msg, stream, within = m.msg, StreamControl, m.within
+			msg, stream, within, tag = m.msg, StreamControl, m.within, m.tag
 		default:
 			select {
 			case <-e.stop:
 				return
 			case m := <-e.ctrl:
-				msg, stream, within = m.msg, StreamControl, m.within
+				msg, stream, within, tag = m.msg, StreamControl, m.within, m.tag
 			case m := <-e.out:
 				msg = m
 			}
@@ -373,6 +395,13 @@ func (e *Endpoint) sendLoop(lg *log.Logger) {
 		err := e.s.SendOn(sctx, stream, e.dst, msg)
 		yielded := stream == StreamSync && e.disarmPreempt()
 		cancel()
+
+		// The OUTCOME, to whoever asked to be told. Reported for success and
+		// for failure alike: "it arrived" and "they did not hear it" are both
+		// answers, and only silence is not.
+		if tag != "" && e.onSent != nil && ctx.Err() == nil {
+			e.onSent(tag, err)
+		}
 
 		switch {
 		case err == nil:

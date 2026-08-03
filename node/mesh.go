@@ -183,7 +183,10 @@ func (r *Runtime) startMeshWire(target string, wire meshWire) error {
 				"shares: %w", err)
 		}
 		ep, err := radiotransfer.Wrap(meshtastic.NewDatagram(radio), key,
-			radiotransfer.EndpointOptions{OnControl: r.onRadioControl})
+			radiotransfer.EndpointOptions{
+				OnControl:     r.onRadioControl,
+				OnControlSent: r.onRadioControlSent,
+			})
 		if err != nil {
 			radio.Close()
 			return err
@@ -467,4 +470,68 @@ func (r *Runtime) SetMeshReliable(on bool) {
 	r.mu.Lock()
 	r.meshReliable = on
 	r.mu.Unlock()
+}
+
+// RadioStatus is the CARRIER-NEUTRAL face of a radio link.
+//
+// MeshStatus below it is a Meshtastic diagnostic wearing a generic name: node
+// numbers, channel indices and firmware queue counters are that carrier's
+// vocabulary, and a second driver would have to either fill them with
+// nonsense or grow a parallel struct. What every radio can honestly answer is
+// this much — is it there, is it coming back, and what is it moving in whole
+// messages.
+type RadioStatus struct {
+	// Carrier names the driver, so a person reading a diagnostic knows which
+	// one answered. It is a label, never something to branch on: policy that
+	// switched on a carrier name is the leak this split exists to close.
+	Carrier   string `json:"carrier"`
+	Connected bool   `json:"connected"`
+	// Reconnecting distinguishes "no radio configured" from "the radio is
+	// gone and we are trying to get it back". Both show as not connected and
+	// they call for different reactions.
+	Reconnecting bool   `json:"reconnecting,omitempty"`
+	Err          string `json:"error,omitempty"`
+
+	// Transfer is whole-MESSAGE delivery — the number this project spent nine
+	// days unable to see. Packet counts cannot tell a carrier problem from a
+	// reassembly one. Present only on a link running the transfer layer.
+	Transfer *radiotransfer.Stats `json:"transfer,omitempty"`
+	// Waiting, Dropped and Failed are the outbound queue's own honesty:
+	// queued, discarded for want of room, and given up on. Three different
+	// answers that a single "failed" would have merged.
+	Waiting int `json:"waiting,omitempty"`
+	Dropped int `json:"dropped,omitempty"`
+	Failed  int `json:"failed,omitempty"`
+	// PeerLinks is how many peers this radio can currently reach by an
+	// addressed path. Never a claim about hops.
+	PeerLinks int `json:"peer_links,omitempty"`
+
+	// Detail carries whatever the specific carrier wants to say. Nothing
+	// generic reads it; it exists so carrier facts have somewhere honest to
+	// live instead of being promoted into the neutral shape.
+	Detail any `json:"detail,omitempty"`
+}
+
+// RadioState reports the carrier-neutral view, with the Meshtastic diagnostic
+// carried underneath as detail.
+func (r *Runtime) RadioState() RadioStatus {
+	m := r.Mesh()
+	out := RadioStatus{
+		Carrier: "meshtastic", Connected: m.Connected,
+		Reconnecting: m.Reconnecting, Err: m.Err,
+		Transfer: m.Transfer,
+		Waiting:  m.TransferQueue[0], Dropped: m.TransferQueue[1],
+		Failed:   m.TransferQueue[2],
+		Detail:   m,
+	}
+	r.radioPeerOnce()
+	r.meet.mu.Lock()
+	now := time.Now()
+	for _, l := range r.meet.peers {
+		if l.State == PeerLinkUp && now.Before(l.ExpiresAt) {
+			out.PeerLinks++
+		}
+	}
+	r.meet.mu.Unlock()
+	return out
 }

@@ -37,14 +37,22 @@ func peerPair(t *testing.T, loss float64) (alice, bob *Runtime) {
 		AckTimeout: 300 * time.Millisecond, SACKDelay: 10 * time.Millisecond,
 		SendFloor: 5 * time.Millisecond, FrameGap: time.Millisecond}
 
+	// WIRED THE SAME WAY PRODUCTION IS. A harness that omits a callback the
+	// real attach path installs is how a defect stays invisible — which is
+	// exactly what happened with Credit, where the helper embedded a concrete
+	// type and production embedded an interface.
 	aEP, err := radiotransfer.Wrap(aAir, key, radiotransfer.EndpointOptions{
-		Options: radiotransfer.Options{Limits: lim}, OnControl: alice.onRadioControl})
+		Options:       radiotransfer.Options{Limits: lim},
+		OnControl:     alice.onRadioControl,
+		OnControlSent: alice.onRadioControlSent})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { aEP.Close() })
 	bEP, err := radiotransfer.Wrap(bAir, key, radiotransfer.EndpointOptions{
-		Options: radiotransfer.Options{Limits: lim}, OnControl: bob.onRadioControl})
+		Options:       radiotransfer.Options{Limits: lim},
+		OnControl:     bob.onRadioControl,
+		OnControlSent: bob.onRadioControlSent})
 	if err != nil {
 		t.Fatal(err)
 	}

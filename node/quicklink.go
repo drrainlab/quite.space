@@ -64,9 +64,14 @@ type QuickLinkRecord struct {
 }
 
 // quickLinkState is the on-disk shape: the line space plus the issuance log.
+//
+// Records is the ORIGINAL bearer-only log and is kept so an existing file
+// still opens; Invitations is the one journal both modes now write to. On
+// load, anything left in Records is folded across once — see loadQuickLinks.
 type quickLinkState struct {
-	Line    string            `json:"line_space,omitempty"`
-	Records []QuickLinkRecord `json:"records"`
+	Line        string             `json:"line_space,omitempty"`
+	Records     []QuickLinkRecord  `json:"records"`
+	Invitations []InvitationRecord `json:"invitations,omitempty"`
 }
 
 var quickLinkMu sync.Mutex
@@ -80,6 +85,39 @@ func (r *Runtime) loadQuickLinks() quickLinkState {
 		return st
 	}
 	_ = json.Unmarshal(b, &st)
+	return migrateInvitations(st)
+}
+
+// migrateInvitations folds the old bearer-only log into the one journal.
+//
+// In memory only: the fold is idempotent and re-derived on every load, so a
+// file written by an older build keeps working and a file written by this one
+// carries both shapes. Nothing is deleted, because a local record of what you
+// handed out is not worth risking to a migration.
+func migrateInvitations(st quickLinkState) quickLinkState {
+	if len(st.Records) == 0 {
+		return st
+	}
+	seen := make(map[string]bool, len(st.Invitations))
+	for _, inv := range st.Invitations {
+		if inv.Hint != "" {
+			seen[inv.Hint] = true
+		}
+	}
+	for _, rec := range st.Records {
+		if seen[rec.Hint] {
+			continue
+		}
+		state := InvitationOffered
+		if rec.Withdrawn {
+			state = InvitationWithdrawn
+		}
+		st.Invitations = append(st.Invitations, InvitationRecord{
+			ID: rec.Hint, Mode: InvitationBearer, Space: rec.Space,
+			Hint: rec.Hint, PassID: rec.PassID, Note: rec.Note,
+			IssuedAt: rec.IssuedAt, ExpiresAt: rec.ExpiresAt, State: state,
+		})
+	}
 	return st
 }
 
@@ -226,11 +264,28 @@ func (r *Runtime) mintLink(space id.TerminalID, o QuickLinkOptions) (QuickLinkIn
 	note := o.Note
 	relayAddr := r.GetSettings().Relay
 	if relayAddr == "" {
+		// A link needs SOMEWHERE to be reachable — not necessarily a relay.
+		//
+		// The refusal that stood here was right about the mechanism and wrong
+		// about the conclusion: five words can indeed only point at a pass, but
+		// a radio segment can hold one too. What must never happen is handing
+		// somebody five words that point at nothing, which is the dishonesty
+		// QL-hotfix removed; so this still refuses when there is neither.
+		if _, err := r.radioControl(); err != nil {
+			return QuickLinkInfo{}, errors.New(
+				"node: a quick link needs somewhere the pass can wait, because five " +
+					"words can only point at a pass, never carry one — set a relay in " +
+					"Settings, or start a radio segment, or share the pass itself by QR " +
+					"or by sound, which need no network at all")
+		}
 		return QuickLinkInfo{}, errors.New(
-			"node: a quick link needs a relay, because five words can only point at a " +
-				"pass, never carry one — set a relay in Settings, or share the pass itself " +
-				"by QR or by sound, which need no network at all")
+			"node: this node has a radio but no relay, and a five-word link over the " +
+				"radio is not built yet — press the person's name in the radio screen " +
+				"instead, which offers them a line directly")
 	}
+	// Only asked when a RELAY is actually the road. relayGate() answers
+	// "does any space permit the relay transport", which is a question about a
+	// transport this mint may not be using at all.
 	if err := r.relayGate(); err != nil {
 		return QuickLinkInfo{}, err
 	}
@@ -248,6 +303,19 @@ func (r *Runtime) mintLink(space id.TerminalID, o QuickLinkOptions) (QuickLinkIn
 			ttl = 24
 		}
 	}
+	// HOST APPROVAL NEEDS SOMEWHERE TO HOLD THE QUESTION.
+	//
+	// Over a live-only rendezvous there is nowhere: the guest would have to
+	// stand there while a person decides, and if either walks away the request
+	// is simply gone. Refusing at mint is better than building a six-leg saga
+	// around a human pause and then explaining why it timed out.
+	if o.Approval == "host" && custodyOf(relayAddr) == custodyLiveOnly {
+		return QuickLinkInfo{}, errors.New(
+			"node: a link that asks you to decide needs somewhere to hold the " +
+				"question, and a radio segment holds nothing for somebody who is " +
+				"not here — either let them walk straight in, or use a relay")
+	}
+
 	// A personal link is not a stored mode — it IS one device. One concept,
 	// enforced in one place.
 	door := quicklink.DoorShared
@@ -296,13 +364,16 @@ func (r *Runtime) mintLink(space id.TerminalID, o QuickLinkOptions) (QuickLinkIn
 
 	quickLinkMu.Lock()
 	st := r.loadQuickLinks()
-	st.Records = append(st.Records, QuickLinkRecord{
-		Hint:      fmt.Sprintf("%x", tok.Hint()),
-		Space:     space.Hex(),
-		PassID:    pass.PassID,
-		Note:      note,
-		IssuedAt:  time.Now().Unix(),
-		ExpiresAt: expires.Unix(),
+	hint := fmt.Sprintf("%x", tok.Hint())
+	// ONE journal, whatever carried the invitation. The bearer-only log this
+	// replaces is still read on load (migrateInvitations) so an existing file
+	// opens, but nothing writes to it again — two journals of the same act
+	// are how a withdraw ends up true in one place and false in the other.
+	st.Invitations = append(st.Invitations, InvitationRecord{
+		ID: hint, Mode: InvitationBearer, Space: space.Hex(),
+		Hint: hint, PassID: pass.PassID, Note: note,
+		IssuedAt: time.Now().Unix(), ExpiresAt: expires.Unix(),
+		State: InvitationOffered,
 	})
 	saveErr := r.saveQuickLinks(st)
 	quickLinkMu.Unlock()
@@ -476,14 +547,22 @@ func (r *Runtime) rememberResolved(phrase string, prev QuickLinkPreview) {
 	r.resolvedLinks[phrase] = prev
 }
 
-// QuickLinks lists what this node has handed out, newest first.
+// QuickLinks lists the BEARER invitations this node handed out, newest first.
+//
+// A view over the one journal rather than a second log. Targeted invitations
+// are deliberately absent: this answers "what words are live", and a targeted
+// invitation has no words. Invitations() is the whole picture.
 func (r *Runtime) QuickLinks() []QuickLinkRecord {
-	quickLinkMu.Lock()
-	defer quickLinkMu.Unlock()
-	st := r.loadQuickLinks()
-	out := make([]QuickLinkRecord, 0, len(st.Records))
-	for i := len(st.Records) - 1; i >= 0; i-- {
-		out = append(out, st.Records[i])
+	out := []QuickLinkRecord{}
+	for _, inv := range r.Invitations() {
+		if inv.Mode != InvitationBearer {
+			continue
+		}
+		out = append(out, QuickLinkRecord{
+			Hint: inv.Hint, Space: inv.Space, PassID: inv.PassID,
+			Note: inv.Note, IssuedAt: inv.IssuedAt, ExpiresAt: inv.ExpiresAt,
+			Withdrawn: inv.State == InvitationWithdrawn,
+		})
 	}
 	return out
 }
@@ -498,29 +577,21 @@ func (r *Runtime) QuickLinks() []QuickLinkRecord {
 func (r *Runtime) WithdrawQuickLink(hint string) error {
 	quickLinkMu.Lock()
 	st := r.loadQuickLinks()
-	var rec *QuickLinkRecord
-	for i := range st.Records {
-		if st.Records[i].Hint == hint {
-			rec = &st.Records[i]
+	var invID string
+	for _, inv := range st.Invitations {
+		if inv.Mode == InvitationBearer && inv.Hint == hint {
+			invID = inv.ID
 			break
 		}
 	}
-	if rec == nil {
-		quickLinkMu.Unlock()
+	quickLinkMu.Unlock()
+	if invID == "" {
 		return errors.New("node: no such quick link was issued from this device")
 	}
-	rec.Withdrawn = true
-	err := r.saveQuickLinks(st)
-	passID, space := rec.PassID, rec.Space
-	quickLinkMu.Unlock()
-	if err != nil {
-		return err
-	}
-	_ = space // the pass registry is keyed by pass id alone
-	// Whoever is waiting at this door is told the door is gone, rather
-	// than left to time out against a link that no longer exists.
-	r.declinePendingForPass(passID, "the link was withdrawn")
-	return r.RevokePass(passID)
+	// Delegated rather than duplicated: revoking the pass and declining
+	// whoever is at the door are the same steps for every bearer invitation,
+	// and two copies of them are two chances to disagree.
+	return r.WithdrawInvitation(invID)
 }
 
 // spaceTitle is a best-effort label for display inside a sealed link.

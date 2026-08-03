@@ -511,12 +511,18 @@ func (a *APIServer) handleRadioAccept(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusBadRequest, err)
 		return
 	}
-	tid, err := a.rt.AcceptRadioOffer(body.ID)
-	if err != nil {
+	// Answering is now an ANSWER, not a join: it tells the other side we want
+	// in, and the space arrives when they grant it. Reporting a join here
+	// would be the same overstatement as reporting handed-to-transport as
+	// delivery — the very thing this wave keeps removing.
+	if err := a.rt.AcceptRadioLine(body.ID); err != nil {
 		httpErr(w, http.StatusConflict, err)
 		return
 	}
-	writeJSON(w, map[string]string{"joined": tid.String()})
+	writeJSON(w, map[string]string{
+		"state": "accepted",
+		"note": "your answer is on the air. They grant the space when it " +
+			"reaches them, and it appears here then — not before."})
 }
 
 // handleRadioMeet opens a line with a neighbour and offers it over the air.
@@ -533,12 +539,12 @@ func (a *APIServer) handleRadioMeet(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusBadRequest, err)
 		return
 	}
-	tid, err := a.rt.StartLineOverRadio(dev)
+	tid, err := a.rt.OfferLineOverRadio(dev)
 	if err != nil {
 		httpErr(w, http.StatusConflict, err)
 		return
 	}
 	writeJSON(w, map[string]string{"space": tid.String(),
-		"note": "a new line, for the two of you. The invitation is sealed to " +
-			"their device and is on the air now; they still have to accept it."})
+		"note": "a new line, for the two of you. They have been OFFERED it — " +
+			"nobody is a member and no key has moved until they answer."})
 }
