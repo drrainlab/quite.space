@@ -13,6 +13,7 @@ package meshtastic
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"time"
 
@@ -24,9 +25,33 @@ import (
 // bare radio both satisfy it, so a caller may pick reconnect-or-not without
 // this file caring.
 type sender interface {
-	Send([]byte) error
-	Poll() [][]byte
+	SendTo(to uint32, pkt []byte) error
+	PollFrom() []Inbound
 	Capabilities() transports.Capabilities
+}
+
+// NodeAddress renders a Meshtastic node number as the opaque address the
+// layer above passes around. Four bytes, big-endian; nil means broadcast.
+//
+// The address is opaque ON PURPOSE — radiotransfer never interprets it, it
+// only hands back whatever it was given — so the encoding is this driver's
+// business alone and a second carrier may name its peers however it likes.
+func NodeAddress(node uint32) radiotransfer.RadioAddress {
+	if node == 0 || node == Broadcast {
+		return nil
+	}
+	var b [4]byte
+	binary.BigEndian.PutUint32(b[:], node)
+	return radiotransfer.RadioAddress(b[:])
+}
+
+// nodeOf reads an address back. Anything it does not recognise is a broadcast,
+// because refusing to send is worse than sending too widely.
+func nodeOf(addr radiotransfer.RadioAddress) uint32 {
+	if len(addr) != 4 {
+		return Broadcast
+	}
+	return binary.BigEndian.Uint32(addr)
 }
 
 // Datagram presents a Meshtastic link as a radiotransfer.RadioDatagram.
@@ -40,11 +65,11 @@ type Datagram struct {
 	// hands frames to a reader goroutine which parks them in an inbox; there
 	// is no channel to select on, so this is a poll rather than a wait.
 	poll time.Duration
-	// pending holds the remainder of a batch. Poll returns several frames at
-	// once; Receive returns one. Dropping the rest would be indistinguishable
-	// from carrier loss — exactly the confusion this wave exists to end — so
-	// they wait here for the next call.
-	pending [][]byte
+	// pending holds the remainder of a batch. PollFrom returns several frames
+	// at once; Receive returns one. Dropping the rest would be
+	// indistinguishable from carrier loss — exactly the confusion this wave
+	// exists to end — so they wait here for the next call.
+	pending []Inbound
 }
 
 // NewDatagram wraps a link. It does not own it: closing the link stays the
@@ -72,19 +97,21 @@ func (d *Datagram) MTU() int {
 	return 200
 }
 
-// Send hands one frame to the radio.
+// Send hands one frame to the radio, addressed when the caller named a peer.
 //
-// dst is IGNORED, and that is a limitation worth stating rather than hiding:
-// this transport broadcasts on a channel, so a SACK addressed to one peer
-// still reaches the whole segment. It costs nothing in correctness — the
-// transfer id is what routes a frame, and a frame for somebody else's
-// transfer is dropped — but it does cost airtime on a busy segment, and
-// addressed sending is what a later carrier should provide.
-func (d *Datagram) Send(ctx context.Context, _ radiotransfer.RadioAddress, frame []byte) error {
+// A nil dst is a broadcast, which is what a DATA frame on a segment wants.
+// Everything else — SACK, COMMIT, CANCEL — is meant for one peer, and used to
+// go to the whole segment anyway because this driver discarded dst and always
+// wrote Broadcast. That was airtime spent telling people something they could
+// not use.
+//
+// What this does NOT claim: an addressed packet may still traverse
+// intermediate nodes. It says who, never how far.
+func (d *Datagram) Send(ctx context.Context, dst radiotransfer.RadioAddress, frame []byte) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	err := d.link.Send(frame)
+	err := d.link.SendTo(nodeOf(dst), frame)
 	if err == nil {
 		return nil
 	}
@@ -98,17 +125,23 @@ func (d *Datagram) Send(ctx context.Context, _ radiotransfer.RadioAddress, frame
 	return err
 }
 
-// Receive waits for the next frame from the segment.
+// Receive waits for the next frame, and names the node that sent it.
+//
+// It used to answer the constant "segment" for every arrival, which read as
+// harmless and was not: the layer above keys MaxInflightTransfersPerPeer on
+// this value, so one string for every neighbour turned a per-peer bound into a
+// segment-wide one and quietly deleted the memory defence that limit exists to
+// provide.
 func (d *Datagram) Receive(ctx context.Context) (radiotransfer.RadioAddress, []byte, error) {
 	t := time.NewTicker(d.poll)
 	defer t.Stop()
 	for {
-		if pkts := d.link.Poll(); len(pkts) > 0 {
+		if pkts := d.link.PollFrom(); len(pkts) > 0 {
 			d.stash(pkts[1:])
-			return radiotransfer.RadioAddress("segment"), pkts[0], nil
+			return NodeAddress(pkts[0].From), pkts[0].Payload, nil
 		}
-		if b := d.take(); b != nil {
-			return radiotransfer.RadioAddress("segment"), b, nil
+		if p, ok := d.take(); ok {
+			return NodeAddress(p.From), p.Payload, nil
 		}
 		select {
 		case <-ctx.Done():
@@ -128,20 +161,20 @@ func (d *Datagram) Credit() transports.Credit {
 	return d.pacer.Credit()
 }
 
-func (d *Datagram) stash(rest [][]byte) {
+func (d *Datagram) stash(rest []Inbound) {
 	if len(rest) == 0 {
 		return
 	}
 	d.pending = append(d.pending, rest...)
 }
 
-func (d *Datagram) take() []byte {
+func (d *Datagram) take() (Inbound, bool) {
 	if len(d.pending) == 0 {
-		return nil
+		return Inbound{}, false
 	}
-	b := d.pending[0]
+	p := d.pending[0]
 	d.pending = d.pending[1:]
-	return b
+	return p, true
 }
 
 // isFull recognises the carrier saying "not now".

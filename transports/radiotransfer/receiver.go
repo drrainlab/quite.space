@@ -78,6 +78,14 @@ type Delivered struct {
 	Transfer TransferID
 	Stream   uint64
 	Message  []byte
+	// From is the peer whose fragments assembled into this message.
+	//
+	// It is the carrier's own name for a neighbour and nothing more: it says
+	// which radio the bytes arrived from, never who is holding it. Anything
+	// that needs to know WHO must check a signature. What it does buy is the
+	// ability to answer the right radio — without it a reply can only be
+	// broadcast, and a peer link cannot exist at all.
+	From RadioAddress
 }
 
 // ErrAlreadyDelivered marks a transfer this receiver has already completed.
@@ -155,7 +163,8 @@ func (r *Receiver) Accept(peer string, f *Frame, now time.Time) (*Delivered, *Fr
 	}
 	r.forget(f.Transfer)
 	r.done[f.Transfer] = now.Add(r.lim.DedupTTL)
-	return &Delivered{Transfer: f.Transfer, Stream: in.stream, Message: msg},
+	return &Delivered{Transfer: f.Transfer, Stream: in.stream, Message: msg,
+		From: RadioAddress(in.peer)},
 		r.commitFrame(f.Transfer, in.digest), nil
 }
 
@@ -184,13 +193,24 @@ func (in *inbound) assemble() ([]byte, error) {
 }
 
 // DueSACKs returns the SACK frames whose delay has elapsed, and clears them.
-func (r *Receiver) DueSACKs(now time.Time) []*Frame {
-	var out []*Frame
+// SACKDue is a SACK that is ready to send, WITH the peer it belongs to.
+//
+// The peer travels with the frame because a SACK is an answer to one sender,
+// and the caller has no other way to know which. While the carrier discarded
+// the destination this did not matter; now that it does not, sending every due
+// SACK to whoever happened to speak last would answer the wrong radio.
+type SACKDue struct {
+	Peer  string
+	Frame *Frame
+}
+
+func (r *Receiver) DueSACKs(now time.Time) []SACKDue {
+	var out []SACKDue
 	for _, in := range r.open {
 		if in.sackDue.IsZero() || now.Before(in.sackDue) {
 			continue
 		}
-		out = append(out, in.sack())
+		out = append(out, SACKDue{Peer: in.peer, Frame: in.sack()})
 		in.sackDue = time.Time{}
 	}
 	return out

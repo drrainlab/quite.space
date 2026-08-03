@@ -177,6 +177,151 @@ func (r *Runtime) wireLiveLinksLocked(tid id.TerminalID, st *spaceState) {
 	}
 }
 
+// quietLinkFactor is how much less often a space whose log has not grown
+// offers a summary on a metered link. Same intent as relaysync's quietEvery
+// (node/relaysync.go:66-76), expressed in the pump's own vocabulary: a
+// per-space timer rather than a global tick count. Renderer-side policy,
+// never a contract.
+const quietLinkFactor = 5
+
+// airtimeFloorBytes is the least a transmission is charged against the link's
+// airtime budget, whatever the payload weighs. On LoRa the cost of putting
+// anything on the air is dominated by the transmission itself — about two
+// seconds at LONG_FAST — so a byte budget that charged a small summary its
+// small size would approve far more transmissions than the band can hold.
+const airtimeFloorBytes = 200
+
+// activeSpace is a space this link may carry on this tick, with its identity
+// kept alongside it — the cadence below needs the terminal id to stagger and
+// to remember, and spaceState does not carry its own.
+type activeSpace struct {
+	tid id.TerminalID
+	st  *spaceState
+}
+
+// linkCadence decides which spaces may offer a summary on this tick.
+//
+// The relay loop already learned this and wrote it down (relaysync.go:66-76):
+// a space that has not changed does not need announcing as often as one that
+// has, and the quiet ones must not all wake on the same tick. The link pump
+// never learned it, and on a radio the arithmetic is brutal — six spaces on
+// ONE link-wide timer is six whole messages handed over in a single tick,
+// every minute, to a carrier that moves about one message every thirty
+// seconds. Oversubscribed threefold before anybody presses anything, which is
+// why an invitation could sit behind minutes of sync and arrive at nobody.
+//
+// TWO REGIMES, because two carriers:
+//
+//	unmetered (LAN)  every active space offers on one shared timer, exactly as
+//	                 before. There is room, and pacing would only slow a link
+//	                 that was never the bottleneck.
+//	metered (radio)  at most ONE space offers per tick — a space whose log
+//	                 grew going first, then the longest-waiting — and only if
+//	                 the airtime budget can pay for it.
+type linkCadence struct {
+	paced   bool
+	air     *routing.TokenBucket
+	shared  time.Time // the unmetered regime's single timer
+	last    map[id.TerminalID]time.Time
+	seenLen map[id.TerminalID]int
+}
+
+func newLinkCadence(paced bool, now time.Time) *linkCadence {
+	lc := &linkCadence{paced: paced,
+		last: map[id.TerminalID]time.Time{}, seenLen: map[id.TerminalID]int{}}
+	if paced {
+		// SYNC ONLY, and that is the whole point of putting the budget here
+		// rather than inside the endpoint. Airtime spent on a summary is
+		// background traffic; a control message somebody is standing in a
+		// field waiting for never asks this budget for permission. Background
+		// yields to the person.
+		lc.air = routing.DefaultAirtime(now)
+	}
+	return lc
+}
+
+// due returns the spaces that may offer a summary now, and charges whatever
+// budget they spend.
+func (lc *linkCadence) due(active []activeSpace, every time.Duration,
+	now time.Time) []activeSpace {
+
+	if !lc.paced {
+		if now.Sub(lc.shared) <= every {
+			return nil
+		}
+		lc.shared = now
+		return active
+	}
+
+	var best activeSpace
+	var bestAt time.Time
+	bestGrew, found := false, false
+	for _, a := range active {
+		n := a.st.space.Log.Len()
+		grew := n != lc.seenLen[a.tid]
+		prev, seen := lc.last[a.tid]
+		if !seen {
+			// A space this link has not announced yet is due AT ONCE.
+			//
+			// The one-per-tick rule below is what prevents the burst; six new
+			// spaces simply take six ticks. Staggering the FIRST offer as well
+			// would mean a space created during a session waits a whole
+			// interval before anybody hears of it — a minute of silence on a
+			// radio, which is the late-space bug wearing a different hat and
+			// is exactly what mesh_latespace_test.go caught when this line
+			// tried to be clever.
+			prev = now.Add(-every)
+			lc.last[a.tid] = prev
+		}
+		wait := every
+		if !grew {
+			wait = every * quietLinkFactor
+		}
+		if now.Sub(prev) < wait {
+			continue
+		}
+		if !found || (grew && !bestGrew) ||
+			(grew == bestGrew && prev.Before(bestAt)) {
+			best, bestAt, bestGrew, found = a, prev, grew, true
+		}
+	}
+	if !found {
+		return nil
+	}
+	// Priced from the encoder, not guessed — but floored, because on LoRa a
+	// packet costs a packet. Airtime is dominated by per-transmission overhead,
+	// not by payload size, so charging an 86-byte summary 86 bytes would let
+	// the budget approve far more transmissions than the band has room for. The
+	// floor makes 2000 bytes a minute mean about ten transmissions a minute for
+	// background sync, leaving the rest of the air for what a person is waiting
+	// on.
+	//
+	// A budget the link cannot pay leaves lc.last untouched, so the space is
+	// still owed its turn on the next tick rather than silently losing it.
+	cost := best.st.eng.SummarySize()
+	if cost < airtimeFloorBytes {
+		cost = airtimeFloorBytes
+	}
+	if lc.air != nil && !lc.air.Take(cost, now) {
+		return nil
+	}
+	return []activeSpace{best}
+}
+
+// done records what actually happened to a summary this cadence released.
+//
+// A carrier that had no room did not carry it, so the turn is NOT spent —
+// exactly as an unaffordable airtime budget does not spend it. Advancing the
+// timer on a send that never left is the same class of mistake as the old
+// shared timer advancing whether or not anything was sent.
+func (lc *linkCadence) done(a activeSpace, err error, now time.Time) {
+	if !lc.paced || errors.Is(err, kernelsync.ErrCarrierFull) {
+		return
+	}
+	lc.last[a.tid] = now
+	lc.seenLen[a.tid] = a.st.space.Log.Len()
+}
+
 // adoptLink attaches any link to every space and pumps it until it dies.
 // Frames for other terminals are simply not matched by the engines — each
 // engine checks its own terminal id. Cadence is per-transport: a LAN link
@@ -228,7 +373,7 @@ func (r *Runtime) adoptLinkFiltered(c link, pump, summaryEvery time.Duration,
 		// every terminal share this wire, and reassembly is a property of
 		// the wire.
 		reasm := kernelsync.NewReassembler()
-		lastSummary := time.Time{}
+		cad := newLinkCadence(linkKind == TransportRadio, time.Now())
 		for {
 			select {
 			case <-r.stop:
@@ -275,7 +420,7 @@ func (r *Runtime) adoptLinkFiltered(c link, pump, summaryEvery time.Duration,
 			// because going deaf on the mesh whenever the internet happens
 			// to be preferred would be a strange way to run a radio node.
 			sending := map[id.TerminalID]bool{}
-			active := make([]*spaceState, 0, len(byTerm))
+			active := make([]activeSpace, 0, len(byTerm))
 			for tid, st := range byTerm {
 				if !conn.allows(kind, tid) {
 					continue
@@ -284,7 +429,7 @@ func (r *Runtime) adoptLinkFiltered(c link, pump, summaryEvery time.Duration,
 				if has && route != kind {
 					continue // something to send, but not by this road
 				}
-				active = append(active, st)
+				active = append(active, activeSpace{tid: tid, st: st})
 				sending[tid] = has
 				// Stamp the responsibility token BEFORE anything can go
 				// out. openAttempt fsyncs it, so a crash between minting
@@ -312,11 +457,16 @@ func (r *Runtime) adoptLinkFiltered(c link, pump, summaryEvery time.Duration,
 					sendErr = err
 				}
 			}
-			if time.Since(lastSummary) > summaryEvery {
-				for _, st := range active {
-					note(st.eng.SendSummary(c))
-				}
-				lastSummary = time.Now()
+			// The cadence decides WHO offers, and charges what they spend.
+			// Note what it deliberately does not do: it never advances a
+			// space's timer for a summary the carrier refused, so a link that
+			// is merely busy still owes that space its turn. The old shared
+			// timer advanced unconditionally, which is how six spaces stayed
+			// exactly one minute apart from each other forever.
+			for _, a := range cad.due(active, summaryEvery, now) {
+				err := a.st.eng.SendSummary(c)
+				note(err)
+				cad.done(a, err, now)
 			}
 			// Poll ONCE and route by terminal. Letting each space call
 			// Pump would mean each one draining the shared queue: the first

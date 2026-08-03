@@ -28,16 +28,36 @@ import (
 	"github.com/drrainlab/quiet_places/transports"
 )
 
+// ctrlMsg is a control message with its own patience.
+//
+// A control message is something a person is standing there waiting for, and
+// the sync budget is the wrong clock for it: MaxRounds × AckTimeout is 270
+// seconds by default, which is longer than the ten minutes a quicklink lives
+// divided among the legs it needs. A one-frame PROBE that inherits that budget
+// takes four and a half minutes to discover a radio nobody is listening to —
+// which is exactly the discovery it exists to make cheap.
+type ctrlMsg struct {
+	msg    []byte
+	within time.Duration // 0 = the session's own budget
+}
+
 // Endpoint is a transports.Endpoint backed by Radio Transfer.
 type Endpoint struct {
 	s   *Session
 	dst RadioAddress
 
 	out       chan []byte
-	ctrl      chan []byte
-	onControl func([]byte)
+	ctrl      chan ctrlMsg
+	onControl func(RadioAddress, []byte)
 	stop      chan struct{}
 	closed    sync.Once
+
+	// curCancel cancels the SYNC transfer in flight, so a control message can
+	// take the air instead of queueing behind it. Only sync is ever preempted:
+	// yielding a summary costs nothing, because the next one supersedes it.
+	curMu     sync.Mutex
+	curCancel context.CancelFunc
+	preempted bool
 
 	mu    sync.Mutex
 	inbox [][]byte
@@ -47,6 +67,9 @@ type Endpoint struct {
 	// only one of them is the carrier's.
 	dropped int
 	failed  int
+	// yielded counts sync transfers abandoned so a control message could take
+	// the air. Neither a failure nor a delivery, and kept apart from both.
+	yielded int
 }
 
 // EndpointOptions configure the wrapper.
@@ -61,10 +84,15 @@ type EndpointOptions struct {
 	// Log, when set, is told about transfers that fail. Nothing here is
 	// silent about a message that did not arrive.
 	Log *log.Logger
-	// OnControl receives messages sent on the control stream. Nil means this
-	// node has no use for them, and they are dropped rather than queued —
-	// holding traffic nobody reads is a leak with a schedule.
-	OnControl func(msg []byte)
+	// OnControl receives messages sent on the control stream, WITH the peer
+	// they came from. Nil means this node has no use for them, and they are
+	// dropped rather than queued — holding traffic nobody reads is a leak with
+	// a schedule.
+	//
+	// src is the carrier's name for a radio, never for a person: it is what
+	// makes an addressed answer possible, and nothing more. Who is holding
+	// that radio is a question only a signature answers.
+	OnControl func(src RadioAddress, msg []byte)
 }
 
 // Wrap turns a carrier into an Endpoint that delivers whole messages.
@@ -77,7 +105,7 @@ func Wrap(carrier RadioDatagram, key *TransferKey, o EndpointOptions) (*Endpoint
 		o.Queue = 16
 	}
 	e := &Endpoint{s: s, dst: o.Dst, out: make(chan []byte, o.Queue),
-		ctrl: make(chan []byte, o.Queue), onControl: o.OnControl,
+		ctrl: make(chan ctrlMsg, o.Queue), onControl: o.OnControl,
 		stop: make(chan struct{})}
 	go e.readLoop()
 	go e.sendLoop(o.Log)
@@ -135,17 +163,67 @@ func (e *Endpoint) Send(msg []byte) error {
 // the sync engine's parser, and so a busy sync queue cannot starve an invite
 // — the two have their own queues and the worker alternates.
 func (e *Endpoint) SendControl(msg []byte) error {
+	return e.SendControlWithin(msg, 0)
+}
+
+// SendControlWithin queues a control message that must succeed or fail within
+// a stated time.
+//
+// Zero means the session's own budget — right for an invitation, which is
+// worth several minutes of trying. Anything a person is watching for an answer
+// to should name its own patience: a PROBE asking "are you listening?" is one
+// frame, and letting it inherit MaxRounds × AckTimeout would make the cheap
+// question cost as much as the expensive one it exists to avoid.
+func (e *Endpoint) SendControlWithin(msg []byte, within time.Duration) error {
 	select {
 	case <-e.stop:
 		return errors.New("radiotransfer: the endpoint is closed")
 	default:
 	}
 	select {
-	case e.ctrl <- append([]byte(nil), msg...):
+	case e.ctrl <- ctrlMsg{msg: append([]byte(nil), msg...), within: within}:
+		// A sync transfer already on the air would otherwise hold this behind
+		// it for up to MaxRounds × AckTimeout — 270 seconds by default. That is
+		// how an invitation reached nobody while the counters read "still
+		// going": not lost, not refused, merely queued behind four and a half
+		// minutes of background traffic.
+		e.preempt()
 		return nil
 	default:
 		return ErrCarrierFull
 	}
+}
+
+// preempt cancels the SYNC transfer in flight, if there is one.
+//
+// Only sync. A summary is a SNAPSHOT — abandoning one costs nothing because
+// the next one describes everything it did and more — while abandoning a
+// control transfer would throw away the very thing somebody is waiting for.
+func (e *Endpoint) preempt() {
+	e.curMu.Lock()
+	defer e.curMu.Unlock()
+	if e.curCancel != nil {
+		e.preempted = true
+		e.curCancel()
+	}
+}
+
+func (e *Endpoint) armPreempt(c context.CancelFunc) {
+	e.curMu.Lock()
+	e.curCancel, e.preempted = c, false
+	e.curMu.Unlock()
+}
+
+// disarmPreempt clears the hook and reports whether it fired, so a transfer
+// this endpoint deliberately abandoned is never counted or logged as one the
+// radio failed to deliver.
+func (e *Endpoint) disarmPreempt() bool {
+	e.curMu.Lock()
+	defer e.curMu.Unlock()
+	e.curCancel = nil
+	was := e.preempted
+	e.preempted = false
+	return was
 }
 
 // Poll returns whole messages that have arrived.
@@ -163,8 +241,9 @@ func (e *Endpoint) Capabilities() transports.Capabilities {
 		// A whole message, not a frame: fragmentation below is ours and is
 		// repaired, so the layer above may hand over more than one packet
 		// holds. What it must NOT do is hand over more than a transfer can
-		// carry, because that is refused before any airtime is spent.
-		MaxPayload: e.s.lim.MaxMessageBytes,
+		// carry, because that is refused before any airtime is spent — which
+		// is precisely what advertising MaxMessageBytes did. See carryable().
+		MaxPayload: min(e.s.lim.MaxMessageBytes, e.s.carryable()),
 		Realtime:   false,
 		// AckNone stands. A COMMIT proves the message ASSEMBLED at a peer —
 		// which is more than any carrier here could say before — but this
@@ -200,6 +279,13 @@ func (e *Endpoint) Queued() (waiting, dropped, failed int) {
 	return len(e.out), e.dropped, e.failed
 }
 
+// Yielded reports how many sync transfers stepped aside for control traffic.
+func (e *Endpoint) Yielded() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.yielded
+}
+
 // readLoop is the ONE reader of the carrier. Everything that arrives goes
 // through Deliver, which routes it to whichever Send is waiting or into the
 // reassembler.
@@ -220,7 +306,7 @@ func (e *Endpoint) readLoop() {
 				switch got.Stream {
 				case StreamControl:
 					if e.onControl != nil {
-						e.onControl(got.Message)
+						e.onControl(got.From, got.Message)
 					}
 				default:
 					e.mu.Lock()
@@ -232,7 +318,7 @@ func (e *Endpoint) readLoop() {
 		// SACKs are pushed from here rather than from a timer of their own:
 		// this loop already runs whenever anything happens on the segment,
 		// and a receiver with nothing to acknowledge has nothing to do.
-		e.s.PumpSACKs(ctx, src)
+		e.s.PumpSACKs(ctx)
 	}
 }
 
@@ -250,36 +336,64 @@ func (e *Endpoint) sendLoop(lg *log.Logger) {
 	for {
 		var msg []byte
 		stream := StreamSync
+		var within time.Duration
 		select {
 		case <-e.stop:
 			return
 		// Control first when both are waiting: an invite is a few hundred
 		// bytes and somebody is standing there watching for it, while sync
 		// traffic is a background that has all day.
+		//
+		// Preference at SELECTION time is not enough on its own, which is what
+		// preempt() is for — by the time a control message is queued, the loop
+		// is usually already inside a sync transfer and will not look here
+		// again for minutes.
 		case m := <-e.ctrl:
-			msg, stream = m, StreamControl
+			msg, stream, within = m.msg, StreamControl, m.within
 		default:
 			select {
 			case <-e.stop:
 				return
 			case m := <-e.ctrl:
-				msg, stream = m, StreamControl
+				msg, stream, within = m.msg, StreamControl, m.within
 			case m := <-e.out:
 				msg = m
 			}
 		}
-		{
-			if err := e.s.SendOn(ctx, stream, e.dst, msg); err != nil {
-				if ctx.Err() != nil {
-					return
-				}
-				e.mu.Lock()
-				e.failed++
-				e.mu.Unlock()
-				if lg != nil {
-					lg.Printf("radio transfer of %d bytes did not arrive: %v",
-						len(msg), err)
-				}
+
+		sctx, cancel := ctx, context.CancelFunc(func() {})
+		if within > 0 {
+			sctx, cancel = context.WithTimeout(ctx, within)
+		} else if stream == StreamSync {
+			sctx, cancel = context.WithCancel(ctx)
+		}
+		if stream == StreamSync {
+			e.armPreempt(cancel)
+		}
+		err := e.s.SendOn(sctx, stream, e.dst, msg)
+		yielded := stream == StreamSync && e.disarmPreempt()
+		cancel()
+
+		switch {
+		case err == nil:
+		case ctx.Err() != nil:
+			return
+		case yielded:
+			// Not a failure and not a delivery: this endpoint took the air back
+			// for something a person is waiting on. Counted separately, because
+			// folding it into `failed` would make a working preemption look
+			// like a broken radio — and this project has already spent two
+			// nights on counters that described the wrong thing.
+			e.mu.Lock()
+			e.yielded++
+			e.mu.Unlock()
+		default:
+			e.mu.Lock()
+			e.failed++
+			e.mu.Unlock()
+			if lg != nil {
+				lg.Printf("radio transfer of %d bytes did not arrive: %v",
+					len(msg), err)
 			}
 		}
 	}

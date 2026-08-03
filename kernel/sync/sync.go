@@ -353,6 +353,14 @@ func (e *Engine) SendSummary(ep transports.Endpoint) error {
 	return e.sendMsg(ep, e.encodeSummary())
 }
 
+// SummarySize reports how many bytes the next summary will occupy.
+//
+// A metered link has to decide whether it can AFFORD a summary before it
+// spends the air on one, and an estimate that drifts from the encoder is how
+// an airtime budget quietly stops describing airtime. This encodes the same
+// bytes SendSummary would, so the two cannot disagree.
+func (e *Engine) SummarySize() int { return len(e.encodeSummary()) }
+
 // ErrCarrierFull says the endpoint has no room for this message right now.
 //
 // It is not a failure. The message was NOT started, nothing was spent, and

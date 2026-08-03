@@ -106,6 +106,36 @@ func (e *ErrRefusedByPeer) Error() string {
 		e.Reason)
 }
 
+// carryable reports how many bytes ONE transfer can actually move over this
+// carrier: the fragment cap times what a fragment holds at this MTU.
+//
+// Measured with the same probe the sender uses, so the advertised ceiling and
+// the enforced one cannot drift apart. It matters because the layer above sizes
+// its batches from what we advertise: with MaxMessageBytes (64 KiB) on the
+// wire, kernel/sync's messageBudget takes its unmetered branch and batches up
+// to 32 KiB — about 240 fragments at a 200-byte MTU, which
+// MaxFragmentsPerTransfer refuses outright. The engine was building messages
+// this layer could only reject, and the honest ceiling is simply what a
+// transfer can hold.
+//
+// Deliberately NOT capped by airtime as well. Sixty-four fragments is minutes
+// of air, but refusing a message for being slow would make a legitimate large
+// one unsendable rather than merely patient — how OFTEN we spend the air is the
+// pump's business (node/lan.go's linkCadence), not the message's.
+func (s *Session) carryable() int {
+	var id TransferID
+	for i := range id {
+		id[i] = 0xff // worst case for every varint in the header
+	}
+	var digest [DigestLen]byte
+	chunk, err := maxChunk(s.carrier.MTU(), id, digest, s.lim.MaxMessageBytes,
+		StreamControl, s.key)
+	if err != nil || chunk <= 0 {
+		return s.lim.MaxMessageBytes
+	}
+	return chunk * s.lim.MaxFragmentsPerTransfer
+}
+
 // Send delivers one whole message, and returns only when the receiver has
 // said it assembled — or when the rounds run out.
 //
@@ -312,13 +342,15 @@ func (s *Session) Deliver(ctx context.Context, src RadioAddress, raw []byte) (*D
 
 // PumpSACKs sends any SACK whose delay has elapsed. A caller drives this on
 // its own cadence; nothing here starts a goroutine on somebody's behalf.
-func (s *Session) PumpSACKs(ctx context.Context, dst RadioAddress) {
+// PumpSACKs sends whatever SACKs have come due, each ADDRESSED to the peer
+// whose transfer it answers rather than to whoever last spoke on the segment.
+func (s *Session) PumpSACKs(ctx context.Context) {
 	s.mu.Lock()
 	due := s.rx.DueSACKs(time.Now())
 	s.mu.Unlock()
-	for _, f := range due {
-		if b, err := f.Encode(s.key); err == nil {
-			_ = s.carrier.Send(ctx, dst, b)
+	for _, d := range due {
+		if b, err := d.Frame.Encode(s.key); err == nil {
+			_ = s.carrier.Send(ctx, RadioAddress(d.Peer), b)
 		}
 	}
 }

@@ -116,6 +116,22 @@ func (r *Runtime) startMeshWire(target string, wire meshWire) error {
 	seed := r.meshSeed
 	r.mu.Unlock()
 
+	// want_ack is redundant under Radio Transfer and costs real airtime.
+	//
+	// The firmware's implicit acknowledgement only says a NEIGHBOUR rebroadcast
+	// the packet; a SACK says which fragments the PEER actually holds. Paying
+	// for both buys nothing and spends the band this layer exists to use
+	// carefully.
+	//
+	// That sentence was already written below, beside the wire switch — but the
+	// decision is consumed HERE, by Supervise, several lines earlier, so the
+	// comment described an intention the code never carried out. Every Radio
+	// Transfer frame has been paying twice. Deciding it where it is used is the
+	// difference between a true comment and a false one.
+	if wire == wireTransfer {
+		reliable = false
+	}
+
 	// A device that opened and said NOTHING is not the same as one that is
 	// not there, and only the first is worth asking again. A wrong path or a
 	// busy port still fails on the spot with its own message, so the
@@ -200,6 +216,21 @@ func (l transferLink) Closed() (bool, error) { return l.radio.Closed() }
 func (l transferLink) SendControl(msg []byte) error { return l.transfer.SendControl(msg) }
 func (l transferLink) Close() error                 { l.transfer.Close(); return l.radio.Close() }
 
+// Credit is forwarded EXPLICITLY, for exactly the reason above — and it was
+// left behind when SendControl was fixed.
+//
+// transports.Pacer is an OPTIONAL interface, so losing it is silent by
+// construction: transports.CreditOf finds no Pacer, answers CreditUnlimited,
+// and kernel/sync's Allows() returns true however full the radio is. The
+// engine believed it was pacing against a carrier and was pacing against
+// nothing — which is why three shipped backpressure fixes changed no measured
+// outcome. Only the RAW wire ever reached the engine as a Pacer.
+//
+// The e2e helper endpointLink embeds the CONCRETE *radiotransfer.Endpoint and
+// therefore promotes Credit for free, so the harness had the property
+// production lacked and no test could see the difference.
+func (l transferLink) Credit() transports.Credit { return l.transfer.Credit() }
+
 // TransferStats reports whole-message delivery, which is the number this
 // layer exists to move — packet counts belong to the carrier below it.
 func (l transferLink) TransferStats() radiotransfer.Stats { return l.transfer.Stats() }
@@ -214,6 +245,12 @@ type compactLink struct {
 }
 
 func (c compactLink) Closed() (bool, error) { return c.radio.Closed() }
+
+// Credit is forwarded explicitly for the same reason transferLink's is.
+// transports/compact already forwards it from the radio with a comment saying
+// a wrapper that did not "would silently restore the flood"; embedding the
+// Endpoint INTERFACE here dropped it again one layer further up.
+func (c compactLink) Credit() transports.Credit { return transports.CreditOf(c.Endpoint) }
 
 // MeshStatus is the transport diagnostic for the UI.
 type MeshStatus struct {

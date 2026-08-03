@@ -124,7 +124,7 @@ func drive(ctx context.Context, s *Session, air *lossyAir, out chan<- []byte) {
 					}
 				}
 			}
-			s.PumpSACKs(ctx, RadioAddress("peer"))
+			s.PumpSACKs(ctx)
 		}
 	}()
 }

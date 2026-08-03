@@ -105,7 +105,7 @@ type Radio struct {
 	conn io.ReadWriteCloser
 
 	mu      sync.Mutex
-	inbox   [][]byte
+	inbox   []Inbound
 	closed  bool
 	err     error
 	nodeNum uint32
@@ -341,7 +341,7 @@ func (r *Radio) readLoop(br *bufio.Reader) {
 			continue // our own broadcast echoed back
 		}
 		r.mu.Lock()
-		r.inbox = append(r.inbox, p.Payload)
+		r.inbox = append(r.inbox, Inbound{From: p.From, Payload: p.Payload})
 		r.rxCount++
 		r.mu.Unlock()
 	}
@@ -376,8 +376,32 @@ func (r *Radio) fail(err error) {
 
 // ---- transports.Endpoint ----
 
+// Inbound is a received packet WITH the node that sent it.
+//
+// The sender's node number arrives in every MeshPacket and used to be thrown
+// away here, which cost more than it looked like: the layer above keys its
+// per-peer limits on whatever this reports, so with one constant standing in
+// for every neighbour, "at most four transfers per peer" quietly became "at
+// most four transfers on the whole segment".
+type Inbound struct {
+	From    uint32
+	Payload []byte
+}
+
 // Send broadcasts one opaque packet on our port.
-func (r *Radio) Send(pkt []byte) error {
+func (r *Radio) Send(pkt []byte) error { return r.SendTo(Broadcast, pkt) }
+
+// SendTo addresses one packet to a node, or to Broadcast.
+//
+// Meshtastic has carried a destination all along — MeshPacket's `to` field,
+// which EncodeDataPacket already takes — and this driver hardcoded Broadcast,
+// so every SACK, COMMIT and CANCEL meant for one peer went to the whole
+// segment. On a shared band that is airtime spent to tell people something
+// they cannot use.
+//
+// An addressed packet may still traverse intermediate nodes: this says WHO,
+// never how many hops, and nothing above may read it as "direct".
+func (r *Radio) SendTo(to uint32, pkt []byte) error {
 	if len(pkt) == 0 || len(pkt) > r.opts.MaxPayload {
 		return fmt.Errorf("meshtastic: packet length %d out of range (max %d)", len(pkt), r.opts.MaxPayload)
 	}
@@ -399,7 +423,7 @@ func (r *Radio) Send(pkt []byte) error {
 		r.rememberSent(packetID)
 		r.mu.Unlock()
 	}
-	frame := EncodeDataPacket(Broadcast, r.opts.Channel, r.opts.Portnum,
+	frame := EncodeDataPacket(to, r.opts.Channel, r.opts.Portnum,
 		pkt, packetID, r.opts.HopLimit, r.opts.Reliable)
 	if err := writeFrame(r.conn, frame); err != nil {
 		r.fail(err)
@@ -408,8 +432,22 @@ func (r *Radio) Send(pkt []byte) error {
 	return nil
 }
 
-// Poll drains received packets.
+// Poll drains received packets, payloads only — the transports.Endpoint shape.
+//
+// Poll and PollFrom drain the SAME inbox, so a link uses one or the other and
+// never both. The raw wire takes this one; the datagram adapter takes PollFrom
+// because the layer above it needs to tell peers apart.
 func (r *Radio) Poll() [][]byte {
+	in := r.PollFrom()
+	out := make([][]byte, 0, len(in))
+	for _, p := range in {
+		out = append(out, p.Payload)
+	}
+	return out
+}
+
+// PollFrom drains received packets with the node that sent each one.
+func (r *Radio) PollFrom() []Inbound {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	out := r.inbox

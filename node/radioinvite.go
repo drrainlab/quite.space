@@ -32,6 +32,7 @@ import (
 
 	"github.com/drrainlab/quiet_places/protocol/codec"
 	"github.com/drrainlab/quiet_places/protocol/id"
+	"github.com/drrainlab/quiet_places/transports/radiotransfer"
 )
 
 // Radio control message kinds.
@@ -79,6 +80,15 @@ type RadioNeighbour struct {
 	Name   string      `json:"name"`
 	Heard  time.Time   `json:"heard"`
 	x25519 [32]byte
+	// addr is OBSERVED, never claimed: it is where this card actually arrived
+	// from, which is the only way to answer the right radio. A card that named
+	// its own address would be inviting somebody to point us elsewhere.
+	addr radiotransfer.RadioAddress
+	// eph is the ephemeral key from that card, and generation/expires are what
+	// stop an old card being replayed after a restart.
+	eph        [32]byte
+	generation uint64
+	expires    time.Time
 }
 
 // MarshalJSON writes the device id as HEX.
@@ -131,6 +141,19 @@ type radioMeet struct {
 	// lines remembers which space was opened for which neighbour, so a second
 	// press re-sends that invitation instead of opening another room.
 	lines map[id.DeviceID]id.TerminalID
+	// peers holds the live peer links. Memory-only and short-lived: a link is
+	// a fact about right now, and a durable one would be a claim about a radio
+	// that may since have been switched off.
+	peers map[id.DeviceID]*RadioPeerLink
+	// generation changes every time this process starts, so a card minted by a
+	// previous run cannot be replayed as current.
+	generation uint64
+	// myEph is the private half of the ephemeral key our last card advertised,
+	// and myEphPub the public half. Kept so a probe answering that card can
+	// complete the agreement; replaced on every announcement, because a key
+	// reused across conversations stops being ephemeral.
+	myEph    [32]byte
+	myEphPub [32]byte
 }
 
 func newRadioMeet() *radioMeet {
@@ -141,40 +164,14 @@ func newRadioMeet() *radioMeet {
 	}
 }
 
-// AnnounceOnRadio broadcasts this node's card to the segment.
+// AnnounceOnRadio lives in node/radiopeer.go, where the card became SIGNED.
 //
-// An explicit act, never automatic. Announcing tells everyone within radio
-// range that this device exists and what it is called; that is a reasonable
-// thing to do when standing in a field with somebody, and not a reasonable
-// default for a node sitting in a flat.
-func (r *Runtime) AnnounceOnRadio() error {
-	ep, err := r.radioControl()
-	if err != nil {
-		return err
-	}
-	name := r.DisplayName()
-	if len(name) > maxRadioName {
-		name = name[:maxRadioName]
-	}
-	// Keys STRICTLY ASCENDING. The decoder enforces it, so a map written in
-	// the order the fields were thought of decodes as nothing at all — which
-	// is silence on a radio, and silence on a radio looks like being out of
-	// range. That is the exact confusion this wave exists to end, so the
-	// version goes last because its key number is highest, not first because
-	// it feels like a header.
-	b := codec.AppendMap(nil, 5)
-	b = codec.AppendUint(b, rkKind)
-	b = codec.AppendUint(b, radioMsgCard)
-	b = codec.AppendUint(b, rkDevice)
-	b = codec.AppendBytes(b, r.Device.ID[:])
-	b = codec.AppendUint(b, rkX25519)
-	b = codec.AppendBytes(b, r.Device.X25519Pub[:])
-	b = codec.AppendUint(b, rkName)
-	b = codec.AppendBytes(b, []byte(name))
-	b = codec.AppendUint(b, rkVersion)
-	b = codec.AppendUint(b, radioControlVersion)
-	return ep.SendControl(b)
-}
+// The unsigned version that stood here bound nothing: an impostor could
+// announce somebody else's device id alongside their own key, and the
+// invitation meant for that person was sealed to the impostor instead. The
+// comment above RadioNeighbour argued the arrangement was safe because an
+// impostor receives an invite they cannot open — true for the person being
+// impersonated, and false for the person doing the inviting.
 
 // RadioNeighbours lists who has been heard, most recent first.
 func (r *Runtime) RadioNeighbours() []RadioNeighbour {
@@ -314,8 +311,24 @@ func (r *Runtime) AcceptRadioOffer(offerID string) (id.TerminalID, error) {
 
 // onRadioControl folds one control message in. It is called from the radio's
 // read loop, so it does the least possible and never blocks on the radio.
-func (r *Runtime) onRadioControl(msg []byte) {
+func (r *Runtime) onRadioControl(src radiotransfer.RadioAddress, msg []byte) {
 	r.radioMeetOnce()
+	// SIGNED kinds are dispatched first and never fall through to the flat
+	// parser below. Peeking the kind is safe because nothing is acted upon
+	// until a signature has been checked against the device the body names.
+	if kind, _, ok := peekSignedRadio(msg); ok {
+		switch kind {
+		case radioMsgCard:
+			r.onRadioCard(src, msg)
+			return
+		case radioMsgProbe:
+			r.onRadioProbe(src, msg)
+			return
+		case radioMsgAck:
+			r.onRadioAck(src, msg)
+			return
+		}
+	}
 	d := codec.NewDecoder(msg)
 	m, err := d.ReadMapHeader()
 	if err != nil {
@@ -324,8 +337,7 @@ func (r *Runtime) onRadioControl(msg []byte) {
 	var (
 		version, kind uint64
 		dev           []byte
-		x25519        []byte
-		name, title   string
+		title         string
 		from          string
 		invite        []byte
 		space         []byte
@@ -342,12 +354,10 @@ func (r *Runtime) onRadioControl(msg []byte) {
 			kind, er = d.ReadUint()
 		case rkDevice:
 			dev, er = d.ReadBytes()
-		case rkX25519:
-			x25519, er = d.ReadBytes()
-		case rkName:
-			var b []byte
-			b, er = d.ReadBytes()
-			name = clip(string(b), maxRadioName)
+		case rkX25519, rkName:
+			// Card-only fields. A card is a SIGNED message handled above, so
+			// reaching them here means somebody sent an unsigned one.
+			er = d.SkipItem()
 		case rkTitle:
 			var b []byte
 			b, er = d.ReadBytes()
@@ -375,21 +385,9 @@ func (r *Runtime) onRadioControl(msg []byte) {
 
 	switch kind {
 	case radioMsgCard:
-		if len(x25519) != 32 || device == r.Device.ID {
-			return
-		}
-		r.meet.mu.Lock()
-		defer r.meet.mu.Unlock()
-		// Bounded, and oldest-first: a segment somebody is standing in has a
-		// handful of radios on it. A cap is what stops a neighbour from
-		// filling this by announcing under a thousand device ids.
-		if _, known := r.meet.neighbour[device]; !known &&
-			len(r.meet.neighbour) >= maxRadioHeard {
-			dropOldest(r.meet.neighbour)
-		}
-		n := &RadioNeighbour{Device: device, Name: name, Heard: time.Now()}
-		copy(n.x25519[:], x25519)
-		r.meet.neighbour[device] = n
+		// Unreachable: a card is a SIGNED message and onRadioControl
+		// dispatches it above. An unsigned card is not a card.
+		return
 	case radioMsgOffer:
 		// An offer for somebody else. Everyone in range hears it; only the
 		// addressee can open it, and only the addressee keeps it.
@@ -435,7 +433,14 @@ func (r *Runtime) radioControl() (radioControlEndpoint, error) {
 }
 
 // radioControlEndpoint is the part of the radio link this file uses.
-type radioControlEndpoint interface{ SendControl([]byte) error }
+// radioControlEndpoint is the one-method-plus-one seam this file needs from a
+// radio. SendControlWithin is separate rather than a parameter on SendControl
+// because most control traffic wants the session's own patience and only the
+// peer link's questions want their own.
+type radioControlEndpoint interface {
+	SendControl([]byte) error
+	SendControlWithin([]byte, time.Duration) error
+}
 
 func (r *Runtime) radioMeetOnce() {
 	r.mu.Lock()

@@ -259,6 +259,32 @@ func (s *Supervised) Poll() [][]byte {
 	return radio.Poll()
 }
 
+// SendTo addresses a packet through whichever radio is currently attached.
+func (s *Supervised) SendTo(to uint32, pkt []byte) error {
+	s.mu.Lock()
+	radio, closed := s.radio, s.closed
+	s.mu.Unlock()
+	if closed {
+		return errors.New("meshtastic: radio link closed")
+	}
+	if radio == nil {
+		return errors.New("meshtastic: radio disconnected, reconnecting")
+	}
+	return radio.SendTo(to, pkt)
+}
+
+// PollFrom drains arrivals with the node that sent each one. Poll and PollFrom
+// share one inbox, so a link uses one of them and never both.
+func (s *Supervised) PollFrom() []Inbound {
+	s.mu.Lock()
+	radio := s.radio
+	s.mu.Unlock()
+	if radio == nil {
+		return nil
+	}
+	return radio.PollFrom()
+}
+
 // Apply writes a configuration plan to the radio currently behind this link.
 // The radio reboots, and the supervisor reconnects to it on its own — so the
 // caller can simply wait for the link to come back and then re-read.

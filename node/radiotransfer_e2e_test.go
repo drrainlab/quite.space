@@ -247,6 +247,15 @@ func TestTwoPeopleMeetOverTheRadioWithNoRelay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Both runtimes hold the SEGMENT seed, not just the derived transfer key.
+	// The test always meant them to be on one segment; it simply never said so
+	// to the runtime, which mattered the moment a card had to name the segment
+	// it belongs to.
+	for _, rt := range []*Runtime{alice, bob} {
+		rt.mu.Lock()
+		rt.meshSeed = seed[:]
+		rt.mu.Unlock()
+	}
 	aAir, bAir := newSegment(200, 0.05, 4242)
 	lim := radiotransfer.Limits{Window: 4, MaxRounds: 30,
 		AckTimeout: 300 * time.Millisecond, SACKDelay: 10 * time.Millisecond,
