@@ -49,7 +49,7 @@ const I18N = {
     'radio.meet.offering': 'Offered over the radio. Nobody is a member and no key has moved until they answer \u2014 watch \u201con the air\u201d below.',
     'radio.meet.joined': 'Joined.',
     'radio.meet.unheard': 'They did not hear it. Their radio may be off, or they may have walked out of range. NOTHING IS WAITING FOR THEM ANYWHERE \u2014 press again when you are both here.',
-    'radio.meet.heard': 'They heard it. Waiting for them to answer.',
+    'radio.meet.delivered': 'They heard it. Waiting for them to answer.',
     'radio.meet.link_up': 'Radio link established.',
     'radio.meet.link_direct': 'Direct radio link.',
     'radio.meet.link_probing': 'Asking whether they can hear you\u2026',
