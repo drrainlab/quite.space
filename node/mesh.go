@@ -219,6 +219,33 @@ func (l transferLink) Closed() (bool, error) { return l.radio.Closed() }
 func (l transferLink) SendControl(msg []byte) error { return l.transfer.SendControl(msg) }
 func (l transferLink) Close() error                 { l.transfer.Close(); return l.radio.Close() }
 
+// The REST of the control surface, forwarded for the same reason and missed
+// twice before this line existed.
+//
+// radioControl() finds a radio by asserting this type against an interface. An
+// interface the type ALMOST satisfies fails the assertion silently, and the
+// node then reports that no radio is attached — on a node whose banner says
+// radio-transfer. That is what happened when the interface grew
+// SendControlWithin and again when it grew SendControlTagged: every test
+// passed, because the e2e harness embeds the CONCRETE *radiotransfer.Endpoint
+// and gets every method for free, while production embeds the interface and
+// gets three.
+func (l transferLink) SendControlWithin(msg []byte, within time.Duration) error {
+	return l.transfer.SendControlWithin(msg, within)
+}
+func (l transferLink) SendControlTagged(tag string, msg []byte, within time.Duration) error {
+	return l.transfer.SendControlTagged(tag, msg, within)
+}
+
+// COMPILE-TIME, so this class of defect cannot reach a radio again.
+//
+// Three times now a method has been added to radioControlEndpoint and not to
+// the type that must satisfy it, and three times the failure surfaced as "no
+// radio is attached" in somebody's hand rather than as a build error. A
+// silently-unsatisfied interface is invisible until something asks; this line
+// asks at compile time.
+var _ radioControlEndpoint = transferLink{}
+
 // Credit is forwarded EXPLICITLY, for exactly the reason above — and it was
 // left behind when SendControl was fixed.
 //

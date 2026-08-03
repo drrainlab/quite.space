@@ -90,3 +90,46 @@ func TestCreditReachesTheEngineOnACompactLink(t *testing.T) {
 		t.Fatalf("compact link credit = %d packets, carrier said 3", c.Packets)
 	}
 }
+
+// The radio must be FINDABLE through the exact shape production uses.
+//
+// radioControl() locates a radio by asserting the adopted link against
+// radioControlEndpoint. transferLink embeds transports.Endpoint — an INTERFACE
+// — so it satisfies that assertion only for methods it forwards EXPLICITLY.
+// Twice a method was added to the interface and not to the type, and both
+// times every test passed while a real node reported "no radio is attached"
+// with a radio plainly attached: the e2e harness embeds the CONCRETE
+// *radiotransfer.Endpoint and inherits everything.
+//
+// This asserts the production shape, not the harness one.
+func TestTheRadioIsFindableThroughTheProductionLinkShape(t *testing.T) {
+	seed := sha256.Sum256([]byte("a segment for finding a radio"))
+	key, err := radiotransfer.DeriveTransferKey(seed[:], radiotransfer.KDFVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	air, _ := newSegment(200, 0, 3)
+	ep, err := radiotransfer.Wrap(air, key, radiotransfer.EndpointOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ep.Close()
+
+	rt := openRuntime(t, t.TempDir(), "alice")
+	defer rt.Close()
+	rt.mu.Lock()
+	rt.meshSeed = seed[:]
+	rt.mu.Unlock()
+	// Adopted exactly as node/mesh.go adopts it.
+	rt.adoptLink(transferLink{Endpoint: ep, transfer: ep}, 50*time.Millisecond,
+		time.Hour, "radio")
+
+	if _, err := rt.radioControl(); err != nil {
+		t.Fatalf("a node with a transfer radio adopted the production way "+
+			"cannot find it: %v", err)
+	}
+	// And the whole reason it matters: announcing must work.
+	if err := rt.AnnounceOnRadio(); err != nil {
+		t.Fatalf("announcing failed on a node with a radio attached: %v", err)
+	}
+}
