@@ -1,7 +1,6 @@
 package main
 
 import (
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
@@ -95,17 +94,19 @@ func runUI(args []string, withUI bool) error {
 				"what makes two radios a segment, and without it no frame " +
 				"verifies")
 		}
-		if len(seed) < radiotransfer.MinSeedLen {
-			return fmt.Errorf("--mesh-seed must be at least %d characters: a "+
-				"shorter one derives a key that looks exactly as strong as a "+
-				"real one", radiotransfer.MinSeedLen)
-		}
 		if flags["mesh"] != "" {
 			return errors.New("--rnode and --mesh are two radios: a node " +
 				"attaches one")
 		}
-		sum := sha256.Sum256([]byte("quiet-radio-segment:" + seed))
-		if err := rt.StartRNodeTransfer(dev, sum[:]); err != nil {
+		// One derivation, shared with the attach path in the interface. A
+		// phrase typed here and the same phrase typed there MUST land on the
+		// same segment, and the only way to be sure of that is to have one
+		// function.
+		sum, err := radiotransfer.SeedFromPhrase(seed)
+		if err != nil {
+			return fmt.Errorf("--mesh-seed: %w", err)
+		}
+		if err := rt.StartRNodeTransfer(dev, sum); err != nil {
 			fmt.Println("rnode: connection failed:", err)
 		} else {
 			fmt.Printf("rnode: attached via %s (radio-transfer wire, summaries "+
@@ -127,13 +128,11 @@ func runUI(args []string, withUI bool) error {
 		// and shipping an interim shape into the keystore is how an interim
 		// shape becomes permanent.
 		if seed := flags["mesh-seed"]; seed != "" {
-			if len(seed) < radiotransfer.MinSeedLen {
-				return fmt.Errorf("--mesh-seed must be at least %d characters: a "+
-					"shorter one derives a key that looks exactly as strong as a "+
-					"real one", radiotransfer.MinSeedLen)
+			sum, err := radiotransfer.SeedFromPhrase(seed)
+			if err != nil {
+				return fmt.Errorf("--mesh-seed: %w", err)
 			}
-			sum := sha256.Sum256([]byte("quiet-radio-segment:" + seed))
-			start = func(t string) error { return rt.StartMeshtasticTransfer(t, sum[:]) }
+			start = func(t string) error { return rt.StartMeshtasticTransfer(t, sum) }
 			wire = "radio-transfer"
 		}
 		// compact is decided AFTER the transfer layer, and only where the

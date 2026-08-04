@@ -77,6 +77,14 @@ type Runtime struct {
 	// modem rather than a Meshtastic node. One radio per node either way.
 	rnodeRadio *rnode.Radio
 	rnodeEP    *radiotransfer.Endpoint
+	// rnodeLink is the adopted link itself, kept so DetachRadio can take it
+	// back out of the registry. Without it a detached radio would keep a
+	// corpse wired into every space's connection list.
+	rnodeLink link
+	// radioRestoreErr is why the remembered radio did not come back on start.
+	// Kept so the status can SAY it: an unplugged board and a board that was
+	// never configured look identical without this.
+	radioRestoreErr error
 	// meshNetworkID scopes which segment's gateway beacons this node listens
 	// to; gateways is what it has heard (RB-2). Presence is advisory — it is
 	// what a person is SHOWN, never a gate on the queue.
@@ -444,6 +452,11 @@ func Open(dataDir string, passphrase []byte, displayName string) (rt *Runtime, e
 	}
 	r.ensurePassPolling()
 	r.resumeJoinPolling()
+	// The radio this device was last attached to, brought back on its own.
+	// Best effort by design — see restoreRadio: a radio that is unplugged, or
+	// that came back under a different serial path, must never stop somebody
+	// opening their own data.
+	r.restoreRadio()
 	// Resume background relay sync. Automatic mode (RR-3) resolves its
 	// primary from measurements in the background — unlock never waits on
 	// a probe; custom mode uses exactly the configured address.

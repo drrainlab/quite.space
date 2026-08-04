@@ -28,6 +28,11 @@ const I18N = {
     // from this chip.
     'conn.radio_carrier': ({ carrier }) => `radio · ${carrier}`,
 
+    // attaching a radio from the interface
+    'radio.attach.ask': 'The phrase your segment shares.\n\nEvery radio on a segment derives the same key from these exact words, so it has to be identical everywhere — including on a node started with --mesh-seed. At least 16 characters.',
+    'radio.detach': 'detach this radio',
+    'radio.detach.confirm': 'Put this radio down and forget it? Nothing is lost — messages keep moving over the internet and the local network, and you can attach it again whenever you like.',
+
     // meeting over the radio (MR-1) — no relay, no internet
     'radio.meet.intro': 'Two radios and nobody else. Saying who you are puts this device\u2019s name and public key on the air, where everyone in range hears it \u2014 that is what somebody needs in order to seal an invitation to you. Nothing is joined until you answer it.',
     'radio.meet.offers': 'waiting for your answer',

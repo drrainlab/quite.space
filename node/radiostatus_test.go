@@ -89,9 +89,10 @@ func TestTheNeutralFaceAgreesWithMeshtasticAboutPresence(t *testing.T) {
 		t.Fatalf("no radio attached, yet the two faces disagree: "+
 			"neutral %v, meshtastic %v", got.Connected, rt.Mesh().Connected)
 	}
-	// With nothing attached the neutral face still NAMES a carrier, so a
-	// client never has to guess what it is looking at.
-	if rt.RadioState().Carrier == "" {
-		t.Fatal("the neutral face named no carrier at all")
-	}
+	// This test originally also asserted that the neutral face NAMES a carrier
+	// even with nothing attached, "so a client never has to guess". That was
+	// wrong, and the claim is now inverted in TestNoRadioNamesNoCarrier:
+	// answering "meshtastic" on a node with no radio is a driver that is not
+	// present, sitting in a field that reads as a fact. Not guessing is worth
+	// less than not asserting.
 }

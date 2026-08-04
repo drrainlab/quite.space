@@ -99,8 +99,11 @@ func (r *Runtime) StartRNodeTransfer(device string, seed []byte) error {
 	r.rnodeEP = ep
 	r.mu.Unlock()
 
-	r.adoptLink(rnodeLink{Endpoint: ep, radio: radio, transfer: ep},
-		meshPumpEvery, meshSummaryEvery, "radio")
+	lk := rnodeLink{Endpoint: ep, radio: radio, transfer: ep}
+	r.mu.Lock()
+	r.rnodeLink = lk
+	r.mu.Unlock()
+	r.adoptLink(lk, meshPumpEvery, meshSummaryEvery, "radio")
 	return nil
 }
 

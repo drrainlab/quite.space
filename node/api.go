@@ -150,6 +150,8 @@ func (a *APIServer) Handler() http.Handler {
 	mux.HandleFunc("POST /api/gateway/prepare", a.auth(a.handlePrepareRadio))
 
 	// Meeting over the radio: no relay, no internet, no pasted link.
+	mux.HandleFunc("POST /api/radio/attach", a.auth(a.handleRadioAttach))
+	mux.HandleFunc("POST /api/radio/detach", a.auth(a.handleRadioDetach))
 	mux.HandleFunc("POST /api/radio/announce", a.auth(a.handleRadioAnnounce))
 	mux.HandleFunc("GET /api/radio/neighbours", a.auth(a.handleRadioNeighbours))
 	mux.HandleFunc("POST /api/radio/meet", a.auth(a.handleRadioMeet))

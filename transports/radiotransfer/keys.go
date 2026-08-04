@@ -117,3 +117,33 @@ func MessageDigest(msg []byte) [DigestLen]byte {
 	copy(out[:], sum[:])
 	return out
 }
+
+// SeedFromPhrase turns what a person types into the SEGMENT SEED.
+//
+// It exists as one exported function because it was about to exist twice.
+// The derivation lived inline in the CLI's --mesh-seed handling, and adding
+// an attach path in the interface would have meant writing it a second time
+// from memory. Two derivations of one secret is precisely how "we typed the
+// same words and are not a segment" happens: both sides believe they agreed,
+// every frame fails its MAC, and nothing anywhere says why.
+//
+// So the rule is stated once and enforced once: THE SAME PHRASE MUST PRODUCE
+// THE SAME SEGMENT, whether it arrived on a command line, through a screen,
+// or one day inside an invitation.
+//
+// The length check is on the PHRASE, deliberately. The digest is always 32
+// bytes, so checking after hashing would check nothing at all — a one-letter
+// phrase would derive a key that looks exactly as strong as a real one.
+func SeedFromPhrase(phrase string) ([]byte, error) {
+	if len(phrase) < MinSeedLen {
+		return nil, fmt.Errorf("%w: %d characters, minimum is %d",
+			ErrSeedTooShort, len(phrase), MinSeedLen)
+	}
+	sum := sha256.Sum256([]byte(phraseDomain + phrase))
+	return sum[:], nil
+}
+
+// phraseDomain separates a typed segment phrase from every other use of the
+// same words. It is part of the wire in the sense that matters: change it and
+// every existing segment silently becomes a different one.
+const phraseDomain = "quiet-radio-segment:"

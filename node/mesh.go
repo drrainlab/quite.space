@@ -547,7 +547,20 @@ func (r *Runtime) RadioState() RadioStatus {
 	// from the transfer endpoint.
 	r.mu.Lock()
 	rn, rnEP := r.rnodeRadio, r.rnodeEP
+	restoreErr, remembered := r.radioRestoreErr, r.ks.Radio
 	r.mu.Unlock()
+	// A radio this device is ATTACHED TO but could not bring up is not the
+	// same as no radio, and the difference is the whole reason the record is
+	// kept rather than cleared on failure. Somebody unplugged a board, or it
+	// came back under a different serial path after a reset; either way they
+	// still mean to have it, and the screen can now say which.
+	if rn == nil && rnEP == nil && remembered.Attached() {
+		out := RadioStatus{Carrier: remembered.Carrier}
+		if restoreErr != nil {
+			out.Err = restoreErr.Error()
+		}
+		return out
+	}
 	if rn != nil && rnEP != nil {
 		closed, rerr := rn.Closed()
 		st := rnEP.Stats()
@@ -572,8 +585,16 @@ func (r *Runtime) RadioState() RadioStatus {
 	}
 
 	m := r.Mesh()
+	// A carrier is named only when there IS one. With nothing attached the
+	// old code said "meshtastic" — a driver that is not present, sitting in a
+	// field that reads as a fact, on the screen that exists to report facts.
+	// The empty string is the honest answer to "which radio is this".
+	carrier := ""
+	if r.MeshAttached() {
+		carrier = "meshtastic"
+	}
 	out := RadioStatus{
-		Carrier: "meshtastic", Connected: m.Connected,
+		Carrier: carrier, Connected: m.Connected,
 		Reconnecting: m.Reconnecting, Err: m.Err,
 		Transfer: m.Transfer,
 		Waiting:  m.TransferQueue[0], Dropped: m.TransferQueue[1],

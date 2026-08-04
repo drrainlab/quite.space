@@ -25,12 +25,14 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	qrcode "github.com/skip2/go-qrcode"
 
 	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/transports/meshtastic"
+	"github.com/drrainlab/quiet_places/transports/rnode"
 )
 
 type prepareResp struct {
@@ -388,13 +390,29 @@ func (a *APIServer) handleScanRadios(w http.ResponseWriter, r *http.Request) {
 	attachedDev := strings.TrimPrefix(attached, "serial:")
 
 	probes := meshtastic.ScanSerial(4 * time.Second)
+	// A port that answered in somebody else's protocol gets a SECOND question,
+	// and it is asked HERE rather than inside the Meshtastic package.
+	//
+	// One carrier package importing another would tie two drivers together
+	// that the whole seam exists to keep apart — and the node is the layer
+	// that already knows about both, because choosing between them is its job.
+	// The question itself sets nothing: DETECT is one of the two commands in
+	// the RNode protocol with an ask form, so a port belonging to hardware
+	// that is none of our business is not touched by being asked.
+	rnodes := detectRNodes(probes)
+
 	resp := scanResp{Ports: []scanPort{}}
-	candidates, foreign := 0, 0
+	candidates, foreign, modems := 0, 0, 0
 	for _, p := range probes {
 		sp := scanPort{
 			Port: p.Port, Kind: string(p.Kind), Detail: p.Detail,
 			Firmware: p.Firmware, Region: p.Region, Preset: p.Preset,
 			Channels: p.Channels, Key: p.PrimaryKey,
+		}
+		if rnodes[p.Port] {
+			sp.Kind = "rnode"
+			sp.Detail = "an RNode modem. Attach it with the phrase your segment " +
+				"shares — everyone on it derives the same key from those words"
 		}
 		if p.NodeNum != 0 {
 			sp.NodeNum = itoa(int(p.NodeNum))
@@ -411,8 +429,11 @@ func (a *APIServer) handleScanRadios(w http.ResponseWriter, r *http.Request) {
 		// summary below stop guessing.
 		if sp.Kind != "skipped" {
 			candidates++
-			if sp.Kind == "foreign" {
+			switch sp.Kind {
+			case "foreign":
 				foreign++
+			case "rnode":
+				modems++
 			}
 		}
 		resp.Ports = append(resp.Ports, sp)
@@ -430,6 +451,17 @@ func (a *APIServer) handleScanRadios(w http.ResponseWriter, r *http.Request) {
 		resp.Note = "Found more than one Meshtastic node. Pick the one you mean."
 	case len(resp.Ports) == 0:
 		resp.Note = "No serial ports at all. Plug a Meshtastic node in over USB."
+	case modems > 0:
+		// Naming what is there beats explaining what is not. This is the
+		// common case on a desk with RNode boards on it, and until this scan
+		// could say the word the only answer the screen had was a shrug.
+		what := "an RNode modem"
+		if modems > 1 {
+			what = "RNode modems"
+		}
+		resp.Note = "Found " + what + ". Attach one with the phrase your " +
+			"segment shares — every radio on a segment derives the same key " +
+			"from those words, so it has to be the same phrase everywhere."
 	case foreign > 0 && foreign == candidates:
 		// Do not offer the port-holding advice when we know exactly what is on
 		// the port. Every candidate answered, and none of them in this
@@ -572,4 +604,38 @@ func (a *APIServer) handleRadioMeet(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"space": tid.String(),
 		"note": "a new line, for the two of you. They have been OFFERED it — " +
 			"nobody is a member and no key has moved until they answer."})
+}
+
+// detectRNodes asks every port that answered in a foreign protocol whether it
+// is an RNode modem.
+//
+// Only foreign ports are asked, and the restraint is the point: a Meshtastic
+// node already identified itself, a busy port cannot be opened without taking
+// it from whoever holds it, and a skipped port was skipped for a reason. That
+// leaves exactly the ports where the question is both unanswered and cheap.
+func detectRNodes(probes []meshtastic.PortProbe) map[string]bool {
+	var (
+		mu  sync.Mutex
+		wg  sync.WaitGroup
+		out = map[string]bool{}
+	)
+	for _, p := range probes {
+		if p.Kind != meshtastic.ProbeForeign {
+			continue
+		}
+		wg.Add(1)
+		go func(port string) {
+			defer wg.Done()
+			// An error is not a verdict: the port may have been taken between
+			// the two questions. Silence and failure both mean "not named",
+			// never "not a radio".
+			if ok, err := rnode.Detect(port, 900*time.Millisecond); err == nil && ok {
+				mu.Lock()
+				out[port] = true
+				mu.Unlock()
+			}
+		}(p.Port)
+	}
+	wg.Wait()
+	return out
 }

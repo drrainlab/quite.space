@@ -477,12 +477,61 @@ func (r *Radio) Close() error {
 }
 
 // readLoop is the ONE reader of the port, and it un-escapes KISS as it goes.
+// kissParser turns a byte stream into (command, payload) frames.
+//
+// Extracted so there is exactly ONE of it in the tree. The haveCmd rule below
+// is not a style choice — getting it wrong delivered 0 of 30 frames while
+// refusing nothing, which is the exact signature of a dead radio produced
+// entirely in software. A second copy written from memory would be a second
+// chance to make the same mistake, and the port probe needed a parser too.
+type kissParser struct {
+	inFrame, haveCmd, escaped bool
+	cmd                       byte
+	frame                     []byte
+}
+
+// feed consumes bytes and calls emit once per complete frame.
+func (k *kissParser) feed(b []byte, emit func(cmd byte, payload []byte)) {
+	for _, c := range b {
+		switch {
+		case c == fend:
+			if k.inFrame && k.haveCmd {
+				emit(k.cmd, k.frame)
+			}
+			k.inFrame, k.haveCmd, k.escaped, k.frame, k.cmd = true, false, false, nil, 0
+			// The next byte is the command; a zero-length frame between
+			// two FENDs is a keepalive and is simply dropped above.
+			continue
+		case !k.inFrame:
+			continue
+		case k.escaped:
+			switch c {
+			case tfend:
+				c = fend
+			case tfesc:
+				c = fesc
+			}
+			k.escaped = false
+		case c == fesc:
+			k.escaped = true
+			continue
+		}
+		// The first byte after FEND is the command. It must be tracked by
+		// its own flag and NEVER by testing cmd against zero: cmdData IS
+		// zero, so a "cmd == 0 means not read yet" test eats the payload
+		// of every data frame until it happens to meet a non-zero byte.
+		if !k.haveCmd {
+			k.cmd, k.haveCmd = c, true
+			continue
+		}
+		k.frame = append(k.frame, c)
+	}
+}
+
 func (r *Radio) readLoop() {
 	defer r.wg.Done()
 	buf := make([]byte, 1024)
-	var frame []byte
-	inFrame, haveCmd, escaped := false, false, false
-	var cmd byte
+	var p kissParser
 
 	for {
 		select {
@@ -503,43 +552,7 @@ func (r *Radio) readLoop() {
 		r.rxBytes += n
 		r.mu.Unlock()
 
-		for _, c := range buf[:n] {
-			switch {
-			case c == fend:
-				if inFrame && haveCmd {
-					r.deliver(cmd, frame)
-				}
-				inFrame, haveCmd, escaped, frame, cmd = true, false, false, nil, 0
-				// The next byte is the command; a zero-length frame between
-				// two FENDs is a keepalive and is simply dropped above.
-				continue
-			case !inFrame:
-				continue
-			case escaped:
-				switch c {
-				case tfend:
-					c = fend
-				case tfesc:
-					c = fesc
-				}
-				escaped = false
-			case c == fesc:
-				escaped = true
-				continue
-			}
-			// The first byte after FEND is the command. It must be tracked by
-			// its own flag and NEVER by testing cmd against zero: cmdData IS
-			// zero, so a "cmd == 0 means not read yet" test eats the payload
-			// of every data frame until it happens to meet a non-zero byte.
-			// That defect delivered 0 of 30 frames while refusing nothing —
-			// the exact signature of a dead radio, produced entirely in
-			// software.
-			if !haveCmd {
-				cmd, haveCmd = c, true
-				continue
-			}
-			frame = append(frame, c)
-		}
+		p.feed(buf[:n], r.deliver)
 	}
 }
 

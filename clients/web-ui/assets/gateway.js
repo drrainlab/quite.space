@@ -60,8 +60,20 @@ function gwRadioBlock(g) {
   } else { state = 'not responding'; cls = 'off'; }
 
   const rows = [row('radio', `<span class="gw-${cls}">${esc(state)}</span>`)];
+  // The carrier is a DIAGNOSTIC, shown where diagnostics belong. Nobody is
+  // being asked to pick one — that is the doctrine, and this screen is the
+  // only place in the interface that names a driver at all.
+  if (r.carrier) rows.push(row('carrier', `<code>${esc(r.carrier)}</code>`));
   if (r.nodeNum) rows.push(row('node', `<code>${esc(r.nodeNum)}</code>`));
-  if (r.attached) rows.push(row('packets', `${r.tx} out · ${r.rx} in`));
+  // Packet counters are Meshtastic's; a modem this device drives has none,
+  // and showing 0 out / 0 in for it would be a reading that was never taken.
+  if (r.attached && r.carrier !== 'rnode') {
+    rows.push(row('packets', `${r.tx} out · ${r.rx} in`));
+  }
+  if (r.attached) {
+    rows.push(row('', `<button class="btn-plain" onclick="gwDetachRadio()">${
+      esc(t('radio.detach'))}</button>`));
+  }
   // Reconnects are shown only once there have been some: on a healthy bench
   // link this line is noise, and on a flaky one it is the whole story.
   if (r.reconnects > 0 || r.attempts > 0) {
@@ -369,8 +381,10 @@ function gwScanBlock(g) {
 
 function gwScanResults() {
   if (!GW_SCAN) return '';
-  const icon = { radio: '\u25cf', attached: '\u25cf', busy: '\u25cb', silent: '\u25cb', skipped: '\u00b7' };
-  const cls  = { radio: 'gw-on', attached: 'gw-on', busy: 'gw-warn', silent: 'dim', skipped: 'dim' };
+  const icon = { radio: '\u25cf', rnode: '\u25cf', attached: '\u25cf', busy: '\u25cb',
+    foreign: '\u25cb', silent: '\u25cb', skipped: '\u00b7' };
+  const cls  = { radio: 'gw-on', rnode: 'gw-on', attached: 'gw-on', busy: 'gw-warn',
+    foreign: 'dim', silent: 'dim', skipped: 'dim' };
   const rows = (GW_SCAN.ports || []).map(p => {
     const bits = [];
     if (p.firmware) bits.push('firmware ' + p.firmware);
@@ -378,8 +392,13 @@ function gwScanResults() {
     if (p.preset) bits.push(p.preset);
     if (p.channels) bits.push(p.channels + ' channels');
     if (p.primaryKey) bits.push('primary key ' + p.primaryKey);
+    // An RNode is attached with a SEGMENT PHRASE, a Meshtastic node without
+    // one — two carriers, two different questions, one row shape.
     const action = (p.kind === 'radio')
-      ? `<button class="btn-tinted" onclick="gwAttach('${esc(p.port)}')">attach</button>` : '';
+      ? `<button class="btn-tinted" onclick="gwAttach('${esc(p.port)}')">attach</button>`
+      : (p.kind === 'rnode')
+        ? `<button class="btn-tinted" onclick="gwAttachRNode('${esc(p.port)}')">attach</button>`
+        : '';
     return `<div class="gw-row"><div>
       <span class="${cls[p.kind] || 'dim'}">${icon[p.kind] || '\u00b7'}</span>
       <b class="mono">${esc(p.port)}</b><br>
@@ -400,6 +419,36 @@ async function gwScan() {
   }
   GW_SCANNING = false;
   refreshGateway();
+}
+
+// Attaching a modem needs the words its segment shares.
+//
+// The phrase is asked for HERE rather than stored in settings, because it is
+// not a preference: it is the secret that makes two radios the same segment,
+// and every radio on one derives the same frame key from it. A prompt is
+// plain, and being plain is the point — nothing about this is guessable, and
+// a wrong phrase produces a node that hears nobody and is told nothing.
+async function gwAttachRNode(port) {
+  const phrase = prompt(t('radio.attach.ask'));
+  if (phrase === null) return;
+  try {
+    await api('/api/radio/attach', {
+      method: 'POST', body: JSON.stringify({ port, phrase }),
+    });
+    GW_SCAN = null;
+    refreshGateway();
+  } catch (err) { alert(err.message); }
+}
+
+// Detach releases the port and FORGETS the radio, so the next start does not
+// bring back something somebody just switched off.
+async function gwDetachRadio() {
+  if (!confirm(t('radio.detach.confirm'))) return;
+  try {
+    await api('/api/radio/detach', { method: 'POST', body: '{}' });
+    GW_SCAN = null;
+    refreshGateway();
+  } catch (err) { alert(err.message); }
 }
 
 async function gwAttach(port) {

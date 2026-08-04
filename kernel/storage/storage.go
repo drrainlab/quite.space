@@ -168,6 +168,10 @@ type Keystore struct {
 	Navigator NavState
 	// Agent is the local assistant's own identity and its space (AI-0).
 	Agent AgentRecord
+
+	// Radio is the radio this device brings up on start, and the segment seed
+	// it derives its frame key from. Zero means none, which is ordinary.
+	Radio RadioRecord
 }
 
 // PublicPublishState is the publisher-side durable projection counter.
@@ -284,6 +288,7 @@ const (
 	ksKeyJoins     = 13 // QL-0 guest join-saga journal
 	ksKeyNavigator = 14 // NAV-0 device-local Navigator arrangement
 	ksKeyAgent     = 15 // AI-0 the local Agent Terminal and its space
+	ksKeyRadio     = 16 // the radio this device attaches, and its segment seed
 )
 
 // ksMapArity is how many top-level pairs encode() writes, and it MUST equal
@@ -291,7 +296,7 @@ const (
 // which is a poor place for a number that bricks every keystore when it is
 // wrong: too few and the trailing pair goes unread, so Done() fails and
 // nobody can open their data again. Named here, next to the keys it counts.
-const ksMapArity = 15
+const ksMapArity = 16
 
 func (k *Keystore) encode() []byte {
 	buf := codec.AppendMap(nil, ksMapArity)
@@ -370,6 +375,8 @@ func (k *Keystore) encode() []byte {
 	buf = appendNavState(buf, k.Navigator)
 	buf = codec.AppendUint(buf, ksKeyAgent)
 	buf = appendAgentRecord(buf, k.Agent)
+	buf = codec.AppendUint(buf, ksKeyRadio)
+	buf = appendRadioRecord(buf, k.Radio)
 	return buf
 }
 
@@ -735,6 +742,8 @@ func decodeKeystore(data []byte) (*Keystore, error) {
 			k.Navigator, er = readNavState(d)
 		case ksKeyAgent:
 			k.Agent, er = readAgentRecord(d)
+		case ksKeyRadio:
+			k.Radio, er = readRadioRecord(d)
 		default:
 			er = d.SkipItem()
 		}
