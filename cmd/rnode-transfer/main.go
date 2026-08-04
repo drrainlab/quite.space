@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/drrainlab/quiet_places/transports/radiotransfer"
@@ -41,6 +42,7 @@ func main() {
 		win  = flag.Int("window", 0, "override Window (0 = production default)")
 		ack  = flag.Duration("ack", 0, "override AckTimeout (0 = production default)")
 		btwn = flag.Duration("between", 0, "quiet time between transfers")
+		trc  = flag.String("trace", "", "write a structured transfer trace here")
 	)
 	flag.Parse()
 	if *aDev == "" || *bDev == "" {
@@ -85,13 +87,41 @@ func main() {
 		opts.Limits.AckTimeout = *ack
 	}
 
-	send, err := radiotransfer.Wrap(a, key, opts)
+	// One trace, both sides, one clock. Two files would have to be correlated
+	// afterwards, and the whole question is which side knew what WHEN.
+	var traceOut *os.File
+	if *trc != "" {
+		f, err := os.Create(*trc)
+		if err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
+		traceOut = f
+		defer traceOut.Close()
+	}
+	var traceMu sync.Mutex
+	tracer := func(side string) radiotransfer.Tracer {
+		if traceOut == nil {
+			return nil
+		}
+		return func(ev radiotransfer.TraceEvent) {
+			traceMu.Lock()
+			fmt.Fprintf(traceOut, "%-4s %s\n", side, ev)
+			traceMu.Unlock()
+		}
+	}
+
+	sendOpts, recvOpts := opts, opts
+	sendOpts.Trace = tracer("SEND")
+	recvOpts.Trace = tracer("RECV")
+
+	send, err := radiotransfer.Wrap(a, key, sendOpts)
 	if err != nil {
 		fmt.Println("sender endpoint:", err)
 		os.Exit(1)
 	}
 	defer send.Close()
-	recv, err := radiotransfer.Wrap(b, key, opts)
+	recv, err := radiotransfer.Wrap(b, key, recvOpts)
 	if err != nil {
 		fmt.Println("receiver endpoint:", err)
 		os.Exit(1)

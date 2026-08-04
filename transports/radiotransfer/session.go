@@ -43,6 +43,7 @@ import (
 // So frames come IN through Deliver, from whoever owns the read loop, and
 // Send waits on a channel for the ones addressed to its transfer.
 type Session struct {
+	tracer Tracer
 	carrier RadioDatagram
 	key     *TransferKey
 	lim     Limits
@@ -67,6 +68,9 @@ type Session struct {
 // Options configure a session. Zero values mean the defaults.
 type Options struct {
 	Limits Limits
+	// Trace, when set, receives a structured record of what this session did.
+	// Observation only: nothing about the protocol changes when it is set.
+	Trace Tracer
 }
 
 // NewSession wraps a carrier.
@@ -78,7 +82,7 @@ func NewSession(carrier RadioDatagram, key *TransferKey, o Options) (*Session, e
 	if err := lim.check(); err != nil {
 		return nil, err
 	}
-	return &Session{carrier: carrier, key: key, lim: lim,
+	return &Session{carrier: carrier, key: key, lim: lim, tracer: o.Trace,
 		rx: NewReceiver(lim), waiting: map[TransferID]chan *Frame{}}, nil
 }
 
@@ -160,6 +164,8 @@ func (s *Session) SendOn(ctx context.Context, stream uint64, dst RadioAddress,
 	s.waiting[o.ID] = ch
 	s.attempted++
 	s.mu.Unlock()
+	s.trace(TraceEvent{Transfer: o.ID, Event: TraceTransferCreated,
+		Fragment: -1, Count: o.Count(), Reason: fmt.Sprintf("%d bytes", len(msg))})
 	defer func() {
 		s.mu.Lock()
 		delete(s.waiting, o.ID)
@@ -167,7 +173,20 @@ func (s *Session) SendOn(ctx context.Context, stream uint64, dst RadioAddress,
 	}()
 
 	for {
-		for k, i := range o.Pending() {
+		pending := o.Pending()
+		if o.Rounds() == 0 {
+			s.trace(TraceEvent{Transfer: o.ID, Event: TraceWindowStarted,
+				Fragment: -1, Count: o.Count(), Round: o.Rounds() + 1,
+				Pending: pending})
+		} else {
+			// The field the standard of proof rests on: exactly which
+			// fragments a repair round chose, so an excess DATA frame can be
+			// traced to the state that asked for it.
+			s.trace(TraceEvent{Transfer: o.ID, Event: TraceRetransmit,
+				Fragment: -1, Count: o.Count(), Round: o.Rounds() + 1,
+				Pending: pending, Reason: "unacknowledged after the last round"})
+		}
+		for k, i := range pending {
 			if k > 0 {
 				// The gap between frames is what makes a window arrive. See
 				// Limits.FrameGap: back-to-back frames measured ~9% delivery
@@ -177,8 +196,12 @@ func (s *Session) SendOn(ctx context.Context, stream uint64, dst RadioAddress,
 				}
 			}
 			if err := s.sendFrame(ctx, dst, o.Frame(i)); err != nil {
+				s.trace(TraceEvent{Transfer: o.ID, Event: TraceDataTXFailed,
+					Fragment: i, Round: o.Rounds() + 1, Reason: err.Error()})
 				return err
 			}
+			s.trace(TraceEvent{Transfer: o.ID, Event: TraceDataTX,
+				Fragment: i, Count: o.Count(), Round: o.Rounds() + 1})
 		}
 		done, err := s.awaitCommit(ctx, o, ch)
 		if err != nil {
@@ -188,9 +211,14 @@ func (s *Session) SendOn(ctx context.Context, stream uint64, dst RadioAddress,
 			s.mu.Lock()
 			s.completed++
 			s.mu.Unlock()
+			s.trace(TraceEvent{Transfer: o.ID, Event: TraceCompleted,
+				Fragment: -1, Count: o.Count(), Round: o.Rounds() + 1})
 			return nil
 		}
 		if !o.NextRound() {
+			s.trace(TraceEvent{Transfer: o.ID, Event: TraceGaveUp, Fragment: -1,
+				Count: o.Count(), Round: o.Rounds(), Pending: o.Pending(),
+				Reason: "rounds exhausted"})
 			s.mu.Lock()
 			s.givenUp++
 			s.mu.Unlock()
@@ -214,21 +242,42 @@ func (s *Session) awaitCommit(ctx context.Context, o *Outbound, ch <-chan *Frame
 		case <-ctx.Done():
 			return false, ctx.Err()
 		case <-deadline.C:
+			s.trace(TraceEvent{Transfer: o.ID, Event: TraceAckTimeout,
+				Fragment: -1, Round: o.Rounds() + 1,
+				Reason: "no SACK and no COMMIT within AckTimeout"})
 			return false, nil // nobody answered; the caller repairs
 		case f := <-ch:
 			switch f.Kind {
 			case KindSACK:
+				txt, have, missing := bitmapText(f.Bitmap, int(f.Count)-int(f.Base))
 				o.NoteSACK(f)
-				if !o.Complete() {
+				complete := o.Complete()
+				reason := "holes reported"
+				if complete {
+					// A SACK saying the peer holds everything still does not
+					// finish the transfer — only a COMMIT does. Traced
+					// explicitly, because if this line is followed by an
+					// ack_timeout it names the defect on its own.
+					reason = "peer holds every fragment; still waiting for COMMIT"
+				}
+				s.trace(TraceEvent{Transfer: o.ID, Event: TraceSACKRX,
+					Fragment: -1, Round: o.Rounds() + 1, Base: int(f.Base),
+					Count: int(f.Count), Bitmap: txt, Have: have,
+					Missing: missing, Reason: reason})
+				if !complete {
 					return false, nil // holes reported; repair them now
 				}
 			case KindCommit:
+				s.trace(TraceEvent{Transfer: o.ID, Event: TraceCommitRX,
+					Fragment: -1, Round: o.Rounds() + 1})
 				if f.Digest != o.digest {
 					return false, fmt.Errorf("radiotransfer: the peer committed a "+
 						"different message under transfer %s", o.ID.Short())
 				}
 				return true, nil
 			case KindCancel:
+				s.trace(TraceEvent{Transfer: o.ID, Event: TraceCancelRX,
+					Fragment: -1, Reason: fmt.Sprintf("code %d", f.Reason)})
 				return false, &ErrRefusedByPeer{Reason: f.Reason}
 			}
 		}
@@ -317,9 +366,30 @@ func (s *Session) Deliver(ctx context.Context, src RadioAddress, raw []byte) (*D
 		s.mu.Lock()
 		got, reply, err := s.rx.Accept(string(src), f, time.Now())
 		s.mu.Unlock()
+		ev := TraceDataRX
+		if errors.Is(err, ErrAlreadyDelivered) {
+			ev = TraceDataRXDuplicate
+		}
+		s.trace(TraceEvent{Transfer: f.Transfer, Event: ev,
+			Fragment: int(f.Index), Count: int(f.Count)})
 		if reply != nil {
-			if b, e := reply.Encode(s.key); e == nil {
-				_ = s.carrier.Send(ctx, src, b)
+			b, e := reply.Encode(s.key)
+			var sendErr error
+			if e == nil {
+				sendErr = s.carrier.Send(ctx, src, b)
+			}
+			if reply.Kind == KindCommit {
+				// Traced with its outcome because this frame is sent ONCE and
+				// is never repeated by anything: if it is lost, the peer holds
+				// the whole message and the sender cannot know it.
+				reason := "sent once, never repeated"
+				if e != nil {
+					reason = "encode failed: " + e.Error()
+				} else if sendErr != nil {
+					reason = "carrier refused: " + sendErr.Error()
+				}
+				s.trace(TraceEvent{Transfer: f.Transfer, Event: TraceCommitTX,
+					Fragment: -1, Count: int(f.Count), Reason: reason})
 			}
 		}
 		if errors.Is(err, ErrAlreadyDelivered) {
@@ -349,9 +419,20 @@ func (s *Session) PumpSACKs(ctx context.Context) {
 	due := s.rx.DueSACKs(time.Now())
 	s.mu.Unlock()
 	for _, d := range due {
-		if b, err := d.Frame.Encode(s.key); err == nil {
-			_ = s.carrier.Send(ctx, RadioAddress(d.Peer), b)
+		txt, have, missing := bitmapText(d.Frame.Bitmap,
+			int(d.Frame.Count)-int(d.Frame.Base))
+		b, err := d.Frame.Encode(s.key)
+		reason := "due"
+		if err == nil {
+			if e := s.carrier.Send(ctx, RadioAddress(d.Peer), b); e != nil {
+				reason = "carrier refused: " + e.Error()
+			}
+		} else {
+			reason = "encode failed: " + err.Error()
 		}
+		s.trace(TraceEvent{Transfer: d.Frame.Transfer, Event: TraceSACKTX,
+			Fragment: -1, Base: int(d.Frame.Base), Count: int(d.Frame.Count),
+			Bitmap: txt, Have: have, Missing: missing, Reason: reason})
 	}
 }
 
