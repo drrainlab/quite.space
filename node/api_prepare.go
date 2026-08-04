@@ -540,6 +540,13 @@ func (a *APIServer) handleRadioMeet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tid, err := a.rt.OfferLineOverRadio(dev)
+	if errors.Is(err, ErrLinkNotReady) {
+		// 202: accepted, not done. The probe is on the air and the answer
+		// decides whether an invitation is worth sending at all.
+		w.WriteHeader(http.StatusAccepted)
+		writeJSON(w, map[string]string{"state": "probing", "note": err.Error()})
+		return
+	}
 	if err != nil {
 		httpErr(w, http.StatusConflict, err)
 		return

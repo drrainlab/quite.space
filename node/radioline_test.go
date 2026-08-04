@@ -2,6 +2,7 @@ package node
 
 import (
 	"encoding/base64"
+	"errors"
 	"testing"
 	"time"
 
@@ -9,6 +10,28 @@ import (
 )
 
 func decodeB64(s string) ([]byte, error) { return base64.StdEncoding.DecodeString(s) }
+
+// offerAfterLink does what a person does: press once, which asks whether they
+// can hear us, and press again once the answer is in.
+//
+// The two presses are the design, not a wart. An invitation is six frames and
+// a probe is one, so the expensive thing is never committed to a radio nobody
+// is listening to.
+func offerAfterLink(t *testing.T, from *Runtime, dev id.DeviceID) id.TerminalID {
+	t.Helper()
+	if _, err := from.OfferLineOverRadio(dev); !errors.Is(err, ErrLinkNotReady) {
+		t.Fatalf("the first press should have started a probe, got %v", err)
+	}
+	waitPeer(t, "the peer link to come up", func() bool {
+		l, ok := from.PeerLink(dev)
+		return ok && l.State == PeerLinkUp
+	})
+	tid, err := from.OfferLineOverRadio(dev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tid
+}
 
 // THE run that failed in a car park, in one test.
 //
@@ -26,10 +49,7 @@ func TestTwoPeopleStartALineOverTheRadioInFourMessages(t *testing.T) {
 		return ok
 	})
 
-	tid, err := alice.OfferLineOverRadio(bob.Device.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	tid := offerAfterLink(t, alice, bob.Device.ID)
 
 	// THE point of the whole gate: offering grants NOTHING.
 	assertNoPhantomMember(t, alice, tid, "immediately after offering")
@@ -81,10 +101,7 @@ func TestAnOfferNeverAcceptedDoesNotLeaveAPhantomMember(t *testing.T) {
 		_, ok := neighbourOf(alice, bob.Device.ID)
 		return ok
 	})
-	tid, err := alice.OfferLineOverRadio(bob.Device.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	tid := offerAfterLink(t, alice, bob.Device.ID)
 	// Bob receives it and simply never answers, which is what walking away
 	// looks like from here.
 	waitPeer(t, "the offer to arrive", func() bool {
@@ -104,10 +121,7 @@ func TestPressingAgainReOffersTheSamePlace(t *testing.T) {
 		_, ok := neighbourOf(alice, bob.Device.ID)
 		return ok
 	})
-	first, err := alice.OfferLineOverRadio(bob.Device.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	first := offerAfterLink(t, alice, bob.Device.ID)
 	second, err := alice.OfferLineOverRadio(bob.Device.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -138,9 +152,7 @@ func TestAGrantFromAStrangerIsIgnored(t *testing.T) {
 		_, ok := neighbourOf(alice, bob.Device.ID)
 		return ok
 	})
-	if _, err := alice.OfferLineOverRadio(bob.Device.ID); err != nil {
-		t.Fatal(err)
-	}
+	offerAfterLink(t, alice, bob.Device.ID)
 	waitPeer(t, "the offer to arrive", func() bool {
 		return len(bob.RadioOffers()) > 0
 	})
@@ -251,9 +263,7 @@ func TestAnOfferThatNobodyHeardIsNotReportedAsSent(t *testing.T) {
 		_, ok := neighbourOf(alice, bob.Device.ID)
 		return ok
 	})
-	if _, err := alice.OfferLineOverRadio(bob.Device.ID); err != nil {
-		t.Fatal(err)
-	}
+	offerAfterLink(t, alice, bob.Device.ID)
 	waitPeer(t, "the offer to be recorded as heard", func() bool {
 		for _, rec := range alice.Invitations() {
 			if rec.Mode == InvitationTargeted && rec.Delivery == DeliveryHeard {
@@ -295,4 +305,69 @@ func contains(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+// An invitation is six frames; a probe is one. The expensive one must never be
+// committed to a radio nobody is listening to.
+//
+// This was built in RD-2A and NOT wired into the button, and the first live run
+// showed exactly what that costs: both people pressed at once, both sides
+// pushed a six-frame offer onto a half-duplex carrier, and each was deaf while
+// the other spoke — one transfer running, two more queued behind it.
+func TestOfferingProbesBeforeSpendingSixFrames(t *testing.T) {
+	alice, bob := peerPair(t, 0)
+	if err := bob.AnnounceOnRadio(); err != nil {
+		t.Fatal(err)
+	}
+	waitPeer(t, "alice to hear bob", func() bool {
+		_, ok := neighbourOf(alice, bob.Device.ID)
+		return ok
+	})
+
+	// The first press must NOT put an offer on the air.
+	before := len(bob.RadioOffers())
+	if _, err := alice.OfferLineOverRadio(bob.Device.ID); !errors.Is(err, ErrLinkNotReady) {
+		t.Fatalf("the first press committed an invitation instead of asking: %v", err)
+	}
+	if _, ok := alice.PeerLink(bob.Device.ID); !ok {
+		t.Fatal("the first press neither offered nor probed")
+	}
+	if got := len(bob.RadioOffers()); got != before {
+		t.Fatalf("an offer reached bob before the link was proven (%d -> %d)",
+			before, got)
+	}
+	// And once the link stands, the offer goes.
+	waitPeer(t, "the link", func() bool {
+		l, ok := alice.PeerLink(bob.Device.ID)
+		return ok && l.State == PeerLinkUp
+	})
+	if _, err := alice.OfferLineOverRadio(bob.Device.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitPeer(t, "the offer", func() bool { return len(bob.RadioOffers()) > 0 })
+}
+
+// The screen reads state out of the MODEL, so a re-render cannot lose it.
+func TestANeighbourCarriesTheInvitationAlreadySentToThem(t *testing.T) {
+	alice, bob := peerPair(t, 0)
+	if err := bob.AnnounceOnRadio(); err != nil {
+		t.Fatal(err)
+	}
+	waitPeer(t, "alice to hear bob", func() bool {
+		_, ok := neighbourOf(alice, bob.Device.ID)
+		return ok
+	})
+	offerAfterLink(t, alice, bob.Device.ID)
+
+	waitPeer(t, "the neighbour row to carry the invitation", func() bool {
+		n, ok := neighbourOf(alice, bob.Device.ID)
+		return ok && n.Invitation != nil && n.Invitation.Delivery == DeliveryHeard
+	})
+	n, _ := neighbourOf(alice, bob.Device.ID)
+	if n.Link == nil || n.Link.State != string(PeerLinkUp) {
+		t.Fatalf("the row does not carry the link state: %+v", n.Link)
+	}
+	if n.Link.Direct {
+		t.Fatal("the row claims a DIRECT link with no observed hop count")
+	}
 }

@@ -125,6 +125,18 @@ function rmLinkLine(link) {
   return '';
 }
 
+// What became of an invitation already sent to this person.
+//
+// "queued" is deliberately absent: on this carrier queued and gone look
+// identical for minutes, and a screen that shows one while meaning the other
+// is the screen this wave exists because of.
+function rmDeliveryLine(inv) {
+  if (!inv) return '';
+  if (inv.delivery === 'unheard') return t('radio.meet.unheard');
+  if (inv.delivery === 'heard') return t('radio.meet.delivered');
+  return '';
+}
+
 function rmNeighboursBlock(list) {
   const head = `<div class="gw-section"><h4>${esc(t('radio.meet.heard'))}</h4>`;
   if (!list.length) {
@@ -151,7 +163,7 @@ function rmNeighboursBlock(list) {
             esc(alsoName ? t('radio.meet.also_into', { space: alsoName })
                          : t('radio.meet.also_here'))}</a></div>`
       : '';
-    const linkLine = rmLinkLine(n.link);
+    const linkLine = rmLinkLine(n.link) || rmDeliveryLine(n.invitation);
     return `<div class="gw-row">
       <span>${esc(who)} <span class="dim mono">${esc(n.device.slice(0, 8))}</span>${also}${
         linkLine ? `<div class="hint">${esc(linkLine)}</div>` : ''}</span>
@@ -176,13 +188,28 @@ async function startLineOverRadio(btn) {
       method: 'POST',
       body: JSON.stringify({ device }),
     });
-    // The line exists here already; it becomes theirs when they accept.
-    current = r.space;
-    await refresh();
+    // PROBING is not a failure and not a line: the node asked, in one frame,
+    // whether they can hear us, because an invitation is six frames and is
+    // not worth spending blind. The neighbour row shows the answer when it
+    // arrives, and pressing again then sends the offer.
+    if (r && r.state === 'probing') {
+      if (info) info.textContent = t('radio.meet.link_probing');
+    } else if (r && r.space) {
+      // The line exists here already; it becomes theirs when they accept.
+      current = r.space;
+      await refresh();
+    }
   } catch (err) {
     if (info) info.textContent = t('radio.meet.failed', { why: err.message });
-    if (btn && btn.disabled !== undefined) btn.disabled = false;
   }
+  // The button is NEVER left disabled by this function.
+  //
+  // Its label used to be set here and then wiped by the four-second re-render,
+  // so "going out…" reverted to "start a line" with nothing to show for it —
+  // state living in a variable the renderer does not know about. What the
+  // person needs to see lives in the MODEL now (the link state on the row and
+  // the invitation's delivery state), and the renderer reads it.
+  await refreshRadioMeet();
 }
 
 async function announceOnRadio() {

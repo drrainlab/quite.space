@@ -50,6 +50,16 @@ const (
 	domainCommit    = "qs.radio.commit.v1"
 )
 
+// ErrLinkNotReady says the radio is being asked whether the other side can
+// hear us, and the answer is not in yet.
+//
+// It is NOT a failure, and the screen must not render it as one: it is the
+// cheap question standing in for the expensive commitment. A second press
+// after the link comes up sends the offer.
+var ErrLinkNotReady = errors.New("node: asking whether they can hear you — " +
+	"one frame, a few seconds. Press again when the link is up; the invitation " +
+	"is six frames and is not worth spending blind")
+
 // lineDeadline is how long any one leg of the saga may take.
 //
 // Longer than a probe, because these carry real content and are worth some
@@ -198,6 +208,26 @@ func (r *Runtime) OfferLineOverRadio(dev id.DeviceID) (id.TerminalID, error) {
 	if n == nil {
 		return id.TerminalID{}, fmt.Errorf("node: no radio neighbour %s has been "+
 			"heard — they have to announce themselves first", dev.String()[:8])
+	}
+
+	// ASK BEFORE COMMITTING, which is the entire reason the peer link exists.
+	//
+	// An offer is six frames — thirteen seconds of air, and on a half-duplex
+	// carrier every one of them is time this radio is deaf. Committing that
+	// blind is what the first live run did: both people pressed at once, both
+	// sides pushed a six-frame offer, and each was deaf while the other spoke.
+	// The counters showed one transfer running and two more queued behind it.
+	//
+	// A probe is ONE frame and answers in seconds. So: no live link, no offer
+	// yet — probe, and let the screen say what is happening. The next press,
+	// once the link is up, sends the offer over a path already proven.
+	if l, ok := r.PeerLink(dev); !ok || l.State != PeerLinkUp {
+		if !ok || l.State != PeerLinkProbing {
+			if err := r.LinkToPeer(dev); err != nil {
+				return id.TerminalID{}, err
+			}
+		}
+		return id.TerminalID{}, ErrLinkNotReady
 	}
 
 	// A second press re-offers the SAME place, from the durable journal.

@@ -92,6 +92,20 @@ type RadioNeighbour struct {
 	// Link is what we can honestly say about REACHING them right now. Nil
 	// when nothing has been asked. Filled by RadioNeighbours, never stored.
 	Link *NeighbourLink `json:"link,omitempty"`
+	// Invitation is what became of the last one sent to them, if any. It is
+	// here so the SCREEN reads state out of the model rather than holding it
+	// in a variable a re-render wipes — which is what made a button say
+	// "going out…" and then quietly revert to its idle label.
+	Invitation *NeighbourInvite `json:"invitation,omitempty"`
+}
+
+// NeighbourInvite is the invitation already offered to this person, reduced
+// to what a screen may say about it.
+type NeighbourInvite struct {
+	ID       string `json:"id"`
+	Space    string `json:"space"`
+	State    string `json:"state"`
+	Delivery string `json:"delivery,omitempty"`
 }
 
 // NeighbourLink is the peer link, reduced to what a screen may say.
@@ -119,8 +133,9 @@ func (n RadioNeighbour) MarshalJSON() ([]byte, error) {
 		// plus a truncated digest — and feeding it back to ParseDeviceID
 		// fails on the colon. The screen posts this value straight back, so
 		// the two have to be the same alphabet.
-		Link *NeighbourLink `json:"link,omitempty"`
-	}{hex.EncodeToString(n.Device[:]), n.Name, n.Heard, n.Link})
+		Link       *NeighbourLink   `json:"link,omitempty"`
+		Invitation *NeighbourInvite `json:"invitation,omitempty"`
+	}{hex.EncodeToString(n.Device[:]), n.Name, n.Heard, n.Link, n.Invitation})
 }
 
 // RadioOffer is an invite that arrived over the air and is waiting for an
@@ -192,6 +207,7 @@ func (r *Runtime) RadioNeighbours() []RadioNeighbour {
 	r.meet.mu.Lock()
 	defer r.meet.mu.Unlock()
 	now := time.Now()
+	invites := map[id.DeviceID]bool{}
 	out := make([]RadioNeighbour, 0, len(r.meet.neighbour))
 	for dev, n := range r.meet.neighbour {
 		cp := *n
@@ -209,9 +225,21 @@ func (r *Runtime) RadioNeighbours() []RadioNeighbour {
 			}
 			cp.Link = &NeighbourLink{State: string(state), Direct: l.Direct()}
 		}
+		invites[dev] = true
 		out = append(out, cp)
 	}
 	sortByHeard(out)
+	// Read the journal OUTSIDE r.meet.mu: it takes its own lock, and this
+	// file's rule is one lock at a time in one order.
+	r.meet.mu.Unlock()
+	for i := range out {
+		if rec, ok := r.liveTargetedInvitation(out[i].Device); ok {
+			out[i].Invitation = &NeighbourInvite{ID: rec.ID, Space: rec.Space,
+				State: rec.State, Delivery: rec.Delivery}
+		}
+	}
+	r.meet.mu.Lock()
+	_ = invites
 	return out
 }
 
