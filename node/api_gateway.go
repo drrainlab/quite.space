@@ -44,7 +44,12 @@ type gatewayResp struct {
 }
 
 type gwRadio struct {
-	Attached     bool   `json:"attached"`
+	Attached bool `json:"attached"`
+	// Carrier names the driver that actually answered, so the screen can stop
+	// presenting one carrier's vocabulary as every radio's. Everything below
+	// NodeNum is Meshtastic's, and on any other carrier it is absent rather
+	// than zero — a zero shown in a reading position is a measurement claim.
+	Carrier      string `json:"carrier,omitempty"`
 	Connected    bool   `json:"connected"`
 	Reconnecting bool   `json:"reconnecting"`
 	NodeNum      string `json:"nodeNum"`
@@ -118,9 +123,16 @@ func (a *APIServer) handleGateway(w http.ResponseWriter, r *http.Request) {
 	}
 
 	m := rt.Mesh()
+	// Connected comes from the CARRIER-NEUTRAL face, not from Meshtastic's
+	// status, which is an empty struct whenever another driver is the one
+	// attached. An RNode that was transmitting read here as attached but not
+	// connected, with a node number and a channel of zero sitting in reading
+	// positions as though they had been measured.
+	rs := rt.RadioState()
 	resp.Radio = gwRadio{
 		Attached:     rt.MeshAttached(),
-		Connected:    m.Connected,
+		Carrier:      rs.Carrier,
+		Connected:    rs.Connected,
 		Reconnecting: m.Reconnecting,
 		TX:           m.TX,
 		RX:           m.RX,
@@ -128,6 +140,9 @@ func (a *APIServer) handleGateway(w http.ResponseWriter, r *http.Request) {
 		Attempts:     m.Attempts,
 		Reconnects:   m.Reconnects,
 		Err:          m.Err,
+	}
+	if resp.Radio.Err == "" {
+		resp.Radio.Err = rs.Err
 	}
 	if m.NodeNum != 0 {
 		resp.Radio.NodeNum = hex.EncodeToString([]byte{
@@ -225,6 +240,18 @@ func gatewayAdvice(g gatewayResp) []string {
 			"or the node's power.")
 	case !g.Radio.Connected:
 		out = append(out, "The radio is not responding: "+g.Radio.Err)
+	}
+	// Everything below this line reads a Meshtastic node's own configuration,
+	// and a modem does not have one. Saying so once is honest; letting the
+	// Meshtastic advice run would tell somebody with a working radio to go
+	// compare settings that do not exist.
+	if g.Radio.Connected && g.Radio.Carrier != "" && g.Radio.Carrier != "meshtastic" {
+		out = append(out, "This radio is an "+g.Radio.Carrier+" — a modem this "+
+			"device drives directly, not a node with firmware of its own. It has "+
+			"no channel table, no node number and no configuration to read back, "+
+			"so the checks below do not apply to it. Its air is set by this "+
+			"device and its segment by the seed.")
+		return out
 	}
 	if g.Config == nil && g.Radio.Connected {
 		out = append(out, "This node reported no configuration, so nothing "+

@@ -49,7 +49,7 @@ async function refreshRadioMeet() {
   const html = [
     rmOffersBlock(offers.invitations || []),
     rmNeighboursBlock(near.neighbours || []),
-    rmAirBlock(st && st.mesh),
+    rmAirBlock(st && st.radio),
   ].join('');
   // ONLY when it changed.
   //
@@ -71,18 +71,27 @@ async function refreshRadioMeet() {
 // conclude nothing happened. A person waiting deserves to see the difference
 // between "in flight" and "nothing is moving", and those are exactly the two
 // states the transfer counters distinguish.
-function rmAirBlock(mesh) {
-  if (!mesh) return '';
+//
+// It takes the CARRIER-NEUTRAL status, not the Meshtastic one: this screen is
+// where somebody standing in a field looks to find out whether anything is
+// moving, and on an RNode the Meshtastic diagnostic is empty by construction —
+// so it answered "no radio is connected" while the radio was transmitting.
+function rmAirBlock(radio) {
+  if (!radio) return '';
   const head = `<div class="gw-section"><h4>${esc(t('radio.meet.air'))}</h4>`;
-  if (!mesh.connected) {
+  if (!radio.connected) {
     return head + `<p class="hint">${esc(t('radio.meet.no_radio'))}</p></div>`;
   }
-  const tr = mesh.transfer;
+  const tr = radio.transfer;
   if (!tr) {
     return head + `<p class="hint">${esc(t('radio.meet.no_seed'))}</p></div>`;
   }
-  const moving = tr.attempted > tr.completed + tr.gaveUp;
-  const line = moving
+  // The denominator is the OUTCOMES — confirmed and unconfirmed. gaveUp is a
+  // REASON that sums into unconfirmed, so subtracting it here would count a
+  // finished transfer twice and leave one that stopped on a deadline looking
+  // like it was still in flight, forever.
+  const done = tr.completed + (tr.unconfirmed || 0);
+  const line = tr.attempted > done
     ? t('radio.meet.in_flight', { done: tr.completed, all: tr.attempted })
     : t('radio.meet.idle', { done: tr.completed });
   return head + `<div class="gw-kv"><span>${esc(t('radio.meet.messages'))}</span>

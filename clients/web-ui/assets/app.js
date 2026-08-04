@@ -572,11 +572,14 @@ if (window.matchMedia) {
 
 // Compact human connection summary (§17): "● Direct · 2 here" — the raw
 // LAN/mesh/relay strings live behind the chip and in Protocol view.
+// It reads status.radio, NEVER status.mesh. The mesh object is a Meshtastic
+// diagnostic and is empty for every other carrier, so a node carrying a
+// conversation over an RNode reported itself as not connected at all.
 function connectionSummary(status) {
-  const lan = status.lan, mesh = status.mesh;
-  const peers = (lan.peers || 0) + (mesh.connected ? 1 : 0);
+  const lan = status.lan, radio = status.radio || {};
+  const peers = (lan.peers || 0) + (radio.connected ? 1 : 0);
   let state = t('conn.off'), cls = 'off';
-  if (mesh.connected && peers > 0) { state = t('conn.mesh'); cls = 'mesh'; }
+  if (radio.connected && peers > 0) { state = t('conn.radio'); cls = 'mesh'; }
   else if (lan.peers > 0) { state = t('conn.direct'); cls = ''; }
   else if (lan.listening) { state = t('conn.lan'); cls = ''; }
   return { text: peers > 0 ? t('conn.summary', { state, count: peers }) : state, cls };
@@ -674,7 +677,7 @@ async function refresh() {
       chipCls = 'conn-chip ' + s.cls + (s.cls === 'off' ? '' : ' up');
       // Relay auto-sync: when there's no direct peer, show that the relay
       // is carrying us (honest — store-and-forward, not live).
-      const peers = (status.lan.peers || 0) + (status.mesh.connected ? 1 : 0);
+      const peers = (status.lan.peers || 0) + ((status.radio || {}).connected ? 1 : 0);
       if (peers === 0) {
         try {
           const rs = await api('/api/relay/status');
@@ -712,12 +715,20 @@ async function refresh() {
     }
     document.getElementById('fp').textContent = PROTOCOL ? status.fingerprint : '';
 
-    const mesh = status.mesh;
-    document.getElementById('mesh').textContent = mesh.connected
-      ? t('conn.mesh_node', { node: mesh.node_num.toString(16) }) : '';
+    // A node number is Meshtastic's own vocabulary, and an RNode has none —
+    // so it is shown only where it exists, and presence is answered by the
+    // neutral face. Reading the node number unconditionally is how a working
+    // radio came to be rendered as nothing at all.
+    const mesh = status.mesh, radio = status.radio || {};
+    document.getElementById('mesh').textContent = !radio.connected ? ''
+      : mesh.connected ? t('conn.mesh_node', { node: mesh.node_num.toString(16) })
+        : t('conn.radio_carrier', { carrier: radio.carrier || '?' });
     document.getElementById('meshInfo').textContent = mesh.connected
       ? `connected as node ${mesh.node_num} · sent ${mesh.tx} · received ${mesh.rx}`
-      : (mesh.err ? `disconnected: ${mesh.err}` : 'not connected');
+      : radio.connected
+        ? `${radio.carrier} · messages ${(radio.transfer || {}).completed || 0}/${(radio.transfer || {}).attempted || 0}`
+          + ` · frames ${(radio.transfer || {}).framesOut || 0} out · ${(radio.transfer || {}).framesIn || 0} in`
+        : (radio.error || mesh.err ? `disconnected: ${radio.error || mesh.err}` : 'not connected');
 
     spacesCache = await api('/api/spaces');
     // The sidebar is the Navigator's (NAV-1). It reconciles rather than

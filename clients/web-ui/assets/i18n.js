@@ -9,7 +9,11 @@ const I18N = {
     'app.name': 'quiet spaces',
     'conn.direct': 'Direct',
     'conn.lan': 'Local network',
-    'conn.mesh': 'Mesh',
+    // "Radio", not "Mesh": the ordinary chip names the physical form the
+    // connection took, never the vendor whose firmware happens to be on the
+    // board. A second carrier arrived and the word had to stop being one
+    // driver's — the same reason ModeMeshtasticOnly became ModeRadioOnly.
+    'conn.radio': 'Radio',
     'conn.relay': 'Through a relay',
     'conn.syncing': 'Catching up',
     'conn.offline': 'No connection right now',
@@ -18,6 +22,11 @@ const I18N = {
     'conn.summary': ({ state, count }) => `${state} · ${count} here`,
     'conn.details': 'Connection details',
     'conn.mesh_node': ({ node }) => `mesh · node ${node}`,
+    // For a carrier that has no node numbers, which is every carrier except
+    // Meshtastic. Naming the driver here is a DIAGNOSTIC, not a choice
+    // offered to anybody — the person never picked it and cannot change it
+    // from this chip.
+    'conn.radio_carrier': ({ carrier }) => `radio · ${carrier}`,
 
     // meeting over the radio (MR-1) — no relay, no internet
     'radio.meet.intro': 'Two radios and nobody else. Saying who you are puts this device\u2019s name and public key on the air, where everyone in range hears it \u2014 that is what somebody needs in order to seal an invitation to you. Nothing is joined until you answer it.',

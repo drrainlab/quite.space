@@ -267,6 +267,18 @@ type statusResp struct {
 		QueueKnown bool           `json:"queue_known"`
 		Transfer   map[string]any `json:"transfer,omitempty"`
 	} `json:"mesh"`
+
+	// Radio is the CARRIER-NEUTRAL face, and it is the one a client must read
+	// to answer "is a radio there at all".
+	//
+	// The mesh object above it is a Meshtastic diagnostic wearing a generic
+	// name, and Mesh() returns an EMPTY struct whenever that driver is not the
+	// one attached. So an RNode could be connected, transmitting and carrying
+	// a conversation while every surface in the interface said no radio was
+	// connected — which is exactly what happened for the whole of the live
+	// gate, unnoticed because the gate drove the API directly and never looked
+	// at a screen. RadioStatus existed for this and had no caller.
+	Radio RadioStatus `json:"radio"`
 }
 
 func (a *APIServer) handleOnboarding(w http.ResponseWriter, r *http.Request) {
@@ -308,6 +320,14 @@ func (a *APIServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 	resp.DeviceXPub = hex.EncodeToString(a.rt.Device.X25519Pub[:])
 	l := a.rt.LAN()
 	resp.LAN.Listening, resp.LAN.Port, resp.LAN.Peers = l.Listening, l.Port, l.Peers
+	// The neutral face first, because it is the one that answers for every
+	// carrier. Detail is dropped HERE and nowhere else: the mesh object below
+	// already carries the Meshtastic diagnostic in the shape the client reads,
+	// and MeshStatus has no json tags, so serialising it a second time would
+	// put one set of facts on the wire under two different spellings.
+	resp.Radio = a.rt.RadioState()
+	resp.Radio.Detail = nil
+
 	m := a.rt.Mesh()
 	resp.Mesh.Connected, resp.Mesh.NodeNum = m.Connected, m.NodeNum
 	resp.Mesh.TX, resp.Mesh.RX, resp.Mesh.Err = m.TX, m.RX, m.Err

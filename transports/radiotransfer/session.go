@@ -869,42 +869,47 @@ func (s *Session) PumpSACKs(ctx context.Context) {
 // Stats separates OUTCOMES from REASONS, because conflating them is how a
 // single transfer ends up counted twice in a denominator and nobody can say
 // afterwards whether a segment was futile, expensive or slow.
+// The json tags are not decoration: these counters are what a person looks at
+// to find out whether anything is moving, and without them they reach a client
+// under Go's own field names while every other radio number on the wire is
+// lowerCamel. One set of facts under two spellings is how a screen quietly
+// reads zeroes for counters that were never zero.
 type Stats struct {
-	Attempted int
+	Attempted int `json:"attempted"`
 	// Completed is CONFIRMED completion — the sender heard a COMMIT. It is a
 	// lower bound on delivery, not a measure of it: on real boards this
 	// reported 0% and 80% in runs where 100% of the messages had in fact
 	// arrived byte-exact, because the confirmations were what got lost.
-	Completed int
+	Completed int `json:"completed"`
 	// Unconfirmed is an outcome: the sender stopped and the peer's state is
 	// unknown. Every transfer lands in exactly one outcome.
-	Unconfirmed int
+	Unconfirmed int `json:"unconfirmed"`
 
 	// The reasons a transfer became Unconfirmed. These SUM INTO Unconfirmed;
 	// they are not outcomes of their own.
-	GaveUp               int
-	FrameBudgetExhausted int
-	DeadlineExpired      int
-	AirtimeExhausted     int
+	GaveUp               int `json:"gaveUp"`
+	FrameBudgetExhausted int `json:"frameBudgetExhausted"`
+	DeadlineExpired      int `json:"deadlineExpired"`
+	AirtimeExhausted     int `json:"airtimeExhausted"`
 
 	// RepairDataFrames and RepairDataBytes are what retransmission cost. The
 	// first transmission is not counted, and neither is control traffic.
-	RepairDataFrames int
-	RepairDataBytes  int
+	RepairDataFrames int `json:"repairDataFrames"`
+	RepairDataBytes  int `json:"repairDataBytes"`
 	// PollsSent counts the one-frame questions that replaced whole-burst
 	// retransmissions as the answer to silence.
-	PollsSent int
+	PollsSent int `json:"pollsSent"`
 
-	FramesOut int
-	Refused   int
+	FramesOut int `json:"framesOut"`
+	Refused   int `json:"refused"`
 	// FramesIn counts authentic frames from the segment, and Inbound the
 	// transfers part-assembled here right now. Without them a stalled
 	// transfer cannot be told from a deaf one — the sender's counters look
 	// identical either way, which is the ambiguity this whole layer exists
 	// to remove.
-	FramesIn    int
-	Inbound     int
-	InboundHave int
+	FramesIn    int `json:"framesIn"`
+	Inbound     int `json:"inbound"`
+	InboundHave int `json:"inboundHave"`
 }
 
 // CompleteTransferRate is the headline, and what it measures is CONFIRMED
