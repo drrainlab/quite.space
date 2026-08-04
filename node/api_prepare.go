@@ -604,9 +604,25 @@ func (a *APIServer) handleRadioMeet(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusConflict, err)
 		return
 	}
-	writeJSON(w, map[string]string{"space": tid.String(),
+	writeJSON(w, meetResponse(tid))
+}
+
+// meetResponse is the answer to "start a line", and it exists as a function so
+// the id in it can be tested.
+//
+// It used to send tid.String(), which is the DISPLAY form: "terminal:" plus a
+// TRUNCATED hex. The client stores what it is given as the current space and
+// asks for that space's entries, palette and appearance — so every one of
+// those came back 400, and the console filled with "encoding/hex: invalid
+// byte: U+0074 't'", which is the 't' of "terminal:". Pressing "start a line"
+// appeared to break the whole screen.
+//
+// Hex is what every other endpoint sends and what ParseTerminalID reads.
+// String() is for a person to look at.
+func meetResponse(tid id.TerminalID) map[string]string {
+	return map[string]string{"space": tid.Hex(),
 		"note": "a new line, for the two of you. They have been OFFERED it — " +
-			"nobody is a member and no key has moved until they answer."})
+			"nobody is a member and no key has moved until they answer."}
 }
 
 // detectRNodes asks every port that answered in a foreign protocol whether it
