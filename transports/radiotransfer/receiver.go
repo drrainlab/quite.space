@@ -48,6 +48,9 @@ type inbound struct {
 	// pending. A receiver that answers the instant a window fills makes every
 	// receiver on the segment answer at once.
 	sackDue time.Time
+	// gen is the highest burst number heard on this transfer's DATA, echoed
+	// in every SACK so the sender can tell a report from a history.
+	gen uint64
 	// sackBase is the window a pending SACK describes.
 	sackBase int
 }
@@ -107,6 +110,24 @@ func (r *Receiver) Accept(peer string, f *Frame, now time.Time) (*Delivered, *Fr
 	r.evict(now)
 
 	if _, already := r.done[f.Transfer]; already {
+		// A duplicate of a COMPLETED transfer buys a complete-SACK, not
+		// another COMMIT. The COMMIT is one frame sent once; when it is
+		// lost, every duplicate the sender pays for must buy back a claim
+		// that can be repeated — measured live, 73 COMMITs went out and one
+		// was heard, while the sender resent the last fragment for minutes.
+		// The digest and generation are echoed from the duplicate itself,
+		// which is exactly what the original COMMIT reply did.
+		if f.Kind == KindData {
+			width := int(f.Count)
+			bitmap := make([]byte, (width+7)/8)
+			for i := range width {
+				SetBit(bitmap, i)
+			}
+			return nil, &Frame{Kind: KindSACK, Transfer: f.Transfer,
+				Count: f.Count, Base: 0, Bitmap: bitmap,
+				Generation: f.Generation, Digest: f.Digest, Reassembled: true,
+			}, ErrAlreadyDelivered
+		}
 		// Re-delivery. Say COMMIT again rather than staying silent: the
 		// sender is here because it did not hear the first one, and silence
 		// is what made it retry.
@@ -141,6 +162,9 @@ func (r *Receiver) Accept(peer string, f *Frame, now time.Time) (*Delivered, *Fr
 	}
 
 	in.lastSeen = now
+	if f.Generation > in.gen {
+		in.gen = f.Generation
+	}
 	if _, dup := in.chunks[int(f.Index)]; !dup {
 		in.chunks[int(f.Index)] = append([]byte(nil), f.Chunk...)
 		in.bytes += len(f.Chunk)
@@ -259,6 +283,7 @@ func (in *inbound) sack() *Frame {
 	return &Frame{
 		Kind: KindSACK, Transfer: in.id,
 		Count: uint64(in.count), Base: uint64(in.sackBase), Bitmap: bitmap,
+		Generation: in.gen,
 	}
 }
 

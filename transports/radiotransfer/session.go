@@ -274,6 +274,10 @@ func (s *Session) SendOn(ctx context.Context, stream uint64, dst RadioAddress,
 	}()
 
 	for {
+		// A new burst opens HERE, before its frames render, so every DATA
+		// frame of this pass carries the number a SACK must echo to count as
+		// an answer to it.
+		o.NextGeneration()
 		pending := o.Pending()
 		if o.Rounds() == 0 {
 			s.trace(TraceEvent{Transfer: o.ID, Event: TraceWindowStarted,
@@ -441,23 +445,110 @@ func (s *Session) awaitCommit(ctx context.Context, o *Outbound, ch <-chan *Frame
 		case f := <-ch:
 			switch f.Kind {
 			case KindSACK:
+				if f.Reassembled {
+					// Completion folded into a repeatable frame: the same
+					// claim as a COMMIT, checked the same way.
+					s.trace(TraceEvent{Transfer: o.ID, Event: TraceCommitRX,
+						Fragment: -1, Round: o.Rounds() + 1, Gen: f.Generation,
+						Reason: "complete-SACK"})
+					if f.Digest != o.digest {
+						return false, fmt.Errorf("radiotransfer: the peer "+
+							"assembled a different message under transfer %s",
+							o.ID.Short())
+					}
+					return true, nil
+				}
 				txt, have, missing := bitmapText(f.Bitmap, int(f.Count)-int(f.Base))
-				o.NoteSACK(f)
+				class := o.NoteSACK(f)
 				complete := o.Complete()
 				reason := "holes reported"
-				if complete {
+				switch {
+				case complete:
 					// A SACK saying the peer holds everything still does not
 					// finish the transfer — only a COMMIT does. Traced
 					// explicitly, because if this line is followed by an
 					// ack_timeout it names the defect on its own.
 					reason = "peer holds every fragment; still waiting for COMMIT"
+				case class == sackStale:
+					reason = "history: bits merged, no decision taken"
+				case class == sackFuture:
+					reason = "a burst this sender never sent: bits merged, ignored"
 				}
 				s.trace(TraceEvent{Transfer: o.ID, Event: TraceSACKRX,
 					Fragment: -1, Round: o.Rounds() + 1, Base: int(f.Base),
 					Count: int(f.Count), Bitmap: txt, Have: have,
-					Missing: missing, Reason: reason})
-				if !complete {
-					return false, nil // holes reported; repair them now
+					Missing: missing, Gen: f.Generation, Reason: reason})
+				// The decision to retransmit is taken ONCE per response slot,
+				// on the answer to the burst in flight — never on the first
+				// frame to arrive. The trace that forced this showed thirteen
+				// fresher SACKs queued behind the first; reacting to the
+				// first meant repairing against the oldest possible view. So
+				// the first current answer opens a short COALESCE window in
+				// which everything already queued or still dripping in is
+				// merged, and only then is anything decided.
+				if !complete && class == sackCurrent {
+					return s.coalesce(ctx, o, ch)
+				}
+			case KindCommit:
+				s.trace(TraceEvent{Transfer: o.ID, Event: TraceCommitRX,
+					Fragment: -1, Round: o.Rounds() + 1})
+				if f.Digest != o.digest {
+					return false, fmt.Errorf("radiotransfer: the peer committed a "+
+						"different message under transfer %s", o.ID.Short())
+				}
+				return true, nil
+			case KindCancel:
+				s.trace(TraceEvent{Transfer: o.ID, Event: TraceCancelRX,
+					Fragment: -1, Reason: fmt.Sprintf("code %d", f.Reason)})
+				return false, &ErrRefusedByPeer{Reason: f.Reason}
+			}
+		}
+	}
+}
+
+// coalesce keeps listening briefly after the first answer to the current
+// burst, merging every further report, then decides once.
+//
+// A COMMIT or CANCEL arriving during the window still ends the transfer the
+// ordinary way — coalescing gathers evidence, it does not delay verdicts.
+func (s *Session) coalesce(ctx context.Context, o *Outbound, ch <-chan *Frame) (bool, error) {
+	if s.lim.SACKCoalesce <= 0 {
+		return false, nil
+	}
+	t := time.NewTimer(s.lim.SACKCoalesce)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		case <-t.C:
+			return false, nil // decided: whatever is still pending gets resent
+		case f := <-ch:
+			switch f.Kind {
+			case KindSACK:
+				if f.Reassembled {
+					s.trace(TraceEvent{Transfer: o.ID, Event: TraceCommitRX,
+						Fragment: -1, Round: o.Rounds() + 1, Gen: f.Generation,
+						Reason: "complete-SACK"})
+					if f.Digest != o.digest {
+						return false, fmt.Errorf("radiotransfer: the peer "+
+							"assembled a different message under transfer %s",
+							o.ID.Short())
+					}
+					return true, nil
+				}
+				txt, have, missing := bitmapText(f.Bitmap, int(f.Count)-int(f.Base))
+				class := o.NoteSACK(f)
+				s.trace(TraceEvent{Transfer: o.ID, Event: TraceSACKRX,
+					Fragment: -1, Round: o.Rounds() + 1, Base: int(f.Base),
+					Count: int(f.Count), Bitmap: txt, Have: have,
+					Missing: missing, Gen: f.Generation,
+					Reason: "merged during coalesce"})
+				_ = class
+				if o.Complete() {
+					// Everything acknowledged: back to waiting for COMMIT,
+					// which the caller's loop does by resending nothing.
+					return false, nil
 				}
 			case KindCommit:
 				s.trace(TraceEvent{Transfer: o.ID, Event: TraceCommitRX,
@@ -643,7 +734,8 @@ func (s *Session) PumpSACKs(ctx context.Context) {
 		}
 		s.trace(TraceEvent{Transfer: d.Frame.Transfer, Event: TraceSACKTX,
 			Fragment: -1, Base: int(d.Frame.Base), Count: int(d.Frame.Count),
-			Bitmap: txt, Have: have, Missing: missing, Reason: reason})
+			Bitmap: txt, Have: have, Missing: missing,
+			Gen: d.Frame.Generation, Reason: reason})
 	}
 }
 

@@ -72,6 +72,10 @@ type TraceEvent struct {
 	Have    int
 	Bitmap  string
 
+	// Gen is the burst a frame belongs to, zero when unknown or before
+	// generations existed.
+	Gen uint64
+
 	// Pending lists exactly which fragments a repair round chose to send
 	// again. This is the field the standard of proof rests on.
 	Pending []int
@@ -95,6 +99,9 @@ func (e TraceEvent) String() string {
 	if e.Bitmap != "" {
 		fmt.Fprintf(&b, " base=%d have=%d missing=%d bitmap=%s",
 			e.Base, e.Have, e.Missing, e.Bitmap)
+	}
+	if e.Gen > 0 {
+		fmt.Fprintf(&b, " gen=%d", e.Gen)
 	}
 	if len(e.Pending) > 0 {
 		fmt.Fprintf(&b, " resending=%v", e.Pending)

@@ -81,6 +81,8 @@ const (
 	keyBitmap   = 11
 	keyReason   = 12
 	keyStream   = 13
+	keyGen      = 14
+	keyDone     = 15
 )
 
 // Streams separate kinds of traffic that must not be confused on one carrier.
@@ -128,6 +130,34 @@ type Frame struct {
 	// carried on DATA and echoed nowhere else: SACK and COMMIT name a
 	// transfer, and a transfer already knows which stream it is.
 	Stream uint64
+
+	// Generation is which burst of a transfer this frame belongs to.
+	//
+	// A DATA frame carries the sender's current burst number; a SACK echoes
+	// the highest one the receiver has HEARD. That one echo is what lets the
+	// sender tell a report from a history: on real boards fourteen SACKs
+	// arrived intact and every one described a window the sender had left a
+	// minute earlier, and repairing against them pressed 94 duplicate frames
+	// on a peer that already held the message.
+	//
+	// Zero means "not speaking generations" — an older build — and is why
+	// this is an optional key rather than a version bump: an old reader
+	// skips it (still MAC-covered), an old sender never writes it, and the
+	// sender falls back to the old behaviour for a peer that never echoes
+	// one.
+	Generation uint64
+
+	// Reassembled, on a SACK, is completion folded into the report: the
+	// receiver has every fragment, has assembled the message, and its digest
+	// matched — the same claim a COMMIT makes, carried by a frame that can
+	// be REPEATED. A COMMIT is sent once and never again; measured live,
+	// seventy-three of them were sent and one was heard, and every resend of
+	// the last fragment bought only another unheard COMMIT. A duplicate DATA
+	// frame now buys this instead, for as long as the tombstone lives.
+	//
+	// When set, the SACK also carries the message digest, so the claim is
+	// checked exactly as a COMMIT's is.
+	Reassembled bool
 }
 
 // DigestLen is how much of the message digest travels.
@@ -202,10 +232,22 @@ func (f *Frame) Encode(key *TransferKey) ([]byte, error) {
 		if f.Stream != StreamSync {
 			add(keyStream, func(b []byte) []byte { return codec.AppendUint(b, f.Stream) })
 		}
+		if f.Generation != 0 {
+			add(keyGen, func(b []byte) []byte { return codec.AppendUint(b, f.Generation) })
+		}
 	case KindSACK:
 		add(keyCount, func(b []byte) []byte { return codec.AppendUint(b, f.Count) })
+		if f.Reassembled {
+			add(keyDigest, func(b []byte) []byte { return codec.AppendBytes(b, f.Digest[:]) })
+		}
 		add(keyBase, func(b []byte) []byte { return codec.AppendUint(b, f.Base) })
 		add(keyBitmap, func(b []byte) []byte { return codec.AppendBytes(b, f.Bitmap) })
+		if f.Generation != 0 {
+			add(keyGen, func(b []byte) []byte { return codec.AppendUint(b, f.Generation) })
+		}
+		if f.Reassembled {
+			add(keyDone, func(b []byte) []byte { return codec.AppendUint(b, 1) })
+		}
 	case KindCommit:
 		add(keyDigest, func(b []byte) []byte { return codec.AppendBytes(b, f.Digest[:]) })
 	case KindCancel, KindRepair:
@@ -312,6 +354,12 @@ func Decode(b []byte, key *TransferKey) (*Frame, error) {
 			f.Reason, er = d.ReadUint()
 		case keyStream:
 			f.Stream, er = d.ReadUint()
+		case keyGen:
+			f.Generation, er = d.ReadUint()
+		case keyDone:
+			var v uint64
+			v, er = d.ReadUint()
+			f.Reassembled = v != 0
 		default:
 			// Unknown key: skipped, so a newer sender can add one without
 			// this build refusing the frame. It is still covered by the MAC,

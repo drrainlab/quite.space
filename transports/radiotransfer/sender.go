@@ -39,6 +39,18 @@ type Outbound struct {
 	stream   uint64
 	lim      Limits
 
+	// gen is the burst this transfer is currently sending, stamped into
+	// every DATA frame; peerSpokeGen records whether ANY SACK has echoed a
+	// generation, which is how a new sender recognises an old receiver and
+	// keeps the old behaviour for it.
+	gen          uint64
+	peerSpokeGen bool
+	// freshProgress is set only when a CURRENT-generation SACK advanced the
+	// window base. It is the one thing allowed to reset the futility budget:
+	// evidence merged from history proves delivery but says nothing about
+	// whether the peer is answering NOW.
+	freshProgress bool
+
 	// submitted marks fragments the CARRIER has accepted at least once.
 	//
 	// The name is exact and the exactness is the point. This layer does not
@@ -162,22 +174,71 @@ func (o *Outbound) base() int {
 // digest matched, and only that is reported upward.
 func (o *Outbound) Complete() bool { return o.base() == len(o.chunks) }
 
-// NoteSACK folds a receiver's report in.
+// sackClass is what a SACK is entitled to do, decided by its generation.
+type sackClass int
+
+const (
+	// sackCurrent answers the burst in flight: it may end the response wait,
+	// choose a retransmission, and reset the futility budget.
+	sackCurrent sackClass = iota
+	// sackStale is history. Its acknowledged bits are still evidence of
+	// delivery and are merged — but it triggers nothing, resets nothing, and
+	// answers nothing. Fourteen of these in a row, each intact and each
+	// describing a window a minute gone, are what turned one lost frame into
+	// ninety-four duplicates on the real boards.
+	sackStale
+	// sackFuture claims a burst this sender has not sent: a desync. Its bits
+	// are merged as evidence; everything else about it is ignored.
+	sackFuture
+)
+
+// NextGeneration opens a new burst. Every DATA frame sent from now carries
+// its number, and only a SACK echoing it counts as an answer.
+func (o *Outbound) NextGeneration() { o.gen++ }
+
+// Generation is the burst currently in flight.
+func (o *Outbound) Generation() uint64 { return o.gen }
+
+// NoteSACK folds a receiver's report in and says what the report may do.
 //
-// A SACK for a window we have moved past is ignored rather than treated as
-// contradiction: on a lossy carrier an old SACK can arrive after a new one,
-// and un-acknowledging a fragment because a stale frame did not mention it
-// would resend work that already succeeded.
-func (o *Outbound) NoteSACK(f *Frame) {
+// The acknowledged bits are merged WHATEVER the class — un-acknowledging a
+// fragment because a stale frame did not mention it would resend work that
+// already succeeded, and evidence of delivery does not expire. What expires
+// is authority: only a SACK echoing the current burst may drive a decision.
+//
+// A receiver that has never echoed a generation is an older build, and for
+// it every SACK stays current — the old behaviour, chosen by evidence rather
+// than by configuration.
+func (o *Outbound) NoteSACK(f *Frame) sackClass {
 	if f.Kind != KindSACK || f.Transfer != o.ID {
-		return
+		return sackStale
 	}
+	if f.Generation > 0 {
+		o.peerSpokeGen = true
+	}
+	class := sackCurrent
+	switch {
+	case !o.peerSpokeGen:
+		// legacy peer: current by construction
+	case f.Generation == o.gen:
+		// the answer to the burst in flight
+	case f.Generation > o.gen:
+		class = sackFuture
+	default:
+		class = sackStale
+	}
+
+	before := o.base()
 	base := int(f.Base)
 	for i := 0; i < o.lim.Window && base+i < len(o.chunks); i++ {
 		if HasBit(f.Bitmap, i) {
 			o.acked[base+i] = true
 		}
 	}
+	if class == sackCurrent && o.base() > before {
+		o.freshProgress = true
+	}
+	return class
 }
 
 // NextRound spends a REPAIR from the budget, and reports whether there is any
@@ -200,10 +261,16 @@ func (o *Outbound) NoteSACK(f *Frame) {
 // history. Measured on two Heltec v3: fifteen windows against a MaxRounds of
 // six. Limits.Repair bounds the cost that this bounds the futility of; see
 // RepairBudget.
+// Only FRESH progress renews it: an advance assembled out of stale SACKs
+// proves the peer heard an old burst, not that it is answering this one, and
+// letting history renew a liveness budget is the exact loop measured live.
 func (o *Outbound) NextRound() bool {
-	if base := o.base(); base > o.lastBase {
-		o.lastBase, o.round = base, 0
-		return true
+	if o.freshProgress {
+		if base := o.base(); base > o.lastBase {
+			o.lastBase, o.round, o.freshProgress = base, 0, false
+			return true
+		}
+		o.freshProgress = false
 	}
 	o.round++
 	return o.round <= o.lim.MaxRounds

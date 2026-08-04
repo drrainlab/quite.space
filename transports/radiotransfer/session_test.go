@@ -370,9 +370,21 @@ func TestARedeliveryIsAnsweredButNotDeliveredTwice(t *testing.T) {
 	if got2 != nil {
 		t.Fatal("the same message was delivered upward twice")
 	}
-	if reply2 == nil || reply2.Kind != KindCommit {
+	if reply2 == nil {
 		t.Fatal("a re-delivery was met with silence — which is exactly what " +
 			"made the sender retry in the first place")
+	}
+	// The answer is a complete-SACK, not another COMMIT: a COMMIT is sent
+	// once and never again, and when it is lost every duplicate must buy a
+	// claim that can be REPEATED. Measured live before this: 73 COMMITs
+	// sent, one heard.
+	if reply2.Kind != KindSACK || !reply2.Reassembled {
+		t.Fatalf("a re-delivery answered with %v (reassembled=%v), want a "+
+			"complete-SACK", reply2.Kind, reply2.Reassembled)
+	}
+	if reply2.Digest != o.Frame(0).Digest {
+		t.Fatal("the complete-SACK does not carry the digest that proves " +
+			"WHICH message assembled")
 	}
 }
 

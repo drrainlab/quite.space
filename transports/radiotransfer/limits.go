@@ -53,6 +53,18 @@ type Limits struct {
 	// AckTimeout is how long a sender waits for a SACK before assuming it was
 	// lost and resending the outstanding fragments.
 	AckTimeout time.Duration
+	// SACKCoalesce is how long a sender keeps LISTENING after the first
+	// answer to its current burst, merging whatever else arrives, before
+	// deciding what to resend.
+	//
+	// It exists because the receiver reports per frame while no explicit
+	// end-of-burst exists: the first answer describes the window's start,
+	// and the trace that forced this showed thirteen fresher reports queued
+	// behind it. Deciding on the first is repairing against the oldest
+	// possible view. This is INSURANCE, not the fix — the burst protocol's
+	// EOB/one-SACK exchange replaces it properly — and it is bounded small
+	// so it can never masquerade as patience.
+	SACKCoalesce time.Duration
 	// DedupTTL is how long a completed transfer id is remembered, so a
 	// re-delivery is recognised rather than reassembled a second time.
 	DedupTTL time.Duration
@@ -214,6 +226,14 @@ func (l Limits) withDefaults() Limits {
 	}
 	if l.SACKDelay <= 0 {
 		l.SACKDelay = d.SACKDelay
+	}
+	if l.SACKCoalesce < 0 {
+		l.SACKCoalesce = 0 // explicitly none, for a protocol with a real EOB
+	} else if l.SACKCoalesce == 0 {
+		// Derived from SACKDelay, not from a constant: the coalesce window
+		// exists to absorb the receiver's own reporting interval, so it
+		// scales with it — including in tests that shrink everything.
+		l.SACKCoalesce = l.SACKDelay
 	}
 	if l.AckTimeout <= 0 {
 		l.AckTimeout = d.AckTimeout

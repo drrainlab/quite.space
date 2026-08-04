@@ -37,7 +37,8 @@ type modelAir struct {
 	// frame was ACCEPTED — which is exactly the number MaxQueuedAirtime
 	// promises to bound.
 	maxBacklog time.Duration
-	// commits dropped, to force the lost-confirmation shape when asked.
+	// dropCommits drops every CONFIRMATION — COMMIT and the tombstone's
+	// complete-SACK alike — to force the endless-repair shape when asked.
 	dropCommits bool
 	key         *TransferKey
 }
@@ -88,7 +89,8 @@ func (m *modelAir) Receive(ctx context.Context) (RadioAddress, []byte, error) {
 		select {
 		case b := <-m.fromPeer:
 			if m.dropCommits {
-				if f, err := Decode(b, m.key); err == nil && f.Kind == KindCommit {
+				if f, err := Decode(b, m.key); err == nil &&
+					(f.Kind == KindCommit || (f.Kind == KindSACK && f.Reassembled)) {
 					continue
 				}
 			}

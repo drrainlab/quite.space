@@ -39,7 +39,10 @@ type delayedFeedbackAir struct {
 	// dropCommits silently discards COMMIT frames this side would receive.
 	// The key is needed to tell which they are, so it is set by the pair.
 	dropCommits bool
-	key         *TransferKey
+	// dropAllReturn silences the return path entirely — the peer heard us
+	// and we hear nothing at all, tombstone answers included.
+	dropAllReturn bool
+	key           *TransferKey
 
 	held    []timed
 	dropped int
@@ -83,11 +86,13 @@ func (a *delayedFeedbackAir) Receive(ctx context.Context) (RadioAddress, []byte,
 		for {
 			select {
 			case b := <-a.fromPeer:
-				if a.dropCommits && a.isCommit(b) {
-					a.mu.Lock()
-					a.dropped++
-					a.mu.Unlock()
-					continue
+				if a.dropAllReturn || (a.dropCommits && a.isCommit(b)) {
+					if a.dropAllReturn || a.isCommit(b) {
+						a.mu.Lock()
+						a.dropped++
+						a.mu.Unlock()
+						continue
+					}
 				}
 				a.mu.Lock()
 				a.held = append(a.held, timed{at: time.Now(), b: b})
@@ -195,19 +200,12 @@ func TestStaleDripNeverRestoresTheRepairBudget(t *testing.T) {
 
 	select {
 	case err := <-done:
-		if !errors.Is(err, ErrDeliveryUnconfirmed) {
-			t.Fatalf("a transfer fed stale progress ended with %v, want it to "+
-				"be unconfirmed", err)
-		}
-		// It must NOT claim the peer received nothing: the whole point is
-		// that the peer very likely holds the message.
-		var du *DeliveryUnconfirmedError
-		if !errors.As(err, &du) {
-			t.Fatalf("error is not a DeliveryUnconfirmedError: %v", err)
-		}
-		if du.RepairFrames > lim.Repair.MaxFrames {
-			t.Fatalf("spent %d repair frames against a budget of %d",
-				du.RepairFrames, lim.Repair.MaxFrames)
+		// Either honest ending is acceptable — CONFIRMED via the tombstone's
+		// repeatable claim (the usual outcome now), or unconfirmed within
+		// budget. What is being proved is that the ending EXISTS and that no
+		// amount of stale progress bought unbounded spend.
+		if err != nil && !errors.Is(err, ErrDeliveryUnconfirmed) {
+			t.Fatalf("a transfer fed stale progress ended with %v", err)
 		}
 	case <-time.After(20 * time.Second):
 		t.Fatal("the transfer did not end — stale progress kept restoring the " +
@@ -215,9 +213,8 @@ func TestStaleDripNeverRestoresTheRepairBudget(t *testing.T) {
 	}
 
 	st := sender.Stats()
-	if st.Unconfirmed != 1 {
-		t.Fatalf("one transfer ended unconfirmed, stats say %d: %+v",
-			st.Unconfirmed, st)
+	if st.Completed+st.Unconfirmed != 1 {
+		t.Fatalf("one transfer must land in exactly one outcome: %+v", st)
 	}
 	if st.RepairDataFrames > lim.Repair.MaxFrames {
 		t.Fatalf("session spent %d repair frames, budget %d",
@@ -231,18 +228,17 @@ func TestStaleDripNeverRestoresTheRepairBudget(t *testing.T) {
 	}
 }
 
-// The case a frame budget can never catch: every fragment reaches the peer on
-// the first pass, so there is nothing to resend, and only the confirmation is
-// lost. Without a deadline the loop waits for something to count forever.
-func TestACompleteButUncommittedTransferEndsRatherThanSpinning(t *testing.T) {
+// A lost COMMIT is no longer even a failure: the first duplicate the sender
+// pays for buys a repeatable complete-SACK from the tombstone, and the
+// transfer CONFIRMS. This test began life proving that such a transfer at
+// least *ended* (unconfirmed, by deadline); the completion fold made the
+// honest outcome strictly better, and the test now pins that instead.
+func TestALostCommitIsRescuedByTheTombstone(t *testing.T) {
 	key := testKey(t)
-	// A frame budget generous enough that it CANNOT be what stops this, so
-	// the only thing left to stop it is the clock. That is the claim under
-	// test: the two dimensions are not redundant.
-	lim := budgetLimits(10_000, 400*time.Millisecond)
+	lim := budgetLimits(10_000, 5*time.Second)
 
 	// No delay at all — the peer hears everything immediately. Only its
-	// confirmation is lost.
+	// COMMITs are lost, every one of them.
 	sAir, rAir := newDelayedPair(200, key, 0, true)
 	sender, _ := NewSession(sAir, key, Options{Limits: lim})
 	receiver, _ := NewSession(rAir, key, Options{Limits: lim})
@@ -252,29 +248,63 @@ func TestACompleteButUncommittedTransferEndsRatherThanSpinning(t *testing.T) {
 	driveAir(ctx, receiver, rAir)
 	driveAir(ctx, sender, sAir)
 
-	start := time.Now()
 	err := sender.Send(ctx, RadioAddress("peer"),
 		bytes.Repeat([]byte("every fragment arrived. "), 12))
+	if err != nil {
+		t.Fatalf("with every COMMIT lost the tombstone should still have "+
+			"confirmed the transfer: %v", err)
+	}
+	st := sender.Stats()
+	if st.Completed != 1 {
+		t.Fatalf("the transfer did not confirm: %+v", st)
+	}
+	// The rescue costs a few duplicates — the frames whose acknowledgement
+	// was riding the lost COMMITs — and must stay cheap.
+	if st.RepairDataFrames > 4 {
+		t.Fatalf("the rescue cost %d repair frames", st.RepairDataFrames)
+	}
+}
+
+// The budget's remaining integration role, after the tombstone: a peer that
+// heard everything and then went COMPLETELY silent — no SACK, no COMMIT, no
+// tombstone answer. The transfer must still end, bounded, without claiming
+// the peer has nothing.
+func TestAPeerThatGoesDeafAfterDeliveryStillEndsBounded(t *testing.T) {
+	key := testKey(t)
+	lim := budgetLimits(12, 2*time.Second)
+
+	// Everything on the return path is dropped, not only COMMITs: the peer
+	// delivered upward and then its answers stopped reaching us entirely.
+	sAir, rAir := newDelayedPair(200, key, 0, true)
+	sAir.dropAllReturn = true
+	sender, _ := NewSession(sAir, key, Options{Limits: lim})
+	receiver, _ := NewSession(rAir, key, Options{Limits: lim})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	driveAir(ctx, receiver, rAir)
+	driveAir(ctx, sender, sAir)
+
+	start := time.Now()
+	err := sender.Send(ctx, RadioAddress("peer"),
+		bytes.Repeat([]byte("delivered into silence. "), 12))
 	took := time.Since(start)
 
 	if !errors.Is(err, ErrDeliveryUnconfirmed) {
 		t.Fatalf("got %v, want an unconfirmed delivery", err)
 	}
-	if !errors.Is(err, ErrRepairDeadlineExhausted) {
-		t.Fatalf("got %v, want the DEADLINE to be the cause — with a budget of "+
-			"ten thousand frames nothing else could have stopped it, which is "+
-			"the whole reason the deadline is not redundant", err)
+	// The message may well have arrived — it did — so the error must not
+	// claim otherwise, and the spend must respect the budget.
+	var du *DeliveryUnconfirmedError
+	if !errors.As(err, &du) {
+		t.Fatalf("not a structured unconfirmed error: %v", err)
 	}
-	if errors.Is(err, ErrRepairFrameBudgetExhausted) {
-		t.Fatal("the frame budget fired despite being effectively unlimited")
+	if du.RepairFrames > lim.Repair.MaxFrames {
+		t.Fatalf("spent %d repair frames against a budget of %d",
+			du.RepairFrames, lim.Repair.MaxFrames)
 	}
-	// Generous, because the assertion is "it ends", not "it ends in exactly
-	// this long": the deadline plus a round of slack.
-	if took > 5*time.Second {
-		t.Fatalf("took %s to give up on a lost confirmation", took)
-	}
-	if st := sender.Stats(); st.DeadlineExpired != 1 || st.Unconfirmed != 1 {
-		t.Fatalf("stats do not name the deadline as the reason: %+v", st)
+	if took > 20*time.Second {
+		t.Fatalf("took %s to stop repairing into silence", took)
 	}
 }
 
