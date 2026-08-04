@@ -446,11 +446,13 @@ func (a *APIServer) handleScanRadios(w http.ResponseWriter, r *http.Request) {
 	case resp.Found == 1:
 		port, _ := meshtastic.FirstRadio(probes)
 		resp.Attached = port
-		resp.Note = "Found one Meshtastic node. Attach it to start using the mesh."
+		resp.Note = "Found one Meshtastic node. It is the other carrier this " +
+			"build speaks; an RNode modem is the one it drives directly."
 	case resp.Found > 1:
 		resp.Note = "Found more than one Meshtastic node. Pick the one you mean."
 	case len(resp.Ports) == 0:
-		resp.Note = "No serial ports at all. Plug a Meshtastic node in over USB."
+		resp.Note = "No serial ports at all. Plug a radio in over USB — an " +
+			"RNode modem is what this build drives directly."
 	case modems > 0:
 		// Naming what is there beats explaining what is not. This is the
 		// common case on a desk with RNode boards on it, and until this scan
@@ -471,10 +473,11 @@ func (a *APIServer) handleScanRadios(w http.ResponseWriter, r *http.Request) {
 			"most likely another firmware. An RNode modem is attached at " +
 			"startup with --rnode and its own segment seed, not from this screen."
 	default:
-		resp.Note = "No Meshtastic node answered. If the device is plugged in, " +
-			"close anything else that might be holding its port — the Meshtastic " +
-			"app, a serial monitor — and scan again. A device that has just been " +
-			"reset can take a few seconds to come up."
+		resp.Note = "Nothing answered on any port — no RNode modem and no " +
+			"Meshtastic node. If a radio is plugged in, close anything else " +
+			"that might be holding its port (the Meshtastic app, a serial " +
+			"monitor) and scan again. A board that has just been reset can " +
+			"take a few seconds to come up."
 	}
 	writeJSON(w, resp)
 }

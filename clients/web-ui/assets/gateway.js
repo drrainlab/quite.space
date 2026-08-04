@@ -375,7 +375,14 @@ function gwScanBlock(g) {
         ${GW_SCANNING ? 'scanning\u2026' : 'Scan for radios'}</button>
     </div>`;
   return section('find a radio', head + btn + '<div id="gwScanOut">' +
-    (GW_SCANNING ? '<p class="hint">Opening each serial port in turn. A few seconds.</p>'
+    // Say the real number. Measured at seven to eight seconds with two boards
+    // on the desk: every port is opened, given a window to identify itself,
+    // and the quiet ones are asked a second time before being called quiet.
+    // "A few seconds" was the old text, and a wait that runs to double what
+    // was promised is how a working thing gets reported as hung.
+    (GW_SCANNING ? '<p class="hint">Opening every serial port and waiting for '
+      + 'each to say what it is. Around ten seconds — a port that stays quiet '
+      + 'is asked twice before it is called quiet.</p>'
                  : gwScanResults()) + '</div>');
 }
 

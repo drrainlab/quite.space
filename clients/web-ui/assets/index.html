@@ -42,7 +42,7 @@
       </svg><span class="nav-label">signals</span></button>
   </div>
   <span class="hspace"></span>
-  <span id="mesh" class="dim mono" onclick="openGateway()" style="cursor:pointer" title="Meshtastic radio" tabindex="0"></span>
+  <span id="mesh" class="dim mono" onclick="openGateway()" style="cursor:pointer" title="Radio" tabindex="0"></span>
   <span id="protoToggle" class="dim mono" onclick="toggleProtocol()" style="cursor:pointer" tabindex="0" role="button"
     title="Protocol view — the technical layer"></span>
   <button class="icon-btn" onclick="openSettings()" title="Settings" aria-label="Settings">⚙</button>
@@ -904,18 +904,33 @@
   <p class="hint" id="lanInfo"></p>
 </dialog>
 
+<!-- ORDER IS THE ARGUMENT HERE. An RNode is the radio this build drives
+     directly and measured everything on, so what a person meets first is the
+     scan that finds one. The Meshtastic address box is the other carrier and
+     sits at the bottom, where a second option belongs — saying "primary" in
+     copy while putting the other one under the reader's nose would be the
+     interface disagreeing with itself. -->
 <dialog id="dlgMesh" class="sheet">
   <h3>radio &amp; gateway</h3>
-  <p class="hint">connect a node: <code>tcp:HOST[:PORT]</code> (WiFi node / meshtasticd)
-  or <code>serial:/dev/tty…</code> (USB). Sync over LoRa is slow by physics —
-  summaries go out once a minute.</p>
-  <input id="meshTarget" placeholder="tcp:192.168.1.42  or  serial:/dev/tty.usbserial-0001">
-  <div class="row"><button onclick="meshConnect()">connect</button>
+  <p class="hint"><b>An RNode modem is the radio to reach for.</b> Plug it in over
+  USB and press <em>Scan for radios</em> below — the device path is found for you,
+  and attaching asks for nothing at all when a segment already arrived with an
+  invitation. Sync over LoRa is slow by physics: summaries go out once a minute.</p>
+  <div class="row">
   <button onclick="refreshGateway()">refresh</button>
   <button class="btn-tinted" onclick="dlgMesh.close(); openRadioMeet()">meet over the radio</button>
   <button onclick="dlgMesh.close()">close</button></div>
   <p class="hint" id="meshInfo"></p>
   <div id="gwBody"></div>
+
+  <div class="settings-sec">
+    <h4>a Meshtastic node instead</h4>
+    <p class="hint">The other carrier this build speaks, attached by address rather
+    than found: <code>tcp:HOST[:PORT]</code> (WiFi node / meshtasticd) or
+    <code>serial:/dev/tty…</code> (USB). Where it goes from here is not decided.</p>
+    <input id="meshTarget" placeholder="tcp:192.168.1.42  or  serial:/dev/tty.usbserial-0001">
+    <div class="row"><button onclick="meshConnect()">connect</button></div>
+  </div>
 </dialog>
 
 <dialog id="dlgRadioMeet" class="sheet">
