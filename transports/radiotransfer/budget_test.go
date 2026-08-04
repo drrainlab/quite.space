@@ -42,7 +42,11 @@ type delayedFeedbackAir struct {
 	// dropAllReturn silences the return path entirely — the peer heard us
 	// and we hear nothing at all, tombstone answers included.
 	dropAllReturn bool
-	key           *TransferKey
+	// dropFirstEOB loses exactly one EOB-marked DATA frame on the way OUT,
+	// so the burst's own turnaround marker is what the air ate.
+	dropFirstEOB bool
+	droppedEOBs  int
+	key          *TransferKey
 
 	held    []timed
 	dropped int
@@ -70,6 +74,16 @@ func (a *delayedFeedbackAir) Send(ctx context.Context, _ RadioAddress, frame []b
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	a.mu.Lock()
+	if a.dropFirstEOB {
+		if f, err := Decode(frame, a.key); err == nil && f.Kind == KindData && f.EOB {
+			a.dropFirstEOB = false
+			a.droppedEOBs++
+			a.mu.Unlock()
+			return nil // gone on the air
+		}
+	}
+	a.mu.Unlock()
 	select {
 	case a.toPeer <- append([]byte(nil), frame...):
 		return nil
@@ -127,6 +141,30 @@ func (a *delayedFeedbackAir) isCommit(b []byte) bool {
 
 func (a *delayedFeedbackAir) Credit() transports.Credit {
 	return transports.Credit{Packets: 8, Known: true, RetryAfter: time.Millisecond}
+}
+
+// driveAirTo is driveAir with delivered messages surfaced to the test.
+func driveAirTo(ctx context.Context, s *Session, air *delayedFeedbackAir, out chan<- []byte) {
+	go func() {
+		for {
+			rctx, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
+			_, raw, err := air.Receive(rctx)
+			cancel()
+			if ctx.Err() != nil {
+				return
+			}
+			if err == nil {
+				got, _ := s.Deliver(ctx, RadioAddress("peer"), raw)
+				if got != nil && out != nil {
+					select {
+					case out <- got.Message:
+					default:
+					}
+				}
+			}
+			s.PumpSACKs(ctx)
+		}
+	}()
 }
 
 // driveAir runs the one read loop a session is entitled to, for any carrier.

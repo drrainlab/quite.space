@@ -83,6 +83,24 @@ type Limits struct {
 	// the failure with better bookkeeping.
 	FrameGap time.Duration
 
+	// BurstAirtime bounds how long ONE burst may occupy the air before the
+	// sender falls silent and listens.
+	//
+	// It is the burst's size expressed in the only unit that transfers
+	// between carriers: three frames on this PHY and six on a faster one are
+	// the same courtesy. The trade is stated rather than implied — capping a
+	// burst costs a few percent of useful airtime and buys a link where no
+	// side is deaf for a minute, a loss that spoils one burst rather than a
+	// window, and room for the answer this protocol now explicitly turns
+	// around for. Only meaningful on a carrier with an AirtimeModel; without
+	// one, a burst is the window.
+	BurstAirtime time.Duration
+	// PollRetries is how many short POLLs a silent response slot costs
+	// before any DATA is retransmitted. A POLL is one small frame; the
+	// alternative it replaces was resending the whole burst to provoke the
+	// same answer.
+	PollRetries int
+
 	// MaxQueuedAirtime bounds how much UNTRANSMITTED air may sit in the
 	// carrier's queue before this layer stops offering frames and waits.
 	//
@@ -195,6 +213,11 @@ func DefaultLimits() Limits {
 		// near enough to bury the feedback path. The measured catastrophe
 		// queued ~30 seconds of air.
 		MaxQueuedAirtime: 6 * time.Second,
+
+		// Three to four long frames on the measured PHY — the owner's
+		// 12-18 s range, taken at the top so a burst is a real burst.
+		BurstAirtime: 18 * time.Second,
+		PollRetries:  2,
 	}
 }
 
@@ -251,6 +274,14 @@ func (l Limits) withDefaults() Limits {
 	}
 	if l.MaxQueuedAirtime <= 0 {
 		l.MaxQueuedAirtime = d.MaxQueuedAirtime
+	}
+	if l.BurstAirtime <= 0 {
+		l.BurstAirtime = d.BurstAirtime
+	}
+	if l.PollRetries < 0 {
+		l.PollRetries = 0 // explicitly none: straight to DATA retransmission
+	} else if l.PollRetries == 0 {
+		l.PollRetries = d.PollRetries
 	}
 	// A caller who lowered the fragment cap and said nothing about the window
 	// meant a smaller transfer, not an incoherent budget. Clamping here is

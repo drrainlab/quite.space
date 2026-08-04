@@ -47,6 +47,14 @@ const (
 	KindCancel FrameKind = 4
 	// KindRepair asks for a transfer to be offered again from the start.
 	KindRepair FrameKind = 5
+	// KindPoll asks the receiver to say, right now, what it holds of a
+	// transfer. One short frame, and the answer is a cumulative SACK — or a
+	// complete-SACK from the tombstone when the transfer already assembled.
+	//
+	// It exists so that a lost answer costs a POLL and never a burst: before
+	// this, a sender that heard nothing had exactly one move, resending
+	// sixteen large DATA frames to provoke sixteen small answers.
+	KindPoll FrameKind = 6
 )
 
 func (k FrameKind) String() string {
@@ -61,6 +69,8 @@ func (k FrameKind) String() string {
 		return "CANCEL"
 	case KindRepair:
 		return "REPAIR"
+	case KindPoll:
+		return "POLL"
 	}
 	return fmt.Sprintf("UNKNOWN(%d)", uint8(k))
 }
@@ -83,6 +93,7 @@ const (
 	keyStream   = 13
 	keyGen      = 14
 	keyDone     = 15
+	keyEOB      = 16
 )
 
 // Streams separate kinds of traffic that must not be confused on one carrier.
@@ -158,6 +169,13 @@ type Frame struct {
 	// When set, the SACK also carries the message digest, so the claim is
 	// checked exactly as a COMMIT's is.
 	Reassembled bool
+
+	// EOB, on a DATA frame, marks the end of a burst: the sender is about to
+	// fall silent and listen. It is the receiver's cue to answer with ONE
+	// cumulative SACK — the explicit turnaround a half-duplex link needs,
+	// instead of the per-frame drip that reported one window twenty-nine
+	// times.
+	EOB bool
 }
 
 // DigestLen is how much of the message digest travels.
@@ -235,6 +253,9 @@ func (f *Frame) Encode(key *TransferKey) ([]byte, error) {
 		if f.Generation != 0 {
 			add(keyGen, func(b []byte) []byte { return codec.AppendUint(b, f.Generation) })
 		}
+		if f.EOB {
+			add(keyEOB, func(b []byte) []byte { return codec.AppendUint(b, 1) })
+		}
 	case KindSACK:
 		add(keyCount, func(b []byte) []byte { return codec.AppendUint(b, f.Count) })
 		if f.Reassembled {
@@ -252,6 +273,10 @@ func (f *Frame) Encode(key *TransferKey) ([]byte, error) {
 		add(keyDigest, func(b []byte) []byte { return codec.AppendBytes(b, f.Digest[:]) })
 	case KindCancel, KindRepair:
 		add(keyReason, func(b []byte) []byte { return codec.AppendUint(b, f.Reason) })
+	case KindPoll:
+		if f.Generation != 0 {
+			add(keyGen, func(b []byte) []byte { return codec.AppendUint(b, f.Generation) })
+		}
 	default:
 		return nil, fmt.Errorf("%w: kind %s cannot be encoded by this build",
 			ErrBadFrame, f.Kind)
@@ -360,6 +385,10 @@ func Decode(b []byte, key *TransferKey) (*Frame, error) {
 			var v uint64
 			v, er = d.ReadUint()
 			f.Reassembled = v != 0
+		case keyEOB:
+			var v uint64
+			v, er = d.ReadUint()
+			f.EOB = v != 0
 		default:
 			// Unknown key: skipped, so a newer sender can add one without
 			// this build refusing the frame. It is still covered by the MAC,
@@ -420,7 +449,7 @@ func (f *Frame) check() error {
 		if f.Base >= f.Count {
 			return fmt.Errorf("%w: SACK base %d of %d", ErrBadFrame, f.Base, f.Count)
 		}
-	case KindCommit, KindCancel, KindRepair:
+	case KindCommit, KindCancel, KindRepair, KindPoll:
 		// Nothing further: the transfer id and the MAC are the whole content.
 	default:
 		return fmt.Errorf("%w: kind %d", ErrBadFrame, f.Kind)

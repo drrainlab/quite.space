@@ -61,9 +61,12 @@ type inbound struct {
 // single goroutine, which is what keeps the eviction and the accounting
 // consistent without a lock in every path.
 type Receiver struct {
-	lim   Limits
-	open  map[TransferID]*inbound
-	done  map[TransferID]time.Time // completed, kept for DedupTTL
+	lim  Limits
+	open map[TransferID]*inbound
+	// done holds completed transfers for DedupTTL, WITH the digest and
+	// count, because the tombstone answers questions now: a duplicate DATA
+	// or a POLL is met with a complete-SACK, and the claim needs its proof.
+	done  map[TransferID]doneRec
 	bytes int
 }
 
@@ -72,7 +75,7 @@ func NewReceiver(lim Limits) *Receiver {
 	return &Receiver{
 		lim:  lim.withDefaults(),
 		open: map[TransferID]*inbound{},
-		done: map[TransferID]time.Time{},
+		done: map[TransferID]doneRec{},
 	}
 }
 
@@ -89,6 +92,25 @@ type Delivered struct {
 	// ability to answer the right radio — without it a reply can only be
 	// broadcast, and a peer link cannot exist at all.
 	From RadioAddress
+}
+
+// doneRec is what a completed transfer leaves behind.
+type doneRec struct {
+	until  time.Time
+	digest [DigestLen]byte
+	count  uint64
+}
+
+// completeSACK is the tombstone's answer: the whole claim of a COMMIT, in a
+// frame that can be repeated as often as it is asked for.
+func (d doneRec) completeSACK(id TransferID, gen uint64) *Frame {
+	width := int(d.count)
+	bitmap := make([]byte, (width+7)/8)
+	for i := range width {
+		SetBit(bitmap, i)
+	}
+	return &Frame{Kind: KindSACK, Transfer: id, Count: d.count, Base: 0,
+		Bitmap: bitmap, Generation: gen, Digest: d.digest, Reassembled: true}
 }
 
 // ErrAlreadyDelivered marks a transfer this receiver has already completed.
@@ -109,29 +131,13 @@ func (r *Receiver) Accept(peer string, f *Frame, now time.Time) (*Delivered, *Fr
 	}
 	r.evict(now)
 
-	if _, already := r.done[f.Transfer]; already {
+	if rec, already := r.done[f.Transfer]; already {
 		// A duplicate of a COMPLETED transfer buys a complete-SACK, not
 		// another COMMIT. The COMMIT is one frame sent once; when it is
 		// lost, every duplicate the sender pays for must buy back a claim
 		// that can be repeated — measured live, 73 COMMITs went out and one
 		// was heard, while the sender resent the last fragment for minutes.
-		// The digest and generation are echoed from the duplicate itself,
-		// which is exactly what the original COMMIT reply did.
-		if f.Kind == KindData {
-			width := int(f.Count)
-			bitmap := make([]byte, (width+7)/8)
-			for i := range width {
-				SetBit(bitmap, i)
-			}
-			return nil, &Frame{Kind: KindSACK, Transfer: f.Transfer,
-				Count: f.Count, Base: 0, Bitmap: bitmap,
-				Generation: f.Generation, Digest: f.Digest, Reassembled: true,
-			}, ErrAlreadyDelivered
-		}
-		// Re-delivery. Say COMMIT again rather than staying silent: the
-		// sender is here because it did not hear the first one, and silence
-		// is what made it retry.
-		return nil, r.commitFrame(f.Transfer, f.Digest), ErrAlreadyDelivered
+		return nil, rec.completeSACK(f.Transfer, f.Generation), ErrAlreadyDelivered
 	}
 
 	in, open := r.open[f.Transfer]
@@ -170,12 +176,23 @@ func (r *Receiver) Accept(peer string, f *Frame, now time.Time) (*Delivered, *Fr
 		in.bytes += len(f.Chunk)
 		r.bytes += len(f.Chunk)
 	}
-	// Arm a SACK for the window this fragment belongs to, once. The delay is
-	// what keeps several receivers from answering in the same instant, and
-	// the pending base is what an overheard SACK is compared against.
+	// Arm a SACK for the window this fragment belongs to — and RE-ARM it on
+	// every frame, pushing the timer back, so it fires after the SENDER
+	// FALLS SILENT rather than once per frame. The arm-once rule produced
+	// twenty-nine reports of one sixteen-fragment window, because with
+	// frames spaced wider than the delay every fragment restarted the drip.
+	// An EOB overrides the wait entirely: the sender has said it is
+	// listening NOW, so the answer goes out now (the overheard-SACK
+	// suppression still keeps a segment of many receivers from answering in
+	// chorus).
 	base := (int(f.Index) / r.lim.Window) * r.lim.Window
-	if in.sackDue.IsZero() || base != in.sackBase {
-		in.sackBase, in.sackDue = base, now.Add(jitter(r.lim.SACKDelay, f.Transfer))
+	if true {
+		in.sackBase = base
+		if f.EOB {
+			in.sackDue = now
+		} else {
+			in.sackDue = now.Add(jitter(r.lim.SACKDelay, f.Transfer))
+		}
 	}
 
 	if len(in.chunks) < in.count {
@@ -186,7 +203,8 @@ func (r *Receiver) Accept(peer string, f *Frame, now time.Time) (*Delivered, *Fr
 		return nil, cancelFrame(f.Transfer, ReasonDigest), err
 	}
 	r.forget(f.Transfer)
-	r.done[f.Transfer] = now.Add(r.lim.DedupTTL)
+	r.done[f.Transfer] = doneRec{until: now.Add(r.lim.DedupTTL),
+		digest: in.digest, count: uint64(in.count)}
 	return &Delivered{Transfer: f.Transfer, Stream: in.stream, Message: msg,
 			From: RadioAddress(in.peer)},
 		r.commitFrame(f.Transfer, in.digest), nil
@@ -238,6 +256,22 @@ func (r *Receiver) DueSACKs(now time.Time) []SACKDue {
 		in.sackDue = time.Time{}
 	}
 	return out
+}
+
+// Poll answers "what do you hold of this transfer, right now".
+//
+// An open transfer arms its SACK for immediate sending; a completed one
+// answers from the tombstone with the full claim; an unknown one is met with
+// silence — there is nothing true to say about it, and the sender's next
+// DATA will re-establish it.
+func (r *Receiver) Poll(id TransferID, gen uint64, now time.Time) *Frame {
+	if rec, done := r.done[id]; done {
+		return rec.completeSACK(id, gen)
+	}
+	if in, open := r.open[id]; open {
+		in.sackDue = now
+	}
+	return nil
 }
 
 // NoteOverheard suppresses our own pending SACK when another receiver has
@@ -307,8 +341,8 @@ func (r *Receiver) evict(now time.Time) {
 			r.forget(id)
 		}
 	}
-	for id, until := range r.done {
-		if now.After(until) {
+	for id, rec := range r.done {
+		if now.After(rec.until) {
 			delete(r.done, id)
 		}
 	}

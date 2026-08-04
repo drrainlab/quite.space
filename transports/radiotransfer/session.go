@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -45,8 +46,17 @@ import (
 type Session struct {
 	tracer  Tracer
 	carrier RadioDatagram
-	key     *TransferKey
-	lim     Limits
+
+	// The transmit gate: ONE scheduler per physical radio. Every frame this
+	// session puts on the air goes through it, and control RESPONSES —
+	// SACKs, COMMITs, tombstone answers — outrank DATA: an answer somebody
+	// is waiting for must never queue behind a burst we happen to be
+	// sending. Without this, half-duplex breaks again BETWEEN directions
+	// the moment one node both sends and receives.
+	txMu         sync.Mutex
+	replyWaiting atomic.Int32
+	key          *TransferKey
+	lim          Limits
 
 	mu sync.Mutex
 	rx *Receiver
@@ -67,9 +77,11 @@ type Session struct {
 	deadlineExpired      int
 	airtimeExhausted     int
 	// repairFrames and repairBytes accumulate across transfers, so a session
-	// can say what retransmission cost it overall.
+	// can say what retransmission cost it overall; polls count the cheap
+	// questions that replaced expensive bursts.
 	repairFrames int
 	repairBytes  int
+	polls        int
 	framesOut    int
 	framesIn     int
 	refused      int
@@ -211,6 +223,29 @@ func (e *ErrRefusedByPeer) Error() string {
 		e.Reason)
 }
 
+// transmitReply puts a control response on the air ahead of any waiting DATA.
+func (s *Session) transmitReply(ctx context.Context, dst RadioAddress, b []byte) error {
+	s.replyWaiting.Add(1)
+	defer s.replyWaiting.Add(-1)
+	s.txMu.Lock()
+	defer s.txMu.Unlock()
+	return s.carrier.Send(ctx, dst, b)
+}
+
+// transmitData puts a DATA frame on the air, yielding briefly when an answer
+// is waiting to go out. The yield is bounded: priority means "you first", not
+// "I starve".
+func (s *Session) transmitData(ctx context.Context, dst RadioAddress, b []byte) error {
+	for i := 0; i < 50 && s.replyWaiting.Load() > 0; i++ {
+		if err := sleep(ctx, time.Millisecond); err != nil {
+			return err
+		}
+	}
+	s.txMu.Lock()
+	defer s.txMu.Unlock()
+	return s.carrier.Send(ctx, dst, b)
+}
+
 // carryable reports how many bytes ONE transfer can actually move over this
 // carrier: the fragment cap times what a fragment holds at this MTU.
 //
@@ -278,18 +313,19 @@ func (s *Session) SendOn(ctx context.Context, stream uint64, dst RadioAddress,
 		// frame of this pass carries the number a SACK must echo to count as
 		// an answer to it.
 		o.NextGeneration()
-		pending := o.Pending()
+		pending := s.burstOf(o.Pending())
 		if o.Rounds() == 0 {
 			s.trace(TraceEvent{Transfer: o.ID, Event: TraceWindowStarted,
 				Fragment: -1, Count: o.Count(), Round: o.Rounds() + 1,
-				Pending: pending})
+				Gen: o.Generation(), Pending: pending})
 		} else {
 			// The field the standard of proof rests on: exactly which
 			// fragments a repair round chose, so an excess DATA frame can be
 			// traced to the state that asked for it.
 			s.trace(TraceEvent{Transfer: o.ID, Event: TraceRetransmit,
 				Fragment: -1, Count: o.Count(), Round: o.Rounds() + 1,
-				Pending: pending, Reason: "unacknowledged after the last round"})
+				Gen: o.Generation(), Pending: pending,
+				Reason: "unacknowledged after the last round"})
 		}
 		for k, i := range pending {
 			if k > 0 {
@@ -301,6 +337,9 @@ func (s *Session) SendOn(ctx context.Context, stream uint64, dst RadioAddress,
 				}
 			}
 			frame := o.Frame(i)
+			// The last frame of a burst says so: EOB is the explicit
+			// half-duplex turnaround — "I am about to fall silent; answer".
+			frame.EOB = k == len(pending)-1
 			// A fragment the carrier already took: offering it again is a
 			// RETRANSMISSION, and that is the first of the two ways a repair
 			// phase begins.
@@ -334,8 +373,13 @@ func (s *Session) SendOn(ctx context.Context, stream uint64, dst RadioAddress,
 				s.mu.Unlock()
 			}
 			o.MarkSubmitted(i)
-			s.trace(TraceEvent{Transfer: o.ID, Event: TraceDataTX,
-				Fragment: i, Count: o.Count(), Round: o.Rounds() + 1})
+			ev := TraceEvent{Transfer: o.ID, Event: TraceDataTX,
+				Fragment: i, Count: o.Count(), Round: o.Rounds() + 1,
+				Gen: o.Generation()}
+			if frame.EOB {
+				ev.Reason = "eob"
+			}
+			s.trace(ev)
 		}
 
 		// The second way a repair phase begins, and it must be stamped HERE —
@@ -350,9 +394,22 @@ func (s *Session) SendOn(ctx context.Context, stream uint64, dst RadioAddress,
 			o.BeginRepair(time.Now())
 		}
 
-		done, err := s.awaitCommit(ctx, o, ch)
+		done, answered, err := s.awaitCommit(ctx, o, ch)
 		if err != nil {
 			return finishSendError(o, err, time.Now())
+		}
+		// SILENCE is met with a POLL before it is met with a burst: one
+		// short frame asking "what do you hold", answered by a cumulative
+		// SACK — or by the tombstone, which is how a transfer whose every
+		// confirmation was lost still confirms. Only when the polls too go
+		// unanswered does a DATA retransmission spend the budget.
+		for polls := 0; !done && !answered && polls < s.lim.PollRetries; polls++ {
+			if err := s.sendPoll(ctx, dst, o); err != nil {
+				return finishSendError(o, err, time.Now())
+			}
+			if done, answered, err = s.awaitCommit(ctx, o, ch); err != nil {
+				return finishSendError(o, err, time.Now())
+			}
 		}
 		if done {
 			s.mu.Lock()
@@ -411,7 +468,11 @@ func (s *Session) stopUnconfirmed(o *Outbound, cause error, now time.Time) error
 // window's patience runs out. A SACK that acknowledges EVERYTHING does not
 // end the wait: acknowledged is not delivered, and only a COMMIT says the
 // message assembled and its digest matched.
-func (s *Session) awaitCommit(ctx context.Context, o *Outbound, ch <-chan *Frame) (bool, error) {
+// It reports three things now: done (a confirmation arrived), answered (the
+// peer said ANYTHING current — a report with holes is an answer, silence is
+// not), and error. The distinction is what decides whether the next move is
+// a cheap POLL or a paid retransmission.
+func (s *Session) awaitCommit(ctx context.Context, o *Outbound, ch <-chan *Frame) (done, answered bool, err error) {
 	// Patience starts at TX DRAIN, not at enqueue, on a carrier that can
 	// tell the difference. AckTimeout is "how long may the peer take to
 	// answer" — and the peer cannot even have HEARD the window while our own
@@ -428,7 +489,7 @@ func (s *Session) awaitCommit(ctx context.Context, o *Outbound, ch <-chan *Frame
 			wait = left
 		}
 		if wait <= 0 {
-			return false, nil // the loop head reports the exhausted budget
+			return false, false, nil // the loop head reports the exhausted budget
 		}
 	}
 	deadline := time.NewTimer(wait)
@@ -436,12 +497,12 @@ func (s *Session) awaitCommit(ctx context.Context, o *Outbound, ch <-chan *Frame
 	for {
 		select {
 		case <-ctx.Done():
-			return false, ctx.Err()
+			return false, false, ctx.Err()
 		case <-deadline.C:
 			s.trace(TraceEvent{Transfer: o.ID, Event: TraceAckTimeout,
 				Fragment: -1, Round: o.Rounds() + 1,
 				Reason: "no SACK and no COMMIT within AckTimeout"})
-			return false, nil // nobody answered; the caller repairs
+			return false, false, nil // silence; the caller polls before it pays
 		case f := <-ch:
 			switch f.Kind {
 			case KindSACK:
@@ -452,11 +513,11 @@ func (s *Session) awaitCommit(ctx context.Context, o *Outbound, ch <-chan *Frame
 						Fragment: -1, Round: o.Rounds() + 1, Gen: f.Generation,
 						Reason: "complete-SACK"})
 					if f.Digest != o.digest {
-						return false, fmt.Errorf("radiotransfer: the peer "+
+						return false, true, fmt.Errorf("radiotransfer: the peer "+
 							"assembled a different message under transfer %s",
 							o.ID.Short())
 					}
-					return true, nil
+					return true, true, nil
 				}
 				txt, have, missing := bitmapText(f.Bitmap, int(f.Count)-int(f.Base))
 				class := o.NoteSACK(f)
@@ -487,23 +548,64 @@ func (s *Session) awaitCommit(ctx context.Context, o *Outbound, ch <-chan *Frame
 				// which everything already queued or still dripping in is
 				// merged, and only then is anything decided.
 				if !complete && class == sackCurrent {
-					return s.coalesce(ctx, o, ch)
+					d, e := s.coalesce(ctx, o, ch)
+					return d, true, e
 				}
 			case KindCommit:
 				s.trace(TraceEvent{Transfer: o.ID, Event: TraceCommitRX,
 					Fragment: -1, Round: o.Rounds() + 1})
 				if f.Digest != o.digest {
-					return false, fmt.Errorf("radiotransfer: the peer committed a "+
+					return false, true, fmt.Errorf("radiotransfer: the peer committed a "+
 						"different message under transfer %s", o.ID.Short())
 				}
-				return true, nil
+				return true, true, nil
 			case KindCancel:
 				s.trace(TraceEvent{Transfer: o.ID, Event: TraceCancelRX,
 					Fragment: -1, Reason: fmt.Sprintf("code %d", f.Reason)})
-				return false, &ErrRefusedByPeer{Reason: f.Reason}
+				return false, true, &ErrRefusedByPeer{Reason: f.Reason}
 			}
 		}
 	}
+}
+
+// burstOf caps a burst by the airtime it will occupy, on a carrier that can
+// price it. The unit is deliberate — three frames on this PHY and six on a
+// faster one are the same courtesy — and without a model the burst is the
+// window, exactly as before.
+func (s *Session) burstOf(pending []int) []int {
+	m, ok := s.carrier.(AirtimeModel)
+	if !ok || len(pending) == 0 {
+		return pending
+	}
+	var spent time.Duration
+	for k := range pending {
+		// Approximate each frame at the carrier's MTU: a burst cap is a
+		// courtesy bound, and the conservative reading is the honest one.
+		spent += m.FrameAirtime(s.carrier.MTU())
+		if spent > s.lim.BurstAirtime && k > 0 {
+			return pending[:k]
+		}
+	}
+	return pending
+}
+
+// sendPoll asks the receiver what it holds, in one short frame.
+func (s *Session) sendPoll(ctx context.Context, dst RadioAddress, o *Outbound) error {
+	f := &Frame{Kind: KindPoll, Transfer: o.ID, Generation: o.Generation()}
+	b, err := f.Encode(s.key)
+	if err != nil {
+		return err
+	}
+	if err := s.transmitData(ctx, dst, b); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.polls++
+	s.framesOut++
+	s.mu.Unlock()
+	s.trace(TraceEvent{Transfer: o.ID, Event: TracePollTX, Fragment: -1,
+		Round: o.Rounds() + 1, Gen: o.Generation()})
+	return nil
 }
 
 // coalesce keeps listening briefly after the first answer to the current
@@ -613,7 +715,7 @@ func (s *Session) sendFrame(ctx context.Context, dst RadioAddress, f *Frame) (in
 				}
 			}
 		}
-		err := s.carrier.Send(ctx, dst, b)
+		err := s.transmitData(ctx, dst, b)
 		if err == nil {
 			s.mu.Lock()
 			s.framesOut++
@@ -678,7 +780,7 @@ func (s *Session) Deliver(ctx context.Context, src RadioAddress, raw []byte) (*D
 			b, e := reply.Encode(s.key)
 			var sendErr error
 			if e == nil {
-				sendErr = s.carrier.Send(ctx, src, b)
+				sendErr = s.transmitReply(ctx, src, b)
 			}
 			if reply.Kind == KindCommit {
 				// Traced with its outcome because this frame is sent ONCE and
@@ -698,6 +800,20 @@ func (s *Session) Deliver(ctx context.Context, src RadioAddress, raw []byte) (*D
 			return nil, nil
 		}
 		return got, err
+	case KindPoll:
+		// "What do you hold?" — answered from the open transfer or from the
+		// tombstone, or met with honest silence for a transfer this side
+		// never saw.
+		s.mu.Lock()
+		reply := s.rx.Poll(f.Transfer, f.Generation, time.Now())
+		s.mu.Unlock()
+		s.trace(TraceEvent{Transfer: f.Transfer, Event: TracePollRX,
+			Fragment: -1, Gen: f.Generation})
+		if reply != nil {
+			if b, e := reply.Encode(s.key); e == nil {
+				_ = s.transmitReply(ctx, src, b)
+			}
+		}
 	case KindSACK:
 		// Somebody else asking for the same window. Ours is suppressed, so a
 		// group does not answer in chorus.
@@ -726,7 +842,7 @@ func (s *Session) PumpSACKs(ctx context.Context) {
 		b, err := d.Frame.Encode(s.key)
 		reason := "due"
 		if err == nil {
-			if e := s.carrier.Send(ctx, RadioAddress(d.Peer), b); e != nil {
+			if e := s.transmitReply(ctx, RadioAddress(d.Peer), b); e != nil {
 				reason = "carrier refused: " + e.Error()
 			}
 		} else {
@@ -766,6 +882,9 @@ type Stats struct {
 	// first transmission is not counted, and neither is control traffic.
 	RepairDataFrames int
 	RepairDataBytes  int
+	// PollsSent counts the one-frame questions that replaced whole-burst
+	// retransmissions as the answer to silence.
+	PollsSent int
 
 	FramesOut int
 	Refused   int
@@ -809,6 +928,7 @@ func (s *Session) Stats() Stats {
 		DeadlineExpired:      s.deadlineExpired,
 		AirtimeExhausted:     s.airtimeExhausted,
 		RepairDataFrames:     s.repairFrames, RepairDataBytes: s.repairBytes,
+		PollsSent: s.polls,
 		FramesOut: s.framesOut, Refused: s.refused,
 		FramesIn: s.framesIn, Inbound: n, InboundHave: b}
 }

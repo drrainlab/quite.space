@@ -49,6 +49,8 @@ const (
 	TraceCompleted       = "transfer_completed"
 	TraceGaveUp          = "transfer_given_up"
 	TraceBudgetExhausted = "repair_budget_exhausted"
+	TracePollTX          = "poll_tx"
+	TracePollRX          = "poll_rx"
 )
 
 // TraceEvent is one thing that happened, with the state that explains it.
