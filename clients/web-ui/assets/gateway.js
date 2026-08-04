@@ -397,7 +397,8 @@ function gwScanResults() {
     const action = (p.kind === 'radio')
       ? `<button class="btn-tinted" onclick="gwAttach('${esc(p.port)}')">attach</button>`
       : (p.kind === 'rnode')
-        ? `<button class="btn-tinted" onclick="gwAttachRNode('${esc(p.port)}')">attach</button>`
+        ? `<button class="btn-tinted" onclick="gwAttachRNode('${esc(p.port)}', ${
+            g.radio && g.radio.knownSegment ? 'true' : 'false'})">attach</button>`
         : '';
     return `<div class="gw-row"><div>
       <span class="${cls[p.kind] || 'dim'}">${icon[p.kind] || '\u00b7'}</span>
@@ -428,9 +429,16 @@ async function gwScan() {
 // and every radio on one derives the same frame key from it. A prompt is
 // plain, and being plain is the point — nothing about this is guessable, and
 // a wrong phrase produces a node that hears nobody and is told nothing.
-async function gwAttachRNode(port) {
-  const phrase = prompt(t('radio.attach.ask'));
-  if (phrase === null) return;
+async function gwAttachRNode(port, knownSegment) {
+  // Nothing is asked when the segment already arrived with an invitation.
+  // That is the payoff of carrying it: the person being invited never had the
+  // words, and should never be made to go and get them — least of all at the
+  // moment the internet is the thing that stopped working.
+  let phrase = '';
+  if (!knownSegment) {
+    phrase = prompt(t('radio.attach.ask'));
+    if (phrase === null) return;
+  }
   try {
     await api('/api/radio/attach', {
       method: 'POST', body: JSON.stringify({ port, phrase }),

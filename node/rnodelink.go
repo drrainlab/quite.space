@@ -10,12 +10,15 @@
 package node
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"sync"
 	"time"
 
+	"github.com/drrainlab/quiet_places/kernel/storage"
 	"github.com/drrainlab/quiet_places/transports"
 	"github.com/drrainlab/quiet_places/transports/radiotransfer"
 	"github.com/drrainlab/quiet_places/transports/rnode"
@@ -28,6 +31,20 @@ import (
 // ordinary invitation is the RadioSegment descriptor's job (recorded); until
 // then it is passed in, exactly as the Meshtastic path does.
 func (r *Runtime) StartRNodeTransfer(device string, seed []byte) error {
+	return r.startRNodeOn(device, seed, rnode.ProfileLongFastRU)
+}
+
+// startRNodeOn is the same thing with the PHY named rather than assumed, so a
+// segment that arrived in an invitation can say which air it lives on and a
+// build that does not know that air can refuse instead of guessing.
+func (r *Runtime) startRNodeOn(device string, seed []byte, profile string) error {
+	phy, ok := rnode.SettingsForProfile(profile)
+	if !ok {
+		return fmt.Errorf("this build does not know the radio profile %q, so "+
+			"it will not bring a radio up on air it cannot name. Whoever set "+
+			"the segment up is running a version this one does not match",
+			profile)
+	}
 	r.mu.Lock()
 	if r.meshSupervised {
 		r.mu.Unlock()
@@ -46,7 +63,7 @@ func (r *Runtime) StartRNodeTransfer(device string, seed []byte) error {
 	// device path, or a modem whose radio will not start, fails HERE with
 	// its own sentence rather than becoming a node quietly retrying a radio
 	// that does not exist.
-	radio, err := rnode.Open(device, rnode.LongFastRU())
+	radio, err := rnode.Open(device, phy)
 	if err != nil {
 		return err
 	}
@@ -99,6 +116,13 @@ func (r *Runtime) StartRNodeTransfer(device string, seed []byte) error {
 	r.rnodeEP = ep
 	r.mu.Unlock()
 
+	// Remembered HERE, where a radio actually came up, rather than in the
+	// attach path only. The live gate caught that: a node started with
+	// --rnode carried no segment in its invitations at all, because the
+	// keystore record was written by the interface path and by nothing else.
+	// One radio coming up is one place, whoever asked for it.
+	r.rememberRadio(device, seed)
+
 	lk := rnodeLink{Endpoint: ep, radio: radio, transfer: ep}
 	r.mu.Lock()
 	r.rnodeLink = lk
@@ -142,3 +166,24 @@ var (
 	_ radioControlEndpoint = rnodeLink{}
 	_ transports.Pacer     = rnodeLink{}
 )
+
+// rememberRadio stores what this device is attached to, and saves only when
+// something actually changed. Restoring on start re-derives the same record,
+// and rewriting the keystore on every open would be a write nobody asked for.
+func (r *Runtime) rememberRadio(device string, seed []byte) {
+	r.mu.Lock()
+	cur := r.ks.Radio
+	if cur.Carrier == carrierRNode && cur.Device == device &&
+		bytes.Equal(cur.Seed, seed) {
+		r.mu.Unlock()
+		return
+	}
+	r.ks.Radio = storage.RadioRecord{
+		Carrier: carrierRNode, Device: device,
+		Seed: append([]byte(nil), seed...),
+	}
+	r.mu.Unlock()
+	if err := r.saveKeystore(); err != nil {
+		log.Printf("radio: attached but not remembered: %v", err)
+	}
+}

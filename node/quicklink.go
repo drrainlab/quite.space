@@ -347,6 +347,13 @@ func (r *Runtime) mintLink(space id.TerminalID, o QuickLinkOptions) (QuickLinkIn
 		// Claims, so the guest can see what they are walking into. The
 		// owner's own record is what admits or refuses.
 		MaxUses: maxUses, Approval: o.Approval, ExpiresAt: pass.ExpiresAt,
+		// The radio segment, when this node has one. It rides because the
+		// failover promise depends on it: both devices must already hold a
+		// compatible segment, and the moment the internet disappears is the
+		// moment nobody can send anybody a configuration.
+		//
+		// Absent when no radio is attached, which is exactly today's link.
+		Segment: r.SegmentDescriptor(),
 	})
 	if err != nil {
 		return QuickLinkInfo{}, err
@@ -393,8 +400,26 @@ func (r *Runtime) mintLink(space id.TerminalID, o QuickLinkOptions) (QuickLinkIn
 		Title:     title,
 		ExpiresAt: expires.Unix(),
 		RelayNote: "The pass waits on " + relayAddr + ", encrypted under these words. " +
-			"The relay cannot read it. It is fetched once and then gone.",
+			"The relay cannot read it. It is fetched once and then gone." +
+			segmentNote(r.SegmentDescriptor()),
 	}, nil
+}
+
+// segmentNote says what ELSE these words hand over, when a radio is attached.
+//
+// Said plainly because it is not a routing detail. The seed lets whoever holds
+// it authenticate on this segment's air — which includes cancelling a transfer
+// on it. It gives them nothing to read: every message is sealed under the
+// space's own keys long before it reaches a radio. Both halves of that belong
+// in the sentence, because either one alone is misleading.
+func segmentNote(seg quicklink.RadioSegment) string {
+	if !seg.Present() {
+		return ""
+	}
+	return " These words also carry your radio segment, so this person's " +
+		"device is ready for your air before either of you needs it — no " +
+		"phrase to pass along at the moment the internet stops working. It " +
+		"lets them onto that air; it does not let them read anything."
 }
 
 // QuickLinkPreview is what a guest sees before deciding.
@@ -414,6 +439,14 @@ type QuickLinkPreview struct {
 	// PassLink is the ordinary Space Pass the words were pointing at. From
 	// here the existing join path takes over unchanged.
 	PassLink string `json:"pass_link"`
+	// Segment reports that this link also carried the inviter's radio
+	// segment, and that this device kept it — so a radio attached later needs
+	// no phrase from anybody.
+	Segment bool `json:"segment,omitempty"`
+	// SegmentNote is why a carried segment was NOT kept. Shown rather than
+	// swallowed: "your radio will not reach them" is worth knowing while
+	// there is still a way to ask.
+	SegmentNote string `json:"segment_note,omitempty"`
 }
 
 // ResolveQuickLink turns five words back into a Space Pass.
@@ -509,6 +542,20 @@ func (r *Runtime) ResolveQuickLink(words string) (QuickLinkPreview, error) {
 		}
 		prev := QuickLinkPreview{From: p.From, Space: p.Space, PassLink: p.PassLink,
 			MaxUses: p.MaxUses, Approval: p.Approval, ExpiresAt: p.ExpiresAt}
+		// A segment arriving with the invitation is recorded HERE, at resolve,
+		// rather than at join. Somebody who reads a preview and walks away
+		// still ends up ready for that person's air, and being ready costs
+		// nothing until a radio is actually attached.
+		//
+		// A refusal is NOT fatal to the resolve. The pass is the thing they
+		// came for; a segment this build cannot use is a note, not a wall.
+		if p.Segment.Present() {
+			if err := r.AdoptSegment(p.Segment); err != nil {
+				prev.SegmentNote = err.Error()
+			} else {
+				prev.Segment = true
+			}
+		}
 		// Remember the entrance. The words may be spent, but backing out of
 		// a preview should not cost somebody their way in.
 		r.rememberResolved(tok.Phrase(), prev)

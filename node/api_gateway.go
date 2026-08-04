@@ -49,7 +49,12 @@ type gwRadio struct {
 	// presenting one carrier's vocabulary as every radio's. Everything below
 	// NodeNum is Meshtastic's, and on any other carrier it is absent rather
 	// than zero — a zero shown in a reading position is a measurement claim.
-	Carrier      string `json:"carrier,omitempty"`
+	Carrier string `json:"carrier,omitempty"`
+	// KnownSegment says this device already holds a segment — it arrived with
+	// an invitation — so attaching a board needs no phrase from anybody. That
+	// is the whole point of carrying the segment: the words were never this
+	// person's to know.
+	KnownSegment bool   `json:"knownSegment,omitempty"`
 	Connected    bool   `json:"connected"`
 	Reconnecting bool   `json:"reconnecting"`
 	NodeNum      string `json:"nodeNum"`
@@ -132,6 +137,7 @@ func (a *APIServer) handleGateway(w http.ResponseWriter, r *http.Request) {
 	resp.Radio = gwRadio{
 		Attached:     rt.MeshAttached(),
 		Carrier:      rs.Carrier,
+		KnownSegment: rt.KnownSegment(),
 		Connected:    rs.Connected,
 		Reconnecting: m.Reconnecting,
 		TX:           m.TX,

@@ -46,6 +46,14 @@ const (
 	innerKeyMaxUses  = 4
 	innerKeyApproval = 5
 	innerKeyExpires  = 6
+	// The radio segment this node is on, so automatic failover has something
+	// to fail over TO. See segment.go for what it is and what it is not.
+	//
+	// SealVersion does NOT move for this. The inner map is tag-keyed with a
+	// SkipItem default, so an older build reads such a link and simply does
+	// not see the segment — while the OUTER version check is a hard refusal,
+	// which a person would read as "you typed the words wrong".
+	innerKeySegment = 7
 )
 
 // SealVersion is bumped only when the sealed layout changes incompatibly.
@@ -68,6 +76,15 @@ type Payload struct {
 	MaxUses   uint64
 	Approval  string
 	ExpiresAt uint64
+	// Segment is the radio segment the inviter is on, so the two devices are
+	// ready for each other's air BEFORE they ever need it. Absent is the
+	// ordinary case and never an error.
+	//
+	// Unlike the fields above it is not merely a claim: acting on it costs
+	// nothing that can be taken back, and a wrong one produces a radio that
+	// hears nobody — which is why every part of it is validated on decode
+	// rather than believed.
+	Segment RadioSegment
 }
 
 // Seal encrypts a payload under a key derived from the token.
@@ -93,6 +110,9 @@ func Seal(t Token, p Payload) ([]byte, error) {
 	if p.ExpiresAt > 0 {
 		n++
 	}
+	if p.Segment.Present() {
+		n++
+	}
 	inner := codec.AppendMap(nil, n)
 	inner = codec.AppendUint(inner, innerKeyPassLink)
 	inner = codec.AppendText(inner, p.PassLink)
@@ -111,6 +131,10 @@ func Seal(t Token, p Payload) ([]byte, error) {
 	if p.ExpiresAt > 0 {
 		inner = codec.AppendUint(inner, innerKeyExpires)
 		inner = codec.AppendUint(inner, p.ExpiresAt)
+	}
+	if p.Segment.Present() {
+		inner = codec.AppendUint(inner, innerKeySegment)
+		inner = appendSegment(inner, p.Segment)
 	}
 
 	aead, err := tokenAEAD(t)
@@ -218,6 +242,8 @@ func Open(t Token, sealed []byte) (Payload, error) {
 			p.Approval, err = di.ReadText()
 		case innerKeyExpires:
 			p.ExpiresAt, err = di.ReadUint()
+		case innerKeySegment:
+			p.Segment, err = readSegment(di)
 		default:
 			err = di.SkipItem()
 		}

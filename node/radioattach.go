@@ -10,10 +10,14 @@
 package node
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"net/http"
 	"strings"
+
+	"github.com/drrainlab/quiet_places/protocol/quicklink"
+	"github.com/drrainlab/quiet_places/transports/rnode"
 
 	"github.com/drrainlab/quiet_places/kernel/storage"
 	"github.com/drrainlab/quiet_places/transports/radiotransfer"
@@ -34,27 +38,35 @@ const carrierRNode = "rnode"
 // The phrase itself is not kept. Only the derived seed is stored, because
 // nothing needs the words again and a phrase is the form of this secret a
 // person is most likely to have reused somewhere else.
+// An EMPTY phrase means "use the segment this device already knows" — the one
+// that arrived in an invitation. That is the payoff of carrying it: a person
+// who was invited plugs a board in and is asked nothing at all, because the
+// words were never theirs to know. An empty phrase with no known segment is
+// refused rather than derived from "".
 func (r *Runtime) AttachRNode(device, phrase string) error {
 	if device == "" {
 		return errors.New("a serial device is required — scan for radios first")
 	}
-	seed, err := radiotransfer.SeedFromPhrase(phrase)
-	if err != nil {
+	var seed []byte
+	if phrase == "" {
+		r.mu.Lock()
+		seed = append([]byte(nil), r.ks.Radio.Seed...)
+		r.mu.Unlock()
+		if len(seed) == 0 {
+			return errors.New("this device knows no radio segment yet, so it " +
+				"needs the phrase yours shares. A segment arrives on its own " +
+				"with an invitation from somebody who already has a radio")
+		}
+	} else if s, err := radiotransfer.SeedFromPhrase(phrase); err != nil {
 		return fmt.Errorf("segment phrase: %w", err)
+	} else {
+		seed = s
 	}
-	if err := r.StartRNodeTransfer(device, seed); err != nil {
-		return err
-	}
-	// Remembered only AFTER the radio actually came up. Storing the intent
-	// first would leave a node trying to attach a device that never worked,
-	// every start, with the failure a little further from its cause each time.
-	r.mu.Lock()
-	r.ks.Radio = storage.RadioRecord{
-		Carrier: carrierRNode, Device: device,
-		Seed: append([]byte(nil), seed...),
-	}
-	r.mu.Unlock()
-	return r.saveKeystore()
+	// StartRNodeTransfer remembers the attachment itself, and only after the
+	// radio actually came up: storing the intent first would leave a node
+	// trying to attach a device that never worked, every start, with the
+	// failure a little further from its cause each time.
+	return r.StartRNodeTransfer(device, seed)
 }
 
 // DetachRadio puts the radio down and forgets it.
@@ -113,6 +125,102 @@ func (r *Runtime) restoreRadio() {
 		r.radioRestoreErr = err
 		r.mu.Unlock()
 	}
+}
+
+// SegmentDescriptor is this node's radio segment, for an invitation to carry.
+//
+// Absent when no radio is attached, which is the ordinary case and never an
+// error: an invitation without a segment is exactly today's invitation.
+//
+// It is built from the STORED attachment rather than from the live radio, so
+// a board that is momentarily unplugged does not silently strip the segment
+// out of every link minted while the cable is out. What the person configured
+// is what they are sharing.
+func (r *Runtime) SegmentDescriptor() quicklink.RadioSegment {
+	r.mu.Lock()
+	rec := r.ks.Radio
+	r.mu.Unlock()
+	if len(rec.Seed) == 0 || rec.Carrier == "" {
+		return quicklink.RadioSegment{}
+	}
+	return quicklink.RadioSegment{
+		KDFVersion: uint64(radiotransfer.KDFVersion),
+		Carrier:    rec.Carrier,
+		Profile:    rnode.ProfileLongFastRU,
+		Seed:       append([]byte(nil), rec.Seed...),
+	}
+}
+
+// AdoptSegment records a segment that arrived in an invitation.
+//
+// This is the point of the whole exercise: the configuration lands BEFORE it
+// is needed. Automatic failover assumes both devices already hold a compatible
+// segment, and the moment the internet disappears is precisely the moment
+// nobody can send anybody one.
+//
+// Three refusals, each because the alternative is a radio that hears nobody:
+//
+//   - a descriptor this build cannot act on (already validated on decode)
+//   - a carrier or profile this build does not speak
+//   - a DIFFERENT segment when one is already configured
+//
+// The last is the one worth arguing about. Silently re-keying somebody's air
+// because they opened a link would take a radio they had working and point it
+// somewhere else, with the only symptom being silence. A person can always
+// detach and attach again; nothing here decides that for them.
+func (r *Runtime) AdoptSegment(seg quicklink.RadioSegment) error {
+	if !seg.Present() {
+		return nil
+	}
+	if err := seg.Validate(); err != nil {
+		return err
+	}
+	if seg.Carrier != carrierRNode {
+		return fmt.Errorf("that invitation is for a %q radio, and this build "+
+			"attaches %q", seg.Carrier, carrierRNode)
+	}
+	if _, ok := rnode.SettingsForProfile(seg.Profile); !ok {
+		return fmt.Errorf("that invitation names the radio profile %q, which "+
+			"this build does not know", seg.Profile)
+	}
+	if uint32(seg.KDFVersion) != radiotransfer.KDFVersion {
+		return fmt.Errorf("that segment derives its key with version %d and "+
+			"this build uses %d — every radio on a segment must agree, so "+
+			"nothing is derived rather than deriving a key nobody else holds",
+			seg.KDFVersion, radiotransfer.KDFVersion)
+	}
+
+	r.mu.Lock()
+	cur := r.ks.Radio
+	same := bytes.Equal(cur.Seed, seg.Seed)
+	if len(cur.Seed) > 0 && !same {
+		r.mu.Unlock()
+		return errors.New("this device is already on a different radio segment. " +
+			"Adopting this one would point the radio at air the people you " +
+			"already share it with are not on. Detach the radio first if that " +
+			"is what you want")
+	}
+	if same {
+		r.mu.Unlock()
+		return nil // already ours; nothing to do and nothing to say
+	}
+	// The DEVICE is deliberately left empty. A segment is known long before a
+	// board is plugged in — often on a machine that has no radio at all — and
+	// that gap is the entire value: when a radio does arrive, nobody has to be
+	// asked for a phrase, and nobody has to be reachable to supply one.
+	r.ks.Radio = storage.RadioRecord{
+		Carrier: seg.Carrier, Seed: append([]byte(nil), seg.Seed...),
+	}
+	r.mu.Unlock()
+	return r.saveKeystore()
+}
+
+// KnownSegment reports whether this device has a segment it could bring a
+// radio up on without asking anybody anything.
+func (r *Runtime) KnownSegment() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.ks.Radio.Seed) > 0
 }
 
 // handleRadioAttach brings up a modem the scan found.

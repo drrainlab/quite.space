@@ -623,3 +623,29 @@ var (
 	_ radiotransfer.RadioDatagram = (*Radio)(nil)
 	_ radiotransfer.AirtimeModel  = (*Radio)(nil)
 )
+
+// The PHY by NAME.
+//
+// A segment descriptor travels between devices, and numbers in it would be a
+// parameter matrix nothing can set yet, frozen into a sealed payload where an
+// interim shape becomes permanent. A name is refusable instead: a build that
+// does not recognise one says so, rather than bringing a radio up on air
+// nobody else is on — where it would hear nothing and be told nothing, which
+// is the failure this whole layer exists to end.
+const (
+	// ProfileLongFastRU is the regulatory RU profile this project transmits
+	// on, and the only one the node attaches today.
+	ProfileLongFastRU = "long-fast-ru"
+)
+
+// SettingsForProfile resolves a profile name. The second return is false for
+// a name this build has never heard of, which is a refusal and not a default:
+// falling back to "whatever we usually use" is how two radios end up
+// confidently on different air.
+func SettingsForProfile(name string) (Settings, bool) {
+	switch name {
+	case ProfileLongFastRU:
+		return LongFastRU(), true
+	}
+	return Settings{}, false
+}

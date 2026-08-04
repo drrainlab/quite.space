@@ -2,6 +2,7 @@ package quicklink
 
 import (
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -26,7 +27,10 @@ func TestSealRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != want {
+	// Compared with reflect rather than != because the payload now carries a
+	// segment descriptor, which holds a byte slice. Field-wise equality is
+	// what this test always meant.
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("payload changed: %+v → %+v", want, got)
 	}
 }
