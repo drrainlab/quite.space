@@ -486,9 +486,11 @@ const (
 	// DeliveryHeard means the peer assembled it. Not that they read it, and
 	// certainly not that they agreed — only that the bytes arrived.
 	DeliveryHeard = "heard"
-	// DeliveryUnheard means nothing ever reached the carrier: the send
-	// provably did not begin, so this side KNOWS the peer has nothing. It is
-	// the only failure state entitled to that claim.
+	// DeliveryUnheard means THIS ATTEMPT never reached the carrier: the send
+	// provably did not begin. That is the whole claim — it says nothing
+	// about the peer's overall state, because a repeat of the same
+	// invitation may follow an earlier attempt that DID arrive. The proven
+	// statement is about the attempt, never about the person.
 	DeliveryUnheard = "unheard"
 	// DeliveryUnconfirmed means the budget was spent and no confirmation
 	// came back — and that is ALL it means. The peer may hold nothing, part,
@@ -512,8 +514,10 @@ func (r *Runtime) onRadioControlSent(tag string, err error) {
 			// claim more than the sender heard.
 			state = DeliveryUnconfirmed
 		default:
-			// Nothing was ever handed over — the one case where "they have
-			// nothing" is a statement of knowledge rather than of hope.
+			// Nothing was handed over THIS TIME. Still not a claim about the
+			// peer: an earlier attempt under the same invitation may have
+			// landed, and the saga's idempotency is what makes retrying safe
+			// rather than what makes this state omniscient.
 			state = DeliveryUnheard
 		}
 		r.setInvitationDelivery(tag[len(tagOffer):], state)
