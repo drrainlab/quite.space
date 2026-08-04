@@ -34,10 +34,28 @@ async function refreshGateway() {
     box.innerHTML = `<p class="hint">could not read gateway status: ${esc(err.message)}</p>`;
     return;
   }
-  box.innerHTML = [
-    gwAdvice(g), gwScanBlock(g), gwAppliedBlock(), gwPrepareBlock(g), gwRadioBlock(g), gwProfileBlock(g),
-    gwPresenceBlock(g), gwPinsBlock(g),
-  ].filter(Boolean).join('');
+  // A RENDER FAILURE MUST NOT LOOK LIKE A HUNG RADIO.
+  //
+  // One of these blocks threw — a variable read in a scope that did not have
+  // it — and because the whole screen is built in one expression, nothing was
+  // written at all. The scan had already come back; the button simply stayed
+  // on "scanning…" because no repaint ever happened. That is indistinguishable
+  // from a serial port that never answered, and it was reported as exactly
+  // that, twice, sending both of us to look at the radio layer.
+  //
+  // So the failure says what it is, and says it where the screen is.
+  try {
+    box.innerHTML = [
+      gwAdvice(g), gwScanBlock(g), gwAppliedBlock(), gwPrepareBlock(g), gwRadioBlock(g), gwProfileBlock(g),
+      gwPresenceBlock(g), gwPinsBlock(g),
+    ].filter(Boolean).join('');
+  } catch (err) {
+    GW_SCANNING = false; // or the button stays disabled on a dead screen
+    box.innerHTML = `<p class="hint">This screen could not draw itself: ${
+      esc(err && err.message ? err.message : String(err))}. The radio is not
+      the problem — nothing above was read from it.</p>`;
+    throw err; // still surfaces in the console, where the stack is
+  }
   if (GW_PREPARED) renderPrepared();
 }
 
@@ -368,8 +386,10 @@ let GW_SCANNING = false;
 function gwScanBlock(g) {
   const head = g.radio.attached
     ? ''
-    : `<p class="hint">No radio is attached yet. Plug a Meshtastic node in over USB and scan \u2014
-       the device path is found for you, and it changes on its own after a reset.</p>`;
+    : `<p class="hint">No radio is attached yet. Plug an <b>RNode</b> modem in over USB
+       and scan \u2014 the device path is found for you, and it changes on its own after
+       a reset. A Meshtastic node is the other carrier this build speaks, and is
+       attached by address at the bottom of this screen.</p>`;
   const btn = `<div class="row">
       <button class="btn-tinted" onclick="gwScan()" ${GW_SCANNING ? 'disabled' : ''}>
         ${GW_SCANNING ? 'scanning\u2026' : 'Scan for radios'}</button>
@@ -383,10 +403,16 @@ function gwScanBlock(g) {
     (GW_SCANNING ? '<p class="hint">Opening every serial port and waiting for '
       + 'each to say what it is. Around ten seconds — a port that stays quiet '
       + 'is asked twice before it is called quiet.</p>'
-                 : gwScanResults()) + '</div>');
+                 : gwScanResults(!!(g.radio && g.radio.knownSegment))) + '</div>');
 }
 
-function gwScanResults() {
+// knownSegment is PASSED IN, not reached for.
+//
+// It was read off a `g` that does not exist in this scope, which threw inside
+// a .map() — so the results block never rendered and the button sat on
+// "scanning…" forever. The scan itself had already come back. A person cannot
+// tell that apart from a hung radio, and reported it as one.
+function gwScanResults(knownSegment) {
   if (!GW_SCAN) return '';
   const icon = { radio: '\u25cf', rnode: '\u25cf', attached: '\u25cf', busy: '\u25cb',
     foreign: '\u25cb', silent: '\u25cb', skipped: '\u00b7' };
@@ -405,7 +431,7 @@ function gwScanResults() {
       ? `<button class="btn-tinted" onclick="gwAttach('${esc(p.port)}')">attach</button>`
       : (p.kind === 'rnode')
         ? `<button class="btn-tinted" onclick="gwAttachRNode('${esc(p.port)}', ${
-            g.radio && g.radio.knownSegment ? 'true' : 'false'})">attach</button>`
+            knownSegment ? 'true' : 'false'})">attach</button>`
         : '';
     return `<div class="gw-row"><div>
       <span class="${cls[p.kind] || 'dim'}">${icon[p.kind] || '\u00b7'}</span>
