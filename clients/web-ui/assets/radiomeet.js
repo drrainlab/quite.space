@@ -35,20 +35,27 @@ function openRadioMeet() {
 async function refreshRadioMeet() {
   const box = document.getElementById('rmBody');
   if (!box) return;
-  let near, offers, st;
+  let near, offers, st, spaces;
   try {
-    [near, offers, st] = await Promise.all([
+    // The spaces list is fetched HERE rather than read from spacesCache: this
+    // sheet refreshes on its own four-second timer, and the moment a line
+    // actually arrives is the moment worth reporting. Reading a cache filled
+    // by somebody else's schedule would announce it late or not at all.
+    [near, offers, st, spaces] = await Promise.all([
       api('/api/radio/neighbours'),
       api('/api/radio/invitations'),
       api('/api/status'),
+      api('/api/spaces'),
     ]);
   } catch (err) {
     box.innerHTML = `<p class="hint">${esc(t('radio.meet.unavailable', { why: err.message }))}</p>`;
     return;
   }
+  const held = new Set((spaces || []).map(s => s.id));
   const html = [
+    rmArrivedBlock(held),
     rmOffersBlock(offers.invitations || []),
-    rmNeighboursBlock(near.neighbours || []),
+    rmNeighboursBlock(near.neighbours || [], held),
     rmAirBlock(st && st.radio),
   ].join('');
   // ONLY when it changed.
@@ -102,6 +109,36 @@ function rmAirBlock(radio) {
     </div>`;
 }
 
+// What this device accepted and is still waiting to receive.
+//
+// Keyed by space id, so a second accept of the same offer is not a second
+// wait. Memory only: if the sheet is closed the space still arrives, and the
+// sidebar is where it shows up — this is an announcement, not the mechanism.
+const RM_AWAITING = new Map();
+
+// SAY WHEN IT LANDED.
+//
+// Accepting answers "your answer is on the air. The space appears here when
+// they grant it" — and then, when it did appear, the screen said nothing at
+// all. A person who has been told to wait for a thing must be told when the
+// thing happens; otherwise the only way to find out is to go and look
+// somewhere else, which is exactly what they were asked not to do.
+function rmArrivedBlock(held) {
+  const arrived = [];
+  for (const [space, who] of RM_AWAITING) {
+    if (held.has(space)) {
+      arrived.push({ space, who });
+      RM_AWAITING.delete(space);
+    }
+  }
+  if (!arrived.length) return '';
+  return arrived.map(a => `<div class="gw-section"><h4>${
+    esc(t('radio.meet.arrived_title'))}</h4>
+    <p class="hint">${esc(t('radio.meet.arrived', { who: a.who }))}</p>
+    <div class="row"><button class="btn-tinted" onclick="rmOpenSpace('${
+      esc(a.space)}')">${esc(t('radio.meet.open_line'))}</button></div></div>`).join('');
+}
+
 // Invitations come FIRST, because an invitation is somebody waiting for an
 // answer and a neighbour list is not.
 function rmOffersBlock(offers) {
@@ -109,57 +146,78 @@ function rmOffersBlock(offers) {
   const rows = offers.map(o => `
     <div class="gw-row">
       <span>${esc(t('radio.meet.offer', { from: o.from || '?', space: o.title || o.space.slice(0, 8) }))}</span>
-      <button class="btn-tinted" onclick="acceptRadioOffer('${esc(o.id)}')">${esc(t('radio.meet.accept'))}</button>
+      <button class="btn-tinted" onclick="acceptRadioOffer('${esc(o.id)}','${
+        esc(o.space || '')}','${esc(o.from || '')}')">${esc(t('radio.meet.accept'))}</button>
     </div>`).join('');
   return `<div class="gw-section"><h4>${esc(t('radio.meet.offers'))}</h4>
     <p class="hint">${esc(t('radio.meet.offers_hint'))}</p>${rows}</div>`;
 }
 
-// What we can honestly say about reaching one neighbour.
+// ONE line per neighbour, and it says the furthest thing that is true.
 //
-// "Radio link established" and "Direct radio link" are DIFFERENT sentences and
-// only the second requires observed zero hops — an addressed Meshtastic packet
-// is exactly what a mesh forwards, so its arrival proves who, never how far.
-// And "nobody answered" is not "they were here and went quiet": a person
-// standing in a field is owed the one that is true.
-function rmLinkLine(link) {
-  if (!link) return '';
+// There used to be two independent renderers — one for the link, one for the
+// invitation — and whichever ran last won. So the most important fact a person
+// could be told, that the other side had ACCEPTED, was liable to be replaced by
+// a sentence about a probe. The order below is the order of consequence: what
+// the people did outranks what the carrier saw, which outranks whether we can
+// reach them at all.
+//
+// "Radio link established" and "Direct radio link" stay different sentences and
+// only the second requires observed zero hops — an addressed packet is what a
+// mesh forwards, so its arrival proves who, never how far.
+function rmStatusLine(n, held) {
+  const inv = n.invitation;
+  if (inv && inv.state === 'accepted') {
+    return held.has(inv.space)
+      ? t('radio.meet.line_ready')
+      : t('radio.meet.granting');
+  }
+  if (inv && inv.state === 'offered') {
+    if (inv.delivery === 'unheard') return t('radio.meet.unheard');
+    if (inv.delivery === 'unconfirmed') return t('radio.meet.unconfirmed');
+    if (inv.delivery === 'heard') return t('radio.meet.delivered');
+    return t('radio.meet.offering');
+  }
+  const link = n.link;
+  if (!link) return t('radio.meet.link_unknown');
   switch (link.state) {
-    case 'up':
-      return link.direct ? t('radio.meet.link_direct') : t('radio.meet.link_up');
+    case 'up': return link.direct ? t('radio.meet.link_direct') : t('radio.meet.link_up');
     case 'probing': return t('radio.meet.link_probing');
     case 'no_answer': return t('radio.meet.link_none');
     case 'gone': return t('radio.meet.link_gone');
   }
-  return '';
+  return t('radio.meet.link_unknown');
 }
 
-// What became of an invitation already sent to this person.
+// The button says what THE NEXT PRESS DOES, and the two presses are two
+// different acts rather than one button with a hidden mode.
 //
-// "queued" is deliberately absent: on this carrier queued and gone look
-// identical for minutes, and a screen that shows one while meaning the other
-// is the screen this wave exists because of.
-function rmDeliveryLine(inv) {
-  if (!inv) return '';
-  if (inv.delivery === 'unheard') return t('radio.meet.unheard');
-  if (inv.delivery === 'unconfirmed') return t('radio.meet.unconfirmed');
-  if (inv.delivery === 'heard') return t('radio.meet.delivered');
-  return '';
+// Establishing the link costs one frame and asks whether they can hear us at
+// all. Offering a line costs six and cannot be taken back. Calling both "start
+// a line" made the first press look like a failure and the second like a
+// repeat, when in fact the first had worked and the second was the real thing.
+function rmAction(n) {
+  const who = n.name || t('radio.meet.unnamed');
+  const inv = n.invitation;
+  if (inv && inv.state === 'accepted') return null;      // nothing left to press
+  if (inv && inv.state === 'offered') {
+    return { label: t('radio.meet.offer_again'), disabled: false };
+  }
+  const st = n.link && n.link.state;
+  if (st === 'probing') return { label: t('radio.meet.checking'), disabled: true };
+  if (st === 'up') return { label: t('radio.meet.start_line', { who }), disabled: false };
+  return { label: t('radio.meet.establish'), disabled: false };
 }
 
-function rmNeighboursBlock(list) {
+function rmNeighboursBlock(list, held) {
   const head = `<div class="gw-section"><h4>${esc(t('radio.meet.heard'))}</h4>`;
   if (!list.length) {
     return head + `<p class="hint">${esc(t('radio.meet.nobody'))}</p></div>`;
   }
   // The space that is OPEN is the secondary option, never the primary one.
-  //
   // Meeting somebody over the radio means the two of you now have a line —
-  // that is QL-1's rule (a link opens a NEW place, never one picked
-  // implicitly) and QL-3's (a space with one other person in it IS that
-  // person). Offering "whatever you happen to be looking at" made the result
-  // depend on where a cursor was, and collapsed entirely when that space was
-  // public, which has no epoch to seal an invitation to.
+  // QL-1's rule (a link opens a NEW place, never one picked implicitly) and
+  // QL-3's (a space with one other person in it IS that person).
   const sp = spacesCache.find(s => s.id === current);
   const canAlsoInvite = sp && !(sp.visibility && sp.visibility !== 'private');
   const alsoName = canAlsoInvite
@@ -167,31 +225,56 @@ function rmNeighboursBlock(list) {
 
   const rows = list.map(n => {
     const who = n.name || t('radio.meet.unnamed');
-    const also = canAlsoInvite
+    const act = rmAction(n);
+    const inv = n.invitation;
+    // The space is OFFERED here — so once it exists, the useful thing is a
+    // way into it, not another button that would offer it again.
+    const done = inv && inv.state === 'accepted' && held.has(inv.space);
+    const button = done
+      ? `<button class="btn-tinted" onclick="rmOpenSpace('${esc(inv.space)}')">${
+          esc(t('radio.meet.open_line'))}</button>`
+      : act
+        ? `<button class="btn-tinted" data-dev="${esc(n.device)}" ${act.disabled ? 'disabled' : ''}
+            onclick="startLineOverRadio(this)">${esc(act.label)}</button>`
+        : '';
+    const also = canAlsoInvite && !inv
       ? `<div class="hint"><a href="#" data-dev="${esc(n.device)}"
           onclick="inviteOverRadio(this); return false">${
             esc(alsoName ? t('radio.meet.also_into', { space: alsoName })
                          : t('radio.meet.also_here'))}</a></div>`
       : '';
-    const linkLine = rmLinkLine(n.link) || rmDeliveryLine(n.invitation);
+    const line = rmStatusLine(n, held);
     return `<div class="gw-row">
       <span>${esc(who)} <span class="dim mono">${esc(n.device.slice(0, 8))}</span>${also}${
-        linkLine ? `<div class="hint">${esc(linkLine)}</div>` : ''}</span>
-      <button class="btn-tinted" data-dev="${esc(n.device)}"
-        onclick="startLineOverRadio(this)">${
-          esc(t('radio.meet.start_line', { who }))}</button></div>`;
+        line ? `<div class="hint">${esc(line)}</div>` : ''}</span>
+      ${button}</div>`;
   }).join('');
   return head + `<p class="hint">${esc(t('radio.meet.heard_hint'))}</p>${rows}</div>`;
 }
 
-// The primary action: a new line, for the two of you.
+// Open the line this screen just built. Closing the sheet is part of it: the
+// thing a person wanted was the conversation, not the dialog about it.
+function rmOpenSpace(space) {
+  const dlg = /** @type {HTMLDialogElement} */ (document.getElementById('dlgRadioMeet'));
+  if (dlg) dlg.close();
+  current = space;
+  refresh();
+}
+
+// One handler, TWO acts, and the person is told which one just happened.
+//
+// The node decides: with no link yet it sends a one-frame probe, and with one
+// up it spends the six-frame invitation. Both used to be behind a button
+// labelled "start a line", so the first press looked like a failure and the
+// second like a repeat. The label now names the next act (see rmAction) and
+// the sentence below names the one that just occurred.
 async function startLineOverRadio(btn) {
   const info = document.getElementById('rmInfo');
   const device = btn && btn.dataset ? btn.dataset.dev : btn;
-  if (info) info.textContent = t('radio.meet.offering');
+  if (info) info.textContent = t('radio.meet.reaching');
   if (btn && btn.disabled !== undefined) {
     btn.disabled = true;
-    btn.textContent = t('radio.meet.offering_short');
+    btn.textContent = t('radio.meet.working');
   }
   try {
     const r = await api('/api/radio/meet', {
@@ -203,11 +286,15 @@ async function startLineOverRadio(btn) {
     // not worth spending blind. The neighbour row shows the answer when it
     // arrives, and pressing again then sends the offer.
     if (r && r.state === 'probing') {
-      if (info) info.textContent = t('radio.meet.link_probing');
+      // Not a failure and not a line: one frame asking whether they can hear
+      // us, because an invitation is six and is not worth spending blind.
+      if (info) info.textContent = t('radio.meet.probe_sent');
     } else if (r && r.space) {
-      // The line exists here already; it becomes theirs when they accept.
-      current = r.space;
-      await refresh();
+      // The line exists HERE already; it becomes theirs when they accept.
+      // Deliberately not switching to it — the person is still standing in
+      // this screen watching for an answer, and moving them to an empty room
+      // would hide the very thing they are waiting for.
+      if (info) info.textContent = t('radio.meet.offering');
     }
   } catch (err) {
     if (info) info.textContent = t('radio.meet.failed', { why: err.message });
@@ -263,7 +350,7 @@ async function inviteOverRadio(btn) {
   }
 }
 
-async function acceptRadioOffer(id) {
+async function acceptRadioOffer(id, space, from) {
   const info = document.getElementById('rmInfo');
   try {
     await api('/api/radio/invitations/accept', {
@@ -273,6 +360,11 @@ async function acceptRadioOffer(id) {
     // Accepting is an ANSWER, not a join. The space arrives when the other
     // side grants it, which on this carrier is seconds away and sometimes
     // more — so this must not land anybody in a room that is not there yet.
+    //
+    // Remembered here so the arrival can be ANNOUNCED. Without this the
+    // screen told somebody to wait and then never mentioned that the waiting
+    // was over.
+    if (space) RM_AWAITING.set(space, from || t('radio.meet.unnamed'));
     if (info) info.textContent = t('radio.meet.answered');
     await refresh();
   } catch (err) {

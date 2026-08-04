@@ -35,6 +35,23 @@ const I18N = {
 
     // meeting over the radio (MR-1) — no relay, no internet
     'radio.meet.intro': 'Two radios and nobody else. Saying who you are puts this device\u2019s name and public key on the air, where everyone in range hears it \u2014 that is what somebody needs in order to seal an invitation to you. Nothing is joined until you answer it.',
+    // The two presses of the radio introduction, named for what each DOES.
+    // One frame to find out whether they can hear you; six to hand over a way
+    // in. Calling both "start a line" made the first look like a failure.
+    'radio.meet.establish': 'check they can hear you',
+    'radio.meet.checking': 'checking\u2026',
+    'radio.meet.working': 'going out\u2026',
+    'radio.meet.reaching': 'Reaching out over the radio\u2026',
+    'radio.meet.probe_sent': 'Asked whether they can hear you \u2014 one frame, so nothing was spent. The answer appears on their row; press again when it says the link is up.',
+    'radio.meet.offer_again': 'offer again',
+    'radio.meet.link_unknown': 'Not asked yet whether they can hear you.',
+    // What the people did, which outranks anything the carrier saw.
+    'radio.meet.granting': 'They accepted. The way in is going out over the air \u2014 this takes a minute on LoRa.',
+    'radio.meet.line_ready': 'The line is here.',
+    'radio.meet.open_line': 'open the line',
+    'radio.meet.arrived_title': 'the line is here',
+    'radio.meet.arrived': ({ who }) => `${who} granted it, and the space has arrived on this device. Nothing else is needed.`,
+
     'radio.meet.offers': 'waiting for your answer',
     'radio.meet.offers_hint': 'Sealed to this device, so nobody else in range could open it. Accepting is what joins you \u2014 until then it has cost you nothing.',
     'radio.meet.offer': ({ from, space }) => `${from} offers a way into ${space}`,
