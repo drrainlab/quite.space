@@ -300,6 +300,23 @@ func (o *Outbound) AllSubmitted() bool {
 	return true
 }
 
+// AnyAcked reports whether the peer has EVER acknowledged a fragment of this
+// transfer — the evidence that it is participating at all. It gates the poll
+// ladder: a POLL asks "what do you hold of this transfer", and a peer that
+// never heard frame one answers an unknown-transfer question with silence by
+// design. Polling it buys nothing and DELAYS the one thing that would help,
+// which is resending the data. Found live: two simultaneous announces
+// collided, and each sender then spent PollRetries×AckTimeout politely asking
+// a peer that had nothing to be asked about.
+func (o *Outbound) AnyAcked() bool {
+	for _, a := range o.acked {
+		if a {
+			return true
+		}
+	}
+	return false
+}
+
 // AnySubmitted reports whether ANY fragment reached the carrier.
 //
 // It is the line between "this was never attempted" and "the peer's state is

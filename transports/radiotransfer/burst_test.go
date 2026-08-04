@@ -28,6 +28,14 @@ func pollLimits() Limits {
 func TestTheTombstoneAnswersAPoll(t *testing.T) {
 	key := testKey(t)
 	lim := pollLimits()
+	// TWO windows, deliberately. The poll ladder now requires EVIDENCE the
+	// peer participates (an acked bit), because polling a peer that never
+	// heard frame one postpones the resend that would actually help. Window
+	// one's SACK provides the evidence; window two completes the message,
+	// and its final SACK dies with the completed inbound — leaving exactly
+	// the shape where a POLL is the right question and the tombstone is what
+	// answers it.
+	lim.Window = 2
 
 	sAir, rAir := newDelayedPair(200, key, 0, true) // every COMMIT dropped
 	sender, err := NewSession(sAir, key, Options{Limits: lim})

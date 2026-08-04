@@ -30,6 +30,8 @@ import (
 	"github.com/drrainlab/quiet_places/transports"
 	"github.com/drrainlab/quiet_places/transports/lan"
 	"github.com/drrainlab/quiet_places/transports/meshtastic"
+	"github.com/drrainlab/quiet_places/transports/radiotransfer"
+	"github.com/drrainlab/quiet_places/transports/rnode"
 )
 
 // Runtime is one running node.
@@ -71,6 +73,10 @@ type Runtime struct {
 	// does not leave the node permanently deaf.
 	mesh           *meshtastic.Supervised
 	meshSupervised bool
+	// rnodeRadio and rnodeEP are set when the attached radio is an RNode
+	// modem rather than a Meshtastic node. One radio per node either way.
+	rnodeRadio *rnode.Radio
+	rnodeEP    *radiotransfer.Endpoint
 	// meshNetworkID scopes which segment's gateway beacons this node listens
 	// to; gateways is what it has heard (RB-2). Presence is advisory — it is
 	// what a person is SHOWN, never a gate on the queue.

@@ -542,14 +542,43 @@ type RadioStatus struct {
 // RadioState reports the carrier-neutral view, with the Meshtastic diagnostic
 // carried underneath as detail.
 func (r *Runtime) RadioState() RadioStatus {
+	// An RNode is not a Meshtastic node, and the status must not pretend
+	// otherwise: its liveness comes from the serial port and its numbers
+	// from the transfer endpoint.
+	r.mu.Lock()
+	rn, rnEP := r.rnodeRadio, r.rnodeEP
+	r.mu.Unlock()
+	if rn != nil && rnEP != nil {
+		closed, rerr := rn.Closed()
+		st := rnEP.Stats()
+		w, d, f := rnEP.Queued()
+		out := RadioStatus{
+			Carrier: "rnode", Connected: !closed && rerr == nil,
+			Transfer: &st, Waiting: w, Dropped: d, Failed: f,
+		}
+		if rerr != nil {
+			out.Err = rerr.Error()
+		}
+		r.radioPeerOnce()
+		r.meet.mu.Lock()
+		now := time.Now()
+		for _, l := range r.meet.peers {
+			if l.State == PeerLinkUp && now.Before(l.ExpiresAt) {
+				out.PeerLinks++
+			}
+		}
+		r.meet.mu.Unlock()
+		return out
+	}
+
 	m := r.Mesh()
 	out := RadioStatus{
 		Carrier: "meshtastic", Connected: m.Connected,
 		Reconnecting: m.Reconnecting, Err: m.Err,
 		Transfer: m.Transfer,
 		Waiting:  m.TransferQueue[0], Dropped: m.TransferQueue[1],
-		Failed:   m.TransferQueue[2],
-		Detail:   m,
+		Failed: m.TransferQueue[2],
+		Detail: m,
 	}
 	r.radioPeerOnce()
 	r.meet.mu.Lock()

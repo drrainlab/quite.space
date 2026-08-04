@@ -85,6 +85,34 @@ func runUI(args []string, withUI bool) error {
 		fmt.Println("listening for gateway beacons on network", net)
 	}
 
+	if dev := flags["rnode"]; dev != "" {
+		// RNode: the modem carrier, always under the Radio Transfer layer —
+		// there is no raw wire to fall back to, because a bare modem has no
+		// framing of its own worth speaking.
+		seed := flags["mesh-seed"]
+		if seed == "" {
+			return errors.New("--rnode needs --mesh-seed: the segment seed is " +
+				"what makes two radios a segment, and without it no frame " +
+				"verifies")
+		}
+		if len(seed) < radiotransfer.MinSeedLen {
+			return fmt.Errorf("--mesh-seed must be at least %d characters: a "+
+				"shorter one derives a key that looks exactly as strong as a "+
+				"real one", radiotransfer.MinSeedLen)
+		}
+		if flags["mesh"] != "" {
+			return errors.New("--rnode and --mesh are two radios: a node " +
+				"attaches one")
+		}
+		sum := sha256.Sum256([]byte("quiet-radio-segment:" + seed))
+		if err := rt.StartRNodeTransfer(dev, sum[:]); err != nil {
+			fmt.Println("rnode: connection failed:", err)
+		} else {
+			fmt.Printf("rnode: attached via %s (radio-transfer wire, summaries "+
+				"every 60s — LoRa airtime)\n", dev)
+		}
+	}
+
 	if target := flags["mesh"]; target != "" {
 		start := rt.StartMeshtastic
 		wire := "raw"

@@ -398,12 +398,15 @@ func (s *Session) SendOn(ctx context.Context, stream uint64, dst RadioAddress,
 		if err != nil {
 			return finishSendError(o, err, time.Now())
 		}
-		// SILENCE is met with a POLL before it is met with a burst: one
-		// short frame asking "what do you hold", answered by a cumulative
-		// SACK — or by the tombstone, which is how a transfer whose every
-		// confirmation was lost still confirms. Only when the polls too go
-		// unanswered does a DATA retransmission spend the budget.
-		for polls := 0; !done && !answered && polls < s.lim.PollRetries; polls++ {
+		// SILENCE is met with a POLL before it is met with a burst — but only
+		// when there is EVIDENCE the peer holds any of this transfer. A POLL
+		// asks "what do you hold", and a peer that never heard frame one
+		// meets an unknown-transfer question with silence by design; polling
+		// it merely postpones the resend that would actually help. So: some
+		// fragment acknowledged, or everything acknowledged and only the
+		// confirmation missing — poll. Nothing ever acknowledged — resend.
+		canPoll := o.AnyAcked() || o.Complete()
+		for polls := 0; !done && !answered && canPoll && polls < s.lim.PollRetries; polls++ {
 			if err := s.sendPoll(ctx, dst, o); err != nil {
 				return finishSendError(o, err, time.Now())
 			}
@@ -479,6 +482,12 @@ func (s *Session) awaitCommit(ctx context.Context, o *Outbound, ch <-chan *Frame
 	// modem is still radiating it. Counting that tail against the peer is
 	// how a transfer times out on itself.
 	wait := s.lim.AckTimeout
+	// Jittered by the transfer id, so two nodes that transmitted into each
+	// other do not then RETRY into each other forever: identical timeouts
+	// turn one collision into a standing wave. Deterministic per transfer —
+	// the same property the receiver's SACK jitter already leans on — and
+	// different between any two transfers, which is what breaks the lockstep.
+	wait += jitter(s.lim.AckTimeout/4, o.ID)
 	if m, ok := s.carrier.(AirtimeModel); ok {
 		if drain := time.Until(m.EstimatedTxEnd()); drain > 0 {
 			wait += drain

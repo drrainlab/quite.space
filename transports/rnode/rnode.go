@@ -442,6 +442,15 @@ func (r *Radio) Credit() transports.Credit {
 	return transports.Credit{Known: false}
 }
 
+// Closed reports whether this radio is finished, and with what error — the
+// liveness a link adopter needs, in the same shape the supervised Meshtastic
+// link answers it.
+func (r *Radio) Closed() (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.closed, r.err
+}
+
 // Refused reports frames the modem would not queue.
 func (r *Radio) Refused() int {
 	r.mu.Lock()
