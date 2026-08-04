@@ -321,6 +321,9 @@ func (s *Session) SendOn(ctx context.Context, stream uint64, dst RadioAddress,
 				// and charging it would let a busy radio spend the budget that
 				// exists to bound a talkative one.
 				o.ChargeRepairFrame(n)
+				if m, ok := s.carrier.(AirtimeModel); ok {
+					o.ChargeRepairAirtime(m.FrameAirtime(n))
+				}
 				s.mu.Lock()
 				s.repairFrames++
 				s.repairBytes += n
@@ -405,11 +408,17 @@ func (s *Session) stopUnconfirmed(o *Outbound, cause error, now time.Time) error
 // end the wait: acknowledged is not delivered, and only a COMMIT says the
 // message assembled and its digest matched.
 func (s *Session) awaitCommit(ctx context.Context, o *Outbound, ch <-chan *Frame) (bool, error) {
-	// Never wait past the repair deadline. Without this the transfer would
-	// overshoot its own absolute budget by up to a whole AckTimeout — 45
-	// seconds at the defaults — which on the failure this budget was written
-	// for is most of the time it is meant to save.
+	// Patience starts at TX DRAIN, not at enqueue, on a carrier that can
+	// tell the difference. AckTimeout is "how long may the peer take to
+	// answer" — and the peer cannot even have HEARD the window while our own
+	// modem is still radiating it. Counting that tail against the peer is
+	// how a transfer times out on itself.
 	wait := s.lim.AckTimeout
+	if m, ok := s.carrier.(AirtimeModel); ok {
+		if drain := time.Until(m.EstimatedTxEnd()); drain > 0 {
+			wait += drain
+		}
+	}
 	if end := o.RepairDeadline(); !end.IsZero() {
 		if left := time.Until(end); left < wait {
 			wait = left
@@ -497,6 +506,22 @@ func (s *Session) sendFrame(ctx context.Context, dst RadioAddress, f *Frame) (in
 	// process.
 	deadline := time.Now().Add(s.lim.AckTimeout * time.Duration(s.lim.MaxRounds))
 	for {
+		// A carrier that can tell time is not allowed to be buried. Waiting
+		// HERE — before the offer — is what keeps the queue's length bounded
+		// and therefore keeps feedback current; the measured alternative was
+		// a ~30-second queue and SACKs that arrived as history.
+		if m, ok := s.carrier.(AirtimeModel); ok {
+			for {
+				backlog := time.Until(m.EstimatedTxEnd())
+				if backlog <= s.lim.MaxQueuedAirtime {
+					break
+				}
+				if err := sleep(ctx, min(backlog-s.lim.MaxQueuedAirtime,
+					s.lim.SendFloor)); err != nil {
+					return 0, err
+				}
+			}
+		}
 		err := s.carrier.Send(ctx, dst, b)
 		if err == nil {
 			s.mu.Lock()

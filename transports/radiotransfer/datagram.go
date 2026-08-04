@@ -90,6 +90,33 @@ type RadioDatagram interface {
 // and offers the same frame again.
 var ErrCarrierFull = errors.New("radiotransfer: the carrier will not take a frame right now")
 
+// AirtimeModel is implemented by carriers that can tell TIME as well as
+// bytes, and it is OPTIONAL for the same reason Pacer is: a carrier that
+// cannot answer honestly must not be forced to invent a number.
+//
+// It exists because of a measured contract confusion. Send means "the modem
+// accepted the bytes", and the transfer layer paced as though it meant "the
+// frame has left the antenna" — at SF11 a 500-byte frame is ~4.6 s of air
+// against a 2.5 s FrameGap, so the modem's queue grew for a whole window,
+// every SACK arrived a window late (14 sent, 14 heard, the first 62 s after
+// it was sent), and the sender repaired against history. This interface is
+// how a carrier stops that being unknowable.
+//
+// Both answers are MODELS, not measurements, and the doc of each says which
+// way to be wrong: overestimating airtime wastes a little pacing; under-
+// estimating it rebuilds the queue this exists to prevent.
+type AirtimeModel interface {
+	// FrameAirtime is how long a frame of n bytes occupies the air,
+	// including any margin the carrier knows it needs (serial transfer,
+	// firmware handling). Conservative — never optimistic.
+	FrameAirtime(n int) time.Duration
+
+	// EstimatedTxEnd is when everything handed to the carrier SO FAR is
+	// expected to have finished transmitting. Never in the past by more
+	// than "now": an idle carrier answers now or earlier.
+	EstimatedTxEnd() time.Time
+}
+
 // pace works out how long to wait before offering a frame again.
 //
 // The carrier's own RetryAfter is preferred over any interval invented here:

@@ -124,10 +124,10 @@ const MaxFrame = 500
 // So frame size was capped at 176 bytes to fit the gap, and Stage B was run
 // again. IT WAS DRAMATICALLY WORSE:
 //
-//     size     MTU 500 frames/time     MTU 176 frames/time
-//      300      1-2 / 3.6 s             4-5 / 6.6 s
-//      700      2-3 / 8.8 s            10-15 / 24.9 s
-//     1500      5-10 / 20.7 s          53-93 / 2m01 s
+//	size     MTU 500 frames/time     MTU 176 frames/time
+//	 300      1-2 / 3.6 s             4-5 / 6.6 s
+//	 700      2-3 / 8.8 s            10-15 / 24.9 s
+//	1500      5-10 / 20.7 s          53-93 / 2m01 s
 //
 // The cost scales with the NUMBER OF FRAMES, not with bytes or with airtime
 // per frame. Every extra fragment is another chance to lose one, another
@@ -230,6 +230,11 @@ type Radio struct {
 	rxBytes  int
 	rxFrames map[byte]int
 	lastErr  byte
+
+	// estTxEnd is the queue model: when everything handed to the modem so
+	// far is expected to have left the antenna. Advanced on every accepted
+	// Send by the frame's modelled airtime plus a guard; never behind now.
+	estTxEnd time.Time
 
 	// The firmware reports whether the radio actually came up, and it can
 	// refuse: a board may accept every PHY parameter, echo them all back
@@ -366,7 +371,42 @@ func (r *Radio) Send(ctx context.Context, _ radiotransfer.RadioAddress, frame []
 	if e != nil {
 		return e
 	}
-	return r.writeKISS(cmdData, frame)
+	if err := r.writeKISS(cmdData, frame); err != nil {
+		return err
+	}
+	// Advance the queue model ONLY on acceptance: a frame the port refused
+	// occupies no air. max(now, prev) because an idle queue does not owe
+	// time backwards.
+	r.mu.Lock()
+	start := time.Now()
+	if r.estTxEnd.After(start) {
+		start = r.estTxEnd
+	}
+	r.estTxEnd = start.Add(r.FrameAirtime(len(frame)))
+	r.mu.Unlock()
+	return nil
+}
+
+// FrameAirtime prices one frame, per radiotransfer.AirtimeModel: the PHY
+// model plus the measured margin.
+//
+// The margin is real and measured, not padding: wall clock on two Heltec v3
+// ran 0.3-0.7 s above the pure symbol arithmetic (serial transfer, firmware
+// handling, host scheduling), and this number must be conservative — an
+// optimistic airtime model rebuilds the exact queue it exists to prevent.
+func (r *Radio) FrameAirtime(n int) time.Duration {
+	return r.set.Airtime(n) + txGuard
+}
+
+// txGuard is the measured gap between modelled air and observed wall clock.
+const txGuard = 700 * time.Millisecond
+
+// EstimatedTxEnd reports when the modem's queue is expected to drain, per
+// radiotransfer.AirtimeModel.
+func (r *Radio) EstimatedTxEnd() time.Time {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.estTxEnd
 }
 
 // Receive waits for the next frame the modem heard.
@@ -392,9 +432,14 @@ func (r *Radio) Receive(ctx context.Context) (radiotransfer.RadioAddress, []byte
 // driver tracks it, claiming a number would be inventing one. transports
 // already has a vocabulary for exactly this — Known:false means "I cannot
 // say", which is different from "nothing right now" and is treated as
-// permission to send.
+// permission to send. (An earlier version of this method said all of that
+// and then returned Known:true with unlimited credit — the comment and the
+// code disagreeing about which vocabulary was in use.)
+//
+// What this driver CAN say honestly is time, and it says it through
+// radiotransfer.AirtimeModel instead.
 func (r *Radio) Credit() transports.Credit {
-	return transports.Credit{Packets: transports.CreditUnlimited, Known: true}
+	return transports.Credit{Known: false}
 }
 
 // Refused reports frames the modem would not queue.
@@ -551,5 +596,8 @@ func be32(v uint32) []byte {
 	return []byte{byte(v >> 24), byte(v >> 16), byte(v >> 8), byte(v)}
 }
 
-// The claim this file exists to check, checked at compile time.
-var _ radiotransfer.RadioDatagram = (*Radio)(nil)
+// The claims this file exists to check, checked at compile time.
+var (
+	_ radiotransfer.RadioDatagram = (*Radio)(nil)
+	_ radiotransfer.AirtimeModel  = (*Radio)(nil)
+)

@@ -59,6 +59,7 @@ type Outbound struct {
 	// stale progress arrives.
 	repairFrames    int
 	repairBytes     int
+	repairAirtime   time.Duration
 	repairStartedAt time.Time
 }
 
@@ -281,9 +282,16 @@ func (o *Outbound) ChargeRepairFrame(size int) {
 	o.repairBytes += size
 }
 
+// ChargeRepairAirtime spends estimated air from the budget, when a carrier
+// can price it. Like frames and bytes, it is never returned.
+func (o *Outbound) ChargeRepairAirtime(d time.Duration) {
+	o.repairAirtime += d
+}
+
 // RepairFrames and RepairBytes are what the repair phase has spent.
-func (o *Outbound) RepairFrames() int { return o.repairFrames }
-func (o *Outbound) RepairBytes() int  { return o.repairBytes }
+func (o *Outbound) RepairFrames() int            { return o.repairFrames }
+func (o *Outbound) RepairBytes() int             { return o.repairBytes }
+func (o *Outbound) RepairAirtime() time.Duration { return o.repairAirtime }
 
 // RepairElapsed is how long the repair phase has run, or zero before it began.
 func (o *Outbound) RepairElapsed(now time.Time) time.Duration {
@@ -308,8 +316,11 @@ func (o *Outbound) OverBudget(now time.Time) error {
 	if b.MaxDuration > 0 && now.Sub(o.repairStartedAt) >= b.MaxDuration {
 		return ErrRepairDeadlineExhausted
 	}
-	// MaxAirtime is checked only when a carrier switched it on; zero means
-	// disabled rather than unlimited-by-omission.
+	// Zero means DISABLED, not unlimited-by-omission: only a carrier that
+	// can price a frame turns this dimension on.
+	if b.MaxAirtime > 0 && o.repairAirtime >= b.MaxAirtime {
+		return ErrRepairAirtimeBudgetExhausted
+	}
 	return nil
 }
 

@@ -71,6 +71,21 @@ type Limits struct {
 	// the failure with better bookkeeping.
 	FrameGap time.Duration
 
+	// MaxQueuedAirtime bounds how much UNTRANSMITTED air may sit in the
+	// carrier's queue before this layer stops offering frames and waits.
+	//
+	// It is the fix for the measured failure mode: a sender that hands the
+	// modem frames faster than the modem can radiate them builds a queue that
+	// delays every answer by the queue's whole length — feedback becomes
+	// history, and repair against history is amplification. FrameGap alone
+	// cannot express this, because one interval means nothing across
+	// different spreading factors, bandwidths and payload sizes.
+	//
+	// Only enforced on a carrier that implements AirtimeModel; inert
+	// otherwise, because without a model of airtime "queued airtime" is not
+	// a number anyone honestly has.
+	MaxQueuedAirtime time.Duration
+
 	// Repair bounds what one transfer may spend AFTER its first pass, and
 	// nothing in it is ever restored by progress. See RepairBudget.
 	Repair RepairBudget
@@ -163,6 +178,11 @@ func DefaultLimits() Limits {
 		DedupTTL:   10 * time.Minute,
 		SendFloor:  500 * time.Millisecond,
 		FrameGap:   2500 * time.Millisecond,
+
+		// One long frame, roughly: enough to keep the antenna busy, nowhere
+		// near enough to bury the feedback path. The measured catastrophe
+		// queued ~30 seconds of air.
+		MaxQueuedAirtime: 6 * time.Second,
 	}
 }
 
@@ -208,6 +228,9 @@ func (l Limits) withDefaults() Limits {
 		l.FrameGap = 0
 	} else if l.FrameGap == 0 {
 		l.FrameGap = d.FrameGap
+	}
+	if l.MaxQueuedAirtime <= 0 {
+		l.MaxQueuedAirtime = d.MaxQueuedAirtime
 	}
 	// A caller who lowered the fragment cap and said nothing about the window
 	// meant a smaller transfer, not an incoherent budget. Clamping here is

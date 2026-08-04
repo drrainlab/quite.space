@@ -86,6 +86,11 @@ func main() {
 	if *ack > 0 {
 		opts.Limits.AckTimeout = *ack
 	}
+	// This carrier can price a frame, so the airtime dimension of the repair
+	// budget is ON here: two minutes of retransmitted air, roughly a dozen
+	// full frames at SF11 — far above one honest repair, far below the
+	// half-hour the unbounded pathology spent.
+	opts.Limits.Repair.MaxAirtime = 2 * time.Minute
 
 	// One trace, both sides, one clock. Two files would have to be correlated
 	// afterwards, and the whole question is which side knew what WHEN.

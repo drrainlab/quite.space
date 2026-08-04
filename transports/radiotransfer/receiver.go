@@ -164,7 +164,7 @@ func (r *Receiver) Accept(peer string, f *Frame, now time.Time) (*Delivered, *Fr
 	r.forget(f.Transfer)
 	r.done[f.Transfer] = now.Add(r.lim.DedupTTL)
 	return &Delivered{Transfer: f.Transfer, Stream: in.stream, Message: msg,
-		From: RadioAddress(in.peer)},
+			From: RadioAddress(in.peer)},
 		r.commitFrame(f.Transfer, in.digest), nil
 }
 
