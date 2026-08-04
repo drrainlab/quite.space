@@ -33,9 +33,16 @@ import (
 
 // Stream framing constants (Meshtastic serial/TCP stream API).
 const (
-	start1     = 0x94
-	start2     = 0xC3
-	maxFrame   = 512
+	start1   = 0x94
+	start2   = 0xC3
+	maxFrame = 512
+	// maxResync bounds how many bytes readFrame will discard while hunting
+	// for a start marker. Interleaved ASCII debug logs are the reason it
+	// hunts at all, and those are a line or two; 64 KiB is orders of
+	// magnitude more slack than any of them and still finite, which is the
+	// whole point — a device speaking a different protocol on the same wire
+	// is otherwise an unbounded loop no outer deadline can interrupt.
+	maxResync  = 64 << 10
 	wakeLen    = 32 // serial wake: 32× START2
 	heartbeatT = 30 * time.Second
 )
@@ -51,6 +58,23 @@ const (
 //
 // A var so tests can shrink it.
 var handshakeIdle = 8 * time.Second
+
+// handshakeTotal bounds the WHOLE dump, and it is the guard the paragraph
+// above argued itself out of.
+//
+// "A device streaming steadily is making progress" holds only for a device
+// streaming MESHTASTIC. For anything else on the wire it is false in the worst
+// way: the bytes keep coming, the idle window keeps resetting, and the
+// handshake never ends. A total budget is not a competing policy — it is the
+// backstop that makes the idle extension safe, the same shape as the repair
+// budget the radio transfer layer needed for the same reason (progress may
+// reset patience; it may never return spent resource).
+//
+// Two minutes is far above any real dump measured on these boards and far
+// below forever, which is what it replaces.
+//
+// A var so tests can shrink it.
+var handshakeTotal = 2 * time.Minute
 
 // Options configure the adapter.
 type Options struct {
@@ -81,6 +105,23 @@ type Options struct {
 	// shared variable made each probe's deadline depend on what the others
 	// were doing at that moment.
 	Idle time.Duration
+	// Handshake caps the WHOLE config dump, and it is not the same guard as
+	// Idle. Idle is extended by every frame that arrives, which is right for
+	// a node dumping a hundred-node database and catastrophic for a device
+	// that TALKS BUT IS NOT MESHTASTIC: readFrame scans a byte stream for the
+	// two-byte start marker, finds it by coincidence in somebody else's
+	// framing, hands back a frame that will not decode, and the idle window
+	// resets. Forever.
+	//
+	// That is not hypothetical. An RNode is a KISS modem chattering on the
+	// same serial line, and the port scanner probing one never returned and
+	// never released the port. The deeper cause was in serialConn (a per-read
+	// timeout that a trickle of bytes resets forever); this is the guard for
+	// the case where frames DO arrive and none of them are ours.
+	//
+	// So: progress may extend the window of patience; it may not extend the
+	// total. Zero means the package default.
+	Handshake time.Duration
 }
 
 func (o Options) withDefaults() Options {
@@ -95,6 +136,9 @@ func (o Options) withDefaults() Options {
 	}
 	if o.Idle <= 0 {
 		o.Idle = handshakeIdle
+	}
+	if o.Handshake <= 0 {
+		o.Handshake = handshakeTotal
 	}
 	return o
 }
@@ -205,12 +249,29 @@ func Connect(conn io.ReadWriteCloser, opts Options) (*Radio, error) {
 	}
 	extend()
 	deadline := time.Now().Add(r.opts.Idle)
-	frames := 0
+	// The total is stamped ONCE and never moved. Every extension below touches
+	// the idle window only.
+	giveUpAt := time.Now().Add(r.opts.Handshake)
+	frames, undecodable := 0, 0
 	for {
 		if time.Now().After(deadline) {
 			conn.Close()
 			return nil, fmt.Errorf("meshtastic: the node went quiet during the "+
 				"config handshake after %d frames (waited %s)", frames, r.opts.Idle)
+		}
+		if time.Now().After(giveUpAt) {
+			conn.Close()
+			// Which of the two it is matters to the person holding the board,
+			// so say it: a Meshtastic node that never finishes is a different
+			// problem from a device that is not one.
+			if undecodable == frames {
+				return nil, fmt.Errorf("meshtastic: this device talks on the "+
+					"serial line but none of its %d frames were Meshtastic — it "+
+					"is something else (an RNode modem, a bootloader, other "+
+					"firmware). Gave up after %s", frames, r.opts.Handshake)
+			}
+			return nil, fmt.Errorf("meshtastic: the config handshake did not "+
+				"finish after %d frames in %s", frames, r.opts.Handshake)
 		}
 		frame, err := readFrame(br)
 		if err != nil {
@@ -224,7 +285,12 @@ func Connect(conn io.ReadWriteCloser, opts Options) (*Radio, error) {
 		extend()
 		msg, err := DecodeFromRadio(frame)
 		if err != nil {
-			continue // tolerate frames we cannot parse during config dump
+			// Tolerated during a config dump, and COUNTED: a real node emits
+			// a few of these among many good ones, while a device that is not
+			// Meshtastic emits nothing else. The count is what lets the
+			// give-up sentence tell those two apart.
+			undecodable++
+			continue
 		}
 		if msg.MyNodeNum != nil {
 			r.nodeNum = *msg.MyNodeNum
@@ -606,10 +672,36 @@ func writeFrame(w io.Writer, payload []byte) error {
 // readFrame scans to the next START1 START2 marker (the serial line may
 // interleave ASCII debug logs) and reads one length-prefixed frame.
 func readFrame(br *bufio.Reader) ([]byte, error) {
+	// Resyncing is bounded, and this is the guard that actually holds.
+	//
+	// Interleaved ASCII debug logs are why this function resyncs at all, and
+	// they are a line or two. A device speaking a DIFFERENT protocol is not:
+	// its bytes never contain this marker, so the loop consumed them forever,
+	// returning neither a frame nor an error. Every deadline above it — the
+	// idle window, the total handshake budget, the caller's context — is
+	// checked between calls to readFrame, so none of them could ever run.
+	//
+	// Measured on two RNode boards through the UI's own scan endpoint: no
+	// answer in 300 seconds, both serial ports open and being read, held
+	// until the process was killed. A first fix that bounded only the
+	// handshake loop changed nothing, which is what proved the loop was here.
+	discarded := 0
 	for {
 		b, err := br.ReadByte()
 		if err != nil {
+			// Say how much was thrown away, because it is the difference
+			// between two verdicts a person acts on differently: a board that
+			// said NOTHING may just need another try, while a board that said
+			// two thousand bytes of something else is running other firmware.
+			if discarded > 0 {
+				return nil, fmt.Errorf("%w (after %d bytes that were not "+
+					"Meshtastic framing)", err, discarded)
+			}
 			return nil, err
+		}
+		if discarded++; discarded > maxResync {
+			return nil, fmt.Errorf("meshtastic: %d bytes without a frame marker "+
+				"— this is not a Meshtastic stream", discarded)
 		}
 		if b != start1 {
 			continue

@@ -389,6 +389,7 @@ func (a *APIServer) handleScanRadios(w http.ResponseWriter, r *http.Request) {
 
 	probes := meshtastic.ScanSerial(4 * time.Second)
 	resp := scanResp{Ports: []scanPort{}}
+	candidates, foreign := 0, 0
 	for _, p := range probes {
 		sp := scanPort{
 			Port: p.Port, Kind: string(p.Kind), Detail: p.Detail,
@@ -405,6 +406,15 @@ func (a *APIServer) handleScanRadios(w http.ResponseWriter, r *http.Request) {
 		if sp.Kind == "radio" {
 			resp.Found++
 		}
+		// candidates are the ports actually tried; foreign are the ones that
+		// answered in somebody else's protocol. The pair is what lets the
+		// summary below stop guessing.
+		if sp.Kind != "skipped" {
+			candidates++
+			if sp.Kind == "foreign" {
+				foreign++
+			}
+		}
 		resp.Ports = append(resp.Ports, sp)
 	}
 
@@ -420,6 +430,14 @@ func (a *APIServer) handleScanRadios(w http.ResponseWriter, r *http.Request) {
 		resp.Note = "Found more than one Meshtastic node. Pick the one you mean."
 	case len(resp.Ports) == 0:
 		resp.Note = "No serial ports at all. Plug a Meshtastic node in over USB."
+	case foreign > 0 && foreign == candidates:
+		// Do not offer the port-holding advice when we know exactly what is on
+		// the port. Every candidate answered, and none of them in this
+		// protocol — telling somebody to close the Meshtastic app would send
+		// them looking for a problem they do not have.
+		resp.Note = "Something is on every port, and none of it is Meshtastic — " +
+			"most likely another firmware. An RNode modem is attached at " +
+			"startup with --rnode and its own segment seed, not from this screen."
 	default:
 		resp.Note = "No Meshtastic node answered. If the device is plugged in, " +
 			"close anything else that might be holding its port — the Meshtastic " +

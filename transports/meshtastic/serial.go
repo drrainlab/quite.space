@@ -3,7 +3,9 @@ package meshtastic
 import (
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
+	"time"
 
 	"go.bug.st/serial"
 )
@@ -59,9 +61,47 @@ func openSerial(device string, opts Options) (*Radio, error) {
 type serialConn struct {
 	serial.Port
 	live atomic.Bool
+
+	mu       sync.Mutex
+	deadline time.Time
+}
+
+// SetReadDeadline gives a serial port the one thing the comment in openSerial
+// says it does not have — and that omission was not cosmetic.
+//
+// Connect bounds its handshake by pushing a read deadline forward on every
+// FRAME. Over TCP that worked. Over serial there was no deadline to push, so
+// the only bound was the driver's per-READ timeout — and a per-read timeout
+// is not a bound on anything when the device keeps handing over bytes.
+//
+// Measured on an RNode board: it dribbles KISS at roughly fifteen bytes a
+// second, in ones and threes and tens. Every single read returned data inside
+// its window, so the timeout never once fired, and readFrame chewed that
+// trickle looking for a Meshtastic start marker that was never going to
+// arrive. The UI's port scan never answered and never let the port go: 300
+// seconds, then 120, both ports still open, held until the process was killed.
+//
+// This is the same shape as the defect at the root of the radio transfer
+// wave, and it is the third place in this codebase to have it: PROGRESS MAY
+// EXTEND A WINDOW OF PATIENCE, BUT SOMETHING MUST STILL BOUND THE WHOLE. Here
+// the whole is bounded because only a decoded frame extends the deadline,
+// while an anonymous byte does not.
+func (s *serialConn) SetReadDeadline(t time.Time) error {
+	s.mu.Lock()
+	s.deadline = t
+	s.mu.Unlock()
+	return nil
 }
 
 func (s *serialConn) Read(p []byte) (int, error) {
+	s.mu.Lock()
+	dl := s.deadline
+	s.mu.Unlock()
+	// Checked BEFORE the read, not after: a device that always has one more
+	// byte ready would otherwise never reach the check at all.
+	if !dl.IsZero() && !time.Now().Before(dl) {
+		return 0, os.ErrDeadlineExceeded
+	}
 	n, err := s.Port.Read(p)
 	if n == 0 && err == nil && !s.live.Load() {
 		return 0, os.ErrDeadlineExceeded

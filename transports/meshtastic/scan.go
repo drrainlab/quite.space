@@ -33,6 +33,12 @@ const (
 	// ProbeSilent: opened, but nothing that looked like a Meshtastic node
 	// came back before the deadline.
 	ProbeSilent ProbeKind = "silent"
+	// ProbeForeign: a device is there and TALKING, and none of it is
+	// Meshtastic. Separated from ProbeSilent because the two call for
+	// opposite reactions and calling this one "silent" is simply false: an
+	// RNode board on this very desk chatters KISS continuously, and the scan
+	// reported it as saying nothing at all.
+	ProbeForeign ProbeKind = "foreign"
 	// ProbeSkipped: not a plausible candidate (Bluetooth audio and friends).
 	// Listed rather than hidden, so "why didn't it try X" has an answer.
 	ProbeSkipped ProbeKind = "skipped"
@@ -94,7 +100,8 @@ func ScanSerial(idle time.Duration) []PortProbe {
 	wg.Wait()
 
 	// Radios first, then the ports worth a second look, then the noise.
-	rank := map[ProbeKind]int{ProbeRadio: 0, ProbeBusy: 1, ProbeSilent: 2, ProbeSkipped: 3}
+	rank := map[ProbeKind]int{ProbeRadio: 0, ProbeForeign: 1, ProbeBusy: 2,
+		ProbeSilent: 3, ProbeSkipped: 4}
 	sort.Slice(out, func(i, j int) bool {
 		if rank[out[i].Kind] != rank[out[j].Kind] {
 			return rank[out[i].Kind] < rank[out[j].Kind]
@@ -143,6 +150,9 @@ func skipPort(port string) (string, bool) {
 // attempt, and a genuinely empty one costs a second short timeout.
 func probePort(port string, idle time.Duration) PortProbe {
 	pr := probeOne(port, idle)
+	// Only SILENCE earns a second try (a native-USB board answers about one
+	// time in three). A foreign device answers every time, with the wrong
+	// protocol, so retrying it only doubles the wait.
 	if pr.Kind != ProbeSilent {
 		return pr
 	}
@@ -163,7 +173,21 @@ func probeOne(port string, idle time.Duration) PortProbe {
 	// in Options because probes run CONCURRENTLY — when this was a package
 	// variable each probe's patience depended on what the others happened to
 	// be doing at that instant.
-	radio, err := openSerial(port, Options{Idle: idle})
+	// A PROBE's total is short and derived from its own patience. The package
+	// default (two minutes) is sized for attaching to a real node with a large
+	// database; a scan walks every port on the machine and must not spend that
+	// on each. Four idle windows is generous for identification, which is all
+	// a probe is doing.
+	//
+	// This is a backstop, not the fix. The scan used to never return at all,
+	// and the cause was one layer down: an RNode board dribbles KISS at about
+	// fifteen bytes a second, so every serial read returned data inside its
+	// window, the driver's per-read timeout never once fired, and readFrame
+	// chewed the trickle forever looking for a marker that was not coming.
+	// Measured on two real boards — 300 seconds with no answer, both ports
+	// still open, held until the process died. serialConn.SetReadDeadline is
+	// what closed it; this total is the second line of defence.
+	radio, err := openSerial(port, Options{Idle: idle, Handshake: 4 * idle})
 
 	if err != nil {
 		msg := err.Error()
@@ -172,6 +196,12 @@ func probeOne(port string, idle time.Duration) PortProbe {
 			strings.Contains(msg, "locked"), strings.Contains(msg, "denied"):
 			pr.Kind, pr.Detail = ProbeBusy, "something else is using this port "+
 				"(the Meshtastic app, a serial monitor, or another copy of this program)"
+		case strings.Contains(msg, "not Meshtastic framing"),
+			strings.Contains(msg, "none of its"):
+			// It is there and it is speaking; it is simply not this protocol.
+			pr.Kind, pr.Detail = ProbeForeign, "a device is here and talking, "+
+				"but not Meshtastic — most likely another firmware (an RNode "+
+				"modem, a bootloader). Nothing to attach from this screen"
 		default:
 			pr.Kind, pr.Detail = ProbeSilent, msg
 		}
