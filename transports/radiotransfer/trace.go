@@ -48,6 +48,7 @@ const (
 	TraceRetransmit      = "retransmit_selected"
 	TraceCompleted       = "transfer_completed"
 	TraceGaveUp          = "transfer_given_up"
+	TraceBudgetExhausted = "repair_budget_exhausted"
 )
 
 // TraceEvent is one thing that happened, with the state that explains it.

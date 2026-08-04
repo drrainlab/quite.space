@@ -70,6 +70,68 @@ type Limits struct {
 	// was made of, and a repair layer that reproduces the burst reproduces
 	// the failure with better bookkeeping.
 	FrameGap time.Duration
+
+	// Repair bounds what one transfer may spend AFTER its first pass, and
+	// nothing in it is ever restored by progress. See RepairBudget.
+	Repair RepairBudget
+}
+
+// RepairBudget makes a transfer finite by construction.
+//
+// MaxRounds already bounds FUTILITY, and correctly: NextRound spends a round
+// only when the window did not advance, so a long message is not mistaken for
+// a failing one. What it does not bound is COST, and on a real link the two
+// came apart badly. Feedback arrives late enough to be a history rather than a
+// report; every stale SACK acknowledges one or two more fragments; each of
+// those looks like progress and resets the round budget; and the loop runs on.
+// Measured on two Heltec v3: fifteen windows against a MaxRounds of six,
+// ninety-four duplicate frames pressed on a peer that already held the whole
+// message, one transfer spending eight and a half minutes.
+//
+// So there is a second budget, and its rule is absolute:
+//
+//	No SACK, however useful, returns airtime that has already been spent.
+//
+// This is a SAFETY floor, not a tuning knob. It does not make a transfer
+// efficient — that is the burst protocol's job. It makes a pathology bounded,
+// so that a defect in some future scheduler cannot capture the air.
+type RepairBudget struct {
+	// MaxFrames bounds RETRANSMITTED DATA frames — a fragment the carrier
+	// accepted once already. It deliberately does not count the first
+	// transmission, or SACK, or anything else on the control stream: cheap
+	// control traffic must not eat a budget that exists to bound expensive
+	// data amplification.
+	//
+	// Zero derives a default from Window; negative is refused.
+	MaxFrames int
+
+	// MaxDuration bounds the wall clock from the START OF THE REPAIR PHASE,
+	// not from the start of the transfer — otherwise a long first pass would
+	// pre-spend the budget meant to bound its repair.
+	//
+	// It is not redundant with MaxFrames, and the case that proves it is the
+	// one this was written for: when every fragment has been submitted and
+	// only the final confirmation was lost, there is nothing left to resend,
+	// the pending set is empty, and the loop spins sending NO FRAMES AT ALL.
+	// A frame budget can never fire there.
+	//
+	// Zero derives a default; negative is refused.
+	MaxDuration time.Duration
+
+	// MaxAirtime is the honest unit for a radio — twenty short frames and
+	// twenty long ones are not the same cost — and it is switched OFF here,
+	// on purpose.
+	//
+	// Pricing a frame needs a carrier that can say what it actually spent,
+	// and today none can: Send means "the modem accepted the bytes", which is
+	// exactly the confusion the next gate exists to fix. A number called
+	// airtime that nobody can trust would be worse than a coarse but honest
+	// frame count.
+	//
+	// ZERO MEANS DISABLED, not "use a default" — the only field here where
+	// that is so, because it is the only one that has a meaningful off. A
+	// carrier that can price its own transmission turns it on explicitly.
+	MaxAirtime time.Duration
 }
 
 // DefaultLimits are sized for the carrier this was measured on: LoRa
@@ -154,6 +216,51 @@ func (l Limits) withDefaults() Limits {
 	if l.Window > l.MaxFragmentsPerTransfer {
 		l.Window = l.MaxFragmentsPerTransfer
 	}
+
+	// The repair budget is DERIVED from the window, and derived last, because
+	// it is only meaningful once Window, FrameGap and AckTimeout have settled.
+	// A caller who widened the window meant a bigger transfer, not a budget
+	// that no longer fits it.
+	//
+	// Note the test is `== 0`, not the `<= 0` used everywhere above. Here a
+	// negative is a MISTAKE rather than an omission, and quietly replacing it
+	// with a default would hide it; check() refuses it by name instead.
+	if l.Repair.MaxFrames == 0 {
+		// TWICE the caller's own patience, and scaled by MaxRounds on
+		// purpose. The first draft derived 3×Window, ignoring MaxRounds — and
+		// a caller who set MaxRounds to thirty for a very lossy link had
+		// bought patience the budget then silently confiscated: an e2e at 20%
+		// loss failed 21 of 25 transfers with ZERO given up, every one killed
+		// by a budget tighter than the honest repair path it was meant to
+		// backstop. The absolute budget bounds the PATHOLOGY — a round
+		// counter reset forever by stale progress — and the pathology is
+		// unbounded, so twice the legitimate ceiling still catches it while
+		// never preempting an honest lossy repair.
+		l.Repair.MaxFrames = 2 * l.MaxRounds * l.Window
+	}
+	if l.Repair.MaxDuration == 0 {
+		// FOUR times what an honestly futile transfer costs, and both numbers
+		// in that sentence matter.
+		//
+		// Times the FUTILE RUN, because this deadline is an outer backstop,
+		// not a second opinion: a peer that went quiet must run out of ROUNDS
+		// and be reported as such, or ErrGaveUp becomes unreachable and "they
+		// stopped answering" collapses into "I hit a ceiling". The first
+		// draft used two cycles rather than runs and was tighter than the
+		// normal path — caught by TestAPeerThatStopsAnsweringIsReportedAsSuch.
+		//
+		// FOUR rather than two, because rounds are counted in events and this
+		// deadline in wall clock, and wall clock is the one that stretches
+		// when the scheduler is starved: under a fully loaded test suite the
+		// same package ran six times slower than alone, and a 2× margin let
+		// the clock preempt the round budget on transfers that were making
+		// honest, slow progress. The margin buys tolerance of starvation, not
+		// generosity to the pathology — the pathology has no ceiling at all.
+		cycle := time.Duration(l.Window)*l.FrameGap + l.AckTimeout
+		l.Repair.MaxDuration = 4 * time.Duration(l.MaxRounds) * cycle
+	}
+	// MaxAirtime is deliberately NOT filled. Zero means disabled, and until a
+	// carrier can price a frame honestly that is the only defensible value.
 	return l
 }
 
@@ -172,6 +279,18 @@ func (l Limits) check() error {
 	case l.Window > l.MaxFragmentsPerTransfer:
 		return fmt.Errorf("radiotransfer: a window of %d over transfers of at "+
 			"most %d fragments", l.Window, l.MaxFragmentsPerTransfer)
+
+	// A negative budget is a mistake, and it is named rather than clamped: a
+	// budget silently repaired is a budget nobody notices was wrong.
+	case l.Repair.MaxFrames < 0:
+		return fmt.Errorf("radiotransfer: a repair budget of %d frames — leave "+
+			"it at zero to take the default", l.Repair.MaxFrames)
+	case l.Repair.MaxDuration < 0:
+		return fmt.Errorf("radiotransfer: a repair budget of %s — leave it at "+
+			"zero to take the default", l.Repair.MaxDuration)
+	case l.Repair.MaxAirtime < 0:
+		return fmt.Errorf("radiotransfer: a repair airtime budget of %s — leave "+
+			"it at zero to leave it disabled", l.Repair.MaxAirtime)
 	}
 	return nil
 }

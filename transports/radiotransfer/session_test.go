@@ -427,6 +427,13 @@ func TestAPeerThatStopsAnsweringIsReportedAsSuch(t *testing.T) {
 	if !errors.Is(err, ErrGaveUp) {
 		t.Fatalf("a silent peer produced %v, want ErrGaveUp", err)
 	}
+	// And it is ALSO unconfirmed, because "they stopped answering" says
+	// nothing about what they already hold. A trace on two real boards showed
+	// a given-up transfer the peer had received in full while the sender's
+	// own statistics reported nothing delivered.
+	if !errors.Is(err, ErrDeliveryUnconfirmed) {
+		t.Fatalf("giving up on a silent peer claimed more than it knows: %v", err)
+	}
 	if st := sender.Stats(); st.Completed != 0 || st.GaveUp != 1 {
 		t.Fatalf("stats claim something completed: %+v", st)
 	}

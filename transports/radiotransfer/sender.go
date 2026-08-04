@@ -18,6 +18,7 @@ package radiotransfer
 import (
 	"errors"
 	"fmt"
+	"time"
 )
 
 // Outbound is one message being sent.
@@ -37,6 +38,28 @@ type Outbound struct {
 	lastBase int
 	stream   uint64
 	lim      Limits
+
+	// submitted marks fragments the CARRIER has accepted at least once.
+	//
+	// The name is exact and the exactness is the point. This layer does not
+	// know whether a frame left the antenna: a successful Send means the modem
+	// took the bytes, and the gap between those two facts is the whole defect
+	// the repair budget exists to survive. A field called `sent` would smuggle
+	// the same false claim back into the code, so there is no such field.
+	//
+	// A RETRANSMISSION is therefore a repeat successful submission of the same
+	// fragment. That charges conservatively — a frame the carrier queued and
+	// never radiated still counts — which for a safety budget is the right
+	// direction to be wrong in, and it needs nothing from the carrier.
+	submitted []bool
+
+	// repairFrames and repairBytes count only retransmitted DATA, and
+	// repairStartedAt is zero until the repair phase begins. NONE of them is
+	// ever reset: that is what makes a transfer finite regardless of how much
+	// stale progress arrives.
+	repairFrames    int
+	repairBytes     int
+	repairStartedAt time.Time
 }
 
 // ErrTooLarge is a message that cannot be sent within the limits.
@@ -85,7 +108,7 @@ func NewOutboundOn(stream uint64, msg []byte, mtu int, lim Limits, key *Transfer
 			ErrTooLarge, len(msg), count, chunkSize, lim.MaxFragmentsPerTransfer)
 	}
 	o := &Outbound{ID: id, total: len(msg), digest: digest, stream: stream,
-		acked: make([]bool, count), lim: lim}
+		acked: make([]bool, count), submitted: make([]bool, count), lim: lim}
 	for i := range count {
 		start := i * chunkSize
 		o.chunks = append(o.chunks, msg[start:min(start+chunkSize, len(msg))])
@@ -168,6 +191,14 @@ func (o *Outbound) NoteSACK(f *Frame) {
 //
 // Progress resets the budget, so the meaning stays what the error says it is:
 // the peer is not answering.
+//
+// AND THAT RESET IS WHY A SECOND, ABSOLUTE BUDGET EXISTS. This rule is correct
+// for what it measures and unsafe on its own: when feedback arrives a whole
+// window late, every stale SACK acknowledges a fragment or two, the base
+// advances, and the budget resets again — apparent progress made out of
+// history. Measured on two Heltec v3: fifteen windows against a MaxRounds of
+// six. Limits.Repair bounds the cost that this bounds the futility of; see
+// RepairBudget.
 func (o *Outbound) NextRound() bool {
 	if base := o.base(); base > o.lastBase {
 		o.lastBase, o.round = base, 0
@@ -175,6 +206,121 @@ func (o *Outbound) NextRound() bool {
 	}
 	o.round++
 	return o.round <= o.lim.MaxRounds
+}
+
+// WasSubmitted reports whether the carrier has already accepted this fragment,
+// which is exactly what makes offering it again a RETRANSMISSION.
+func (o *Outbound) WasSubmitted(i int) bool {
+	return i >= 0 && i < len(o.submitted) && o.submitted[i]
+}
+
+// MarkSubmitted records that the carrier accepted this fragment.
+func (o *Outbound) MarkSubmitted(i int) {
+	if i >= 0 && i < len(o.submitted) {
+		o.submitted[i] = true
+	}
+}
+
+// AllSubmitted reports whether every fragment has been handed over at least
+// once. It is the second way a repair phase can begin — see BeginRepair.
+func (o *Outbound) AllSubmitted() bool {
+	for _, s := range o.submitted {
+		if !s {
+			return false
+		}
+	}
+	return true
+}
+
+// AnySubmitted reports whether ANY fragment reached the carrier.
+//
+// It is the line between "this was never attempted" and "the peer's state is
+// unknown", and that line is not knowable from an error's identity: the same
+// broken serial link means a local failure before the first frame and an
+// unconfirmed delivery after the eighth.
+func (o *Outbound) AnySubmitted() bool {
+	for _, s := range o.submitted {
+		if s {
+			return true
+		}
+	}
+	return false
+}
+
+// BeginRepair stamps the start of the repair phase, once.
+//
+// The caller decides WHEN, and there are exactly two moments, because there are
+// two ways a transfer stops making first-time progress:
+//
+//  1. it is about to resubmit a fragment the carrier already accepted;
+//  2. every fragment has been submitted and completion is still unconfirmed.
+//
+// The second is not a refinement. It is the case measured on real boards —
+// every fragment held by the peer, the COMMIT lost — where the pending set is
+// empty, NOT ONE further frame is ever sent, and a budget counting frames
+// would wait forever for something to count.
+//
+// It must not be called at transfer creation, or a long first pass would spend
+// the budget meant to bound its repair.
+func (o *Outbound) BeginRepair(now time.Time) {
+	if o.repairStartedAt.IsZero() {
+		o.repairStartedAt = now
+	}
+}
+
+// Repairing reports whether the repair phase has begun.
+func (o *Outbound) Repairing() bool { return !o.repairStartedAt.IsZero() }
+
+// ChargeRepairFrame spends one retransmitted DATA frame from the budget.
+//
+// Called only after the carrier ACCEPTED the frame: a frame it refused cost
+// nothing and must not be charged, or a busy radio would exhaust the budget
+// that exists to bound a talkative one.
+func (o *Outbound) ChargeRepairFrame(size int) {
+	o.repairFrames++
+	o.repairBytes += size
+}
+
+// RepairFrames and RepairBytes are what the repair phase has spent.
+func (o *Outbound) RepairFrames() int { return o.repairFrames }
+func (o *Outbound) RepairBytes() int  { return o.repairBytes }
+
+// RepairElapsed is how long the repair phase has run, or zero before it began.
+func (o *Outbound) RepairElapsed(now time.Time) time.Duration {
+	if o.repairStartedAt.IsZero() {
+		return 0
+	}
+	return now.Sub(o.repairStartedAt)
+}
+
+// OverBudget reports which absolute limit has been reached, or nil.
+//
+// Nothing here consults progress, and that is the entire point: a SACK may
+// prove a fragment arrived, and it still does not return airtime already spent.
+func (o *Outbound) OverBudget(now time.Time) error {
+	if o.repairStartedAt.IsZero() {
+		return nil // the repair phase has not begun; nothing is being spent
+	}
+	b := o.lim.Repair
+	if b.MaxFrames > 0 && o.repairFrames >= b.MaxFrames {
+		return ErrRepairFrameBudgetExhausted
+	}
+	if b.MaxDuration > 0 && now.Sub(o.repairStartedAt) >= b.MaxDuration {
+		return ErrRepairDeadlineExhausted
+	}
+	// MaxAirtime is checked only when a carrier switched it on; zero means
+	// disabled rather than unlimited-by-omission.
+	return nil
+}
+
+// RepairDeadline is when the repair phase runs out, or the zero time when it
+// has not begun or is not bounded. It is what keeps a wait from overshooting
+// the budget by a whole AckTimeout.
+func (o *Outbound) RepairDeadline() time.Time {
+	if o.repairStartedAt.IsZero() || o.lim.Repair.MaxDuration <= 0 {
+		return time.Time{}
+	}
+	return o.repairStartedAt.Add(o.lim.Repair.MaxDuration)
 }
 
 // Rounds is how many passes this transfer has taken, for a metric that can

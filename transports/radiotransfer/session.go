@@ -43,7 +43,7 @@ import (
 // So frames come IN through Deliver, from whoever owns the read loop, and
 // Send waits on a channel for the ones addressed to its transfer.
 type Session struct {
-	tracer Tracer
+	tracer  Tracer
 	carrier RadioDatagram
 	key     *TransferKey
 	lim     Limits
@@ -60,9 +60,19 @@ type Session struct {
 	attempted int
 	completed int
 	givenUp   int
-	framesOut int
-	framesIn  int
-	refused   int
+	// unconfirmed is an OUTCOME; the four below are REASONS inside it, so a
+	// transfer is counted once in the denominator and once in an explanation.
+	unconfirmed          int
+	frameBudgetExhausted int
+	deadlineExpired      int
+	airtimeExhausted     int
+	// repairFrames and repairBytes accumulate across transfers, so a session
+	// can say what retransmission cost it overall.
+	repairFrames int
+	repairBytes  int
+	framesOut    int
+	framesIn     int
+	refused      int
 }
 
 // Options configure a session. Zero values mean the defaults.
@@ -88,11 +98,102 @@ func NewSession(carrier RadioDatagram, key *TransferKey, o Options) (*Session, e
 
 // ErrGaveUp is a transfer that ran out of repair rounds.
 //
-// It is a real outcome, not a timeout to be swallowed: the peer is not
-// answering, and the message did NOT arrive. Reporting it as anything softer
-// is how "handed to the transport" came to be mistaken for delivery.
+// It says the peer stopped answering. It does NOT say the message failed to
+// arrive, and an earlier version of this comment claimed it did. A trace on
+// two real boards showed a transfer reported as given-up whose every fragment
+// the peer was holding, byte-exact, while the sender's own statistics said 0%
+// delivered — the confirmation had been lost, not the message. So this error
+// now travels inside DeliveryUnconfirmedError, and both predicates answer
+// true: errors.Is(err, ErrGaveUp) for anyone who cared about the reason, and
+// errors.Is(err, ErrDeliveryUnconfirmed) for the honest question.
 var ErrGaveUp = errors.New("radiotransfer: the peer stopped answering before " +
-	"the message was complete")
+	"the message was confirmed")
+
+// ErrDeliveryUnconfirmed is the honest shape of a failure on a radio.
+//
+// It means exactly this: at least one frame reached the carrier, the sender
+// stopped trying, and WHAT THE PEER HOLDS IS UNKNOWN. It may hold nothing, or
+// part of the message, or all of it and be unable to say so. A caller must not
+// render it as "they did not receive it", and must not render it as delivered.
+//
+// It is deliberately distinct from a local failure, where nothing was ever
+// handed over and the peer genuinely has nothing — see finishSendError.
+var ErrDeliveryUnconfirmed = errors.New("radiotransfer: delivery not confirmed")
+
+// The reasons a repair stopped. Separate sentinels because "the peer went
+// quiet", "this cost too many frames" and "this took too long" call for
+// different answers, and a month from now nobody will remember which happened.
+var (
+	ErrRepairFrameBudgetExhausted = errors.New(
+		"radiotransfer: the repair frame budget is spent")
+	ErrRepairDeadlineExhausted = errors.New(
+		"radiotransfer: the repair deadline has passed")
+	ErrRepairAirtimeBudgetExhausted = errors.New(
+		"radiotransfer: the repair airtime budget is spent")
+)
+
+// DeliveryUnconfirmedError carries what was spent and why it stopped.
+type DeliveryUnconfirmedError struct {
+	Transfer     TransferID
+	Cause        error
+	RepairFrames int
+	RepairBytes  int
+	Elapsed      time.Duration
+	Pending      int
+	Of           int
+}
+
+func (e *DeliveryUnconfirmedError) Error() string {
+	return fmt.Sprintf("radiotransfer: delivery of transfer %s is unconfirmed "+
+		"(%d of %d fragments unacknowledged, %d repair frames, %s): %v — the "+
+		"peer may already hold the whole message",
+		e.Transfer.Short(), e.Pending, e.Of, e.RepairFrames,
+		e.Elapsed.Round(time.Millisecond), e.Cause)
+}
+
+// Unwrap returns BOTH, so one error answers two different questions:
+// errors.Is(err, ErrDeliveryUnconfirmed) asks what may be claimed about the
+// peer, and errors.Is(err, ErrRepairDeadlineExhausted) asks what happened here.
+func (e *DeliveryUnconfirmedError) Unwrap() []error {
+	if e.Cause == nil {
+		return []error{ErrDeliveryUnconfirmed}
+	}
+	return []error{ErrDeliveryUnconfirmed, e.Cause}
+}
+
+// unconfirmed builds the error from what the transfer actually spent.
+func unconfirmed(o *Outbound, cause error, now time.Time) error {
+	return &DeliveryUnconfirmedError{
+		Transfer: o.ID, Cause: cause,
+		RepairFrames: o.RepairFrames(), RepairBytes: o.RepairBytes(),
+		Elapsed: o.RepairElapsed(now),
+		Pending: len(o.Pending()), Of: o.Count(),
+	}
+}
+
+// finishSendError decides what a failed send may claim about the peer.
+//
+// It lives in ONE place on purpose. The rule depends on whether anything ever
+// reached the carrier, not on the error's identity — a cancelled context or a
+// dead serial link means "never attempted" before the first frame and
+// "unknown" after it — and a rule applied at each of a dozen early returns is
+// a rule that will be missed at the thirteenth.
+func finishSendError(o *Outbound, err error, now time.Time) error {
+	switch {
+	case err == nil:
+		return nil
+	case errors.As(err, new(*ErrRefusedByPeer)):
+		// A refusal is an ANSWER. The peer spoke and declined; nothing is
+		// unknown about it, and calling that unconfirmed would throw away the
+		// one case where we know exactly what happened.
+		return err
+	case !o.AnySubmitted():
+		// Nothing was ever handed over, so the peer has nothing and this is a
+		// local failure with a local explanation.
+		return err
+	}
+	return unconfirmed(o, err, now)
+}
 
 // ErrRefusedByPeer is the receiver declining the transfer, with its reason.
 type ErrRefusedByPeer struct{ Reason uint64 }
@@ -192,20 +293,59 @@ func (s *Session) SendOn(ctx context.Context, stream uint64, dst RadioAddress,
 				// Limits.FrameGap: back-to-back frames measured ~9% delivery
 				// on the same boards where paced ones measured 96-99%.
 				if err := sleep(ctx, s.lim.FrameGap); err != nil {
-					return err
+					return finishSendError(o, err, time.Now())
 				}
 			}
-			if err := s.sendFrame(ctx, dst, o.Frame(i)); err != nil {
+			frame := o.Frame(i)
+			// A fragment the carrier already took: offering it again is a
+			// RETRANSMISSION, and that is the first of the two ways a repair
+			// phase begins.
+			isRepair := o.WasSubmitted(i)
+			if isRepair {
+				now := time.Now()
+				o.BeginRepair(now)
+				// Checked BEFORE the frame is offered, so the budget is a
+				// ceiling rather than something noticed one frame late.
+				if err := o.OverBudget(now); err != nil {
+					return s.stopUnconfirmed(o, err, now)
+				}
+			}
+			n, err := s.sendFrame(ctx, dst, frame)
+			if err != nil {
 				s.trace(TraceEvent{Transfer: o.ID, Event: TraceDataTXFailed,
 					Fragment: i, Round: o.Rounds() + 1, Reason: err.Error()})
-				return err
+				return finishSendError(o, err, time.Now())
 			}
+			if isRepair {
+				// Only now, because a frame the carrier REFUSED cost nothing
+				// and charging it would let a busy radio spend the budget that
+				// exists to bound a talkative one.
+				o.ChargeRepairFrame(n)
+				s.mu.Lock()
+				s.repairFrames++
+				s.repairBytes += n
+				s.mu.Unlock()
+			}
+			o.MarkSubmitted(i)
 			s.trace(TraceEvent{Transfer: o.ID, Event: TraceDataTX,
 				Fragment: i, Count: o.Count(), Round: o.Rounds() + 1})
 		}
+
+		// The second way a repair phase begins, and it must be stamped HERE —
+		// before the wait, not after a failed one. Every fragment is now with
+		// the carrier and nothing has confirmed the message; from this moment
+		// the transfer is repairing even though there may be nothing left to
+		// resend. Starting the clock after awaitCommit returned would leave
+		// the whole first AckTimeout outside the deadline, in precisely the
+		// case the deadline exists for: every fragment arrived, only the
+		// confirmation was lost.
+		if o.AllSubmitted() {
+			o.BeginRepair(time.Now())
+		}
+
 		done, err := s.awaitCommit(ctx, o, ch)
 		if err != nil {
-			return err
+			return finishSendError(o, err, time.Now())
 		}
 		if done {
 			s.mu.Lock()
@@ -215,17 +355,47 @@ func (s *Session) SendOn(ctx context.Context, stream uint64, dst RadioAddress,
 				Fragment: -1, Count: o.Count(), Round: o.Rounds() + 1})
 			return nil
 		}
+		// An absolute limit reached while waiting ends the transfer here
+		// rather than after one more window.
+		if now := time.Now(); o.OverBudget(now) != nil {
+			return s.stopUnconfirmed(o, o.OverBudget(now), now)
+		}
 		if !o.NextRound() {
 			s.trace(TraceEvent{Transfer: o.ID, Event: TraceGaveUp, Fragment: -1,
 				Count: o.Count(), Round: o.Rounds(), Pending: o.Pending(),
 				Reason: "rounds exhausted"})
-			s.mu.Lock()
-			s.givenUp++
-			s.mu.Unlock()
-			return fmt.Errorf("%w: %d of %d fragments still unacknowledged after "+
-				"%d rounds", ErrGaveUp, len(o.Pending()), o.Count(), o.Rounds())
+			// ErrGaveUp travels as the CAUSE, not as the whole answer: the
+			// peer going quiet says nothing about what it already holds.
+			return s.stopUnconfirmed(o, ErrGaveUp, time.Now())
 		}
 	}
+}
+
+// stopUnconfirmed ends a transfer that spent its budget, counts it once, and
+// says which limit stopped it.
+func (s *Session) stopUnconfirmed(o *Outbound, cause error, now time.Time) error {
+	s.mu.Lock()
+	s.unconfirmed++
+	switch {
+	case errors.Is(cause, ErrGaveUp):
+		s.givenUp++
+	case errors.Is(cause, ErrRepairFrameBudgetExhausted):
+		s.frameBudgetExhausted++
+	case errors.Is(cause, ErrRepairDeadlineExhausted):
+		s.deadlineExpired++
+	case errors.Is(cause, ErrRepairAirtimeBudgetExhausted):
+		s.airtimeExhausted++
+	}
+	s.mu.Unlock()
+
+	if !errors.Is(cause, ErrGaveUp) {
+		// The give-up path already traced itself; the budget paths would
+		// otherwise stop with no line saying why.
+		s.trace(TraceEvent{Transfer: o.ID, Event: TraceBudgetExhausted,
+			Fragment: -1, Count: o.Count(), Round: o.Rounds(),
+			Pending: o.Pending(), Reason: cause.Error()})
+	}
+	return unconfirmed(o, cause, now)
 }
 
 // awaitCommit waits for what the peer says about this transfer.
@@ -235,7 +405,20 @@ func (s *Session) SendOn(ctx context.Context, stream uint64, dst RadioAddress,
 // end the wait: acknowledged is not delivered, and only a COMMIT says the
 // message assembled and its digest matched.
 func (s *Session) awaitCommit(ctx context.Context, o *Outbound, ch <-chan *Frame) (bool, error) {
-	deadline := time.NewTimer(s.lim.AckTimeout)
+	// Never wait past the repair deadline. Without this the transfer would
+	// overshoot its own absolute budget by up to a whole AckTimeout — 45
+	// seconds at the defaults — which on the failure this budget was written
+	// for is most of the time it is meant to save.
+	wait := s.lim.AckTimeout
+	if end := o.RepairDeadline(); !end.IsZero() {
+		if left := time.Until(end); left < wait {
+			wait = left
+		}
+		if wait <= 0 {
+			return false, nil // the loop head reports the exhausted budget
+		}
+	}
+	deadline := time.NewTimer(wait)
 	defer deadline.Stop()
 	for {
 		select {
@@ -301,10 +484,13 @@ func (s *Session) awaitCommit(ctx context.Context, o *Outbound, ch <-chan *Frame
 //
 // A carrier that genuinely has no room says so by REFUSING, and a refusal is
 // counted, paced and retried. Deciding not to ask is how you never find out.
-func (s *Session) sendFrame(ctx context.Context, dst RadioAddress, f *Frame) error {
+// It returns the ENCODED SIZE, because it is the only place that knows it:
+// Frame has no size of its own and a chunk's length is not a frame's length.
+// A caller charging a budget must not have to guess.
+func (s *Session) sendFrame(ctx context.Context, dst RadioAddress, f *Frame) (int, error) {
 	b, err := f.Encode(s.key)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	// Bounded, so a carrier that refuses forever ends the transfer with an
 	// error rather than holding the queue behind it for the life of the
@@ -316,20 +502,20 @@ func (s *Session) sendFrame(ctx context.Context, dst RadioAddress, f *Frame) err
 			s.mu.Lock()
 			s.framesOut++
 			s.mu.Unlock()
-			return nil
+			return len(b), nil
 		}
 		if !errors.Is(err, ErrCarrierFull) {
-			return err
+			return 0, err
 		}
 		s.mu.Lock()
 		s.refused++
 		s.mu.Unlock()
 		if time.Now().After(deadline) {
-			return fmt.Errorf("%w: the carrier refused every frame for %s",
+			return 0, fmt.Errorf("%w: the carrier refused every frame for %s",
 				ErrCarrierFull, s.lim.AckTimeout*time.Duration(s.lim.MaxRounds))
 		}
 		if err := sleep(ctx, pace(s.carrier.Credit(), s.lim.SendFloor)); err != nil {
-			return err
+			return 0, err
 		}
 	}
 }
@@ -438,10 +624,32 @@ func (s *Session) PumpSACKs(ctx context.Context) {
 
 // Stats is what a session did, in the units that answer the question this
 // layer was built for.
+// Stats separates OUTCOMES from REASONS, because conflating them is how a
+// single transfer ends up counted twice in a denominator and nobody can say
+// afterwards whether a segment was futile, expensive or slow.
 type Stats struct {
 	Attempted int
+	// Completed is CONFIRMED completion — the sender heard a COMMIT. It is a
+	// lower bound on delivery, not a measure of it: on real boards this
+	// reported 0% and 80% in runs where 100% of the messages had in fact
+	// arrived byte-exact, because the confirmations were what got lost.
 	Completed int
-	GaveUp    int
+	// Unconfirmed is an outcome: the sender stopped and the peer's state is
+	// unknown. Every transfer lands in exactly one outcome.
+	Unconfirmed int
+
+	// The reasons a transfer became Unconfirmed. These SUM INTO Unconfirmed;
+	// they are not outcomes of their own.
+	GaveUp               int
+	FrameBudgetExhausted int
+	DeadlineExpired      int
+	AirtimeExhausted     int
+
+	// RepairDataFrames and RepairDataBytes are what retransmission cost. The
+	// first transmission is not counted, and neither is control traffic.
+	RepairDataFrames int
+	RepairDataBytes  int
+
 	FramesOut int
 	Refused   int
 	// FramesIn counts authentic frames from the segment, and Inbound the
@@ -454,9 +662,18 @@ type Stats struct {
 	InboundHave int
 }
 
-// CompleteTransferRate is the headline. Packet delivery is a property of the
-// carrier; this is a property of the system, and it is the number a decision
-// should rest on.
+// CompleteTransferRate is the headline, and what it measures is CONFIRMED
+// completion. Packet delivery is a property of the carrier; this is a property
+// of the system, and it is the number a decision should rest on — as a LOWER
+// BOUND. A confirmation lost on the way back reads here as a failed transfer,
+// which is the safe direction to be wrong in and still a direction.
+//
+// Refusals are excluded on purpose: the peer answered and declined, so the
+// transport worked. Counting that as a delivery failure would show a healthy
+// segment as a broken one.
+//
+// (The honest name is ConfirmedTransferRate. Renaming is a follow-up rather
+// than something smuggled into a safety fix.)
 func (st Stats) CompleteTransferRate() float64 {
 	if st.Attempted == 0 {
 		return 0
@@ -469,7 +686,13 @@ func (s *Session) Stats() Stats {
 	defer s.mu.Unlock()
 	n, b := s.rx.Inflight()
 	return Stats{Attempted: s.attempted, Completed: s.completed,
-		GaveUp: s.givenUp, FramesOut: s.framesOut, Refused: s.refused,
+		Unconfirmed:          s.unconfirmed,
+		GaveUp:               s.givenUp,
+		FrameBudgetExhausted: s.frameBudgetExhausted,
+		DeadlineExpired:      s.deadlineExpired,
+		AirtimeExhausted:     s.airtimeExhausted,
+		RepairDataFrames:     s.repairFrames, RepairDataBytes: s.repairBytes,
+		FramesOut: s.framesOut, Refused: s.refused,
 		FramesIn: s.framesIn, Inbound: n, InboundHave: b}
 }
 
