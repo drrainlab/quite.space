@@ -133,6 +133,7 @@ function rmLinkLine(link) {
 function rmDeliveryLine(inv) {
   if (!inv) return '';
   if (inv.delivery === 'unheard') return t('radio.meet.unheard');
+  if (inv.delivery === 'unconfirmed') return t('radio.meet.unconfirmed');
   if (inv.delivery === 'heard') return t('radio.meet.delivered');
   return '';
 }

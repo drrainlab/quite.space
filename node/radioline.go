@@ -486,9 +486,17 @@ const (
 	// DeliveryHeard means the peer assembled it. Not that they read it, and
 	// certainly not that they agreed — only that the bytes arrived.
 	DeliveryHeard = "heard"
-	// DeliveryUnheard means the transfer gave up. Nothing is waiting for them
-	// anywhere: this is a live exchange, and it did not happen.
+	// DeliveryUnheard means nothing ever reached the carrier: the send
+	// provably did not begin, so this side KNOWS the peer has nothing. It is
+	// the only failure state entitled to that claim.
 	DeliveryUnheard = "unheard"
+	// DeliveryUnconfirmed means the budget was spent and no confirmation
+	// came back — and that is ALL it means. The peer may hold nothing, part,
+	// or the whole invitation; a trace on real boards showed a transfer
+	// reported as given-up that had arrived byte-exact. An earlier version
+	// of this vocabulary rendered that case as "nothing is waiting for them
+	// anywhere", which was measured false.
+	DeliveryUnconfirmed = "unconfirmed"
 )
 
 // onRadioControlSent turns a transfer outcome into something a person can read.
@@ -496,7 +504,16 @@ func (r *Runtime) onRadioControlSent(tag string, err error) {
 	switch {
 	case len(tag) > len(tagOffer) && tag[:len(tagOffer)] == tagOffer:
 		state := DeliveryHeard
-		if err != nil {
+		switch {
+		case err == nil:
+		case errors.Is(err, radiotransfer.ErrDeliveryUnconfirmed):
+			// Frames reached the carrier and the confirmation did not come
+			// back. What the peer holds is UNKNOWN, and the state must not
+			// claim more than the sender heard.
+			state = DeliveryUnconfirmed
+		default:
+			// Nothing was ever handed over — the one case where "they have
+			// nothing" is a statement of knowledge rather than of hope.
 			state = DeliveryUnheard
 		}
 		r.setInvitationDelivery(tag[len(tagOffer):], state)
