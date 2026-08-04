@@ -38,6 +38,9 @@ func main() {
 		cr   = flag.Uint("cr", 5, "coding rate")
 		txp  = flag.Uint("txp", 20, "tx power dBm")
 		only = flag.Int("size", 0, "test only this payload size")
+		win  = flag.Int("window", 0, "override Window (0 = production default)")
+		ack  = flag.Duration("ack", 0, "override AckTimeout (0 = production default)")
+		btwn = flag.Duration("between", 0, "quiet time between transfers")
 	)
 	flag.Parse()
 	if *aDev == "" || *bDev == "" {
@@ -75,6 +78,12 @@ func main() {
 	if *gap > 0 {
 		opts.Limits.FrameGap = *gap
 	}
+	if *win > 0 {
+		opts.Limits.Window = *win
+	}
+	if *ack > 0 {
+		opts.Limits.AckTimeout = *ack
+	}
 
 	send, err := radiotransfer.Wrap(a, key, opts)
 	if err != nil {
@@ -96,8 +105,15 @@ func main() {
 	fmt.Printf("PHY  %.3f MHz · %d kHz · SF%d · CR4/%d · %d dBm\n",
 		float64(phy.FrequencyHz)/1e6, phy.BandwidthHz/1000, phy.SpreadingF,
 		phy.CodingRate, phy.TXPowerDBm)
-	fmt.Printf("MTU  %d bytes · advertised message ceiling %d · FrameGap %s\n\n",
-		a.MTU(), send.Capabilities().MaxPayload, effGap)
+	effWin, effAck := *win, *ack
+	if effWin == 0 {
+		effWin = radiotransfer.DefaultLimits().Window
+	}
+	if effAck == 0 {
+		effAck = radiotransfer.DefaultLimits().AckTimeout
+	}
+	fmt.Printf("MTU  %d bytes · ceiling %d · FrameGap %s · Window %d · AckTimeout %s\n\n",
+		a.MTU(), send.Capabilities().MaxPayload, effGap, effWin, effAck)
 
 	arrived := make(chan []byte, 64)
 	go func() {
@@ -128,6 +144,12 @@ func main() {
 	for _, size := range sizes {
 		r := result{size: size}
 		for i := range *reps {
+			// A transfer does not end for BOTH sides at the same instant: when
+			// the sender is done, the peer may still be finishing its own
+			// half. Starting the next one into that is measurably expensive.
+			if *btwn > 0 && len(history) > 0 {
+				time.Sleep(*btwn)
+			}
 			msg := payload(size, i)
 			history = append(history, msg)
 			before := send.Stats()

@@ -26,6 +26,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -103,13 +104,102 @@ func MediumFast(freqHz uint32) Settings {
 		SpreadingF: 9, CodingRate: 5, TXPowerDBm: 22}
 }
 
-// MTU is what one RNode frame carries.
+// MaxFrame is what the MODEM will accept in one frame. It is not the same
+// question as what a frame SHOULD be — see mtuFor.
+const MaxFrame = 500
+
+// TargetFrameAirtime is what a frame WOULD be capped at if frame size were
+// capped by airtime. It is not used to cap anything — see the refuted
+// hypothesis below — and is kept because MTUFor is a useful thing to inspect
+// before taking two radios into a field.
 //
-// RNode does not fragment and has no packet header of its own beyond KISS, so
-// this is the modem's payload limit. Stated as a constant because the firmware
-// does not report it, and a carrier that guesses its own MTU upward produces
-// frames the far side silently drops.
-const MTU = 500
+// THE HYPOTHESIS, AND ITS REFUTATION BY MEASUREMENT. Measured at SF11/250 kHz
+// on two Heltec v3: 36 B took 0.75 s of wall clock, 200 B took 2.01 s, 400 B
+// took 3.82 s — so a full 500-byte frame is ~4.6 s of air, nearly twice the
+// transfer layer's 2.5 s FrameGap. That looked conclusive: the sender hands
+// the modem frames faster than it can radiate them, the queue absorbs the
+// difference (hence nothing is ever refused), the air is occupied
+// continuously, and the receiver never gets a quiet slot for its SACK.
+//
+// So frame size was capped at 176 bytes to fit the gap, and Stage B was run
+// again. IT WAS DRAMATICALLY WORSE:
+//
+//     size     MTU 500 frames/time     MTU 176 frames/time
+//      300      1-2 / 3.6 s             4-5 / 6.6 s
+//      700      2-3 / 8.8 s            10-15 / 24.9 s
+//     1500      5-10 / 20.7 s          53-93 / 2m01 s
+//
+// The cost scales with the NUMBER OF FRAMES, not with bytes or with airtime
+// per frame. Every extra fragment is another chance to lose one, another
+// entry in a window that must be repaired, and the loss compounds far faster
+// than a longer frame costs. Stage A agrees and should have been listened to
+// first: 400-byte frames delivered 100%, so a big frame is not a fragile one
+// on this link.
+//
+// Conclusion, recorded so it is not re-derived: on this carrier, FEWER AND
+// LARGER frames win. The frame size stays at what the modem accepts.
+const TargetFrameAirtime = 1500 * time.Millisecond
+
+// Airtime models the time on air of a LoRa frame of n bytes, by the standard
+// symbol arithmetic rather than by a fitted constant, so it stays right when
+// somebody changes the spreading factor.
+//
+// It is a MODEL: measured wall-clock runs roughly 0.3-0.7 s above it, because
+// serial transfer, firmware handling and host scheduling are real and are not
+// time on air. The margin is deliberate — this decides a frame size, and
+// being slightly conservative costs a few bytes while being optimistic costs
+// the whole delivery mechanism.
+func (s Settings) Airtime(n int) time.Duration {
+	sf := float64(s.SpreadingF)
+	bw := float64(s.BandwidthHz)
+	if sf < 6 || bw <= 0 {
+		return 0
+	}
+	tSym := math.Pow(2, sf) / bw // seconds
+
+	// Low data rate optimisation is on when a symbol is long, which changes
+	// the denominator below.
+	de := 0.0
+	if tSym > 0.016 {
+		de = 1
+	}
+	preamble := (8 + 4.25) * tSym
+
+	num := 8*float64(n) - 4*sf + 28 + 16
+	den := 4 * (sf - 2*de)
+	sym := math.Ceil(num/den) * float64(s.CodingRate-4+4)
+	if sym < 0 {
+		sym = 0
+	}
+	return time.Duration((preamble + (8+sym)*tSym) * float64(time.Second))
+}
+
+// MTUFor is the largest frame whose airtime stays within the target. Exported
+// because the right frame size for a PHY is a fact worth inspecting before
+// putting two radios in a field.
+func MTUFor(s Settings) int {
+	best := MinFrame
+	for n := MinFrame; n <= MaxFrame; n++ {
+		if s.Airtime(n) > TargetFrameAirtime {
+			break
+		}
+		best = n
+	}
+	return best
+}
+
+// MinFrame is the floor, and it exists because the airtime target and a
+// working frame can genuinely conflict.
+//
+// The transfer layer spends about 66 bytes per frame on its header and MAC.
+// At SF12 a frame inside 1.5 s of air is 70 bytes — FOUR bytes of payload,
+// which is not a slow frame but a useless one: a 6 KB message would need
+// more fragments than the layer permits, so nothing would move at all.
+// Where the two cannot both be had, the floor wins and the frame simply
+// takes longer than the target. That is a stated trade, not an oversight —
+// and it is why a very high spreading factor is a poor fit for bulk
+// transfer rather than merely a patient one.
+const MinFrame = 176
 
 // openSettle is how long to wait after opening the port before configuring.
 const openSettle = 2 * time.Second
@@ -118,6 +208,7 @@ const openSettle = 2 * time.Second
 type Radio struct {
 	port serial.Port
 	set  Settings
+	mtu  int
 
 	mu     sync.Mutex
 	closed bool
@@ -178,7 +269,8 @@ func Open(device string, s Settings) (*Radio, error) {
 		p.Close()
 		return nil, err
 	}
-	r := &Radio{port: p, set: s, inbox: make(chan []byte, 64),
+	// The modem's limit, NOT MTUFor: capping by airtime was measured worse.
+	r := &Radio{port: p, set: s, mtu: MaxFrame, inbox: make(chan []byte, 64),
 		stop: make(chan struct{}), rxFrames: map[byte]int{}}
 
 	r.wg.Add(1)
@@ -246,7 +338,7 @@ func (r *Radio) configure() error {
 
 // MTU reports what one frame carries, per the RadioDatagram contract:
 // EXCLUDING carrier framing, INCLUDING our own header and MAC.
-func (r *Radio) MTU() int { return MTU }
+func (r *Radio) MTU() int { return r.mtu }
 
 // Send hands one frame to the modem.
 //
@@ -259,9 +351,11 @@ func (r *Radio) Send(ctx context.Context, _ radiotransfer.RadioAddress, frame []
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if len(frame) > MTU {
-		return fmt.Errorf("rnode: a frame of %d bytes exceeds the %d-byte MTU",
-			len(frame), MTU)
+	if len(frame) > r.mtu {
+		return fmt.Errorf("rnode: a frame of %d bytes exceeds the %d-byte MTU "+
+			"(%s of air at SF%d/%d kHz)", len(frame), r.mtu,
+			r.set.Airtime(r.mtu).Round(time.Millisecond/10), r.set.SpreadingF,
+			r.set.BandwidthHz/1000)
 	}
 	r.mu.Lock()
 	closed, e := r.closed, r.err

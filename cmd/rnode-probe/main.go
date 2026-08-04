@@ -169,7 +169,19 @@ func show(cmd byte, b []byte) {
 	if name == "" {
 		name = "?"
 	}
-	// Telemetry arrives constantly and would bury the answers.
+	// Channel utilisation is the one telemetry frame worth reading: it says
+	// how much of the air OTHER transmitters are occupying, which is the
+	// difference between "our tuning is wrong" and "the band is busy".
+	if cmd == 0x25 && len(b) >= 11 {
+		ats := float64(int(b[0])<<8|int(b[1])) / 100
+		atl := float64(int(b[2])<<8|int(b[3])) / 100
+		cus := float64(int(b[4])<<8|int(b[5])) / 100
+		cul := float64(int(b[6])<<8|int(b[7])) / 100
+		fmt.Printf("  CHTM  our airtime %.2f%% / %.2f%%   CHANNEL BUSY %.2f%% / %.2f%%"+
+			"   noise floor %d dBm\n", ats, atl, cus, cul, int(int8(b[9])))
+		return
+	}
+	// The rest arrives constantly and would bury the answers.
 	switch cmd {
 	case 0x25, 0x26, 0x27, 0x28, 0x29, 0x23, 0x24:
 		return
