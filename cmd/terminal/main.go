@@ -56,9 +56,14 @@ func usage() {
 
 usage:
   terminal ui   --passphrase P [--data DIR] [--name N] [--no-browser] [--no-lan]
+                [--rnode /dev/PATH --mesh-seed "segment phrase"]
                 [--mesh tcp:HOST[:PORT] | --mesh serial:/dev/PATH]
                 [--radio-profile FILE] [--mesh-network ID] [--mesh-channel N]
                                          run the node and open the web UI
+                                         --rnode is the proven radio: an RNode
+                                         modem, and it needs --mesh-seed.
+                                         --mesh is Meshtastic, experimental.
+                                         See docs/radio/
   terminal node --passphrase P [--data DIR]
                                          run headless (API only, no UI assets)
   terminal demo                          run the reproducible two-node demo

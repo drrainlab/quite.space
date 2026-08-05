@@ -1,0 +1,76 @@
+-- Merging decision tree log ---
+manifest
+ADDED from /Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:2:1-48:12
+INJECTED from /Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:2:1-48:12
+INJECTED from /Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:2:1-48:12
+INJECTED from /Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:2:1-48:12
+MERGED from [quietcore.aar] /Users/gurebu/.gradle/caches/9.2.1/transforms/5ad9fde0681432a16f68c855dacf70cc/transformed/quietcore/AndroidManifest.xml:1:1-2:50
+	package
+		INJECTED from /Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml
+	android:versionName
+		INJECTED from /Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml
+	android:versionCode
+		INJECTED from /Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml
+	xmlns:android
+		ADDED from /Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:2:11-69
+uses-permission#android.permission.INTERNET
+ADDED from /Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:8:5-67
+	android:name
+		ADDED from /Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:8:22-64
+uses-permission#android.permission.ACCESS_NETWORK_STATE
+ADDED from /Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:9:5-79
+	android:name
+		ADDED from /Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:9:22-76
+application
+ADDED from /Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:11:5-47:19
+INJECTED from /Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:11:5-47:19
+	android:extractNativeLibs
+		INJECTED from /Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml
+	android:label
+		ADDED from /Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:12:9-39
+	android:allowBackup
+		ADDED from /Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:13:9-36
+	android:usesCleartextTraffic
+		ADDED from /Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:14:9-44
+activity#space.quiet.arprobe.RigActivity
+ADDED from /Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:25:9-33:20
+	android:launchMode
+		ADDED from /Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:28:13-44
+	android:exported
+		ADDED from /Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:27:13-36
+	android:name
+		ADDED from /Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:26:13-40
+intent-filter#action:name:android.intent.action.MAIN+category:name:android.intent.category.LAUNCHER
+ADDED from /Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:29:13-32:29
+action#android.intent.action.MAIN
+ADDED from /Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:30:17-69
+	android:name
+		ADDED from /Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:30:25-66
+category#android.intent.category.LAUNCHER
+ADDED from /Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:31:17-77
+	android:name
+		ADDED from /Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:31:27-74
+activity#space.quiet.arprobe.ContenderActivity
+ADDED from /Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:39:9-45:62
+	android:process
+		ADDED from /Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:42:13-41
+	android:excludeFromRecents
+		ADDED from /Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:43:13-46
+	android:exported
+		ADDED from /Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:41:13-36
+	android:theme
+		ADDED from /Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:45:13-59
+	android:taskAffinity
+		ADDED from /Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:44:13-36
+	android:name
+		ADDED from /Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:40:13-46
+uses-sdk
+INJECTED from /Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml reason: use-sdk injection requested
+INJECTED from /Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml
+INJECTED from /Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml
+MERGED from [quietcore.aar] /Users/gurebu/.gradle/caches/9.2.1/transforms/5ad9fde0681432a16f68c855dacf70cc/transformed/quietcore/AndroidManifest.xml:2:1-39
+MERGED from [quietcore.aar] /Users/gurebu/.gradle/caches/9.2.1/transforms/5ad9fde0681432a16f68c855dacf70cc/transformed/quietcore/AndroidManifest.xml:2:1-39
+	android:targetSdkVersion
+		INJECTED from /Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml
+	android:minSdkVersion
+		INJECTED from /Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml

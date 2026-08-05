@@ -1,0 +1,88 @@
+1<?xml version="1.0" encoding="utf-8"?>
+2<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+3    package="space.quiet.arprobe"
+4    android:versionCode="1"
+5    android:versionName="ar0" >
+6
+7    <uses-sdk
+8        android:minSdkVersion="24"
+9        android:targetSdkVersion="35" />
+10
+11    <!--
+12         The core syncs through a relay; AR-0c's network switch is the point of
+13         the gate, so INTERNET is not optional. Nothing else is requested: this
+14         rig has no notifications, no foreground service and no BLE, exactly as
+15         AR-0's charter excludes them.
+16    -->
+17    <uses-permission android:name="android.permission.INTERNET" />
+17-->/Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:8:5-67
+17-->/Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:8:22-64
+18    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+18-->/Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:9:5-79
+18-->/Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:9:22-76
+19
+20    <application
+20-->/Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:11:5-47:19
+21        android:allowBackup="false"
+21-->/Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:13:9-36
+22        android:debuggable="true"
+23        android:extractNativeLibs="false"
+24        android:label="Quiet AR-0 rig"
+24-->/Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:12:9-39
+25        android:usesCleartextTraffic="true" >
+25-->/Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:14:9-44
+26
+27        <!--
+28             singleTask so a second `am start` reaches the SAME process through
+29             onNewIntent rather than stacking a second one. The rig's identity
+30             claim is about one process; two would make core_pid meaningless.
+31
+32             It deliberately does NOT finish(): a real app backgrounded by HOME
+33             keeps an activity in its task, and a rig that finished would leave
+34             the process component-less and therefore first in line for the
+35             low-memory killer — a harsher lifecycle than the product's, which
+36             would make background -> return fail for a reason that is ours.
+37        -->
+38        <activity
+38-->/Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:25:9-33:20
+39            android:name="space.quiet.arprobe.RigActivity"
+39-->/Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:26:13-40
+40            android:exported="true"
+40-->/Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:27:13-36
+41            android:launchMode="singleTask" >
+41-->/Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:28:13-44
+42            <intent-filter>
+42-->/Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:29:13-32:29
+43                <action android:name="android.intent.action.MAIN" />
+43-->/Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:30:17-69
+43-->/Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:30:25-66
+44
+45                <category android:name="android.intent.category.LAUNCHER" />
+45-->/Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:31:17-77
+45-->/Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:31:27-74
+46            </intent-filter>
+47        </activity>
+48
+49        <!--
+50             The second process, for the one assertion that cannot be made by a
+51             second call: two PROCESSES under one app UID opening one data
+52             directory. Without a real separate process, "the data-dir lock
+53             holds on Android" would be a claim with no mechanism behind it.
+54        -->
+55        <activity
+55-->/Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:39:9-45:62
+56            android:name="space.quiet.arprobe.ContenderActivity"
+56-->/Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:40:13-46
+57            android:excludeFromRecents="true"
+57-->/Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:43:13-46
+58            android:exported="true"
+58-->/Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:41:13-36
+59            android:process=":contender"
+59-->/Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:42:13-41
+60            android:taskAffinity=""
+60-->/Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:44:13-36
+61            android:theme="@android:style/Theme.NoDisplay" />
+61-->/Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/AndroidManifest.xml:45:13-59
+62    </application>
+63
+64</manifest>
