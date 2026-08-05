@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -31,7 +32,12 @@ type thermalState struct {
 	FreqRatio   float64 // current / max on the fastest core, 0 when unknown
 	FastestKHz  int
 	MaxKHz      int
-	Available   bool
+	// Mitigation is the kernel SAYING it is throttling, rather than us
+	// inferring it: a cpufreq cooling device at state N of M has stepped the
+	// ceiling down N steps. Found on the Nothing Phone (1) at 5/9 while the
+	// frequency ratio alone could still have been argued to be idle cores.
+	Mitigation []string
+	Available  bool
 }
 
 func readThermal() thermalState {
@@ -70,6 +76,26 @@ func readThermal() thermalState {
 		if s := strings.TrimSpace(readFile(filepath.Join(p, "status"))); s != "" {
 			t.Charging = s == "Charging" || s == "Full"
 		}
+	}
+
+	// Cooling devices that are ACTIVELY mitigating. This is the unambiguous
+	// signal and it outranks everything else here: a lowered frequency ceiling
+	// can be argued about, `thermal-cpufreq-7 at 5/9` cannot.
+	if cds, err := filepath.Glob("/sys/class/thermal/cooling_device*"); err == nil {
+		for _, d := range cds {
+			name := strings.TrimSpace(readFile(filepath.Join(d, "type")))
+			if !strings.Contains(name, "cpufreq") && !strings.Contains(name, "cpu") {
+				continue
+			}
+			cur, err1 := strconv.Atoi(strings.TrimSpace(readFile(filepath.Join(d, "cur_state"))))
+			max, err2 := strconv.Atoi(strings.TrimSpace(readFile(filepath.Join(d, "max_state"))))
+			if err1 != nil || err2 != nil || cur <= 0 {
+				continue
+			}
+			t.Mitigation = append(t.Mitigation, fmt.Sprintf("%s %d/%d", name, cur, max))
+			t.Available = true
+		}
+		sort.Strings(t.Mitigation)
 	}
 
 	// The fastest core's headroom. Sampled rather than averaged: what matters
@@ -130,6 +156,9 @@ func (t thermalState) String() string {
 		}
 		parts = append(parts, fmt.Sprintf("fastest core %d/%d MHz (%.0f%%)%s",
 			t.FastestKHz/1000, t.MaxKHz/1000, t.FreqRatio*100, note))
+	}
+	if len(t.Mitigation) > 0 {
+		parts = append(parts, "THROTTLING: "+strings.Join(t.Mitigation, ", "))
 	}
 	return strings.Join(parts, " · ")
 }

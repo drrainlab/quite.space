@@ -219,23 +219,55 @@ Corpus A, controlled, one space. `fresh-process`, **OS cache uncontrolled** —
 a fresh directory and a fresh process clear application state, never the
 kernel's page cache, and this report does not use the word "cold".
 
-| | desktop (darwin/arm64, 10 cores) | phone | ratio |
-|---|---|---|---|
-| `Inspect` (stat only) | p50 149 µs | p50 363 µs | 2.4× |
-| `VerifyPassphrase` (scrypt N=2^15 / 32 MiB) | p50 73.7 ms | p50 **128–141 ms** | **1.8×** |
-| replay, paired `Open−Verify` | 70 µs/event | **111 µs/event** (fit) | 1.6× |
-| `Open`, 16 000 events | — | **1.83 s** | — |
-| quicklink `seal` | p50 301 ms | p50 433 ms | 1.4× |
-| quicklink `open` — the redeem path | p50 304 ms | p50 **421 ms** | 1.4× |
-| quicklink `open` peak RSS | n/a (no procfs) | **137.2 MB** | — |
+**Two phone columns, because the phone has two states.** The early column was
+measured on a phone that had just been connected; the frozen column is the
+instrumented run below, taken while the kernel reported
+`thermal-cpufreq-4 5/9, thermal-cpufreq-7 5/9`. The early figures are recorded
+as an *observation that the phone was faster before it warmed up*, **not** as a
+rested measurement — the thermal probe did not exist yet, so their state was
+never captured. The instrument arrived after the observation that motivated it,
+and a number without its state is not a measurement.
 
-**H2 was pessimistic and can be retired.** The reconnaissance modelled a
-3–6× ARM penalty on a memory-hard KDF and budgeted 250–500 ms; the measured
-figure is 1.8× and ~130 ms. **H3 likewise**: 1.5–3 s was modelled for the
-quick-link KDF, and it is 421 ms.
+| | desktop (darwin/arm64, 10 cores) | phone, early (state unrecorded) | phone, FROZEN (throttled 5/9) | ratio to desktop |
+|---|---|---|---|---|
+| `Inspect` (stat only) | p50 149 µs | p50 363 µs | p50 **338–360 µs** | 2.4× |
+| `VerifyPassphrase` (scrypt N=2^15 / 32 MiB) | p50 73.7 ms | p50 128–141 ms | p50 **181–203 ms** | **2.6×** |
+| replay, paired `Open−Verify` | 70 µs/event | 111 µs/event | **155 µs/event** (fit) | 2.2× |
+| `Open`, 16 000 events | — | 1.83 s | **2.61 s** | — |
+| quicklink `seal` | p50 301 ms | p50 433 ms | p50 **659 ms** | 2.2× |
+| quicklink `open` — the redeem path | p50 304 ms | p50 421 ms | p50 **646 ms** | 2.1× |
+| quicklink `open`, Δ over baseline | n/a (no procfs) | 137.2 MB peak | **Δ 129.9 MB** on a 7.4 MB baseline | — |
 
-    REPLAY SHAPE: LINEAR — slope grew 1.02× (criterion ≤ 1.25×)
-                  fit: 111 µs/event
+**Budgets should be set from the throttled column.** It is not the pessimistic
+reading, it is the realistic one: a phone that has been in use is a phone whose
+big cores are capped.
+
+**H2 can be retired.** The reconnaissance modelled a 3–6× ARM penalty on a
+memory-hard KDF and budgeted 250–500 ms for keystore unlock; the throttled
+measurement is 2.6× and ~190 ms — inside the budget even in the worse state.
+**H3's timing likewise**: 1.5–3 s was modelled for the quick-link KDF and it is
+646 ms throttled. H3's *memory* half is answered by the low-memory lane below,
+not by this table.
+
+    REPLAY SHAPE: LINEAR — slope grew 0.94× (criterion ≤ 1.25×)
+                  fit: 155 µs/event
+
+### Corpus B — the metric is portable, and per EVENT rather than per byte
+
+The beta-realistic corpus exists to check whether `ms/event` survives a
+workload that is not a column of identical rows: 6 private spaces, mixed event
+sizes from 20 bytes to 900, unicode.
+
+| corpus | shape | replay p50 | per event | MB/s |
+|---|---|---|---|---|
+| A (fit over 4K/8K/16K) | 1 space, uniform | — | **155 µs** | 3.1–3.4 |
+| B | 6 spaces, mixed, unicode | 373.2 ms | **155 µs** | 4.6 |
+
+Identical per-event cost across two quite different workloads, while the
+throughput in MB/s differs by 40%. So the cost is **per event — one
+`ed25519.Verify`, one AEAD open, one reducer apply — and not per byte**. That
+is what makes `ms/event` worth quoting a year from now, which is the question
+corpus B was added to answer.
 
 ### Two methodology defects this run found, both mine
 
@@ -320,11 +352,61 @@ topology axis (1×4K vs 4×1K vs 20×200), the probe-only staleness diagnostics 
 and all of AR-0c, which is the half that decides whether the core *lives* here
 rather than merely running.
 
-**AR-0b is not archived until the fixed rig re-runs it once**, so the frozen
-artefact carries `REASON_PACKAGE_UPDATED` rather than `code_16`, a status block
-on a failed `start`, the isolated quicklink-open probe, and the confound-aware
-shape classification. The numbers are not in doubt; the artefact should simply
-be the one a reader can trust without this paragraph.
+**AR-0b regenerated and FROZEN 2026-08-05.** The artefact now carries
+`REASON_PACKAGE_UPDATED` rather than `code_16`, a status block on a failed
+`start`, the isolated quicklink-open probe, the confound-aware shape
+classification, and the thermal state of every run. The numbers in the frozen
+column below are the ones to quote.
+
+    AR-0a     GREEN
+    AR-0a.2   GREEN — proven on the physical phone
+    AR-0b     GREEN — frozen
+    AR-0c     GREEN — one direction not exercised (no cellular data on the SIM)
+    AR-0d     GREEN — floor passes; one blocking defect spun off to RS-0
+
+## THE VERDICT — the core lives on Android
+
+AR-0 was chartered to answer one question and produce two deliverables. Both
+are here.
+
+**The question.** The core does not merely compile for Android: it runs inside
+an application process under the app UID, keeps its identity across SIGKILL and
+force-stop, is *kept* across background → return, catches up after Doze, and
+survives a network change without a restart. `flock` holds on the app's own
+volume against a genuinely separate process. A stranger's phone joined a space
+over the internet and every event carries one EventID on both devices.
+
+**Deliverable 1 — the numbers**, from the phone, throttled (the realistic
+state):
+
+    keystore unlock, scrypt N=2^15      181–203 ms      2.6× the desktop
+    replay                              155 µs/event    LINEAR, and per EVENT
+                                                        rather than per byte
+    Open, 16 000 events                 2.61 s
+    quicklink open (the redeem path)    646 ms · Δ 129.9 MB over a 7.4 MB base
+    app process baseline                ~105 MB (ART + JNI + libgojni + Go)
+    low-memory screen, 2 GB             5/5 survived, no LMK kill
+
+**Deliverable 2 — the Android integration cost.** ~2.9 GB of toolchain (NDK
+r27c, two JDKs, cmdline-tools), ~200 lines of Go binding in a nested module and
+~330 lines of Java rig. **Zero product source changes were needed to run it.**
+
+**What AR-0 changed in the product** — one real defect, found by the gate and
+fixed at the cause: a dead relay connection was never classified as fatal, so
+the pool served a corpse for the life of the process and the node pushed while
+pulling nothing. See "THE DEFECT THE GATE FOUND".
+
+**What AR-0 hands to AR-1**, measured rather than assumed:
+
+- a screen-off phone does not sync — so a wake plane and a foreground service
+  are required, not optional, and *catch-up on return* is the honest promise
+  until they exist;
+- an expedited job has room to work: unlock + replay of a 16 000-event log is
+  2.8 s, well inside the window;
+- `force-idle` does not suspend the device, so real suspend-clock skew
+  (finding 5) is still unmeasured and belongs to AR-1;
+- Wi-Fi → cellular is untested and needs a SIM with data;
+- the RS-0 debt list, measured at 360 dp, with one loud prediction retracted.
 
 ---
 
@@ -360,6 +442,229 @@ the presented identity against an empty string and refuse with *"presented an
 unexpected identity (…)"* — quoting back the very pin that was sent, which
 reads like a mismatch in the relay and is in fact a mismatch in the request.
 Accurate, and briefly baffling.
+
+---
+
+## 2026-08-05 — AR-0c step 1, and the finding that arrived unbidden
+
+### A locked screen suppresses the app's network. Measured, not inferred.
+
+Setting the gate up kept failing, and chasing why produced the cleanest result
+of the wave. The same call, from the same process, at two screen states:
+
+    screen locked / dozing    31.6 s  → dial: connection timed out
+    screen awake, unlocked     0.3 s  → success, relay pin verified
+
+Not specific to the relay: with the screen locked the app could not dial
+`1.1.1.1:443` or `8.8.8.8:53` either — every external dial timed out at
+31.6 s, while `nc` from `adb shell` connected instantly at the same moment.
+Same routes for both UIDs (`ip route get … uid 10393` and `uid 2000` are
+identical), `INTERNET granted=true`, Wi-Fi `VALIDATED`, standby bucket 10
+(ACTIVE), no appops or netpolicy restriction. The shell is not an app, and
+that is the whole difference.
+
+**This confirms decision 4 of the plan empirically.** Without a foreground
+service, a phone with its screen off does not sync — so AR-0c's closer
+promising *catch-up on return* rather than live receipt is the correct promise,
+and live screen-off delivery genuinely belongs to AR-1 with its notification.
+
+**A CORRECTION, and it is the reason this section is written carefully.**
+I first attributed the recovery to a battery-optimisation exemption I had added
+(`dumpsys deviceidle whitelist +pkg`), having seen 8/8 successful dials right
+after applying it. The owner pointed out that they had unlocked the phone at
+about the same moment. Two variables had changed and I had credited one of them
+on no evidence. The discriminating test — **remove the whitelist, keep the
+screen unlocked** — gave 8/8 successes at 0.3 s, so the exemption had done
+nothing and the screen state was the whole cause. The whitelist was removed and
+the environment is stock. Recorded because it is exactly the kind of convincing
+untruth this wave exists to catch, and it was one edit away from the report.
+
+### The gate's first step
+
+    android-lifecycle-staging-1 · both nodes · no LAN on either side
+
+| step | verdict | detail |
+|---|---|---|
+| Mac node points at the staging relay, TOFU-pinned | pass | — |
+| Mac mints a personal quicklink; the pass parks on the relay | pass | relay `items=1 bytes=598` |
+| phone resolves the words over the internet | pass | after the screen finding above |
+| phone joins | pass | `waiting_for_owner` → member; 2 spaces |
+| message Mac → phone, and phone → Mac | pass | converged in under 5 s |
+| **the same EventIDs on both devices** | **pass** | `65a1d8d4…` and `b9dd30da…` on both |
+| the relay kept nothing | pass | `items=0 bytes=0 conns=2` after delivery |
+
+Two diagnosability notes from getting here, both worth fixing later:
+
+- `transports/lan/lan.go:109` returns a generic `lan: connection closed` on
+  every call after the first failure, while the real cause sits unused in
+  `c.err`. The reason a link died is therefore invisible from the moment it
+  matters most.
+- `ResolveQuickLink` reports **the last candidate's** error, so a fan-out that
+  really failed on the configured relay reads as
+  `dial tcp 127.0.0.1:7411: connection refused` — the built-in local-dev
+  relay, which the operator never configured and is not the problem.
+
+### The gate, run in full — `scripts/android/ar0c-lifecycle.sh`
+
+| step | verdict | detail |
+|---|---|---|
+| 1 — a message each way | pass | converged in 3 s, one EventID per event |
+| **D1 — SIGKILL → reopen** | **pass** | process gone, new pid, **identity survived** |
+| **D2 — force-stop → explicit restart** | **pass** | stopped everything; **nothing resumed on its own**; identity survived |
+| **background → return** | **pass** | **PROCESS KEPT** — same `core_pid` AND same `runtime_epoch`; caught up in 31 s |
+| C — Doze, documented sequence | pass | `ACTIVE → IDLE` confirmed; caught up in 1 s |
+| A — cellular → Wi-Fi | pass | caught up in 2 s |
+| **B — recovery WITHOUT a restart** | **pass** | pid unchanged across the switch |
+| A — Wi-Fi → cellular | **NOT EXERCISED** | see below |
+| 7 — both ends restart | pass | identity survived the whole gate; converged in 1 s |
+
+**Wi-Fi → cellular is untested, not failed.** With Wi-Fi off, the *shell* — which
+is subject to no app restriction — cannot reach the relay either: the phone
+registers LTE but has no working data path. Reporting "did not catch up" would
+have blamed the client for a network that was never there, so the gate now
+probes the precondition and says so. It needs a SIM with an active data plan.
+
+### THE DEFECT THE GATE FOUND — a dead connection that was never fatal
+
+This is what AR-0c was for.
+
+After being backgrounded, the phone came back with `pushed 11 pulled 0` and a
+permanent `lan: connection closed`. It never recovered: **its own messages
+reached the Mac and the Mac's never reached it**, for as long as the process
+lived. Only a restart cleared it — which is why every *fresh-start* scenario
+passed and only background → return failed.
+
+The mechanism, confirmed by a test rather than by reading:
+
+    node/relaypool.go   isConnFatal() decided a connection was dead by
+                        looking for the substring "use of closed"
+                          ← the NET package's wording
+    transports/lan      returns "lan: connection closed"
+                          ← this transport's wording
+
+The two never met. `isConnFatal` returned false, so the pool never retired the
+corpse and handed it back to every caller forever.
+
+Fixed at the cause rather than by adding a third substring: `lan.ErrConnClosed`
+is now an exported **sentinel** and `isConnFatal` matches it with `errors.Is`.
+Matching a sibling package's errors by text is what made this possible — a
+string is not a contract, and nothing fails when it drifts. Pinned by
+`node/relaypool_fatal_test.go`, which covers both wordings, a wrapped
+sentinel, and the cases that must NOT be fatal (a relay refusal is an answer,
+not a broken connection).
+
+**Validated by the failure it came from**: background → return went from
+*never catches up* to *31 s*, and step 1 from *did not converge in 60 s* to
+*3 s*.
+
+### `force-idle` does not suspend the device — an instrument being honest
+
+The Doze step reports both clocks, and it reported:
+
+    CLOCK_MONOTONIC advanced 110.7s
+    CLOCK_BOOTTIME  advanced 110.7s
+    suspended         -0.0s
+
+Identical. So `dumpsys deviceidle force-idle` applies Doze **policy** without a
+hardware suspend, and **finding 5's hazard cannot be reproduced this way**. The
+instrument reported zero rather than inventing a plausible number, which is the
+behaviour that makes it worth having. Measuring real suspend-related clock skew
+needs a genuinely idle, unplugged, screen-off device over a long period, and
+that is an AR-1 measurement.
+
+### Two harness defects of mine, recorded because both would have lied
+
+- **The identity assertions were comparing a quarter of an identity.** A
+  fingerprint renders in groups (`58fb ab86 d002 …`) and the snapshot was read
+  positionally with `read -r PID EPOCH FP MONO BOOT` — so `FP` held `58fb` and
+  the clock fields held hex. It announced itself only as
+  `ValueError: invalid literal for int() with base 10: 'ab86'`. Now tab-
+  separated. A gate comparing the first word of a fingerprint would pass a
+  changed one.
+- **A shell function named `head` shadowed `/usr/bin/head`** inside every
+  pipeline in the script, so the transport diagnostics in the A/B block printed
+  separators and `-1` instead of the network state — which is why the first
+  Wi-Fi→cellular result could not be interpreted at all. Renamed to `section`.
+
+---
+
+## 2026-08-05 — AR-0d, the narrow-screen launch
+
+Run against the phone's OWN node — the core serves the web UI it already
+embeds — first in the phone's browser at 411 dp, then through a desktop
+browser pane forwarded to the same node so the DOM could be inspected rather
+than guessed at from screenshots.
+
+### The minimal launch floor — PASSES
+
+Deliberately narrow, so that "the UI is rough on a phone" (which everyone
+already knows) never gets confused with "the UI does not launch on a phone".
+
+| floor item | verdict | evidence |
+|---|---|---|
+| the page loads | pass | at 411 dp in the phone's browser |
+| authentication succeeds | pass | tokened URL, real content |
+| the space list appears | pass | 8 rows; the sidebar starts folded, which is the drawer behaving correctly |
+| one conversation opens | pass | `convTitle` = "ar0c lifecycle", messages rendered |
+| the composer is reachable with the keyboard open | pass | composer 412×47 at the bottom of the viewport; the owner typed and sent a message from the phone |
+
+**And no horizontal overflow at either width**: `body.scrollWidth` equals the
+viewport at 412 *and* at 360, and the layout still holds at `font_scale 1.5`.
+The reconnaissance's praise of the text-overflow discipline is confirmed in the
+running app.
+
+### THE DEFECT: a first-run modal with no way out, on a device with no Esc
+
+Found by trying to use the app, and confirmed by the owner independently —
+they could only escape it by opening *another* dialog and cancelling that.
+
+    <dialog id="dlgWelcome">   open=true   modal=true   closedby=(none)
+    buttons: "Create a space" · "Enter with a pass" · "Continue" · "Continue"
+    → not one of them dismisses it
+
+Two separate faults, and they compound:
+
+1. **`needs_name` is not the same question as "is this a first run".**
+   `NeedsOnboarding()` is `r.ks.DisplayName == ""` (`node/node.go:841`). A node
+   that already holds an identity, eight spaces and a live conversation — but
+   was opened without a display name ever being set — gets the first-run flow
+   thrown over the top of it.
+2. **A modal `<dialog>` with no dismiss control is escapable only by Esc, and a
+   phone has no Esc.** On a desktop this is a papercut; on a phone it is a
+   trap. This is the reconnaissance's Tier-2 item ("no backdrop tap-to-dismiss;
+   several dialogs have no visible close control at all") arriving with a
+   consequence nobody predicted.
+
+The fix belongs to RS-0, not here — but the shape is clear: the welcome step
+needs a dismiss, and its trigger needs to be "no identity" rather than "no
+display name".
+
+### The debt list, measured rather than read
+
+Everything below was taken from the running app at 360 dp.
+
+| item | measured | recon said |
+|---|---|---|
+| `--tap` token | **34px** | 34px — confirmed |
+| interactive controls under 44 px | **15 of 21**; smallest 16 px (`+`), then 18 px (`⋯`, `⋯`), then five nav actions at 30 px | confirmed |
+| `env(safe-area-*)` anywhere in the stylesheets | **none** | confirmed |
+| `body` height | resolves to `100vh` (800 px) — no `dvh`, no `visualViewport` | confirmed |
+| `.msg .mk` — the message actions | **`opacity: 0`, 200×16, present in the DOM and unreachable on touch** | confirmed, and it is the most severe item |
+| `@media (hover: none)` coverage | **`.nav-more, .nav-grip` only** — while eight selectors reveal on hover | confirmed |
+| width breakpoints | 520 px, 560 px, 600 px (+ `hover: none`, two `prefers-*`) | confirmed |
+
+**One prediction NOT confirmed, and it was the loudest one.** The
+reconnaissance called `#convbar` "the single most certain break at 375 px" on
+the grounds that it is `display:flex` with no `flex-wrap` and up to ten
+controls. Measured at 360 dp: `flexWrap: nowrap` is real, but five visible
+children total **300 px inside a 360 px bar** and the row simply grows to 82 px
+tall. **No overflow.** Reading the CSS predicted a break that measuring did not
+find — the controls shrink and the title wraps before anything spills. `#convbar`
+stays on the debt list as *crowded and two rows tall*, which is a different and
+much smaller problem than *broken*.
+
+That correction is the whole reason AR-0d exists as a measurement rather than a
+review.
 
 ---
 
