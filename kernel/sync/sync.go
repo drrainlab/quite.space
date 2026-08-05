@@ -88,6 +88,13 @@ type Engine struct {
 	// never more than transport-level custody: ADR-007).
 	OnSent func(eventIDs []id.EventID)
 
+	// OnTooLarge fires when an event is NOT offered on a carrier because it
+	// exceeds what that carrier will carry. It is the seam that keeps a
+	// refusal from being a silence: the node above turns it into something a
+	// person can read, so "this is waiting for a wider path" never has to be
+	// inferred from a message that simply never arrives.
+	OnTooLarge func(ev id.EventID, size, ceiling int)
+
 	// AttemptToken is the sender's current responsibility token for this
 	// space. When set it is stamped on every frames message the engine
 	// emits — unchanged across fragmentation and across re-sends within one
@@ -524,6 +531,16 @@ func (e *Engine) serveBlobs(ep transports.Endpoint, hashes []id.Hash) error {
 	if e.Blobs == nil || e.BlobAllowed == nil {
 		return nil // this node does not serve assets; silence, not oracle
 	}
+	// A carrier may decline to be an asset path at all, and the radio does.
+	//
+	// This is not a size question. A blob request is unbounded work somebody
+	// ELSE asked for, and answering it on a shared half-duplex segment spends
+	// everyone's air, not ours. Silence here is the same silence a node that
+	// does not hold the blob would produce — no oracle, no new signal — and
+	// the assets still arrive over any wider path, whenever one exists.
+	if ep.Capabilities().BlobsRefused {
+		return nil
+	}
 	budget := messageBudget(ep)
 	var batch [][]byte
 	size := 0
@@ -587,6 +604,9 @@ const maxChainBurst = 16
 // eligible heads.
 func (e *Engine) pushMissing(ep transports.Endpoint, sum *summary) error {
 	budget := messageBudget(ep)
+	// What this carrier will CARRY, which is a different question from how it
+	// batches. Zero means no ceiling and is every carrier but the radio.
+	caps := ep.Capabilities()
 	var batch [][]byte
 	var batchIDs []id.EventID
 	batchSize := 0
@@ -643,6 +663,22 @@ func (e *Engine) pushMissing(ep transports.Endpoint, sum *summary) error {
 			burst := 0
 			for c.next < len(c.frames) && burst < maxChainBurst {
 				f := c.frames[c.next]
+				// THE FRAME'S OWN SIZE, asked before anything else.
+				//
+				// The batching test below is `... && len(batch) > 0`, which
+				// means a frame larger than the WHOLE budget was appended
+				// anyway, alone, and sent. The budget only ever grouped; it
+				// never refused. So an inline preview of 40 KiB went onto a
+				// LoRa segment as one message — measured at ninety-nine
+				// frames and six and a half minutes of air, during which
+				// nothing else on that radio moved. The beta cut promised
+				// media would not travel this way and nothing enforced it.
+				if !caps.CarriesEvent(len(f)) {
+					if e.OnTooLarge != nil {
+						e.OnTooLarge(id.EventIDOf(f), len(f), caps.MaxEventBytes)
+					}
+					continue
+				}
 				if batchSize+len(f) > budget && len(batch) > 0 {
 					if err := flush(); err != nil {
 						return err

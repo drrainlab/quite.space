@@ -368,3 +368,61 @@ func (l Limits) check() error {
 	}
 	return nil
 }
+
+// EventAirtimeBudget is how much transmission ONE event may cost before this
+// carrier declines to carry it at all.
+//
+// Twenty seconds, and the number comes from the measurement rather than from
+// taste. On the RU long-fast profile the boards actually run:
+//
+//	a short message          340 B    1 frame     3.9 s
+//	a reaction               387 B    1 frame     3.9 s
+//	a long message           857 B    3 frames   11.7 s
+//	an image, 2 KiB preview  2.4 KB   6 frames   23.4 s
+//	an image, 40 KiB preview 41 KB   99 frames  385.4 s   ← six and a half
+//	                                                        minutes, during
+//	                                                        which nothing
+//	                                                        else moves
+//
+// Twenty seconds admits everything a conversation is made of and refuses the
+// thing that stops one. It is a var so a future profile — or a person who
+// decides differently for their own segment — can move it without a rebuild
+// of the reasoning.
+var EventAirtimeBudget = 20 * time.Second
+
+// eventCeiling turns that budget into bytes for THIS carrier.
+//
+// It asks the carrier what a frame costs and how much of a frame is ours to
+// fill, so a faster profile raises the ceiling by itself. A carrier that
+// cannot price its own air gets no ceiling at all, which is the honest
+// answer: refusing on a guess would be worse than carrying.
+func (s *Session) eventCeiling() int {
+	model, ok := s.carrier.(AirtimeModel)
+	if !ok {
+		return 0
+	}
+	frame := model.FrameAirtime(s.carrier.MTU())
+	if frame <= 0 {
+		return 0
+	}
+	// Room in ONE frame, measured the way the sender measures it — header
+	// and MAC probed rather than assumed, worst case for every varint. This
+	// is the same call carryable() makes; what differs is that carryable
+	// multiplies by the fragment limit to answer "how much can a transfer
+	// hold", and the question here is "how much fits in the time we allow".
+	var wid TransferID
+	for i := range wid {
+		wid[i] = 0xff
+	}
+	var digest [DigestLen]byte
+	per, err := maxChunk(s.carrier.MTU(), wid, digest, s.lim.MaxMessageBytes,
+		StreamControl, s.key)
+	if err != nil || per <= 0 {
+		return 0
+	}
+	frames := int(EventAirtimeBudget / frame)
+	if frames < 1 {
+		frames = 1 // always enough for one, or the carrier carries nothing
+	}
+	return frames * per
+}

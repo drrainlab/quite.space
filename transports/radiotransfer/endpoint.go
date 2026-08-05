@@ -271,6 +271,20 @@ func (e *Endpoint) Capabilities() transports.Capabilities {
 		// interface's Ack vocabulary is about the delivery ladder (ADR-007),
 		// and nothing at this layer is entitled to raise a rung on it.
 		Ack: transports.AckNone,
+
+		// What this link SHOULD carry, which is far less than what it can.
+		//
+		// Derived from the carrier's own airtime rather than picked: the
+		// ceiling is whatever fits EventAirtimeBudget seconds of transmission.
+		// A number chosen by hand would be wrong the moment somebody changes
+		// the spreading factor; a number derived from the physics moves with
+		// it, which is the same argument limits.go already makes for deriving
+		// a repair budget from the window.
+		MaxEventBytes: e.s.eventCeiling(),
+		// A shared half-duplex segment is not a place to answer somebody
+		// else's unbounded blob request. The assets still arrive — over any
+		// wider path, whenever one exists.
+		BlobsRefused: true,
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"sort"
 	"strings"
@@ -81,6 +82,9 @@ type Runtime struct {
 	// back out of the registry. Without it a detached radio would keep a
 	// corpse wired into every space's connection list.
 	rnodeLink link
+	// tooLarge is what a carrier declined to carry, so a person can be told
+	// rather than left watching a message that never goes.
+	tooLarge tooLargeSet
 	// radioRestoreErr is why the remembered radio did not come back on start.
 	// Kept so the status can SAY it: an unplugged board and a board that was
 	// never configured look identical without this.
@@ -539,6 +543,19 @@ func (r *Runtime) attach(tid id.TerminalID, s *terminals.Space) {
 		// hand-off left the machine and stops there; only a signed receipt
 		// moves it further.
 		r.markHandedToTransport(ids, r.curLink, time.Now())
+	}
+	// A refusal must never be a silence.
+	//
+	// Sync now declines to put an event on a carrier that says it will not
+	// carry it — which is the whole point of this gate — but a message that
+	// silently does not go is WORSE than the jam it replaces: a jam ends
+	// eventually, and a silence is indistinguishable from a message nobody
+	// sent. So the refusal is recorded where the ledger already has the right
+	// word for it, and the honest surface (task #145) reads it from there.
+	st.eng.OnTooLarge = func(eid id.EventID, size, ceiling int) {
+		log.Printf("radio: %s is %d bytes and this carrier carries %d — "+
+			"it waits for a wider path", eid, size, ceiling)
+		r.noteTooLargeForCarrier(eid, tid, size, ceiling)
 	}
 	// Bridge custody ACKs: honored only under a pinned custodian key for
 	// the ingress link (custodian.go).
