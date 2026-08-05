@@ -98,6 +98,20 @@ func (c *Conn) fail(err error) {
 	c.c.Close()
 }
 
+// ErrConnClosed is returned by every operation on a connection that has
+// already failed. It is a SENTINEL rather than a fresh errors.New, because a
+// caller that needs to know "is this connection dead" was matching on the
+// STRING and matching the wrong one.
+//
+// Found by AR-0c on a real phone: node/relaypool.go's isConnFatal looked for
+// "use of closed" — the net package's wording — while this transport says
+// "lan: connection closed". The two never met, so the pool never retired a
+// dead connection and handed the same corpse back forever. The node pushed on
+// one lane and PULLED NOTHING for as long as the process lived; only a restart
+// cleared it. A phone that had been backgrounded reached that state on its own,
+// which is how it was found.
+var ErrConnClosed = errors.New("lan: connection closed")
+
 // Send writes one packet to the peer.
 func (c *Conn) Send(pkt []byte) error {
 	if len(pkt) == 0 || len(pkt) > c.cap {
@@ -106,7 +120,7 @@ func (c *Conn) Send(pkt []byte) error {
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
-		return errors.New("lan: connection closed")
+		return ErrConnClosed
 	}
 	c.mu.Unlock()
 	buf := make([]byte, 4+len(pkt))

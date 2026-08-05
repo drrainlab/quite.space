@@ -27,6 +27,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/drrainlab/quiet_places/transports/lan"
 	"github.com/drrainlab/quiet_places/transports/relay"
 )
 
@@ -324,6 +325,19 @@ func isConnFatal(err error) bool {
 		return true
 	}
 	if errors.Is(err, io.EOF) {
+		return true
+	}
+	// The transport's OWN sentinel, matched by identity rather than by text.
+	//
+	// This line is the fix for the defect AR-0c found on a phone: the string
+	// test below looks for "use of closed", which is the net package's wording,
+	// and the lan transport says "lan: connection closed". They never matched,
+	// so a dead connection was never fatal, never retired, and handed back for
+	// the life of the process — the node kept pushing and pulled NOTHING until
+	// it was restarted. Matching a sibling package's error by substring is what
+	// made that possible, so the sentinel goes first and the strings stay only
+	// for errors nobody owns.
+	if errors.Is(err, lan.ErrConnClosed) {
 		return true
 	}
 	s := err.Error()
