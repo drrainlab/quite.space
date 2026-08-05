@@ -193,6 +193,14 @@ func Start(dir, passphrase, name string, withLAN bool) error {
 	startedAt = time.Now().UTC()
 	lastError = ""
 	stateMu.Unlock()
+
+	// AR-1b: the notification plane is armed HERE, and the position is the
+	// invariant rather than a detail. node.Open has returned, so every replay
+	// through the absorb funnel is already behind us and history cannot reach
+	// a sink that did not exist while it ran. Arming any earlier — inside
+	// Open, or from a host that got the runtime first — would turn a first run
+	// over a large journal into one notification per event ever written.
+	armRuntime(r)
 	return nil
 }
 
@@ -281,6 +289,11 @@ func Stop() error {
 	if l != nil {
 		_ = l.Close()
 	}
+	// The plane comes down before the node does. The host's sink is KEPT — a
+	// stop is not a refusal, and the next Start re-arms the same sink — but a
+	// runtime being closed must not be able to announce anything on its way
+	// out, least of all to a host that has already been told it stopped.
+	r.ArmNotifications(nil)
 	r.Close()
 	return nil
 }
@@ -320,6 +333,12 @@ func Status() string {
 		// instrument that turns that from a reading of the code into a number.
 		"mono_ns": mono, // CLOCK_MONOTONIC — what time.Since sees
 		"boot_ns": boot, // CLOCK_BOOTTIME  — includes suspend
+	}
+	// Three notification numbers, because "nothing appeared" has three
+	// different causes — nothing armed, nothing produced, or a host that could
+	// not keep up — and they need three different answers.
+	for k, v := range notifyStatus() {
+		s[k] = v
 	}
 	if lastError != "" {
 		s["last_error"] = lastError
