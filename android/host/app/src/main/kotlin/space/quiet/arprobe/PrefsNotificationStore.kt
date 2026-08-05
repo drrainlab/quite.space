@@ -27,6 +27,21 @@ internal class PrefsNotificationStore(context: Context) : NotificationCoordinato
         return if (raw.isEmpty()) emptyList() else raw.split("\n")
     }
 
+    /**
+     * Created once per space and never derived from the space id — a derived
+     * key would be as much of a giveaway as the id itself to anything reading
+     * tags. 64 random bits: enough that two spaces on one device will not
+     * collide, short enough to stay a tag.
+     */
+    override fun notificationKey(spaceId: String): String {
+        val stored = prefs.getString(KEY_TAG_PREFIX + spaceId, null)
+        if (stored != null) return stored
+        val bytes = ByteArray(8).also { java.security.SecureRandom().nextBytes(it) }
+        val key = bytes.joinToString("") { "%02x".format(it) }
+        prefs.edit().putString(KEY_TAG_PREFIX + spaceId, key).commit()
+        return key
+    }
+
     override fun writeRememberedIds(ids: List<String>) {
         prefs.edit().putString(KEY_PRESENTED, ids.joinToString("\n")).commit()
     }
@@ -34,5 +49,6 @@ internal class PrefsNotificationStore(context: Context) : NotificationCoordinato
     private companion object {
         const val FILE = "quiet-notifications"
         const val KEY_PRESENTED = "presented_ids"
+        const val KEY_TAG_PREFIX = "tag:"
     }
 }

@@ -59,8 +59,15 @@ class NotificationCoordinator(
         /** Show or update the one live notification for a space. */
         fun present(p: Presentation)
 
-        /** Take the space's notification down. Not a read, not a dismissal. */
-        fun clear(spaceId: String)
+        /**
+         * Take the space's notification down. Not a read, not a dismissal.
+         *
+         * The TAG is passed rather than derived: it is an opaque local key,
+         * and a presenter that rebuilt it from the space id would post under
+         * one identity and cancel under another — a notification nothing can
+         * ever take down again.
+         */
+        fun clear(spaceId: String, tag: String)
     }
 
     /**
@@ -74,17 +81,27 @@ class NotificationCoordinator(
         fun rememberedIds(): List<String>
 
         fun writeRememberedIds(ids: List<String>)
+
+        /**
+         * A DEVICE-LOCAL opaque key for a space, created once and remembered.
+         *
+         * The notification tag must not be the space id. A tag is not private:
+         * StatusBarNotification carries it verbatim to every
+         * NotificationListenerService the person has granted access to — a
+         * launcher, a smartwatch companion, a backup tool. In the strictest
+         * privacy mode the title and the text are hidden precisely so that
+         * nothing identifies the conversation, and a raw protocol identifier
+         * in the tag would hand it over anyway, as metadata, to software that
+         * was never told anything else.
+         *
+         * The key is random, means nothing outside this install, and is stable
+         * so that the SAME space keeps updating the SAME notification.
+         */
+        fun notificationKey(spaceId: String): String
     }
 
     /** What a host needs in order to render. Data, never behaviour. */
-    class Presentation(val spaceId: String, items: List<Item>) {
-        /**
-         * A stable per-space tag. Deliberately the space id itself rather than
-         * a hash into an int: an int hash carries a silent collision
-         * probability, and a collision here means two conversations sharing
-         * one notification.
-         */
-        val tag: String = "space:$spaceId"
+    class Presentation(val spaceId: String, val tag: String, items: List<Item>) {
         val items: List<Item> = items.toList()
     }
 
@@ -93,7 +110,30 @@ class NotificationCoordinator(
         val eventId: String,
         val device: String,
         val schema: String,
-        val createdAt: Long,
+        val occurredAtUnixMs: Long,
+        val senderLabel: String,
+        val previewText: String,
+    )
+
+    /**
+     * What the core hands over, as one value rather than eight parameters.
+     *
+     * The presentation half — the labels — is deliberately separate from the
+     * half the decisions run on. Nothing below depends on a label, so a space
+     * whose manifest has not arrived still deduplicates correctly and still
+     * notifies exactly once.
+     */
+    data class Candidate(
+        val eventId: String,
+        val spaceId: String,
+        val device: String,
+        val schema: String,
+        val occurredAtUnixMs: Long,
+        val presentationCursor: Long,
+        val authoredLocally: Boolean,
+        val spaceLabel: String = "",
+        val senderLabel: String = "",
+        val previewText: String = "",
     )
 
     /**
@@ -125,6 +165,12 @@ class NotificationCoordinator(
 
     private val counts = LinkedHashMap<Decision, Int>()
 
+    /** The highest presentation cursor seen, scoped to one runtime. */
+    private var highestCursor = 0L
+
+    /** space id -> opaque local tag, resolved once and cached. */
+    private val tags = HashMap<String, String>()
+
     init {
         presented.addAll(store.rememberedIds())
         trimRemembered()
@@ -139,23 +185,24 @@ class NotificationCoordinator(
      * presenter.
      */
     @Synchronized
-    fun onCandidate(
-        eventId: String,
-        spaceId: String,
-        device: String,
-        schema: String,
-        createdAt: Long,
-        authoredLocally: Boolean,
-    ): Decision {
+    fun onCandidate(c: Candidate): Decision {
         if (!enabled) return count(Decision.SUPPRESSED_DISABLED)
 
         // A person is not told about the thing they just did — and the core
         // says so, so the host does not have to work out who they are.
-        if (authoredLocally) return count(Decision.SUPPRESSED_AUTHORED_LOCALLY)
+        if (c.authoredLocally) return count(Decision.SUPPRESSED_AUTHORED_LOCALLY)
 
-        if (!NotificationPolicy.notifiable(schema)) {
+        if (!NotificationPolicy.notifiable(c.schema)) {
             return count(Decision.SUPPRESSED_SCHEMA_NOT_NOTIFIABLE)
         }
+        val eventId = c.eventId
+        val spaceId = c.spaceId
+
+        // The cursor is the core's own count of applied events, and it only
+        // ever moves forward within one runtime. Remembering the highest one
+        // seen is what lets a host say "nothing has happened since" — AR-1b.5
+        // builds its durable ledger on it.
+        if (c.presentationCursor > highestCursor) highestCursor = c.presentationCursor
 
         // The durable gate, and it runs BEFORE the on-screen gate on purpose:
         // an event this phone has already presented must not be re-presented
@@ -176,10 +223,10 @@ class NotificationCoordinator(
 
         remember(eventId)
         val items = live.getOrPut(spaceId) { ArrayDeque() }
-        items.addLast(Item(eventId, device, schema, createdAt))
+        items.addLast(Item(eventId, c.device, c.schema, c.occurredAtUnixMs, c.senderLabel, c.previewText))
         while (items.size > MESSAGES_PER_SPACE) items.removeFirst()
 
-        presenter.present(Presentation(spaceId, items.toList()))
+        presenter.present(Presentation(spaceId, tagFor(spaceId), items.toList()))
         return count(Decision.PRESENTED)
     }
 
@@ -217,7 +264,7 @@ class NotificationCoordinator(
     @Synchronized
     fun onRead(spaceId: String) {
         live.remove(spaceId)
-        presenter.clear(spaceId)
+        presenter.clear(spaceId, tagFor(spaceId))
     }
 
     /** The permission was refused, or the person switched notifications off. */
@@ -225,7 +272,7 @@ class NotificationCoordinator(
     fun setEnabled(on: Boolean) {
         enabled = on
         if (!on) {
-            for (spaceId in live.keys.toList()) presenter.clear(spaceId)
+            for (spaceId in live.keys.toList()) presenter.clear(spaceId, tagFor(spaceId))
             live.clear()
         }
     }
@@ -239,8 +286,12 @@ class NotificationCoordinator(
         }
         out["live_spaces"] = live.size
         out["remembered_ids"] = presented.size
+        out["highest_cursor"] = highestCursor.toInt()
         return out
     }
+
+    private fun tagFor(spaceId: String): String =
+        tags.getOrPut(spaceId) { "space:" + store.notificationKey(spaceId) }
 
     private fun remember(eventId: String) {
         presented.addLast(eventId)

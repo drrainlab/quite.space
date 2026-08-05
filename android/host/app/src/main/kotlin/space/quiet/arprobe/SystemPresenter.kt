@@ -18,8 +18,15 @@ import org.json.JSONObject
  * probability across a 32-bit space. A collision here is not a cosmetic
  * defect: two different conversations would share one notification, each
  * update overwriting the other's, and a person would lose messages from
- * somebody without ever seeing them arrive. The space id is already unique, so
- * it IS the tag and the id is a constant.
+ * somebody without ever seeing them arrive. So uniqueness lives in the TAG and
+ * the id is a constant.
+ *
+ * The tag is an OPAQUE DEVICE-LOCAL KEY, not the space id (AR-1b.5). A tag is
+ * not private: StatusBarNotification carries it verbatim to every
+ * NotificationListenerService the person has granted access to. Putting a
+ * protocol identifier there would hand the conversation's identity to that
+ * software as metadata — including in the privacy mode whose entire purpose is
+ * that nothing identifies the conversation.
  *
  * NO autoCancel, AND THAT IS THE MODEL SHOWING THROUGH. A tap does not read a
  * conversation: it opens a screen that may never finish loading. The
@@ -33,15 +40,13 @@ import org.json.JSONObject
  * swiped away, and the dedup memory would have no way to learn the difference
  * between dismissed and never-shown.
  *
- * WHAT IT CANNOT SAY YET, and the reason is a boundary rather than an
- * omission. The candidate carries `space_id`, `device` and `schema` — no space
- * title, no sender name, no preview. The host may not invent them: naming the
- * space means reading the journal, which is exactly what this architecture
- * refuses, and asking the API from the emit path would put an HTTP round trip
- * inside a notification. So the text is a count, honestly, until the CORE
- * carries a name — which is the prerequisite AR-1b.7's three privacy modes
- * (Hidden / Space / Preview) are built on, and the point at which the
- * distinction between them becomes real at all.
+ * WHAT IT DOES NOT SAY YET, and the restraint is deliberate. The candidate now
+ * carries a space label, a sender label and a preview (AR-1b.5.1) — resolved
+ * by the CORE from state it already holds, because naming a space from up here
+ * would mean reading the journal, which this architecture refuses. They are
+ * carried and not shown: choosing between Hidden, Space and Preview is a
+ * privacy decision with its own gate (AR-1b.7), and rendering a preview by
+ * default would be taking that decision by omission.
  *
  * The content intent opens the space and no further. The EXACT message — and
  * the immutable, per-target-unique PendingIntent that carries it — is
@@ -72,13 +77,12 @@ internal class SystemPresenter(context: Context) : NotificationCoordinator.Prese
             // the coordinator's own memory, where a skewed remote clock cannot
             // reach it.
             //
-            // SECONDS BECOME MILLIS HERE. The protocol says unix SECONDS
-            // (protocol/signal: "advisory only"); Android says millis. Handing
-            // the number over unconverted put every notification in January
-            // 1970 and the shade rendered it as "56y" — seen on the first live
-            // run, which is the only place a units mismatch of this kind ever
-            // shows up.
-            .setWhen(p.items.last().createdAt * 1000L)
+            // Milliseconds, and the field says so. The conversion lives at the
+            // source now (AR-1b.5.1): a number crossing a language boundary
+            // carries its unit in its name, or it eventually carries the wrong
+            // one — which is how every notification once claimed to be from
+            // January 1970 and the shade rendered "56y".
+            .setWhen(p.items.last().occurredAtUnixMs)
             .setShowWhen(true)
             .setAutoCancel(false)
             .setContentIntent(openSpace(p.spaceId))
@@ -97,11 +101,11 @@ internal class SystemPresenter(context: Context) : NotificationCoordinator.Prese
     }
 
     @Synchronized
-    override fun clear(spaceId: String) {
+    override fun clear(spaceId: String, tag: String) {
         clearCalls++
         shown.remove(spaceId)
         try {
-            nm?.cancel("space:$spaceId", NOTIFICATION_ID)
+            nm?.cancel(tag, NOTIFICATION_ID)
         } catch (t: Throwable) {
             Log.w(TAG, "cancel failed for $spaceId", t)
         }
@@ -142,7 +146,7 @@ internal class SystemPresenter(context: Context) : NotificationCoordinator.Prese
                         .put("event_id", it.eventId)
                         .put("device", it.device)
                         .put("schema", it.schema)
-                        .put("created_at", it.createdAt)
+                        .put("occurred_at_unix_ms", it.occurredAtUnixMs)
                 )
             }
             shown[p.spaceId] = JSONObject()

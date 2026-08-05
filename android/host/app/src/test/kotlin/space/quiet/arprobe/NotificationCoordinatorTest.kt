@@ -1,6 +1,7 @@
 package space.quiet.arprobe
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -23,21 +24,30 @@ class NotificationCoordinatorTest {
     /** The store, in memory. Same contract, no SharedPreferences. */
     private class FakeStore : NotificationCoordinator.Store {
         var ids: List<String> = emptyList()
+        val keys = mutableMapOf<String, String>()
         override fun rememberedIds(): List<String> = ids.toList()
         override fun writeRememberedIds(ids: List<String>) {
             this.ids = ids.toList()
         }
+
+        // Opaque and stable, exactly like the real one: what matters to the
+        // decisions is that the SAME space keeps the SAME tag, and that the
+        // tag is not the space id.
+        override fun notificationKey(spaceId: String): String =
+            keys.getOrPut(spaceId) { "k${keys.size}" }
     }
 
     private class FakePresenter : NotificationCoordinator.Presenter {
         val presented = mutableListOf<NotificationCoordinator.Presentation>()
         val cleared = mutableListOf<String>()
+        val clearedTags = mutableListOf<String>()
         override fun present(p: NotificationCoordinator.Presentation) {
             presented.add(p)
         }
 
-        override fun clear(spaceId: String) {
+        override fun clear(spaceId: String, tag: String) {
             cleared.add(spaceId)
+            clearedTags.add(tag)
         }
     }
 
@@ -51,15 +61,35 @@ class NotificationCoordinatorTest {
         co = NotificationCoordinator(presenter, store)
     }
 
-    private fun arrive(eventId: String, spaceId: String) =
-        co.onCandidate(eventId, spaceId, "device-b", "message.text.v1", 1000L, false)
+    private var cursor = 0L
+
+    private fun candidate(
+        eventId: String,
+        spaceId: String,
+        schema: String = "message.text.v1",
+        authoredLocally: Boolean = false,
+        device: String = "device-b",
+    ) = NotificationCoordinator.Candidate(
+        eventId = eventId,
+        spaceId = spaceId,
+        device = device,
+        schema = schema,
+        occurredAtUnixMs = 1_700_000_000_000L,
+        presentationCursor = ++cursor,
+        authoredLocally = authoredLocally,
+        spaceLabel = "Room",
+        senderLabel = "bob",
+        previewText = "a line of text",
+    )
+
+    private fun arrive(eventId: String, spaceId: String) = co.onCandidate(candidate(eventId, spaceId))
 
     // ------------------------------------------------------------- the gates
 
     @Test
     fun ourOwnEventNeverNotifies() {
         fresh()
-        val d = co.onCandidate("e1", "space-a", "device-me", "message.text.v1", 1L, true)
+        val d = co.onCandidate(candidate("e1", "space-a", authoredLocally = true, device = "device-me"))
         assertEquals(NotificationCoordinator.Decision.SUPPRESSED_AUTHORED_LOCALLY, d)
         assertEquals(0, presenter.presented.size)
     }
@@ -77,7 +107,7 @@ class NotificationCoordinatorTest {
             "some.future.v1",          // unknown: silence, not a guess
         )
         for (schema in quiet) {
-            val d = co.onCandidate("e-$schema", "space-a", "device-b", schema, 1L, false)
+            val d = co.onCandidate(candidate("e-$schema", "space-a", schema = schema))
             assertEquals(
                 "$schema woke somebody",
                 NotificationCoordinator.Decision.SUPPRESSED_SCHEMA_NOT_NOTIFIABLE, d,
@@ -91,7 +121,7 @@ class NotificationCoordinatorTest {
         fresh()
         assertEquals(NotificationCoordinator.Decision.PRESENTED, arrive("e1", "space-a"))
         assertEquals(1, presenter.presented.size)
-        assertEquals("space:space-a", presenter.presented[0].tag)
+        assertEquals("space:k0", presenter.presented[0].tag)
     }
 
     // ------------------------------------------------- foreground suppression
@@ -208,7 +238,7 @@ class NotificationCoordinatorTest {
 
         assertEquals(
             NotificationCoordinator.Decision.SUPPRESSED_ALREADY_PRESENTED,
-            restarted.onCandidate("e1", "space-a", "device-b", "message.text.v1", 1L, false),
+            restarted.onCandidate(candidate("e1", "space-a")),
         )
         assertEquals(0, after.presented.size)
     }
@@ -253,8 +283,13 @@ class NotificationCoordinatorTest {
         fresh()
         arrive("e1", "space-a")
         arrive("e2", "space-b")
-        assertEquals("space:space-a", presenter.presented[0].tag)
-        assertEquals("space:space-b", presenter.presented[1].tag)
+        assertEquals("space:k0", presenter.presented[0].tag)
+        assertEquals("space:k1", presenter.presented[1].tag)
+        assertFalse(
+            "a tag must not carry the space id: every notification listener the " +
+                "person has granted access to reads it verbatim",
+            presenter.presented[0].tag.contains("space-a"),
+        )
     }
 
     // --------------------------------------------------- a refused permission

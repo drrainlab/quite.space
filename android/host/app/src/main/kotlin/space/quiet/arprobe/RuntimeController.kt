@@ -89,8 +89,18 @@ class RuntimeController private constructor(appContext: Context) {
         // critical section, and a call back in from here would deadlock
         // against a lock this side cannot see.
         notifications.onCandidate(
-            c.eventID, c.spaceID, c.device, c.schema,
-            c.createdAt, c.authoredLocally,
+            NotificationCoordinator.Candidate(
+                eventId = c.eventID,
+                spaceId = c.spaceID,
+                device = c.device,
+                schema = c.schema,
+                occurredAtUnixMs = c.occurredAtUnixMs,
+                presentationCursor = c.presentationCursor,
+                authoredLocally = c.authoredLocally,
+                spaceLabel = c.spaceLabel,
+                senderLabel = c.senderLabel,
+                previewText = c.previewText,
+            )
         )
     }
 
