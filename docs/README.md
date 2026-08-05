@@ -2,6 +2,9 @@
 
 Additional documentation. Start with ../VISION_AND_ROADMAP.md and ../ENGINEERING_PLAN_M0_M1.md.
 
+- [guide/](guide/README.md) — **руководство пользователя.** Пространства и
+  их виды, приглашения, разговор и резонансы, посты, атмосфера (звук и
+  меняющийся фон), сигналы, навигатор и каталоги, сеть, ассистент.
 - [radio/](radio/README.md) — **радио: с чего начинать.** Какой носитель
   проверен, прошивка RNode, подключение и работа в приложении, утилиты
   командной строки. English: [radio/en/](radio/en/README.md).

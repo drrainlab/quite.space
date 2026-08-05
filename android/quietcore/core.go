@@ -28,10 +28,13 @@ import (
 	"net"
 	"os"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/drrainlab/quiet_places/protocol/quicklink"
 
 	webui "github.com/drrainlab/quiet_places/clients/web-ui"
 	"github.com/drrainlab/quiet_places/node"
@@ -140,6 +143,65 @@ func Start(dir, passphrase, name string, withLAN bool) error {
 	startedAt = time.Now().UTC()
 	lastError = ""
 	return nil
+}
+
+// QuicklinkProbe runs one seal and one open of a quick-link token and returns
+// a JSON line with the timings and the process's memory around them.
+//
+// It lives here rather than only in cmd/android-baseline because the raw-lane
+// harness runs as the shell user, and the shell user is not subject to the
+// app memory class or to the low-memory killer's view of an application
+// process. The 128 MiB transient is the one cost AR-0 flagged as a risk on a
+// low-end device, so it has to be measurable WHERE that risk exists.
+//
+// The seal is collected before the open is timed. Without that, both KDF
+// allocations are live at once and the peak reads as ~2× what redeeming a
+// link actually costs — measured, not theorised: the first phone run reported
+// 264.7 MB before this was fixed.
+func QuicklinkProbe() string {
+	base := currentRSSKB()
+	resetPeakRSS()
+
+	t, err := quicklink.New()
+	if err != nil {
+		return `{"err":` + strconv.Quote(err.Error()) + `}`
+	}
+	payload := quicklink.Payload{
+		PassLink: strings.Repeat("A", 512), From: "ar0", Space: "ar0", MaxUses: 1, ExpiresAt: 1,
+	}
+
+	t0 := time.Now()
+	sealed, err := quicklink.Seal(t, payload)
+	if err != nil {
+		return `{"err":` + strconv.Quote(err.Error()) + `}`
+	}
+	sealNS := time.Since(t0).Nanoseconds()
+	sealPeak := peakRSSKB()
+
+	runtime.GC()
+	debug.FreeOSMemory()
+	resetPeakRSS()
+
+	t1 := time.Now()
+	if _, err := quicklink.Open(t, sealed); err != nil {
+		return `{"err":` + strconv.Quote(err.Error()) + `}`
+	}
+	openNS := time.Since(t1).Nanoseconds()
+
+	var ms runtime.MemStats
+	runtime.ReadMemStats(&ms)
+	b, _ := json.Marshal(map[string]any{
+		"seal_ns":        sealNS,
+		"open_ns":        openNS,
+		"base_rss_kb":    base,
+		"seal_peak_kb":   sealPeak,
+		"open_peak_kb":   peakRSSKB(),
+		"settled_rss_kb": currentRSSKB(),
+		"go_heap_alloc":  ms.HeapAlloc,
+		"go_sys":         ms.Sys,
+		"pid":            os.Getpid(),
+	})
+	return string(b)
 }
 
 // Stop closes the node and the listener. Safe to call when not running — the

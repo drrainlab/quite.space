@@ -108,6 +108,14 @@ public class RigActivity extends Activity {
                     break;
                 case "status":
                     break;
+                case "quicklink":
+                    // The low-memory lane. Runs the 128 MiB KDF HERE, under the
+                    // app UID, where the memory class and the low-memory killer
+                    // actually apply — the raw-lane harness runs as `shell` and
+                    // is not subject to either, so a clean result there would
+                    // say nothing about the risk this measures.
+                    out.put("quicklink", new JSONObject(Quietcore.quicklinkProbe()));
+                    break;
                 default:
                     out.put("ok", false);
                     out.put("error", "unknown cmd: " + cmd);

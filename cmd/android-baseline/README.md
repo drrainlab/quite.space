@@ -360,3 +360,111 @@ the presented identity against an empty string and refuse with *"presented an
 unexpected identity (…)"* — quoting back the very pin that was sent, which
 reads like a mismatch in the relay and is in fact a mismatch in the request.
 Accurate, and briefly baffling.
+
+---
+
+## 2026-08-05 — A PHONE IS NOT A SERVER
+
+The single most important methodological finding of this wave, and it was found
+by the numbers moving when nothing in the software had.
+
+The same three corpora, the same binary, the same phone measured **128–141 ms**
+of scrypt in one session and **177–292 ms** an hour later. Two things had
+changed, and separating them mattered:
+
+1. **A node was running in the background.** The rig's core had been left
+   started and was syncing to the relay every two seconds. Stopping it did not
+   move the median much — but the *variance* collapsed: 180/292/180 ms became
+   178/177/183 ms. A background node is a noise source, not a bias.
+2. **The phone was throttled.** After an hour of memory-hard KDFs it sat at
+   52 °C with `scaling_max_freq` at **1766 MHz against a `cpuinfo_max_freq` of
+   2515 MHz — the ceiling lowered to 70%**. That is the governor acting, not a
+   core idling, and it is the remaining ~1.4×.
+
+So the harness now samples **thermal and power state before and after every
+run** and prints both lines in the report header, beside the
+"OS cache uncontrolled" note and for the same reason: it will not claim a
+condition it did not control, but it will always say what the condition was.
+A phone's clock rate is a function of what it was doing a minute ago, and a
+number quoted without that state is a number nobody can reproduce.
+
+    thermal in   cpu 50.2°C · fastest core 1766/2515 MHz (70%)  ← CEILING LOWERED
+    thermal out  cpu 53.7°C · fastest core 1766/2515 MHz (70%)  ← CEILING LOWERED
+
+Battery sysfs is SELinux-restricted for the shell user on this device, so those
+fields are absent from the report rather than guessed at. The CPU zone and the
+frequency ceiling carry the signal on their own.
+
+**Consequence for every number above:** the desktop-vs-phone ratios are honest
+about a *warm, throttled* phone. A rested phone is faster. Both states are real
+and a budget should be set from the throttled one, because that is the state a
+person's phone is in when they have been using it.
+
+### The topology axis — 4000 events, three shapes, quiet phone
+
+| corpus | shape | verify p50 | replay p50 | per event |
+|---|---|---|---|---|
+| A4000 | 1 space × 4000 | 178.8 ms | 656 ms | 164 µs |
+| T4x1000 | 4 spaces × 1000 | 176.7 ms | 623.7 ms | 156 µs |
+| T20x200 | 20 spaces × 200 | 183.0 ms | 613.3 ms | 153 µs |
+
+**Per-space overhead is not detectable at this scale.** Twenty spaces replay
+marginally *faster* than one, which is within the run-to-run spread. `Open`
+walking spaces serially was a plausible cost and it is not one here — the cost
+is per event, not per space. The harness correctly answered
+`REPLAY SHAPE: NOT CLASSIFIED — the corpora do not form a scaling axis`,
+because they do not: this axis holds the event count fixed on purpose.
+
+### The low-memory screening lane — 2 GB, KDF under the app UID
+
+Run on `Low_memory_2G` through the package host, **a fresh process every
+time** (force-stop, then invoke), because a transient measured in a process
+that already peaked reads as no transient at all.
+
+| run | pid | seal | open | baseline | seal peak | open peak |
+|---|---|---|---|---|---|---|
+| 1 | 3699 | 1286 ms | 516 ms | 109.8 MB | 262.2 MB | 266.8 MB |
+| 2 | 3827 | 943 ms | 638 ms | 104.4 MB | 256.6 MB | 261.1 MB |
+| 3 | 3996 | 1226 ms | 465 ms | 108.8 MB | 259.3 MB | 261.8 MB |
+| 4 | 4117 | 1293 ms | 557 ms | 104.2 MB | 256.9 MB | 262.2 MB |
+| 5 | 4219 | 1042 ms | 472 ms | 104.7 MB | 257.6 MB | 262.2 MB |
+
+    memory class 192 MB · MemTotal 2022512 kB · 4 cores
+
+**5 of 5 survived.** No `REASON_LOW_MEMORY`, no `SIGNALED`: every entry in
+`ApplicationExitInfo` is one of this harness's own force-stops. The process
+reached ~262 MB RSS against a 192 MB memory class and was not killed —
+consistent with the memory class governing the Java heap while Go allocates
+natively.
+
+**The number nobody was looking for: the baseline is ~105 MB.** An app process
+hosting this core costs about 105 MB resident *before any work happens* — ART,
+the JNI bridge, a 17 MB `libgojni.so`, and the Go runtime. That is what the
+baseline/peak/delta split was added to expose, and in a single "peak RSS"
+figure it was invisible. It is also the number that matters most for a genuinely
+low-end device: the KDF's ~130 MB lands on top of 105 MB, not on top of zero.
+
+**What this lane does and does not establish.** A kill here would have been
+strong evidence of a problem. A clean pass is **not** evidence that 2 GB
+devices are fine: one idle AVD does not reproduce the memory pressure of a real
+low-end phone with a dozen apps resident. It is a screen, it is enough for
+AR-0, and the honest verdict on low-end hardware needs low-end hardware.
+
+One caveat on the in-app peaks, stated rather than smoothed: the `open` figure
+here is not cleanly isolated from the `seal` that preceded it, because Go does
+not always return freed pages to the OS, so resetting `VmHWM` between them can
+latch a still-high resident size. The clean isolated figure is the raw lane's
+**Δ 129.8 MB**, measured in a process that did nothing else.
+
+### The instrument AR-0c needs: two clocks
+
+`android/quietcore` now reports `CLOCK_MONOTONIC` and `CLOCK_BOOTTIME` side by
+side, and the rig reports `uptimeMillis` and `elapsedRealtime` beside them.
+
+This is not symmetry for its own sake. Go's `time.Since` reads
+`CLOCK_MONOTONIC`, which **stops while the device is suspended** — which is
+exactly finding 5, the three places in the tree that age things with
+`time.Since` and will believe an overnight doze was minutes. Sampling both
+clocks before and after a Doze gives the suspended time as
+`(boot_delta − mono_delta)`: measured directly, rather than inferred from a
+clock that was asleep for the part being measured.

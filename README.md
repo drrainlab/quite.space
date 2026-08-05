@@ -65,6 +65,9 @@ desktop shell per ADR-011.
   transports T0–T6, milestones M0.0–M0.8 and M1.0–M1.7, demos A–E, testing
   strategy, definition of done.
 - [adr/](adr/README.md) — architecture decision records (ADR-001–010 planned).
+- [docs/guide/](docs/guide/README.md) — user guide: spaces and their kinds,
+  invitations, conversation, posts, post atmosphere, signals, the Navigator,
+  networking. Russian for now; an English version follows.
 - [docs/radio/en/](docs/radio/en/README.md) — talking over LoRa: which
   carrier is proven, flashing an RNode board, attaching and using it, and
   the radio command-line tools. Тот же раздел по-русски:

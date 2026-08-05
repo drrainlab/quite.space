@@ -174,6 +174,8 @@ func cmdMeasure(args []string) error {
 		return fmt.Errorf("cannot find own path (needed for fresh-process probes): %w", err)
 	}
 
+	thermalBefore := readThermal()
+
 	// Verify every corpus BEFORE measuring anything. A mismatch aborts: two
 	// numbers over two different histories look exactly as comparable as two
 	// numbers over one.
@@ -238,7 +240,8 @@ func cmdMeasure(args []string) error {
 	checks := flockChecks(filepath.Join(*work, "flock-internal"), *external)
 	checks = append(checks, keystoreChecks(*work, "android-baseline-keystore")...)
 
-	report(*cond, rs, &qlSeal, &qlOpen, qlSealMem, qlOpenMem, checks)
+	report(*cond, rs, &qlSeal, &qlOpen, qlSealMem, qlOpenMem, checks,
+		thermalBefore, readThermal())
 	return nil
 }
 
@@ -250,7 +253,7 @@ func (m *multiFlag) Set(s string) error { *m = append(*m, s); return nil }
 // ── report ───────────────────────────────────────────────────────────────────
 
 func report(cond string, rs []*corpusRun, qlSeal, qlOpen *series,
-	sealMem, openMem probeResult, checks []check) {
+	sealMem, openMem probeResult, checks []check, tBefore, tAfter thermalState) {
 
 	line := strings.Repeat("─", 74)
 	fmt.Println("\n" + line)
@@ -263,6 +266,11 @@ func report(cond string, rs []*corpusRun, qlSeal, qlOpen *series,
 		fmt.Print("   (OS cache uncontrolled)")
 	}
 	fmt.Println()
+	// A phone's clock rate depends on what it was doing a minute ago. These
+	// two lines are the difference between a number somebody can reproduce
+	// and a number that merely happened.
+	fmt.Printf("thermal in   %s\n", tBefore)
+	fmt.Printf("thermal out  %s\n", tAfter)
 	fmt.Println(line)
 
 	for _, r := range rs {
