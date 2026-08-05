@@ -22,6 +22,8 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import org.json.JSONObject
 
 /**
@@ -116,6 +118,26 @@ class QuietActivity : ComponentActivity() {
             ),
         )
         setContentView(root)
+
+        // EDGE-TO-EDGE IS NOT OPTIONAL ON ANDROID 15 for an app targeting 35:
+        // the system draws the window under the status bar and the navigation
+        // bar whether it was asked to or not. Uncorrected, the interface's own
+        // header renders underneath the clock and the battery — seen on the
+        // Nothing Phone (1) the first time this screen ran there.
+        //
+        // The inset is applied HERE, as padding, rather than left to the web
+        // UI. A WebView reports `env(safe-area-inset-*)` only with
+        // viewport-fit=cover and a display-cutout mode that permits it, and
+        // there is no env() anywhere in the stylesheet today — RS-0c is that
+        // work. Until then the platform seam is closed where platform seams
+        // belong: in the host, not in the page.
+        ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
+            val bars = insets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+            )
+            view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            insets
+        }
 
         controller.addListener(runtimeListener)   // also renders the current state
         takeTarget(intent)
