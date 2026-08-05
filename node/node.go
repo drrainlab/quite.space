@@ -529,7 +529,7 @@ func (r *Runtime) attach(tid id.TerminalID, s *terminals.Space) {
 		// AR-1b: the notification plane, and it is DISARMED during Open's
 		// replays — a host cannot arm it until Open has returned, so history
 		// is unable to notify by construction rather than by a filter.
-		r.notifyAbsorbed(tid, a)
+		r.notifyAbsorbed(tid, s, a)
 		if a.Env.Device == r.Device.ID {
 			_ = s.Trust.RecordLocal(a.ID, tid, claims.DeliveryCreatedLocal)
 			if r.lanNode != nil || r.mesh != nil {

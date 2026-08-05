@@ -53,15 +53,37 @@ type Candidate struct {
 	SpaceID string
 	Device  string
 	Schema  string
-	// CreatedAt is the AUTHOR's clock, unverified and not ours. It is here for
-	// ordering a conversation's own messages, never for deciding what is new:
-	// a device with a skewed clock would otherwise be able to suppress or
-	// resurrect notifications on somebody else's phone.
-	CreatedAt int64
+
+	// OccurredAtUnixMs is the AUTHOR's clock, in MILLISECONDS, unverified and
+	// not ours. The unit is in the name because the version without it cost a
+	// live run: the protocol counts seconds, Android counts milliseconds, and
+	// the shade rendered every notification as "56y" ago.
+	//
+	// For ordering what a person is shown, never for deciding what is new —
+	// that is PresentationCursor's job, and a device with a skewed clock must
+	// not be able to silence or resurrect notifications on somebody else's
+	// phone.
+	OccurredAtUnixMs int64
+
+	// PresentationCursor is monotonic in this runtime's stream of applied
+	// events, assigned after verify and apply. Not a protocol frontier and not
+	// comparable across nodes OR across runs: it is scoped to one runtime, so
+	// a host that stores it must store the runtime epoch beside it and treat a
+	// change of epoch as "there is nothing to resume".
+	PresentationCursor int64
+
 	// AuthoredLocally marks our own event. A person is not told about the
 	// thing they just did, and the host does not have to work out who they are
 	// to know that.
 	AuthoredLocally bool
+
+	// The presentation snapshot: what may be SHOWN, as opposed to what may be
+	// acted on. Every field is optional and an empty one is ordinary. Nothing
+	// in the dedup or the cursor depends on them, so a missing label can never
+	// cost a notification.
+	SpaceLabel  string
+	SenderLabel string
+	PreviewText string
 }
 
 // NotificationSink is implemented in JAVA. Two obligations, stated because
@@ -83,6 +105,12 @@ var (
 
 	notifyDelivered atomic.Int64
 	notifyDropped   atomic.Int64
+
+	// notifyBaseline is the cursor the core reported when the plane was last
+	// attached. Reported in Status so a host can tell "nothing has happened
+	// since I attached" from "I have not been listening" — the two look
+	// identical from the shade.
+	notifyBaseline atomic.Int64
 )
 
 // ArmNotifications installs the host's sink. Safe to call before the core is
@@ -128,7 +156,10 @@ func armRuntime(r *node.Runtime) {
 		r.ArmNotifications(nil)
 		return
 	}
-	r.ArmNotifications(func(c node.NotificationCandidate) {
+	// AttachNotifications, not ArmNotifications: the baseline cursor is read
+	// and the sink installed in ONE critical section, so no event can be
+	// applied between a host learning where it stands and being able to hear.
+	notifyBaseline.Store(int64(r.AttachNotifications(func(c node.NotificationCandidate) {
 		notifyMu.Lock()
 		q := notifyQ
 		notifyMu.Unlock()
@@ -137,19 +168,23 @@ func armRuntime(r *node.Runtime) {
 		}
 		select {
 		case q <- &Candidate{
-			EventID:         c.EventID.Hex(),
-			SpaceID:         c.SpaceID.Hex(),
-			Device:          c.Device.Hex(),
-			Schema:          c.Schema,
-			CreatedAt:       int64(c.CreatedAt),
-			AuthoredLocally: c.AuthoredLocally,
+			EventID:            c.EventID.Hex(),
+			SpaceID:            c.SpaceID.Hex(),
+			Device:             c.Device.Hex(),
+			Schema:             c.Schema,
+			OccurredAtUnixMs:   int64(c.OccurredAtUnixMs),
+			PresentationCursor: int64(c.PresentationCursor),
+			AuthoredLocally:    c.AuthoredLocally,
+			SpaceLabel:         c.SpaceLabel,
+			SenderLabel:        c.SenderLabel,
+			PreviewText:        c.PreviewText,
 		}:
 		default:
 			// Drop, count, and never block: this runs inside the absorb path,
 			// where waiting on a host would stall sync for everybody.
 			notifyDropped.Add(1)
 		}
-	})
+	})))
 }
 
 // notifyPump is the one goroutine that calls Java. It outlives Stop and Start
@@ -191,5 +226,6 @@ func notifyStatus() map[string]any {
 		"notify_armed":     armed,
 		"notify_delivered": notifyDelivered.Load(),
 		"notify_dropped":   notifyDropped.Load(),
+		"notify_baseline":  notifyBaseline.Load(),
 	}
 }

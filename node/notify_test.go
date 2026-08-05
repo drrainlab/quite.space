@@ -18,8 +18,10 @@ package node
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/transports/relay"
@@ -182,5 +184,188 @@ func TestJoiningASpaceWithHistoryDoesNotNotifyForThatHistory(t *testing.T) {
 		t.Errorf("joining a space with %d prior messages produced %d notifications — "+
 			"a person joining a long-running room would be told about every "+
 			"message ever written in it", history, historical)
+	}
+}
+
+// AR-1b.5.1 — the presentation snapshot, the cursor, and the units.
+//
+// Every one of these is a field a host will act on, and each has a way of
+// being quietly wrong that only shows up on a device: a timestamp in the wrong
+// unit renders as 1970, a cursor that does not advance makes "everything up to
+// here" meaningless, and a label resolved from the wrong side turns somebody
+// else's name onto a person's message.
+func TestACandidateCarriesItsUnitsItsCursorAndWhatMayBeShown(t *testing.T) {
+	dir := t.TempDir()
+	rt := openRuntime(t, dir, "alice")
+	defer rt.Close()
+
+	tid, err := rt.CreateSpace("Long Room")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var mu sync.Mutex
+	var got []NotificationCandidate
+	baseline := rt.AttachNotifications(func(c NotificationCandidate) {
+		mu.Lock()
+		got = append(got, c)
+		mu.Unlock()
+	})
+
+	before := time.Now().Add(-2 * time.Second).UnixMilli()
+	if _, err := rt.Say(tid, "the first thing said", SayOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.Say(tid, "the second thing said", SayOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	after := time.Now().Add(2 * time.Second).UnixMilli()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != 2 {
+		t.Fatalf("%d candidates, want 2", len(got))
+	}
+
+	// MILLISECONDS, and the window is the assertion. A value in seconds would
+	// land in January 1970 and fail this by fifty-six years — which is exactly
+	// how the defect announced itself in a notification shade.
+	for i, c := range got {
+		if int64(c.OccurredAtUnixMs) < before || int64(c.OccurredAtUnixMs) > after {
+			t.Errorf("candidate %d: occurred_at_unix_ms %d is outside [%d, %d] — "+
+				"a value in seconds would land in 1970", i, c.OccurredAtUnixMs, before, after)
+		}
+	}
+
+	// The cursor is monotonic and starts past the baseline the attach
+	// returned. Without the second half, a cursor that always reported 1
+	// would satisfy "monotonic" and tell a host nothing.
+	if got[0].PresentationCursor <= baseline {
+		t.Errorf("first cursor %d is not past the attach baseline %d",
+			got[0].PresentationCursor, baseline)
+	}
+	if got[1].PresentationCursor <= got[0].PresentationCursor {
+		t.Errorf("cursor did not advance: %d then %d",
+			got[0].PresentationCursor, got[1].PresentationCursor)
+	}
+
+	// The presentation snapshot: shown, never acted on.
+	if got[0].SpaceLabel != "Long Room" {
+		t.Errorf("space label %q, want %q", got[0].SpaceLabel, "Long Room")
+	}
+	if got[0].SenderLabel != "alice" {
+		t.Errorf("sender label %q, want %q", got[0].SenderLabel, "alice")
+	}
+	if got[0].PreviewText != "the first thing said" {
+		t.Errorf("preview %q, want the message text", got[0].PreviewText)
+	}
+}
+
+// A preview is bounded at the SOURCE. A host that receives a whole post has
+// been handed more of a person's content than it can ever display, and the
+// bound belongs where the content is, not where it is rendered.
+func TestAPreviewIsBoundedBeforeItLeavesTheCore(t *testing.T) {
+	rt := openRuntime(t, t.TempDir(), "alice")
+	defer rt.Close()
+	tid, err := rt.CreateSpace("Room")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var mu sync.Mutex
+	var got NotificationCandidate
+	rt.AttachNotifications(func(c NotificationCandidate) {
+		mu.Lock()
+		got = c
+		mu.Unlock()
+	})
+
+	long := strings.Repeat("я", 4000) // multi-byte on purpose: the bound is runes
+	if _, err := rt.Say(tid, long, SayOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if n := len([]rune(got.PreviewText)); n > maxPreviewRunes+1 {
+		t.Fatalf("preview is %d runes, want at most %d plus an ellipsis",
+			n, maxPreviewRunes)
+	}
+	if !strings.HasSuffix(got.PreviewText, "…") {
+		t.Error("a clipped preview does not say it was clipped")
+	}
+}
+
+// AR-1b.5.2 — attaching is ONE operation.
+//
+// The obvious shape is two: read the cursor, remember it as a baseline, then
+// subscribe. An event applied between those two steps is past the baseline and
+// before the sink — announced to nobody, recoverable by nobody, and reported
+// as missing by nothing.
+//
+// The assertion is a CONTIGUITY claim rather than a count, because that is
+// what the window actually breaks: every cursor a host sees must follow its
+// baseline with no gap. A lost event leaves a hole in the sequence, and a hole
+// is visible however the scheduler happened to interleave the goroutines.
+//
+// ITS SENSITIVITY IS HONEST ABOUT ITSELF. This detects a race, so it detects
+// wide windows reliably and narrow ones probabilistically. Red-proofed against
+// a two-step attach: with a 10 ms gap between reading the cursor and
+// installing the sink it fails on the first round; with 200 µs it survived
+// forty rounds. So it is a guard against the SHAPE returning, not a proof that
+// no window of any size exists — the proof of that is the single critical
+// section, which is right there to read.
+func TestAttachingIsAtomicWithEmission(t *testing.T) {
+	rt := openRuntime(t, t.TempDir(), "alice")
+	defer rt.Close()
+	tid, err := rt.CreateSpace("Room")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A writer running the whole time, so attaching always lands in the
+	// middle of a stream rather than in a quiet moment nobody races.
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; ; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			if _, err := rt.Say(tid, fmt.Sprintf("during %d", i), SayOptions{}); err != nil {
+				return
+			}
+		}
+	}()
+	defer func() { close(stop); <-done }()
+
+	for round := 0; round < 200; round++ {
+		var mu sync.Mutex
+		var seen []uint64
+		baseline := rt.AttachNotifications(func(c NotificationCandidate) {
+			mu.Lock()
+			seen = append(seen, c.PresentationCursor)
+			mu.Unlock()
+		})
+		time.Sleep(time.Millisecond)
+		rt.AttachNotifications(nil)
+
+		mu.Lock()
+		got := append([]uint64(nil), seen...)
+		mu.Unlock()
+
+		want := baseline + 1
+		for _, c := range got {
+			if c != want {
+				t.Fatalf("round %d: baseline %d then cursors %v — "+
+					"a gap at %d means an event was applied between reading the "+
+					"cursor and installing the sink, and nothing would ever "+
+					"have reported it missing", round, baseline, got, want)
+			}
+			want++
+		}
 	}
 }
