@@ -30,16 +30,17 @@
              keeps an activity in its task, and a rig that finished would leave
              the process component-less and therefore first in line for the
              low-memory killer — a harsher lifecycle than the product's, which
-             would make background -> return fail for a reason that is ours. -->
+             would make background -> return fail for a reason that is ours.
+
+             NO LAUNCHER CATEGORY ANY MORE. The product screen is what a person
+             opens, in every variant, and two launcher icons in a debug build
+             is how a measurement gets taken against the wrong one. The harness
+             never needed it: it addresses the component explicitly, as
+             `am start -n <pkg>/.RigActivity`. -->
         <activity
             android:name=".RigActivity"
             android:exported="true"
-            android:launchMode="singleTask">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
+            android:launchMode="singleTask" />
 
         <!-- The second process, for the one assertion that cannot be made by a
              second call: two PROCESSES under one app UID opening one data

@@ -83,6 +83,17 @@ class RuntimeController private constructor(appContext: Context) {
     val notifications: NotificationCoordinator =
         NotificationCoordinator(presenter, PrefsNotificationStore(app))
 
+    private val sink = NotificationSink { c: Candidate ->
+        // Called on a GO goroutine. It must return promptly and must not reach
+        // back into the core — the emit path runs inside the runtime's own
+        // critical section, and a call back in from here would deadlock
+        // against a lock this side cannot see.
+        notifications.onCandidate(
+            c.eventID, c.spaceID, c.device, c.schema,
+            c.createdAt, c.authoredLocally,
+        )
+    }
+
     init {
         // ARMED AT APPLICATION SCOPE, BEFORE ANY CORE IS OPEN — and that
         // ordering is the invariant, not an optimisation. The binding arms the
@@ -90,16 +101,23 @@ class RuntimeController private constructor(appContext: Context) {
         // this sink however early it is installed; installing it LATE, on the
         // other hand, would lose the first events of a session to a race with
         // whichever screen happened to come up first.
-        Quietcore.armNotifications(NotificationSink { c: Candidate ->
-            // Called on a GO goroutine. It must return promptly and must not
-            // reach back into the core — the emit path runs inside the
-            // runtime's own critical section, and a call back in from here
-            // would deadlock against a lock this side cannot see.
-            notifications.onCandidate(
-                c.eventID, c.spaceID, c.device, c.schema,
-                c.createdAt, c.authoredLocally,
-            )
-        })
+        Quietcore.armNotifications(sink)
+    }
+
+    /**
+     * What the person's answer to the permission means, all the way down.
+     *
+     * A refusal does not merely stop the host from posting: it DISARMS the
+     * core, so no candidate is produced at all. Producing them and dropping
+     * them on this side would burn the bounded queue, count drops nobody can
+     * act on, and make the status lie about why nothing appeared.
+     *
+     * Re-arming reaches the live runtime, so a person who turns notifications
+     * back on in settings does not have to restart anything.
+     */
+    fun setNotificationsEnabled(on: Boolean) {
+        notifications.setEnabled(on)
+        if (on) Quietcore.armNotifications(sink) else Quietcore.disarmNotifications()
     }
 
     /**

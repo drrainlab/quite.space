@@ -22,5 +22,14 @@ class QuietApp : Application() {
     override fun onCreate() {
         super.onCreate()
         RuntimeController.get(this)
+
+        // Channels are created here rather than where the first notification
+        // is posted: from API 26 a notification without one is not shown at
+        // all, and the first one this app ever posts may be produced while no
+        // screen exists — a candidate arrives from a Go goroutine, not from a
+        // tap. Creating them is idempotent, so it happens where it cannot be
+        // missed. See NotificationChannels for why the ids are effectively
+        // frozen the moment they first exist.
+        NotificationChannels.ensure(this)
     }
 }

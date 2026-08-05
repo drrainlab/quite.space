@@ -2,14 +2,13 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!-- The core syncs through a relay, so INTERNET is not optional.
-         POST_NOTIFICATIONS is deliberately ABSENT: AR-1b.2 decides what would
-         be shown and shows nothing, and the permission arrives with AR-1b.3 —
-         the commit that also asks for it at a moment a person can understand
-         and treats a refusal as an ordinary state rather than a startup error.
-         A permission declared before anything can use it is a promise with
-         nothing behind it. -->
+         POST_NOTIFICATIONS arrives with AR-1b.3, in the same commit as the
+         screen that asks for it: a permission declared before anything can
+         use it is a promise with nothing behind it. A refusal is an ordinary
+         state — the node still syncs and the log is still the truth. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- No foreground service and no FCM: AR-1c and AR-1d, each with its own
          honest battery contract. -->
@@ -18,7 +17,28 @@
         android:name=".QuietApp"
         android:label="Quiet"
         android:allowBackup="false"
-        android:usesCleartextTraffic="true" />
+        android:usesCleartextTraffic="true">
+
+        <!-- The product screen, in EVERY variant. Cleartext is loopback only:
+             the interface is served by our own node over 127.0.0.1, which is
+             also why the WebView is pinned to that origin.
+
+             singleTask because a notification tap must reach the SAME process
+             and the same runtime through onNewIntent rather than stacking a
+             second Activity over a node that is already open. -->
+        <activity
+            android:name=".QuietActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+    </application>
 
     <!-- AR-0's rig — RigActivity and the :contender process — lives in
          src/debug/AndroidManifest.xml. It is a MEASUREMENT surface: an

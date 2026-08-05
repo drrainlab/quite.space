@@ -74,6 +74,13 @@ android {
 dependencies {
     implementation(files("libs/quietcore.aar"))
 
+    // AR-1b.3. ONE AndroidX dependency, for one thing: registerForActivityResult
+    // is the supported way to request a runtime permission, and the deprecated
+    // onRequestPermissionsResult path would have to be replaced anyway. This is
+    // not the door opening for Compose, Hilt or Navigation — the interface
+    // stays the web UI the node already serves.
+    implementation("androidx.activity:activity:1.9.3")
+
     // AR-1b.2. Plain JUnit on the JVM, not instrumentation: the notification
     // decisions are ordinary Java by design — no Android type appears in
     // NotificationCoordinator — so they run in milliseconds on any machine
