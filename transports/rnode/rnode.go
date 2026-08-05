@@ -398,8 +398,17 @@ func (r *Radio) FrameAirtime(n int) time.Duration {
 	return r.set.Airtime(n) + txGuard
 }
 
-// txGuard is the measured gap between modelled air and observed wall clock.
-const txGuard = 700 * time.Millisecond
+// TxGuard is the measured gap between modelled air and observed wall clock.
+//
+// Exported because anything pricing this carrier's seconds must price them
+// the SAME way. It was unexported, so a measurement elsewhere used bare
+// Settings.Airtime and understated every frame by 700 ms — which produced a
+// ceiling prediction of 2586 bytes against the 2155 a real board derives.
+// Two spellings of one fact, and the live check is what caught it.
+const TxGuard = 700 * time.Millisecond
+
+// txGuard is the internal spelling, kept so existing call sites read the same.
+const txGuard = TxGuard
 
 // EstimatedTxEnd reports when the modem's queue is expected to drain, per
 // radiotransfer.AirtimeModel.

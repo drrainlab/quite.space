@@ -384,11 +384,24 @@ func (l Limits) check() error {
 //	                                                        which nothing
 //	                                                        else moves
 //
-// Twenty seconds admits everything a conversation is made of and refuses the
-// thing that stops one. It is a var so a future profile — or a person who
-// decides differently for their own segment — can move it without a rebuild
-// of the reasoning.
-var EventAirtimeBudget = 20 * time.Second
+// THIRTY seconds, and the number was corrected by hardware rather than
+// chosen twice.
+//
+// The intent is the owner's: a picture small enough to cost seconds rather
+// than minutes should travel, because that class is not crippled media — it
+// is the thing the emoji work will be built on. Twenty-five was picked to
+// admit it, from a prediction of 2586 bytes; a real board then derived 2155
+// and refused it anyway. The gap was TxGuard, 700 ms per frame that one
+// measurement counted and another did not, so the budget had been set against
+// air that costs less than the air actually does.
+//
+// Priced honestly, a 2 KiB preview is six frames and 27.6 seconds. Thirty
+// buys six frames with room to spare, which is what the intent needs; the
+// eight-KiB class stays out at twenty-one frames and a minute and a half.
+//
+// It stays a var so a future profile — or a person who decides differently
+// for their own segment — can move it without rebuilding the reasoning.
+var EventAirtimeBudget = 30 * time.Second
 
 // eventCeiling turns that budget into bytes for THIS carrier.
 //

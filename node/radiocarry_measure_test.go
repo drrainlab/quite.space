@@ -31,7 +31,14 @@ func framesFor(n int) (frames int, seconds float64) {
 		return 0, 0
 	}
 	frames = (n + perFrame - 1) / perFrame
-	full := rnode.LongFastRU().Airtime(rnode.MaxFrame).Seconds()
+	// The SAME cost the ceiling is derived from — Settings.Airtime PLUS the
+	// transmit guard, which is the measured gap between modelled air and the
+	// wall clock. Pricing a frame without it understates every number here by
+	// 700 ms, which is exactly what it did: the ceiling computed on real
+	// hardware came out 2155 bytes while this test predicted 2586, and the
+	// difference was entirely one function disagreeing with another about
+	// what a frame costs.
+	full := (rnode.LongFastRU().Airtime(rnode.MaxFrame) + rnode.TxGuard).Seconds()
 	return frames, float64(frames) * full
 }
 

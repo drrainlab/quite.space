@@ -13,9 +13,13 @@ import (
 // image or refused the message would be wrong in a way a person feels: the
 // first jams a channel for six minutes, the second breaks a conversation.
 func TestTheCeilingAdmitsAConversationAndRefusesAPhoto(t *testing.T) {
-	// 500-byte frames at ~3.9 s each — the RU long-fast profile, measured.
+	// 500-byte frames at 4.593 s each — the RU long-fast profile as a REAL
+	// BOARD reports it, transmit guard included. An earlier version of this
+	// test used 3.9 s, the modelled air without the guard, and so predicted a
+	// ceiling 431 bytes larger than hardware derives. A test that prices the
+	// air differently from the thing it is testing proves nothing.
 	const mtu = 500
-	perFrame := 3900 * time.Millisecond
+	perFrame := 4593 * time.Millisecond
 
 	key, err := DeriveTransferKey(make([]byte, MinSeedLen), KDFVersion)
 	if err != nil {
@@ -46,7 +50,12 @@ func TestTheCeilingAdmitsAConversationAndRefusesAPhoto(t *testing.T) {
 		{"a short message", 340, true},
 		{"a reaction", 387, true},
 		{"a long message", 857, true},
-		{"an image, 2 KiB preview", 2388, false},
+		// Deliberately ADMITTED, at the owner's decision: a picture that
+		// costs seconds rather than minutes is its own class, and the one
+		// the emoji work will be built on. Twenty seconds refused this by
+		// 233 bytes; twenty-five carries it.
+		{"an image, 2 KiB preview", 2388, true},
+		{"an image, 8 KiB preview", 8532, false},
 		{"an image, 40 KiB preview", 41300, false},
 	} {
 		if got := c.CarriesEvent(s.size); got != s.want {
