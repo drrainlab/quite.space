@@ -1,5 +1,6 @@
 plugins {
     id("com.android.application")
+    id("org.jetbrains.kotlin.android")
 }
 
 android {
@@ -28,9 +29,37 @@ android {
         }
     }
 
+    // AR-0's MEASUREMENT RIG LIVES IN THE DEBUG SOURCE SET, and the separation
+    // is the point rather than tidiness. RigActivity and ContenderActivity are
+    // an intent-driven control surface and a second process that deliberately
+    // fights for the data-dir lock: correct for a gate, and things no shipped
+    // application may carry. They stay JAVA and stay byte-for-byte what AR-0
+    // measured — a frozen artifact is not improved by being ported.
+    //
+    // Everything under src/main is the product host, in Kotlin, and cannot
+    // reach the rig: a release variant simply does not compile it.
+    sourceSets {
+        getByName("main") {
+            java.srcDirs("src/main/kotlin")
+        }
+        getByName("debug") {
+            java.srcDirs("src/debug/java")
+            manifest.srcFile("src/debug/AndroidManifest.xml")
+        }
+        getByName("test") {
+            java.srcDirs("src/test/kotlin")
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    kotlin {
+        compilerOptions {
+            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+        }
     }
 
     packaging {
@@ -44,4 +73,11 @@ android {
 
 dependencies {
     implementation(files("libs/quietcore.aar"))
+
+    // AR-1b.2. Plain JUnit on the JVM, not instrumentation: the notification
+    // decisions are ordinary Java by design — no Android type appears in
+    // NotificationCoordinator — so they run in milliseconds on any machine
+    // rather than needing a booted device to answer whether a swipe clears
+    // the dedup.
+    testImplementation("junit:junit:4.13.2")
 }

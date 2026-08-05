@@ -95,16 +95,25 @@ public class RigActivity extends Activity {
             out.put("cmd", cmd);
             out.put("ok", true);
 
-            File dir = dataDir();
+            // AR-1a: the ACTIVITY NO LONGER OWNS THE CORE. It asks the
+            // Application-scoped controller, which outlives every rotation,
+            // every recreated WebView and every "Don't keep activities".
+            final RuntimeController rc = RuntimeController.get(this);
             switch (cmd) {
                 case "start":
-                    Quietcore.start(dir.getAbsolutePath(),
-                            pass == null ? "" : pass,
-                            name == null ? "me" : name,
-                            lan);
+                    rc.ensureStarted(pass, name, lan);
+                    // The controller is asynchronous; the harness contract is
+                    // that an answer carrying our seq means the work is DONE.
+                    // So wait for the runtime to leave "opening" — reading the
+                    // state rather than sleeping a guessed interval.
+                    awaitSettled(rc);
                     break;
                 case "stop":
-                    Quietcore.stop();
+                    rc.stop();
+                    // A stop is done when the runtime is gone, not when it has
+                    // stopped "opening" — the same wait would have returned at
+                    // once and reported a stop that had not happened yet.
+                    awaitState(rc, "unavailable");
                     break;
                 case "status":
                     break;
@@ -151,12 +160,25 @@ public class RigActivity extends Activity {
         post(out);
     }
 
-    /** The data directory is the real one — app-private internal storage. */
-    private File dataDir() {
-        File dir = new File(getFilesDir(), "node");
-        //noinspection ResultOfMethodCallIgnored
-        dir.mkdirs();
-        return dir;
+    /**
+     * Waits for the runtime to stop being mid-operation. Bounded, because a
+     * harness that hangs teaches people to stop running it — AR-0c learned
+     * that from a live-lock that had to be found with a goroutine dump.
+     */
+    private static void awaitSettled(RuntimeController rc) {
+        for (int i = 0; i < 600 && "opening".equals(rc.state()); i++) {
+            try { Thread.sleep(100); } catch (InterruptedException e) {
+                Thread.currentThread().interrupt(); return;
+            }
+        }
+    }
+
+    private static void awaitState(RuntimeController rc, String want) {
+        for (int i = 0; i < 600 && !want.equals(rc.state()); i++) {
+            try { Thread.sleep(100); } catch (InterruptedException e) {
+                Thread.currentThread().interrupt(); return;
+            }
+        }
     }
 
     /**
