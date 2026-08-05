@@ -73,15 +73,32 @@ class RuntimeController private constructor(appContext: Context) {
     private val starting = AtomicBoolean(false)
 
     /**
+     * Whether notifications were on the last time anybody said. Durable
+     * because the interesting thing is the TRANSITION — see
+     * setNotificationsEnabled — and a transition cannot be seen by a process
+     * that has just started.
+     */
+    private val enabledPrefs = app.getSharedPreferences("quiet-notifications", Context.MODE_PRIVATE)
+
+    /**
      * AR-1b: the notification plane, owned HERE for the same reason the
      * runtime is — it must outlive every Activity. A coordinator that died
      * with a screen would forget on every rotation which notifications it had
      * already shown, and show them again.
      */
     private val presenter = SystemPresenter(this.app)
+    private val ledger = SqliteLedger(this.app)
 
-    val notifications: NotificationCoordinator =
-        NotificationCoordinator(presenter, PrefsNotificationStore(app))
+    val notifications: NotificationCoordinator = NotificationCoordinator(
+        presenter,
+        ledger,
+        // The acknowledgement goes straight to the core: from here the log may
+        // stop replaying this candidate, because the host has it in its own
+        // durable storage. Called on the Go goroutine that delivered it, and
+        // cheap enough to be — it is one map lookup and a counter behind the
+        // binding's own lock.
+        { eventId -> Quietcore.ackNotification(eventId) },
+    )
 
     private val sink = NotificationSink { c: Candidate ->
         // Called on a GO goroutine. It must return promptly and must not reach
@@ -112,6 +129,20 @@ class RuntimeController private constructor(appContext: Context) {
         // other hand, would lose the first events of a session to a race with
         // whichever screen happened to come up first.
         Quietcore.armNotifications(sink)
+
+        // WHAT THE PROCESS DIED IN THE MIDDLE OF (AR-1b.5.3c). Rows that were
+        // acknowledged to the core but never confirmed as posted are posted
+        // now — under the same (tag, id), so a crash that happened AFTER the
+        // shade already showed one updates that entry rather than adding a
+        // second. Runs before anything else can arrive, on the controller's
+        // own thread because it touches SQLite.
+        worker.execute {
+            try {
+                notifications.recoverPending()
+            } catch (t: Throwable) {
+                Log.w(TAG, "pending recovery failed", t)
+            }
+        }
     }
 
     /**
@@ -126,8 +157,41 @@ class RuntimeController private constructor(appContext: Context) {
      * back on in settings does not have to restart anything.
      */
     fun setNotificationsEnabled(on: Boolean) {
+        val was = enabledPrefs.getBoolean(KEY_ENABLED, false)
         notifications.setEnabled(on)
-        if (on) Quietcore.armNotifications(sink) else Quietcore.disarmNotifications()
+
+        if (!on) {
+            enabledPrefs.edit().putBoolean(KEY_ENABLED, false).commit()
+            Quietcore.disarmNotifications()
+            return
+        }
+
+        // TURNED BACK ON AFTER BEING OFF: everything the core held back while
+        // nobody could render it becomes history, deliberately.
+        //
+        // Without this, granting the permission after a week would produce a
+        // week of messages at once: the core does not forget unacknowledged
+        // candidates — that is the whole point of the watermark — so the
+        // backlog would arrive the moment the plane re-attached. Somebody who
+        // switches notifications on wants the NEXT message, not every one they
+        // chose not to be told about.
+        //
+        // The transition is what triggers it, not the state: an ordinary
+        // start with the permission already granted must resume normally, or
+        // every launch would eat whatever a crash left unacknowledged.
+        if (!was) {
+            enabledPrefs.edit().putBoolean(KEY_ENABLED, true).commit()
+            worker.execute {
+                try {
+                    Quietcore.resetNotificationPlane()
+                } catch (t: Throwable) {
+                    Log.w(TAG, "reset after re-enabling failed", t)
+                }
+                Quietcore.armNotifications(sink)
+            }
+            return
+        }
+        Quietcore.armNotifications(sink)
     }
 
     /**
@@ -240,6 +304,8 @@ class RuntimeController private constructor(appContext: Context) {
             // a screen, a permission dialog or a person watching a shade.
             val n = JSONObject(notifications.stats() as Map<*, *>)
             n.put("presenter", presenter.snapshot())
+            n.put("ledger", JSONObject(ledger.stats() as Map<*, *>))
+            n.put("plane", Quietcore.notificationPlaneState())
             out.put("notifications", n)
         } catch (e: Exception) {
             Log.w(TAG, "snapshot failed", e)
@@ -260,6 +326,7 @@ class RuntimeController private constructor(appContext: Context) {
 
     companion object {
         private const val TAG = "quiet-runtime"
+        private const val KEY_ENABLED = "notifications_enabled"
 
         const val STATE_UNAVAILABLE = "unavailable"
         const val STATE_OPENING = "opening"

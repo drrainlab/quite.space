@@ -1,25 +1,34 @@
 package space.quiet.arprobe
 
-import java.util.ArrayDeque
-
 /**
- * AR-1b.2 — the one place that decides whether a verified event becomes a
- * notification.
+ * AR-1b.2 + AR-1b.5.3c — the one place that decides whether a verified event
+ * becomes a notification, and the order in which that becomes durable.
  *
  * NO ANDROID TYPES APPEAR IN THIS FILE, and that is the design rather than a
- * preference. Every hazard this class defends against — historical replay,
- * reconnect, process restart, an event arriving for the space already on
- * screen — is a DECISION, and a decision that can only be exercised on a
- * device is a decision nobody tests. Channels, `MessagingStyle`, shortcuts and
- * `PendingIntent`s live behind [Presenter] and land in AR-1b.3–b.6; storage
- * lives behind [Store]. What is left is ordinary Kotlin that a JVM test drives
- * through a thousand candidates in milliseconds.
+ * preference. Every hazard here is a DECISION, and a decision that can only be
+ * exercised on a device is a decision nobody tests. Storage lives behind
+ * [Ledger], the system surface behind [Presenter], and the core behind
+ * [Acker]; what is left is ordinary Kotlin a JVM test drives through a
+ * thousand candidates in milliseconds.
  *
- * The semantics come from the core, never from here: a candidate exists only
- * after the event was decrypted, signature-checked and applied to the log.
- * This class translates a verified meaning into an Android surface. It does
- * not decide what an event MEANS, and it never reads the DOM, the WebView or
- * the screen to find out.
+ * THE ORDER IS THE CONTRACT, and every step of it answers a crash:
+ *
+ * ```
+ *   durable insert as pending   the host now holds it, whatever happens next
+ *   acknowledge to the core     the log may stop replaying it
+ *   post to the system          the person is told
+ *   mark presented              and now we know they were
+ * ```
+ *
+ * Reversing any two loses something. Acknowledging before the insert means a
+ * crash in between drops the candidate from both sides at once. Posting before
+ * the insert means a notification nothing remembers, which a swipe then cannot
+ * deduplicate. Marking presented before posting means recovery believes a
+ * shade was told something it never saw.
+ *
+ * Everything that lands mid-sequence is recoverable, and recovery is
+ * idempotent because the pair (tag, id) updates one system entry rather than
+ * making a second.
  *
  * POSTED, DISMISSED AND READ ARE THREE DIFFERENT EVENTS (AR-1b.8), and
  * collapsing any two produces a specific, familiar bug:
@@ -34,27 +43,18 @@ import java.util.ArrayDeque
  *              never finish loading.
  * ```
  *
- * WHAT THE DURABLE DEFENCE ACTUALLY IS, stated because it is weaker than the
- * plan's word "frontier" suggests. AR-1b.1 shipped a candidate carrying
- * `event_id · space_id · device · schema · created_at · authored_locally` and
- * no `applied_frontier`. So there is no monotonic number to persist here, and
- * `created_at` cannot stand in for one: it is the author's own clock,
- * unverified, and a device with a skewed clock could then silence or
- * resurrect notifications on somebody else's phone.
- *
- * What is left is honest and bounded: a durable set of recently PRESENTED
- * event ids, FIFO, capped. It closes the two hazards it was pointed at —
- * reconnect and process restart both re-deliver RECENT events — and it does
- * not close a re-delivery older than the cap. That case is recorded rather
- * than papered over; closing it properly needs the frontier in the DTO, which
- * is a core change and belongs to AR-1b.5.
+ * A REFUSED PERMISSION IS TERMINAL, NOT A QUEUE. A candidate that arrives
+ * while notifications are off is recorded, acknowledged and closed — never
+ * held back for the day the person changes their mind. Somebody who enables
+ * notifications after a week should get the next message, not a week of them.
  */
 class NotificationCoordinator(
     private val presenter: Presenter,
-    private val store: Store,
+    private val ledger: Ledger,
+    private val acker: Acker,
 ) {
 
-    /** What the system layer is asked to do. Implemented for real in AR-1b.3+. */
+    /** What the system layer is asked to do. */
     interface Presenter {
         /** Show or update the one live notification for a space. */
         fun present(p: Presentation)
@@ -71,34 +71,46 @@ class NotificationCoordinator(
     }
 
     /**
-     * The durable half. An interface rather than SharedPreferences directly,
-     * so the decisions above can be tested against an in-memory implementation
-     * with no device — and so the persistence can change without touching a
-     * single decision.
+     * The durable half. An interface rather than SQLite directly, so the
+     * decisions can be tested against an in-memory implementation with no
+     * device — and so the storage can change without touching one of them.
      */
-    interface Store {
-        /** Ids presented recently, oldest first. Bounded by the caller. */
-        fun rememberedIds(): List<String>
+    interface Ledger {
+        /** Durable insert as pending; null when the event was already known. */
+        fun insertPending(c: Candidate): Insert?
 
-        fun writeRememberedIds(ids: List<String>)
+        fun markPresented(eventId: String)
+        fun markSuppressed(eventId: String, reason: String)
+
+        /** Closes the live aggregation; the dedup memory stays. */
+        fun dismiss(spaceId: String)
+
+        /** The interface showed the conversation. */
+        fun read(spaceId: String)
+
+        /** Acknowledged to the core but never confirmed as posted. */
+        fun pendingBySpace(): Map<String, Recovery>
 
         /**
-         * A DEVICE-LOCAL opaque key for a space, created once and remembered.
-         *
-         * The notification tag must not be the space id. A tag is not private:
-         * StatusBarNotification carries it verbatim to every
-         * NotificationListenerService the person has granted access to — a
-         * launcher, a smartwatch companion, a backup tool. In the strictest
-         * privacy mode the title and the text are hidden precisely so that
-         * nothing identifies the conversation, and a raw protocol identifier
-         * in the tag would hand it over anyway, as metadata, to software that
-         * was never told anything else.
-         *
-         * The key is random, means nothing outside this install, and is stable
-         * so that the SAME space keeps updating the SAME notification.
+         * Everything still LIVE — pending or presented. Distinct from
+         * pendingBySpace on purpose: recovery must post only what was never
+         * posted, while taking notifications down has to reach the ones
+         * already on screen. Conflating them left a refused permission with
+         * every existing card still showing.
          */
-        fun notificationKey(spaceId: String): String
+        fun activeBySpace(): Map<String, Recovery>
+
+        /** The opaque tag for a space, or null when it has never had one. */
+        fun tagFor(spaceId: String): String?
     }
+
+    /** How the core is told it may stop replaying a candidate. */
+    fun interface Acker {
+        fun ack(eventId: String)
+    }
+
+    class Insert(val tag: String, val items: List<Item>)
+    class Recovery(val tag: String, val items: List<Item>)
 
     /** What a host needs in order to render. Data, never behaviour. */
     class Presentation(val spaceId: String, val tag: String, items: List<Item>) {
@@ -116,7 +128,7 @@ class NotificationCoordinator(
     )
 
     /**
-     * What the core hands over, as one value rather than eight parameters.
+     * What the core hands over, as one value rather than ten parameters.
      *
      * The presentation half — the labels — is deliberately separate from the
      * half the decisions run on. Nothing below depends on a label, so a space
@@ -150,12 +162,6 @@ class NotificationCoordinator(
         SUPPRESSED_DISABLED,
     }
 
-    /** Durable, bounded, oldest first. Mirrors [Store] in memory. */
-    private val presented = ArrayDeque<String>()
-
-    /** Live aggregation per space — what a single notification is showing. */
-    private val live = HashMap<String, ArrayDeque<Item>>()
-
     /** Set by the host when a screen resumes and cleared when it pauses. */
     private var foreground = false
     private var visibleSpace: String? = null
@@ -168,66 +174,82 @@ class NotificationCoordinator(
     /** The highest presentation cursor seen, scoped to one runtime. */
     private var highestCursor = 0L
 
-    /** space id -> opaque local tag, resolved once and cached. */
-    private val tags = HashMap<String, String>()
-
-    init {
-        presented.addAll(store.rememberedIds())
-        trimRemembered()
-    }
-
     /**
      * The whole decision, in the order the gates must run.
      *
      * Synchronized because candidates arrive on a Go goroutine while the host
-     * calls the lifecycle methods from the main thread. It returns promptly by
-     * construction: a set lookup, a bounded write, one call into the
-     * presenter.
+     * calls the lifecycle methods from the main thread.
      */
     @Synchronized
     fun onCandidate(c: Candidate): Decision {
-        if (!enabled) return count(Decision.SUPPRESSED_DISABLED)
-
         // A person is not told about the thing they just did — and the core
         // says so, so the host does not have to work out who they are.
-        if (c.authoredLocally) return count(Decision.SUPPRESSED_AUTHORED_LOCALLY)
-
+        //
+        // Acknowledged and NOT recorded: these can never need recovery, and a
+        // ledger row for every membership event and every one of our own
+        // messages would be a database of things nobody will ever look at.
+        // The acknowledgement still matters — without it, an ordinary event at
+        // sequence 38 would pin the core's watermark there forever while 39
+        // and 40 sat acknowledged behind it.
+        if (c.authoredLocally) {
+            acker.ack(c.eventId)
+            return count(Decision.SUPPRESSED_AUTHORED_LOCALLY)
+        }
         if (!NotificationPolicy.notifiable(c.schema)) {
+            acker.ack(c.eventId)
             return count(Decision.SUPPRESSED_SCHEMA_NOT_NOTIFIABLE)
         }
-        val eventId = c.eventId
-        val spaceId = c.spaceId
-
-        // The cursor is the core's own count of applied events, and it only
-        // ever moves forward within one runtime. Remembering the highest one
-        // seen is what lets a host say "nothing has happened since" — AR-1b.5
-        // builds its durable ledger on it.
         if (c.presentationCursor > highestCursor) highestCursor = c.presentationCursor
 
-        // The durable gate, and it runs BEFORE the on-screen gate on purpose:
-        // an event this phone has already presented must not be re-presented
-        // by a reconnect, whatever is on screen right now.
-        if (presented.contains(eventId)) {
+        // DURABLE FIRST. From here the host owns this candidate whatever
+        // happens next, and only then is the core told it may stop replaying.
+        val inserted = ledger.insertPending(c)
+        acker.ack(c.eventId)
+
+        if (inserted == null) {
+            // Already known: a redelivery after a crash between the insert and
+            // the acknowledgement. The count must not move, and the
+            // acknowledgement above is exactly what this pass was for.
             return count(Decision.SUPPRESSED_ALREADY_PRESENTED)
+        }
+
+        if (!enabled) {
+            // Terminal, not queued: turning notifications on next week must
+            // not produce last week's messages.
+            ledger.markSuppressed(c.eventId, NotificationDb.STATE_SUPPRESSED_PERMISSION)
+            return count(Decision.SUPPRESSED_DISABLED)
         }
 
         // AR-1b.7: keyed on the VISIBLE SPACE and a resumed screen — never on
         // "the process is foreground". A person reading space A must still be
         // told about space B, and a person in Settings must be told about
-        // both. Remembered anyway: the event was seen, so a later reconnect
-        // must not resurrect it as news.
-        if (foreground && spaceId == visibleSpace) {
-            remember(eventId)
+        // both. Recorded anyway, so a later reconnect cannot resurrect it.
+        if (foreground && c.spaceId == visibleSpace) {
+            ledger.markSuppressed(c.eventId, NotificationDb.STATE_SUPPRESSED_ON_SCREEN)
             return count(Decision.SUPPRESSED_SPACE_ON_SCREEN)
         }
 
-        remember(eventId)
-        val items = live.getOrPut(spaceId) { ArrayDeque() }
-        items.addLast(Item(eventId, c.device, c.schema, c.occurredAtUnixMs, c.senderLabel, c.previewText))
-        while (items.size > MESSAGES_PER_SPACE) items.removeFirst()
-
-        presenter.present(Presentation(spaceId, tagFor(spaceId), items.toList()))
+        presenter.present(Presentation(c.spaceId, inserted.tag, inserted.items))
+        ledger.markPresented(c.eventId)
         return count(Decision.PRESENTED)
+    }
+
+    /**
+     * What the process died in the middle of. Called once at startup: rows
+     * acknowledged to the core but never confirmed as posted are posted now.
+     *
+     * Idempotent by construction — the same (tag, id) updates one system entry
+     * rather than making a second — which is what makes it safe to run after a
+     * crash that happened AFTER the notification was already showing.
+     */
+    @Synchronized
+    fun recoverPending() {
+        if (!enabled) return
+        for ((spaceId, r) in ledger.pendingBySpace()) {
+            if (r.items.isEmpty()) continue
+            presenter.present(Presentation(spaceId, r.tag, r.items))
+            for (item in r.items) ledger.markPresented(item.eventId)
+        }
     }
 
     /** A screen resumed. Which space it is showing is a separate fact. */
@@ -247,13 +269,13 @@ class NotificationCoordinator(
     }
 
     /**
-     * The person swiped the shade clear. The live aggregation goes; the dedup
-     * memory stays. Losing the dedup here is what makes a notification come
-     * back on the next sync tick — the phone arguing with the person.
+     * The person swiped the shade clear. The live aggregation closes; the
+     * dedup memory stays. Losing the dedup here is what makes a notification
+     * come back on the next sync tick — the phone arguing with the person.
      */
     @Synchronized
     fun onDismissed(spaceId: String) {
-        live.remove(spaceId)
+        ledger.dismiss(spaceId)
     }
 
     /**
@@ -263,8 +285,8 @@ class NotificationCoordinator(
      */
     @Synchronized
     fun onRead(spaceId: String) {
-        live.remove(spaceId)
-        presenter.clear(spaceId, tagFor(spaceId))
+        ledger.read(spaceId)
+        ledger.tagFor(spaceId)?.let { presenter.clear(spaceId, it) }
     }
 
     /** The permission was refused, or the person switched notifications off. */
@@ -272,8 +294,12 @@ class NotificationCoordinator(
     fun setEnabled(on: Boolean) {
         enabled = on
         if (!on) {
-            for (spaceId in live.keys.toList()) presenter.clear(spaceId, tagFor(spaceId))
-            live.clear()
+            for ((spaceId, r) in ledger.activeBySpace()) {
+                ledger.tagFor(spaceId)?.let { presenter.clear(spaceId, it) }
+                for (item in r.items) {
+                    ledger.markSuppressed(item.eventId, NotificationDb.STATE_SUPPRESSED_PERMISSION)
+                }
+            }
         }
     }
 
@@ -284,23 +310,8 @@ class NotificationCoordinator(
         for (d in Decision.entries) {
             out[d.name.lowercase()] = counts[d] ?: 0
         }
-        out["live_spaces"] = live.size
-        out["remembered_ids"] = presented.size
         out["highest_cursor"] = highestCursor.toInt()
         return out
-    }
-
-    private fun tagFor(spaceId: String): String =
-        tags.getOrPut(spaceId) { "space:" + store.notificationKey(spaceId) }
-
-    private fun remember(eventId: String) {
-        presented.addLast(eventId)
-        trimRemembered()
-        store.writeRememberedIds(presented.toList())
-    }
-
-    private fun trimRemembered() {
-        while (presented.size > REMEMBERED_IDS) presented.removeFirst()
     }
 
     private fun count(d: Decision): Decision {
@@ -309,16 +320,7 @@ class NotificationCoordinator(
     }
 
     companion object {
-        /**
-         * How many presented event ids survive a restart. Sized for the
-         * hazard: reconnect and process restart re-deliver what sync is
-         * currently carrying — hundreds at most — not the whole journal.
-         * Larger would buy an ever rarer case at the cost of a bigger write
-         * on every notification.
-         */
-        const val REMEMBERED_IDS = 512
-
-        /** Messages kept per space for aggregation (AR-1b.3's MessagingStyle). */
+        /** Messages kept per space for aggregation (AR-1b.6's MessagingStyle). */
         const val MESSAGES_PER_SPACE = 8
     }
 }

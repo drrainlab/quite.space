@@ -6,62 +6,129 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * AR-1b.2's decisions, on the JVM, with no device involved.
+ * AR-1b.2 + AR-1b.5.3c's decisions, on the JVM, with no device involved.
  *
- * These are the assertions the wave is judged on, and every one of them is a
- * case a plausible implementation gets wrong:
+ * Every one of these is a case a plausible implementation gets wrong:
  *
  * ```
  *   suppressing on "the process is foreground"  silences every other space
  *   dropping the dedup on dismiss               the next sync brings it back
  *   marking read on tap                         loses a message nobody saw
- *   keeping the dedup only in memory            a restart re-announces
+ *   acknowledging before the durable insert     a crash drops it from both
+ *   queueing while the permission is refused    a week of cards on grant day
  *   a denylist instead of an allowlist          announces epoch rotations
  * ```
  */
 class NotificationCoordinatorTest {
 
-    /** The store, in memory. Same contract, no SharedPreferences. */
-    private class FakeStore : NotificationCoordinator.Store {
-        var ids: List<String> = emptyList()
+    /**
+     * The ledger, in memory, behaving like the SQLite one: insert-or-ignore on
+     * the event id, generations that close on dismiss and read, and an opaque
+     * key per space.
+     */
+    private class FakeLedger : NotificationCoordinator.Ledger {
+        class Row(
+            val c: NotificationCoordinator.Candidate,
+            val generation: Int,
+            var state: String,
+        )
+
+        val rows = LinkedHashMap<String, Row>()
         val keys = mutableMapOf<String, String>()
-        override fun rememberedIds(): List<String> = ids.toList()
-        override fun writeRememberedIds(ids: List<String>) {
-            this.ids = ids.toList()
+        val generations = mutableMapOf<String, Int>()
+
+        override fun insertPending(c: NotificationCoordinator.Candidate):
+            NotificationCoordinator.Insert? {
+            if (rows.containsKey(c.eventId)) return null
+            keys.getOrPut(c.spaceId) { "k${keys.size}" }
+            val gen = generations.getOrPut(c.spaceId) { 0 }
+            rows[c.eventId] = Row(c, gen, NotificationDb.STATE_PENDING)
+            return NotificationCoordinator.Insert(tagFor(c.spaceId)!!, live(c.spaceId))
         }
 
-        // Opaque and stable, exactly like the real one: what matters to the
-        // decisions is that the SAME space keeps the SAME tag, and that the
-        // tag is not the space id.
-        override fun notificationKey(spaceId: String): String =
-            keys.getOrPut(spaceId) { "k${keys.size}" }
+        override fun markPresented(eventId: String) {
+            rows[eventId]?.state = NotificationDb.STATE_PRESENTED
+        }
+
+        override fun markSuppressed(eventId: String, reason: String) {
+            rows[eventId]?.state = reason
+        }
+
+        override fun dismiss(spaceId: String) = close(spaceId, NotificationDb.STATE_DISMISSED)
+
+        override fun read(spaceId: String) = close(spaceId, NotificationDb.STATE_READ)
+
+        override fun pendingBySpace(): Map<String, NotificationCoordinator.Recovery> =
+            rows.values.filter { it.state == NotificationDb.STATE_PENDING }
+                .groupBy { it.c.spaceId }
+                .mapValues { (space, _) ->
+                    NotificationCoordinator.Recovery(tagFor(space)!!, live(space))
+                }
+
+        override fun activeBySpace(): Map<String, NotificationCoordinator.Recovery> =
+            rows.values.filter {
+                it.state == NotificationDb.STATE_PENDING ||
+                    it.state == NotificationDb.STATE_PRESENTED
+            }.groupBy { it.c.spaceId }
+                .mapValues { (space, _) ->
+                    NotificationCoordinator.Recovery(tagFor(space)!!, live(space))
+                }
+
+        override fun tagFor(spaceId: String): String? = keys[spaceId]?.let { "space:$it" }
+
+        fun state(eventId: String): String? = rows[eventId]?.state
+
+        private fun close(spaceId: String, terminal: String) {
+            rows.values.filter {
+                it.c.spaceId == spaceId &&
+                    (it.state == NotificationDb.STATE_PENDING ||
+                        it.state == NotificationDb.STATE_PRESENTED)
+            }.forEach { it.state = terminal }
+            generations[spaceId] = (generations[spaceId] ?: 0) + 1
+        }
+
+        private fun live(spaceId: String): List<NotificationCoordinator.Item> {
+            val gen = generations[spaceId] ?: 0
+            return rows.values
+                .filter {
+                    it.c.spaceId == spaceId && it.generation == gen &&
+                        (it.state == NotificationDb.STATE_PENDING ||
+                            it.state == NotificationDb.STATE_PRESENTED)
+                }
+                .map {
+                    NotificationCoordinator.Item(
+                        it.c.eventId, it.c.device, it.c.schema,
+                        it.c.occurredAtUnixMs, it.c.senderLabel, it.c.previewText,
+                    )
+                }
+                .takeLast(NotificationCoordinator.MESSAGES_PER_SPACE)
+        }
     }
 
     private class FakePresenter : NotificationCoordinator.Presenter {
         val presented = mutableListOf<NotificationCoordinator.Presentation>()
         val cleared = mutableListOf<String>()
-        val clearedTags = mutableListOf<String>()
         override fun present(p: NotificationCoordinator.Presentation) {
             presented.add(p)
         }
 
         override fun clear(spaceId: String, tag: String) {
             cleared.add(spaceId)
-            clearedTags.add(tag)
         }
     }
 
     private lateinit var presenter: FakePresenter
-    private lateinit var store: FakeStore
+    private lateinit var ledger: FakeLedger
     private lateinit var co: NotificationCoordinator
+    private lateinit var acked: MutableList<String>
+    private var cursor = 0L
 
     private fun fresh() {
         presenter = FakePresenter()
-        store = FakeStore()
-        co = NotificationCoordinator(presenter, store)
+        ledger = FakeLedger()
+        acked = mutableListOf()
+        co = NotificationCoordinator(presenter, ledger) { acked.add(it) }
     }
-
-    private var cursor = 0L
 
     private fun candidate(
         eventId: String,
@@ -74,8 +141,8 @@ class NotificationCoordinatorTest {
         spaceId = spaceId,
         device = device,
         schema = schema,
-        occurredAtUnixMs = 1_700_000_000_000L,
-        presentationCursor = ++cursor,
+        occurredAtUnixMs = 1_700_000_000_000L + (++cursor),
+        presentationCursor = cursor,
         authoredLocally = authoredLocally,
         spaceLabel = "Room",
         senderLabel = "bob",
@@ -87,22 +154,25 @@ class NotificationCoordinatorTest {
     // ------------------------------------------------------------- the gates
 
     @Test
-    fun ourOwnEventNeverNotifies() {
+    fun ourOwnEventNeverNotifiesAndIsStillAcknowledged() {
         fresh()
-        val d = co.onCandidate(candidate("e1", "space-a", authoredLocally = true, device = "device-me"))
+        val d = co.onCandidate(candidate("e1", "space-a", authoredLocally = true, device = "me"))
         assertEquals(NotificationCoordinator.Decision.SUPPRESSED_AUTHORED_LOCALLY, d)
         assertEquals(0, presenter.presented.size)
+        // Acknowledged anyway: an unacknowledged event pins the core's
+        // watermark, and the ones behind it would never be forgotten either.
+        assertEquals(listOf("e1"), acked)
     }
 
     @Test
-    fun carriersEditsAndMachineryDoNotNotify() {
+    fun carriersEditsAndMachineryDoNotNotifyAndAreAcknowledged() {
         fresh()
         val quiet = listOf(
             "block.attached.v1",       // an asset carrier, not a message
             "message.revised.v1",      // an edit is not news
             "message.tombstoned.v1",   // neither is a withdrawal
             "membership.epoch.v1",     // key rotation
-            "receipt.delivery.v1",     // a receipt about our own message
+            "receipt.delivery.v1",
             "presence.update.v1",
             "some.future.v1",          // unknown: silence, not a guess
         )
@@ -114,20 +184,36 @@ class NotificationCoordinatorTest {
             )
         }
         assertEquals(0, presenter.presented.size)
+        assertEquals(quiet.size, acked.size)
     }
 
     @Test
-    fun anOrdinaryMessageFromSomebodyElseNotifiesExactlyOnce() {
+    fun anOrdinaryMessageIsDurableBeforeItIsAcknowledgedAndPosted() {
         fresh()
         assertEquals(NotificationCoordinator.Decision.PRESENTED, arrive("e1", "space-a"))
         assertEquals(1, presenter.presented.size)
         assertEquals("space:k0", presenter.presented[0].tag)
+        assertEquals(listOf("e1"), acked)
+        assertEquals(NotificationDb.STATE_PRESENTED, ledger.state("e1"))
+    }
+
+    @Test
+    fun aTagNeverCarriesTheSpaceId() {
+        fresh()
+        arrive("e1", "space-a")
+        arrive("e2", "space-b")
+        assertFalse(
+            "every notification listener the person has granted access to reads " +
+                "the tag verbatim",
+            presenter.presented[0].tag.contains("space-a"),
+        )
+        assertEquals("space:k1", presenter.presented[1].tag)
     }
 
     // ------------------------------------------------- foreground suppression
 
     @Test
-    fun theSpaceOnScreenDoesNotBuzz() {
+    fun theSpaceOnScreenDoesNotBuzzAndIsRecordedAnyway() {
         fresh()
         co.onForeground(true)
         co.onVisibleSpace("space-a")
@@ -136,42 +222,27 @@ class NotificationCoordinatorTest {
             arrive("e1", "space-a"),
         )
         assertEquals(0, presenter.presented.size)
+        assertEquals(NotificationDb.STATE_SUPPRESSED_ON_SCREEN, ledger.state("e1"))
     }
 
     @Test
     fun anotherSpaceStillNotifiesWhileReadingOne() {
-        // The reason suppression keys on the VISIBLE SPACE and not on "the
-        // process is foreground": otherwise reading one conversation silences
-        // every other one.
         fresh()
         co.onForeground(true)
         co.onVisibleSpace("space-a")
         assertEquals(NotificationCoordinator.Decision.PRESENTED, arrive("e1", "space-b"))
-        assertEquals(1, presenter.presented.size)
     }
 
     @Test
     fun aSettingsScreenDoesNotSilenceEverything() {
         fresh()
         co.onForeground(true)
-        co.onVisibleSpace(null)          // in the app, but in no conversation
-        assertEquals(NotificationCoordinator.Decision.PRESENTED, arrive("e1", "space-a"))
-    }
-
-    @Test
-    fun aBackgroundedAppNotifiesForTheSpaceItLastShowed() {
-        fresh()
-        co.onForeground(true)
-        co.onVisibleSpace("space-a")
-        co.onForeground(false)           // HOME pressed; the space is still "visible"
+        co.onVisibleSpace(null)
         assertEquals(NotificationCoordinator.Decision.PRESENTED, arrive("e1", "space-a"))
     }
 
     @Test
     fun whatWasSeenOnScreenIsNotResurrectedByAReconnect() {
-        // The subtle one. Suppressing on screen must still REMEMBER the id:
-        // otherwise the same event, re-delivered by a reconnect an hour later
-        // with the app closed, arrives as news for a message already read.
         fresh()
         co.onForeground(true)
         co.onVisibleSpace("space-a")
@@ -203,6 +274,16 @@ class NotificationCoordinatorTest {
             "a swipe is not a read — nothing should have been cleared",
             presenter.cleared.isEmpty(),
         )
+        assertEquals(NotificationDb.STATE_DISMISSED, ledger.state("e1"))
+    }
+
+    @Test
+    fun aNewMessageAfterADismissStartsTheNotificationAfresh() {
+        fresh()
+        arrive("e1", "space-a")
+        co.onDismissed("space-a")
+        assertEquals(NotificationCoordinator.Decision.PRESENTED, arrive("e2", "space-a"))
+        assertEquals(1, presenter.presented[1].items.size)
     }
 
     @Test
@@ -211,98 +292,85 @@ class NotificationCoordinatorTest {
         arrive("e1", "space-a")
         co.onRead("space-a")
         assertEquals(listOf("space-a"), presenter.cleared)
+        assertEquals(NotificationDb.STATE_READ, ledger.state("e1"))
     }
 
-    @Test
-    fun aNewMessageAfterADismissStartsTheNotificationAfresh() {
-        // Dismiss drops the aggregation but not the memory: the next message
-        // is one message, not a repeat of the whole conversation.
-        fresh()
-        arrive("e1", "space-a")
-        co.onDismissed("space-a")
-        assertEquals(NotificationCoordinator.Decision.PRESENTED, arrive("e2", "space-a"))
-        assertEquals(1, presenter.presented[1].items.size)
-    }
-
-    // --------------------------------------------------------- durable dedup
+    // ------------------------------------------------------ crash recovery
 
     @Test
-    fun presentedIdsSurviveAProcessRestart() {
+    fun aCandidateStoredButNeverPostedIsPostedOnTheNextStart() {
+        // Gate 7: acknowledged to the core, the row written, and the process
+        // died before the system was told. The core will not replay it — it
+        // was acknowledged — so this side has to.
         fresh()
-        arrive("e1", "space-a")
+        val c = candidate("e1", "space-a")
+        ledger.insertPending(c)      // durable, but nothing was posted
 
-        // The process dies. A new coordinator comes up over the SAME store —
-        // which is all a restart is, from this class's point of view.
         val after = FakePresenter()
-        val restarted = NotificationCoordinator(after, store)
+        val restarted = NotificationCoordinator(after, ledger) { acked.add(it) }
+        restarted.recoverPending()
 
-        assertEquals(
-            NotificationCoordinator.Decision.SUPPRESSED_ALREADY_PRESENTED,
-            restarted.onCandidate(candidate("e1", "space-a")),
-        )
-        assertEquals(0, after.presented.size)
+        assertEquals(1, after.presented.size)
+        assertEquals("space:k0", after.presented[0].tag)
+        assertEquals(NotificationDb.STATE_PRESENTED, ledger.state("e1"))
     }
 
     @Test
-    fun theRememberedSetIsBoundedAndEvictsTheOldest() {
-        fresh()
-        val n = NotificationCoordinator.REMEMBERED_IDS + 100
-        for (i in 0 until n) arrive("e$i", "space-a")
-
-        assertEquals(NotificationCoordinator.REMEMBERED_IDS, store.rememberedIds().size)
-
-        // The newest is still remembered; the oldest has been evicted, which
-        // is the bound doing exactly what it says. This is the case the class
-        // comment records as NOT covered by the id set alone.
-        assertEquals(
-            NotificationCoordinator.Decision.SUPPRESSED_ALREADY_PRESENTED,
-            arrive("e${n - 1}", "space-a"),
-        )
-        assertEquals(NotificationCoordinator.Decision.PRESENTED, arrive("e0", "space-a"))
-    }
-
-    // ------------------------------------------------------------ aggregation
-
-    @Test
-    fun aSpaceAggregatesOldestFirstAndIsBounded() {
-        fresh()
-        for (i in 0 until NotificationCoordinator.MESSAGES_PER_SPACE + 3) {
-            arrive("e$i", "space-a")
-        }
-        val last = presenter.presented.last()
-        assertEquals(NotificationCoordinator.MESSAGES_PER_SPACE, last.items.size)
-        assertEquals("e3", last.items.first().eventId)
-        assertEquals(
-            "e${NotificationCoordinator.MESSAGES_PER_SPACE + 2}",
-            last.items.last().eventId,
-        )
-    }
-
-    @Test
-    fun twoSpacesAreTwoConversationsWithTwoTags() {
+    fun aCandidateAlreadyPostedIsNotPostedTwiceByRecovery() {
+        // Gate 8: the notification WAS posted and the process died before the
+        // row said so. Recovery posts it again under the same (tag, id), which
+        // updates one system entry rather than making a second — and once
+        // marked presented, a second recovery does nothing at all.
         fresh()
         arrive("e1", "space-a")
-        arrive("e2", "space-b")
-        assertEquals("space:k0", presenter.presented[0].tag)
-        assertEquals("space:k1", presenter.presented[1].tag)
-        assertFalse(
-            "a tag must not carry the space id: every notification listener the " +
-                "person has granted access to reads it verbatim",
-            presenter.presented[0].tag.contains("space-a"),
-        )
+        val after = FakePresenter()
+        val restarted = NotificationCoordinator(after, ledger) { acked.add(it) }
+        restarted.recoverPending()
+        assertEquals("nothing was pending; recovery should have posted nothing",
+            0, after.presented.size)
     }
 
-    // --------------------------------------------------- a refused permission
+    @Test
+    fun aRedeliveryFromTheCoreIsAcknowledgedAgainAndChangesNothing() {
+        // Gate 6: the row was written and the process died before the core
+        // heard the acknowledgement, so the log replays the same event. The
+        // count must not move and the acknowledgement must happen.
+        fresh()
+        arrive("e1", "space-a")
+        acked.clear()
+
+        assertEquals(
+            NotificationCoordinator.Decision.SUPPRESSED_ALREADY_PRESENTED,
+            arrive("e1", "space-a"),
+        )
+        assertEquals(listOf("e1"), acked)
+        assertEquals(1, presenter.presented.size)
+    }
+
+    // ----------------------------------------------------- a refused permission
 
     @Test
-    fun aRefusedPermissionIsAnOrdinaryStateAndTakesLiveOnesDown() {
+    fun aRefusedPermissionIsTerminalRatherThanAQueue() {
+        fresh()
+        co.setEnabled(false)
+        assertEquals(NotificationCoordinator.Decision.SUPPRESSED_DISABLED, arrive("e1", "space-a"))
+        assertEquals(NotificationDb.STATE_SUPPRESSED_PERMISSION, ledger.state("e1"))
+        assertEquals("it must still be acknowledged, or the core keeps replaying it",
+            listOf("e1"), acked)
+
+        // Turning notifications back on must not produce what arrived while
+        // they were off. A person who enables notifications wants the next
+        // message, not a week of them.
+        co.setEnabled(true)
+        co.recoverPending()
+        assertEquals(0, presenter.presented.size)
+    }
+
+    @Test
+    fun switchingNotificationsOffTakesTheLiveOnesDown() {
         fresh()
         arrive("e1", "space-a")
         co.setEnabled(false)
-        assertEquals(1, presenter.cleared.size)
-        assertEquals(
-            NotificationCoordinator.Decision.SUPPRESSED_DISABLED,
-            arrive("e2", "space-a"),
-        )
+        assertEquals(listOf("space-a"), presenter.cleared)
     }
 }

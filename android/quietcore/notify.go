@@ -32,10 +32,12 @@
 package quietcore
 
 import (
+	"encoding/hex"
 	"sync"
 	"sync/atomic"
 
 	"github.com/drrainlab/quiet_places/node"
+	"github.com/drrainlab/quiet_places/protocol/id"
 )
 
 // notifyQueueDepth bounds what one slow host may hold in memory. Sized for a
@@ -227,5 +229,74 @@ func notifyStatus() map[string]any {
 		"notify_delivered": notifyDelivered.Load(),
 		"notify_dropped":   notifyDropped.Load(),
 		"notify_baseline":  notifyBaseline.Load(),
+		// The durable half's own answer, so "notifications stopped being
+		// remembered" is a thing a harness and a screen can both read.
+		//
+		// planeStateLocked, NOT the exported call: Status already holds
+		// stateMu, and a Go mutex is not reentrant — the exported one would
+		// deadlock the status endpoint the first time anybody asked.
+		"notify_plane": planeStateLocked(),
 	}
+}
+
+// AckNotification tells the core that the host holds this candidate in its own
+// durable storage. Until it does, the candidate comes back on every attach —
+// which is the whole mechanism: no acknowledgement, no forgetting.
+//
+// The id is hex, as it crossed in the candidate. A malformed one is ignored
+// rather than reported: this is called from a storage callback on a phone, and
+// the honest failure for "I could not parse my own id back" is that the
+// candidate stays unacknowledged and arrives again.
+func AckNotification(eventIDHex string) {
+	stateMu.Lock()
+	r := rt
+	stateMu.Unlock()
+	if r == nil {
+		return
+	}
+	b, err := hex.DecodeString(eventIDHex)
+	if err != nil || len(b) != len(id.EventID{}) {
+		return
+	}
+	var eid id.EventID
+	copy(eid[:], b)
+	r.AckNotification(eid)
+}
+
+// NotificationPlaneState is never_activated, active, or metadata_corrupt.
+//
+// The third is the one worth a screen: it means live notifications still work
+// and nothing is being remembered across a restart, because the checkpoint
+// could not be read and inventing a new one would silently decide that
+// unacknowledged events never happened.
+func NotificationPlaneState() string {
+	stateMu.Lock()
+	r := rt
+	stateMu.Unlock()
+	if r == nil {
+		return node.NotifyPlaneNever
+	}
+	return r.NotificationPlaneState()
+}
+
+// planeStateLocked is the same answer for callers that already hold stateMu.
+func planeStateLocked() string {
+	if rt == nil {
+		return node.NotifyPlaneNever
+	}
+	return rt.NotificationPlaneState()
+}
+
+// ResetNotificationPlane throws away an unreadable checkpoint, or a backlog a
+// person does not want, and starts again from where the log is now. Everything
+// not yet acknowledged becomes history — so it is a deliberate act, with a
+// person behind it, and never something a recovery path does on its own.
+func ResetNotificationPlane() bool {
+	stateMu.Lock()
+	r := rt
+	stateMu.Unlock()
+	if r == nil {
+		return false
+	}
+	return r.ResetNotificationPlane()
 }
