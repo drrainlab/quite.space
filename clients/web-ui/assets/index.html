@@ -457,23 +457,31 @@
 <!-- First-run onboarding (§11.1–11.2): no phone, no email, no shared account.
      The local identity is created automatically; the user only picks a name. -->
 <dialog id="dlgWelcome">
-  <div id="obStep1">
+  <div id="obStep1" data-step>
     <img src="brand-glyph.png" alt="" class="brand-hero">
     <h3 id="obTitle">quite.space</h3>
     <p class="hint" id="obLede">Personal spaces for conversations that belong to the people in them.</p>
+    <!-- "not now" is not politeness, it is the exit. Without it this dialog
+         could only be left with Esc, and a phone has no Esc — AR-0d found a
+         person held here with no way out but to open another dialog and
+         cancel that one. Every step below carries the same escape. -->
     <div class="row" style="margin-top:14px">
       <button onclick="obStep('name')">Create a space</button>
       <button onclick="dlgWelcome.close(); openJoinDialog()">Enter with a pass</button>
+      <button class="btn-plain" onclick="dlgWelcome.close()">not now</button>
     </div>
     <p class="hint" style="margin-top:12px">No phone, no email, no shared account.</p>
   </div>
-  <div id="obStep2" style="display:none">
+  <div id="obStep2" data-step data-keep-open style="display:none">
     <h3>What should people call you?</h3>
     <input id="obName" placeholder="a name" maxlength="64" autocomplete="off">
     <p class="hint">People see this in your spaces. You can change it later.</p>
-    <div class="row"><button onclick="obSubmitName()">Continue</button></div>
+    <div class="row">
+      <button onclick="obSubmitName()">Continue</button>
+      <button class="btn-plain" onclick="dlgWelcome.close()">later</button>
+    </div>
   </div>
-  <div id="obStep3" style="display:none">
+  <div id="obStep3" data-step style="display:none">
     <h3>Ready</h3>
     <p class="hint">Your identity was created on this device — nowhere else.</p>
     <div id="obGlyph" style="text-align:center;margin:12px 0"></div>
@@ -742,7 +750,10 @@
   </div>
 </dialog>
 
-<dialog id="dlgComposer" class="sheet composer-sheet">
+<!-- data-keep-open: the backdrop does NOT dismiss this one. It holds an
+     unwritten post, and a stray tap beside a sheet must not be how somebody's
+     draft disappears. Its own cancel button is the way out. -->
+<dialog id="dlgComposer" class="sheet composer-sheet" data-keep-open>
   <div class="comp-head">
     <h3 style="margin:0">Compose a post</h3>
     <select id="compKind" class="comp-kind" onchange="onKindChange()">

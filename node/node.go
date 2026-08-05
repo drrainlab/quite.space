@@ -844,6 +844,26 @@ func (r *Runtime) NeedsOnboarding() bool {
 	return r.ks.DisplayName == ""
 }
 
+// IsFirstRun reports whether there is NOTHING HERE YET — no chosen name and no
+// spaces. It is deliberately a different question from NeedsOnboarding, and
+// keeping them apart is the fix for a trap AR-0d found on a phone.
+//
+// The client used "no name chosen" to decide whether to throw up the modal
+// first-run wall. But a node can hold an identity, eight spaces and an open
+// conversation and still have no display name — every node opened by a shell
+// or an embedding host does, because a display name is chosen in the UI and
+// nowhere else. Those people got the whole welcome flow dropped over a working
+// interface, and on a phone, where there is no Esc, they could not get out of
+// it.
+//
+// So: "has this person chosen a name" is a nudge, and "is there nothing here
+// yet" is a welcome. Only the second is allowed to take the screen.
+func (r *Runtime) IsFirstRun() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.ks.DisplayName == "" && len(r.spaces) == 0
+}
+
 // SetName records the user's display name (onboarding or rename): it bumps
 // the self manifest revision, republishes it into every space so members
 // see the new name, and persists it.

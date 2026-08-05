@@ -285,7 +285,11 @@ type statusResp struct {
 
 func (a *APIServer) handleOnboarding(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{
-		"needs_name":  a.rt.NeedsOnboarding(),
+		"needs_name": a.rt.NeedsOnboarding(),
+		// first_run is what may TAKE THE SCREEN; needs_name is only a nudge.
+		// Reported separately because the client conflated them and, on a
+		// phone, that conflation was a trap the person could not leave.
+		"first_run":   a.rt.IsFirstRun(),
 		"name":        a.rt.DisplayName(),
 		"device_name": deviceName(),
 		"fingerprint": a.rt.Principal.Fingerprint(),

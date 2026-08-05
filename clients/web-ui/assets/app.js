@@ -1836,10 +1836,22 @@ function openJoinDialog() {
 
 let onboardInfo = null;
 
+// ONLY A GENUINELY EMPTY NODE MAY TAKE THE SCREEN.
+//
+// This used to open on `needs_name`, which is "has a display name been chosen"
+// — and a node can hold an identity, spaces and an open conversation and still
+// have none, because a name is chosen here and nowhere else. So anyone whose
+// node was opened by a shell or an embedding host got the first-run wall over
+// a working interface. AR-0d found it on a phone, where there is no Esc and
+// the dialog had no dismiss: the only way out was to open ANOTHER dialog and
+// cancel that one.
+//
+// first_run is the server's separate answer to "is there nothing here yet".
+// needs_name stays available for a nudge that does not take the screen.
 async function checkOnboarding() {
   try {
     onboardInfo = await api('/api/onboarding');
-    if (onboardInfo.needs_name && !dlgWelcome.open) {
+    if (onboardInfo.first_run && !dlgWelcome.open) {
       obStep('welcome');
       dlgWelcome.showModal();
     }
@@ -3544,6 +3556,100 @@ function checkPassDeepLink() {
   openJoinDialog();
   document.getElementById('joinPass').value = decodeURIComponent(m[1]);
 }
+
+// EVERY MODAL NEEDS A WAY OUT THAT IS NOT A KEYBOARD.
+//
+// A <dialog> opened with showModal() closes on Esc, and that was the whole
+// exit strategy for twenty-four dialogs. A phone has no Esc. AR-0d found the
+// consequence on a real device: the welcome dialog had no dismiss control of
+// its own either, so the person was held there, and the only way out anybody
+// found was to open a DIFFERENT dialog and cancel that one.
+//
+// So a tap on the backdrop closes. The hit test is against the dialog's own
+// box rather than `e.target === dialog`, because a click on the dialog's
+// PADDING also targets the dialog and would close it while the person was
+// aiming at something inside.
+//
+// Opt out with data-keep-open where dismissing would silently discard work —
+// the block composer holds an unwritten post, and a stray tap must not be how
+// it disappears.
+function armDialogDismissal(root) {
+  for (const d of (root || document).querySelectorAll('dialog')) {
+    if (d.dataset.dismissArmed) continue;
+    d.dataset.dismissArmed = '1';
+    d.addEventListener('click', (e) => {
+      if (e.target !== d) return;             // a click inside bubbled up
+      if (!backdropMayDismiss(d)) return;
+      const r = d.getBoundingClientRect();
+      const inside = e.clientX >= r.left && e.clientX <= r.right &&
+                     e.clientY >= r.top && e.clientY <= r.bottom;
+      if (!inside) d.close();
+    });
+  }
+}
+
+// Whether a stray tap beside THIS dialog, in ITS CURRENT STEP, may dismiss it.
+//
+// Per step rather than per dialog: the welcome's first step is a choice and a
+// tap outside plainly means "not this", while its second step holds a name the
+// person is in the middle of typing — same dialog, different answer. Blanket
+// opt-out at the dialog level would have made the escape unavailable exactly
+// where it is most needed.
+function backdropMayDismiss(d) {
+  if (d.hasAttribute('data-keep-open')) return false;
+  // A step carrying unsubmitted input is not dismissed by a tap on the void.
+  const shown = [...d.querySelectorAll('[data-step]')]
+    .find(s => getComputedStyle(s).display !== 'none');
+  if (shown && shown.hasAttribute('data-keep-open')) return false;
+  return true;
+}
+
+// SYSTEM BACK MUST CLOSE A DIALOG.
+//
+// On a phone Back is the universal exit, and inside a WebView it moves through
+// HISTORY — so before this, pressing Back on an open dialog navigated away from
+// the app instead of closing the thing in front of you. Esc covers a desktop;
+// nothing covered a phone, which is how AR-0d found a person held in a modal
+// with no way out.
+//
+// One history entry is pushed when a dialog opens and consumed when it closes,
+// so Back unwinds dialogs one at a time before it ever leaves the page. The
+// open state is watched rather than every showModal() call site being wrapped:
+// there are two dozen of them and a new one must not be able to forget.
+(function armBackClosesDialogs() {
+  const opened = [];                     // innermost last
+  const obs = new MutationObserver(muts => {
+    for (const m of muts) {
+      const d = m.target;
+      if (d.tagName !== 'DIALOG') continue;
+      if (d.open && !opened.includes(d)) {
+        opened.push(d);
+        history.pushState({ qsDialog: true }, '');
+      } else if (!d.open) {
+        const i = opened.indexOf(d);
+        if (i >= 0) {
+          opened.splice(i, 1);
+          // Consume our own entry, unless Back is what closed it (popstate
+          // has already unwound one, and a second back() would leave the app).
+          if (!closingFromBack) history.back();
+        }
+      }
+    }
+  });
+  let closingFromBack = false;
+  for (const d of document.querySelectorAll('dialog')) {
+    obs.observe(d, { attributes: true, attributeFilter: ['open'] });
+  }
+  window.addEventListener('popstate', () => {
+    const top = opened[opened.length - 1];
+    if (!top) return;
+    closingFromBack = true;
+    top.close();
+    closingFromBack = false;
+  });
+})();
+
+armDialogDismissal();
 
 applyPanels();
 // A window that becomes narrow folds them, unless the person has said
