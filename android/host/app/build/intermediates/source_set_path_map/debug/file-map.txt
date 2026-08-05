@@ -1,7 +1,0 @@
-space.quiet.arprobe.app-pngs-0 /Users/gurebu/Coding/projects/quiet_places/android/host/app/build/generated/res/pngs/debug
-space.quiet.arprobe.app-resValues-1 /Users/gurebu/Coding/projects/quiet_places/android/host/app/build/generated/res/resValues/debug
-space.quiet.arprobe.app-packageDebugResources-2 /Users/gurebu/Coding/projects/quiet_places/android/host/app/build/intermediates/incremental/debug/packageDebugResources/merged.dir
-space.quiet.arprobe.app-packageDebugResources-3 /Users/gurebu/Coding/projects/quiet_places/android/host/app/build/intermediates/incremental/debug/packageDebugResources/stripped.dir
-space.quiet.arprobe.app-merged_res-4 /Users/gurebu/Coding/projects/quiet_places/android/host/app/build/intermediates/merged_res/debug
-space.quiet.arprobe.app-debug-5 /Users/gurebu/Coding/projects/quiet_places/android/host/app/src/debug/res
-space.quiet.arprobe.app-main-6 /Users/gurebu/Coding/projects/quiet_places/android/host/app/src/main/res
