@@ -39,6 +39,12 @@ import (
 type Runtime struct {
 	mu sync.Mutex
 
+	// notify is AR-1b's notification plane. Its own lock, never r.mu: it is
+	// read on the absorb path, which already holds enough of the runtime, and
+	// a host arming it must never be able to deadlock against a sync in
+	// flight.
+	notify notifySink
+
 	// previews is the transient post-preview store (PS-3). Its own lock,
 	// never r.mu — a preview touches no runtime state by design.
 	previews previewStore
@@ -520,6 +526,10 @@ func (r *Runtime) attach(tid id.TerminalID, s *terminals.Space) {
 	// created_local always, queued once any transport is live. Both are
 	// local claims, never destination proof (ADR-007).
 	s.OnAbsorb = func(a eventlog.Applied) {
+		// AR-1b: the notification plane, and it is DISARMED during Open's
+		// replays — a host cannot arm it until Open has returned, so history
+		// is unable to notify by construction rather than by a filter.
+		r.notifyAbsorbed(tid, a)
 		if a.Env.Device == r.Device.ID {
 			_ = s.Trust.RecordLocal(a.ID, tid, claims.DeliveryCreatedLocal)
 			if r.lanNode != nil || r.mesh != nil {
