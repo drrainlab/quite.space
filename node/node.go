@@ -45,6 +45,12 @@ type Runtime struct {
 	// flight.
 	notify notifySink
 
+	// notifyLedger is what survives the process (AR-1b.5.3). It holds no
+	// events — only how far the host has confirmed it holds them — because
+	// the log is already the durable record and a second copy would be a
+	// second source of truth about what happened.
+	notifyLedger *notifyLedger
+
 	// previews is the transient post-preview store (PS-3). Its own lock,
 	// never r.mu — a preview touches no runtime state by design.
 	previews previewStore
@@ -315,6 +321,7 @@ func Open(dataDir string, passphrase []byte, displayName string) (rt *Runtime, e
 		return nil, err
 	}
 	r := &Runtime{root: root, lock: lock, dataDir: dataDir, spaces: map[id.TerminalID]*spaceState{},
+		notifyLedger: newNotifyLedger(dataDir),
 		assetIdx: newAssetIndex(), passes: newPassRegistry(),
 		joins: map[string]*joinAttempt{}, stop: make(chan struct{}),
 		relayWants: map[id.TerminalID]map[id.Hash]struct{}{},
@@ -653,6 +660,14 @@ func (r *Runtime) Close() {
 		_ = r.ledger.Close()
 	}
 	r.mu.Unlock()
+
+	// The notification watermark is written back here rather than on every
+	// acknowledgement: acks arrive as often as events during a catch-up, and
+	// a late one costs a redelivery the host deduplicates away, while an
+	// early file rewrite would cost the sync path.
+	if r.notifyLedger != nil {
+		r.notifyLedger.flush()
+	}
 
 	// Last, and only on a clean shutdown: everything that writes has stopped.
 	_ = r.lock.Release()

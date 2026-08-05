@@ -147,7 +147,84 @@ func (s *notifySink) next() (func(NotificationCandidate), uint64) {
 // in the log — where it belongs — and the returned cursor is how it learns
 // that a gap exists at all.
 func (r *Runtime) AttachNotifications(fn func(NotificationCandidate)) uint64 {
-	return r.notify.attach(fn)
+	base := r.notify.attach(fn)
+	if fn == nil {
+		return base
+	}
+	// ACTIVATION IS NOT ATTACHING (AR-1b.5.3a). The first time a person ever
+	// turns notifications on, the frontier becomes the baseline and everything
+	// behind it is history — silently, once. Every later attach finds the
+	// marker already there and resumes from what the host actually
+	// acknowledged, which is why a restart does not re-announce a year.
+	if !r.notifyLedger.activated() {
+		r.notifyLedger.activate(r.frontiers())
+		return base
+	}
+	// Whatever the log holds past the acknowledged watermark is, by
+	// definition, a candidate nobody confirmed — including anything applied
+	// while the process was dying. Redelivered here rather than remembered in
+	// a queue: the log is the durable record, and a second one would be a
+	// second story about what happened.
+	r.redeliverUnacknowledged(fn)
+	return base
+}
+
+// frontiers snapshots every open space's chain state, which is what activation
+// freezes as "this is history".
+func (r *Runtime) frontiers() map[id.TerminalID][]eventlog.ChainState {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make(map[id.TerminalID][]eventlog.ChainState, len(r.spaces))
+	for tid, st := range r.spaces {
+		out[tid] = st.space.Log.Summary()
+	}
+	return out
+}
+
+// redeliverUnacknowledged walks each space in memory and re-emits what the
+// host never confirmed. It runs on the caller's goroutine — the host's, not a
+// sync path — so a slow host delays only itself.
+func (r *Runtime) redeliverUnacknowledged(fn func(NotificationCandidate)) {
+	type pending struct {
+		cand NotificationCandidate
+		pos  notifyPosition
+	}
+	var out []pending
+
+	// EVERYTHING IS BUILT UNDER r.mu AND NOTHING IS DELIVERED UNDER IT. A
+	// candidate is decorated from the space's live state and from this node's
+	// own manifest, which are exactly the things another goroutine may be
+	// rewriting; the host, meanwhile, must never be called with the runtime
+	// held, or a sink that reaches back in deadlocks against a lock it cannot
+	// see. Two loops, and the split is the reason for both.
+	r.mu.Lock()
+	for tid, st := range r.spaces {
+		confirmed := map[id.DeviceID]uint64{}
+		for _, ch := range st.space.Log.Summary() {
+			confirmed[ch.Device] = r.notifyLedger.confirmedSeq(tid, ch.Device)
+		}
+		_ = st.space.Log.Replay(func(a eventlog.Applied) error {
+			if a.Env == nil || a.Env.Sequence <= confirmed[a.Env.Device] {
+				return nil
+			}
+			out = append(out, pending{
+				// Cursor 0: a redelivery is not a position in THIS runtime's
+				// stream, and pretending otherwise would hand a host two
+				// numbers that look comparable and are not.
+				cand: r.candidateOf(tid, st.space, a, 0),
+				pos: notifyPosition{
+					space: tid, device: a.Env.Device, seq: a.Env.Sequence,
+				},
+			})
+			return nil
+		})
+	}
+	r.mu.Unlock()
+
+	for _, p := range out {
+		r.notifyLedger.note(p.cand.EventID, p.pos)
+		fn(p.cand)
+	}
 }
 
 // ArmNotifications is AttachNotifications without the cursor, kept because a
@@ -168,6 +245,21 @@ func (r *Runtime) notifyAbsorbed(tid id.TerminalID, s *terminals.Space, a eventl
 	if fn == nil {
 		return
 	}
+	c := r.candidateOf(tid, s, a, cursor)
+	// Recorded BEFORE the host is told, so a candidate cannot be delivered
+	// without a place for its acknowledgement to land.
+	r.notifyLedger.note(c.EventID, notifyPosition{
+		space: tid, device: a.Env.Device, seq: a.Env.Sequence,
+	})
+	fn(c)
+}
+
+// candidateOf builds what a host may render. Called with r.mu held on the live
+// path and without it on the redelivery path, so it touches only the space it
+// was handed.
+func (r *Runtime) candidateOf(tid id.TerminalID, s *terminals.Space,
+	a eventlog.Applied, cursor uint64) NotificationCandidate {
+
 	c := NotificationCandidate{
 		EventID:            a.ID,
 		SpaceID:            tid,
@@ -178,7 +270,7 @@ func (r *Runtime) notifyAbsorbed(tid id.TerminalID, s *terminals.Space, a eventl
 		AuthoredLocally:    a.Env.Device == r.Device.ID,
 	}
 	r.decorateLocked(s, a, &c)
-	fn(c)
+	return c
 }
 
 // decorateLocked fills the presentation snapshot from what the space already

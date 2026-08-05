@@ -346,6 +346,15 @@ func TestAttachingIsAtomicWithEmission(t *testing.T) {
 		var mu sync.Mutex
 		var seen []uint64
 		baseline := rt.AttachNotifications(func(c NotificationCandidate) {
+			// Acknowledged immediately, which is what a host does once it
+			// holds a candidate durably. Without it every round would also
+			// carry the previous rounds' unacknowledged candidates back as
+			// redeliveries — correct behaviour (AR-1b.5.3), and noise for a
+			// test about the live stream.
+			rt.AckNotification(c.EventID)
+			if c.PresentationCursor == 0 {
+				return // a redelivery is not a position in this stream
+			}
 			mu.Lock()
 			seen = append(seen, c.PresentationCursor)
 			mu.Unlock()
@@ -367,5 +376,155 @@ func TestAttachingIsAtomicWithEmission(t *testing.T) {
 			}
 			want++
 		}
+	}
+}
+
+// AR-1b.5.3 — the window between "applied" and "the host holds it".
+//
+// This is the failure the live-only plane could not survive: an event is
+// applied, the candidate is on its way to Android, and the process dies. The
+// runtime cursor cannot help — it is scoped to one runtime by design — so on
+// the next start a naive baseline would call that event history and the
+// notification would be gone with nothing anywhere reporting it.
+//
+// Killing a process is not something a unit test can do, so the shape is
+// reproduced exactly: a runtime that receives a candidate and never
+// acknowledges it, then closes. What must happen is that the next attach hands
+// it over again.
+func TestAnUnacknowledgedCandidateSurvivesTheProcess(t *testing.T) {
+	dir := t.TempDir()
+
+	rt := openRuntime(t, dir, "alice")
+	tid, err := rt.CreateSpace("Room")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Activation: from here, history is history.
+	rt.AttachNotifications(func(NotificationCandidate) {})
+
+	// One event arrives and is deliberately NOT acknowledged — the host got it
+	// and died before writing it down.
+	lost, err := rt.Say(tid, "the message that must not be lost", SayOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt.Close()
+
+	// A new process, a new runtime, a new epoch.
+	rt2 := openRuntime(t, dir, "alice")
+	defer rt2.Close()
+
+	var mu sync.Mutex
+	var got []NotificationCandidate
+	rt2.AttachNotifications(func(c NotificationCandidate) {
+		mu.Lock()
+		got = append(got, c)
+		mu.Unlock()
+	})
+
+	mu.Lock()
+	defer mu.Unlock()
+	found := false
+	for _, c := range got {
+		if c.EventID == lost {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the unacknowledged event was not redelivered after a restart — "+
+			"%d candidates arrived, none of them the one nobody confirmed", len(got))
+	}
+}
+
+// The other half, and the one a naive fix breaks: what WAS acknowledged must
+// stay acknowledged. A ledger that redelivered everything after a restart
+// would be as wrong as one that redelivered nothing — it would announce a
+// person's whole history every time their phone rebooted.
+func TestAnAcknowledgedCandidateIsNeverDeliveredAgain(t *testing.T) {
+	dir := t.TempDir()
+
+	rt := openRuntime(t, dir, "alice")
+	tid, err := rt.CreateSpace("Room")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt.AttachNotifications(func(c NotificationCandidate) { rt.AckNotification(c.EventID) })
+	for i := 0; i < 5; i++ {
+		if _, err := rt.Say(tid, fmt.Sprintf("acknowledged %d", i), SayOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rt.Close() // flushes the watermark
+
+	rt2 := openRuntime(t, dir, "alice")
+	defer rt2.Close()
+
+	var mu sync.Mutex
+	var got int
+	rt2.AttachNotifications(func(NotificationCandidate) {
+		mu.Lock()
+		got++
+		mu.Unlock()
+	})
+
+	mu.Lock()
+	defer mu.Unlock()
+	if got != 0 {
+		t.Fatalf("%d acknowledged events were delivered again after a restart", got)
+	}
+}
+
+// Activation happens ONCE. A restart is not a first run, and the difference is
+// the whole reason the marker is durable: without it, every launch would take
+// the current frontier as a new baseline, which reads as correct until the day
+// a candidate is lost between the two.
+func TestActivationHappensOnceAndARestartIsNotAFirstRun(t *testing.T) {
+	dir := t.TempDir()
+
+	rt := openRuntime(t, dir, "alice")
+	tid, err := rt.CreateSpace("Room")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const history = 20
+	for i := 0; i < history; i++ {
+		if _, err := rt.Say(tid, fmt.Sprintf("before activation %d", i), SayOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// FIRST activation: everything already written is history, silently.
+	var first int
+	rt.AttachNotifications(func(NotificationCandidate) { first++ })
+	if first != 0 {
+		t.Fatalf("activating over %d prior events produced %d candidates, want 0",
+			history, first)
+	}
+	// One event nobody acknowledges, so there is something to resume with.
+	if _, err := rt.Say(tid, "after activation", SayOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	rt.Close()
+
+	rt2 := openRuntime(t, dir, "alice")
+	defer rt2.Close()
+	var mu sync.Mutex
+	var second []NotificationCandidate
+	rt2.AttachNotifications(func(c NotificationCandidate) {
+		mu.Lock()
+		second = append(second, c)
+		mu.Unlock()
+	})
+
+	mu.Lock()
+	defer mu.Unlock()
+	// Exactly the unacknowledged one: not zero (which would mean the restart
+	// re-baselined and ate it) and not twenty-one (which would mean activation
+	// ran again and the marker meant nothing).
+	if len(second) != 1 {
+		t.Fatalf("after a restart: %d candidates, want exactly the 1 nobody "+
+			"acknowledged — 0 means the baseline moved and ate it, %d would mean "+
+			"activation ran a second time", len(second), history+1)
 	}
 }
