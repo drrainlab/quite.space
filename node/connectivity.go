@@ -200,7 +200,38 @@ func (r *Runtime) anySpaceAllows(k TransportKind) bool {
 // radioOutboundCap is what a frame must fit in to be worth putting on the
 // air. A var so a future radio profile can raise it and every derived
 // eligibility answer changes with it.
+//
+// Kept as the FLOOR for a node with no radio attached: there is nothing to
+// ask, and a constant is the only honest answer left.
 var radioOutboundCap = func() int { return routing.BetaOutboundCap }
+
+// radioCarryCeiling asks the ATTACHED RADIO what it will carry.
+//
+// One ceiling, or none. The carrier derives its own from its own airtime
+// (MaxEventBytes), and the moment this ledger answers from a separate
+// constant the two disagree — which is not an abstract tidiness problem: at
+// 1536 against a carrier's 2586 the delivery view would tell somebody their
+// message is "waiting for a faster link" while sync cheerfully carried it.
+// A person reading a status that contradicts what happened stops reading the
+// status.
+func (r *Runtime) radioCarryCeiling() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.radioCarryCeilingLocked()
+}
+
+// radioCarryCeilingLocked is the same answer for callers already holding
+// r.mu — the pattern this package already uses for assetStatusLocked, and for
+// the same reason: the alternative is a deadlock nobody sees until the one
+// path that takes both locks runs.
+func (r *Runtime) radioCarryCeilingLocked() int {
+	if r.rnodeEP != nil {
+		if n := r.rnodeEP.Capabilities().MaxEventBytes; n > 0 {
+			return n
+		}
+	}
+	return radioOutboundCap()
+}
 
 // ErrTransportBlocked is returned when policy forbids the transport a
 // caller asked for. It is deliberately distinct from a network failure:
@@ -279,7 +310,7 @@ func (r *Runtime) Delivery(eid id.EventID) (DeliveryView, bool) {
 		c := r.connectivity()
 		for _, k := range transportPreference {
 			if c.allows(k, in.Space) {
-				if in.BlockedOn(k) != BlockNone {
+				if in.blockedOn(k, r.radioCarryCeiling()) != BlockNone {
 					v.Waiting = "faster_link"
 				}
 				break
@@ -296,10 +327,11 @@ func (r *Runtime) Delivery(eid id.EventID) (DeliveryView, bool) {
 // message can actually use, in preference order. Empty means the message
 // waits — which is a state, not an error.
 func (r *Runtime) eligibleTransports(in DeliveryIntent) []TransportKind {
+	ceiling := r.radioCarryCeiling()
 	c := r.connectivity()
 	var out []TransportKind
 	for _, k := range transportPreference {
-		if c.allows(k, in.Space) && in.EligibleOn(k) {
+		if c.allows(k, in.Space) && in.blockedOn(k, ceiling) == BlockNone {
 			out = append(out, k)
 		}
 	}
@@ -470,12 +502,14 @@ func (r *Runtime) selectTransportLocked(c Connectivity, in DeliveryIntent,
 func (r *Runtime) selectAmongLocked(c Connectivity, in DeliveryIntent,
 	now time.Time, avail map[TransportKind]bool) (TransportKind, bool) {
 
+	// The locked variant: this runs with r.mu already held.
+	ceiling := r.radioCarryCeilingLocked()
 	var eligible []TransportKind
 	for _, k := range transportPreference {
 		if avail != nil && !avail[k] {
 			continue
 		}
-		if c.allows(k, in.Space) && in.EligibleOn(k) {
+		if c.allows(k, in.Space) && in.blockedOn(k, ceiling) == BlockNone {
 			eligible = append(eligible, k)
 		}
 	}

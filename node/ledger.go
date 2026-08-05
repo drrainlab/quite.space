@@ -599,7 +599,15 @@ func (b BlockReason) String() string {
 // answer changes the moment the limit does, which is exactly what an
 // operator expects after changing a setting.
 func (in DeliveryIntent) BlockedOn(k TransportKind) BlockReason {
-	if k == TransportRadio && in.Size > 0 && in.Size > radioOutboundCap() {
+	return in.blockedOn(k, radioOutboundCap())
+}
+
+// blockedOn is the same answer against a NAMED ceiling, so the runtime can
+// supply the one its attached radio actually declared. Two ceilings for one
+// question is how a status comes to contradict what happened.
+func (in DeliveryIntent) blockedOn(k TransportKind, radioCeiling int) BlockReason {
+	if k == TransportRadio && in.Size > 0 && radioCeiling > 0 &&
+		in.Size > radioCeiling {
 		return BlockTooLarge
 	}
 	return BlockNone
