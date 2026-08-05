@@ -53,8 +53,34 @@ var processStartedAt = time.Now().UTC()
 // this changes. Empty when unreadable, which is a fact and not a failure.
 var procStartTicks = readProcStartTicks()
 
+// The runtime's state, as three words a host can act on differently.
+//
+//	unavailable  nothing is open, and nothing is trying
+//	opening      an open is IN FLIGHT — the node is not dead, it is working
+//	alive        open and serving
+//
+// "opening" exists because node.Open is seconds, not milliseconds: scrypt plus
+// a full log replay. A controller that cannot see this window has to guess,
+// and it will guess "dead" — which is how a UI ends up offering to start a
+// node that is already halfway up.
+const (
+	StateUnavailable = "unavailable"
+	StateOpening     = "opening"
+	StateAlive       = "alive"
+)
+
 var (
-	mu sync.Mutex
+	// TWO locks, and the split is the point.
+	//
+	// openMu serializes the OPERATION (open, close) and is held for seconds.
+	// stateMu guards the fields Status reads and is held for microseconds.
+	// One lock for both meant Status blocked behind an in-flight Open — so for
+	// the whole window where a host most needs to distinguish "opening" from
+	// "dead", it could not ask at all.
+	openMu  sync.Mutex
+	stateMu sync.Mutex
+
+	state = StateUnavailable
 
 	rt       *node.Runtime
 	listener net.Listener
@@ -83,11 +109,32 @@ var (
 // held lock and a permission, and AR-0c syncs over a relay. Exposed anyway so
 // the LAN path can be measured deliberately rather than by accident.
 func Start(dir, passphrase, name string, withLAN bool) error {
-	mu.Lock()
-	defer mu.Unlock()
+	openMu.Lock()
+	defer openMu.Unlock()
+
+	stateMu.Lock()
 	if rt != nil {
-		return fmt.Errorf("quietcore: already running (data dir %s)", dataDir)
+		d := dataDir
+		stateMu.Unlock()
+		return fmt.Errorf("quietcore: already running (data dir %s)", d)
 	}
+	// Published BEFORE the seconds-long work, so a controller asking during
+	// the open is told "opening" rather than left to infer "dead".
+	state = StateOpening
+	lastError = ""
+	stateMu.Unlock()
+
+	// Any early return from here leaves the state honest rather than stuck at
+	// "opening" — a status that lies about work in flight is worse than one
+	// that admits failure.
+	ok := false
+	defer func() {
+		if !ok {
+			stateMu.Lock()
+			state = StateUnavailable
+			stateMu.Unlock()
+		}
+	}()
 	if dir == "" {
 		// node.DefaultDataDir() reads $HOME, which is unset for an Android app
 		// process, so it would yield the RELATIVE path "quiet-data" under a CWD
@@ -136,12 +183,16 @@ func Start(dir, passphrase, name string, withLAN bool) error {
 	var epoch [8]byte
 	_, _ = rand.Read(epoch[:])
 
+	stateMu.Lock()
 	rt, listener = r, l
+	state = StateAlive
+	ok = true
 	runtimeEpoch = hex.EncodeToString(epoch[:])
 	dataDir, apiPort, apiToken = dir, port, api.Token()
 	fingerprint = r.Principal.Fingerprint()
 	startedAt = time.Now().UTC()
 	lastError = ""
+	stateMu.Unlock()
 	return nil
 }
 
@@ -208,18 +259,29 @@ func QuicklinkProbe() string {
 // rig's stop command must be usable without first asking whether it needs to
 // be, or every caller grows the same race.
 func Stop() error {
-	mu.Lock()
-	defer mu.Unlock()
-	if rt == nil {
+	openMu.Lock()
+	defer openMu.Unlock()
+
+	stateMu.Lock()
+	r, l := rt, listener
+	if r == nil {
+		stateMu.Unlock()
 		return nil
 	}
-	if listener != nil {
-		_ = listener.Close()
-	}
-	rt.Close()
+	// The fields are cleared FIRST and the mutex released, so a Status asked
+	// during the close is answered immediately and honestly. Closing a node
+	// flushes and joins goroutines; holding the state lock across it would
+	// reintroduce exactly the blindness this split exists to remove.
 	rt, listener = nil, nil
+	state = StateUnavailable
 	runtimeEpoch, apiToken, fingerprint = "", "", ""
 	apiPort = 0
+	stateMu.Unlock()
+
+	if l != nil {
+		_ = l.Close()
+	}
+	r.Close()
 	return nil
 }
 
@@ -232,12 +294,12 @@ func Stop() error {
 // satisfied by an unnoticed process restart is REPORTED as a process restart
 // instead of passing as "the process was kept".
 func Status() string {
-	mu.Lock()
-	defer mu.Unlock()
+	stateMu.Lock()
+	defer stateMu.Unlock()
 
 	mono, boot := clocks()
 	s := map[string]any{
-		"state":              "stopped",
+		"state":              state,
 		"core_pid":           os.Getpid(),
 		"process_started_at": processStartedAt.Format(time.RFC3339Nano),
 		"proc_start_ticks":   procStartTicks,
@@ -263,7 +325,6 @@ func Status() string {
 		s["last_error"] = lastError
 	}
 	if rt != nil {
-		s["state"] = "running"
 		s["runtime_epoch"] = runtimeEpoch
 		s["data_dir"] = dataDir
 		s["api_port"] = apiPort
