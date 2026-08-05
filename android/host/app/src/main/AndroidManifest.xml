@@ -38,6 +38,14 @@
             </intent-filter>
         </activity>
 
+        <!-- The swipe, coming back. NOT exported: nothing outside this app has
+             any business telling it a notification was cleared, and an
+             exported receiver here would let another app clear a person's
+             live aggregation from outside. -->
+        <receiver
+            android:name=".NotificationDismissReceiver"
+            android:exported="false" />
+
     </application>
 
     <!-- AR-0's rig — RigActivity and the :contender process — lives in

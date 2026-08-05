@@ -1,0 +1,18 @@
+<!--
+  The status-bar icon. Android draws it as a SILHOUETTE — colour and detail are
+  discarded, only alpha survives — so this is one solid shape rather than a
+  shrunken product logo, which would have arrived as a grey blob.
+
+  A circle with a mark through it: the closest the mark can get to Quiet's own
+  glyph while staying legible at 24dp in a monochrome status bar.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="#FFFFFFFF">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M12,3a8,8 0 1,0 5.66,13.66l2.34,2.34 1.41,-1.41 -2.34,-2.34A8,8 0 0,0 12,3zM12,5a6,6 0 1,1 0,12A6,6 0 0,1 12,5z" />
+</vector>
