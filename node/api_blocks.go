@@ -406,8 +406,19 @@ type entryResp struct {
 	Resonance *resonanceResp `json:"resonance,omitempty"`
 	// Kept: viewer-relative "kept by me" affordance (API layer only);
 	// KeepCount is how many members keep this entry.
-	Kept      bool `json:"kept,omitempty"`
-	KeepCount int  `json:"keep_count,omitempty"`
+	Kept bool `json:"kept,omitempty"`
+
+	// WaitingFor says this event has NOT gone out on the path available, and
+	// why. Empty is the ordinary case and means nothing is known to be wrong
+	// — never "it arrived", which is a claim only the delivery ladder makes.
+	//
+	// The sizes ride along so the sentence can be concrete: "this is 2.4 KB
+	// and the radio carries 2.5" tells somebody what to do, where "too large"
+	// only tells them to be annoyed.
+	WaitingFor     string `json:"waiting_for,omitempty"`
+	WaitingSize    int    `json:"waiting_size,omitempty"`
+	WaitingCeiling int    `json:"waiting_ceiling,omitempty"`
+	KeepCount      int    `json:"keep_count,omitempty"`
 
 	Text string `json:"text,omitempty"`
 	// ReplyTo is a genuine reply edge (message.text.v1 only — the revision
@@ -514,6 +525,19 @@ func (a *APIServer) projectEntry(tid id.TerminalID, sp *terminals.Space,
 		Mine:       e.Author == me && e.ProducedBy == signal.AuthorshipHuman,
 		ProducedBy: e.ProducedBy.String(),
 		Clock:      e.Clock, CreatedAt: e.CreatedAt, Kind: string(e.Kind),
+	}
+	// Only for one's OWN events, because a waiting state is a statement
+	// about this device's outbound. Telling somebody that SOMEBODY ELSE's
+	// message is stuck would be a claim about a machine we cannot see.
+	//
+	// Lock order: r.mu (already held here) → r.tooLarge.mu, never the
+	// reverse — the same rule the pass registry declares, written down for
+	// the same reason.
+	if resp.Mine {
+		if w, ok := a.rt.WaitingForAWiderPath(e.ID); ok {
+			resp.WaitingFor = "wider_path"
+			resp.WaitingSize, resp.WaitingCeiling = w.Size, w.Ceiling
+		}
 	}
 	if sp != nil {
 		resp.Resonance = a.projectResonance(sp, e.ID, me, names)

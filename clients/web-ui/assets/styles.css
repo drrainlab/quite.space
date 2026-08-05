@@ -2398,3 +2398,14 @@ header .nav-act { padding: 5px 11px 5px 10px; min-height: 30px; }
 .pub-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
   gap: 8px; margin: 8px 0; }
 .pub-gallery img { width: 100%; border-radius: var(--radius-sm); }
+
+/* Why one of your own messages has not gone out yet.
+   Deliberately NOT the error colour: nothing failed and nothing was lost —
+   it is waiting for a path wide enough, and it goes when one appears. */
+.entry-waiting {
+  margin-top: 4px;
+  font-size: .82rem;
+  line-height: 1.4;
+  color: var(--muted, #9a93a8);
+  opacity: .9;
+}

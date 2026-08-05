@@ -632,6 +632,16 @@ func (e *Engine) pushMissing(ep transports.Endpoint, sum *summary) error {
 		frames [][]byte
 		lane   signal.Priority
 		next   int
+		// blocked marks a chain that has met a frame this carrier will not
+		// take. It STOPS there rather than skipping: an event log is a chain
+		// with strict prev linking, so handing the peer frame N+1 without N
+		// hands them a hole they cannot apply. One oversize event holds up
+		// the tail of its OWN chain on this carrier, which is the truth, and
+		// the person is told about the single event that caused it.
+		blocked bool
+		// counted keeps the drained bookkeeping honest: a chain leaves
+		// `remaining` exactly once, whether it drained or stopped.
+		counted bool
 	}
 	var chains []*pendingChain
 	for _, c := range e.Log.Summary() {
@@ -661,7 +671,7 @@ func (e *Engine) pushMissing(ep transports.Endpoint, sum *summary) error {
 				continue
 			}
 			burst := 0
-			for c.next < len(c.frames) && burst < maxChainBurst {
+			for !c.blocked && c.next < len(c.frames) && burst < maxChainBurst {
 				f := c.frames[c.next]
 				// THE FRAME'S OWN SIZE, asked before anything else.
 				//
@@ -677,7 +687,15 @@ func (e *Engine) pushMissing(ep transports.Endpoint, sum *summary) error {
 					if e.OnTooLarge != nil {
 						e.OnTooLarge(id.EventIDOf(f), len(f), caps.MaxEventBytes)
 					}
-					continue
+					// STOP this chain, do not skip the frame.
+					//
+					// `continue` here was a live-lock: c.next advances at the
+					// BOTTOM of this loop, so skipping it re-read the same
+					// frame forever — while holding the runtime lock, which
+					// wedged every API call on the node. Worse than the jam
+					// this gate replaces, and caught only by running it.
+					c.blocked = true
+					break
 				}
 				if batchSize+len(f) > budget && len(batch) > 0 {
 					if err := flush(); err != nil {
@@ -690,7 +708,11 @@ func (e *Engine) pushMissing(ep transports.Endpoint, sum *summary) error {
 				c.next++
 				burst++
 			}
-			if c.next >= len(c.frames) {
+			// A blocked chain is done FOR THIS CARRIER, and must leave the
+			// count or the outer loop spins on it forever — exactly once,
+			// or it takes other chains' turns down with it.
+			if !c.counted && (c.blocked || c.next >= len(c.frames)) {
+				c.counted = true
 				remaining--
 			}
 		}

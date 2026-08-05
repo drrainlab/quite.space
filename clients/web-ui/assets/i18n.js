@@ -28,6 +28,12 @@ const I18N = {
     // from this chip.
     'conn.radio_carrier': ({ carrier }) => `radio · ${carrier}`,
 
+    // Why something of yours has not gone out yet. Never "failed": it is
+    // waiting for a path wide enough, and it will go when one appears.
+    'entry.waiting.wider_path': ({ size, fits }) =>
+      `Waiting for a wider path — ${size}, and the radio carries ${fits}. ` +
+      `It goes as soon as the internet or the local network is back. Nothing is lost.`,
+
     // attaching a radio from the interface
     'radio.attach.ask': 'The phrase your segment shares.\n\nEvery radio on a segment derives the same key from these exact words, so it has to be identical everywhere — including on a node started with --mesh-seed. At least 16 characters.',
     'radio.detach': 'detach this radio',

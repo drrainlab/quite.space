@@ -2330,8 +2330,24 @@ function renderEntry(log, e, fresh, grouped) {
   kp.onclick = () => keepToggle(e);
   acts.appendChild(kp);
   d.appendChild(acts);
+  // WHY THIS HAS NOT GONE, when it has not.
+  //
+  // The radio declines to carry an event that would cost it minutes of air,
+  // which is right — but a refusal nobody hears is worse than the jam it
+  // replaces. A jam ends; a silence is indistinguishable from a message
+  // nobody sent, and the person waiting has no way to tell which.
+  //
+  // Only on one's OWN entries, and never phrased as failure: it has not gone
+  // by THIS path, it will go by a wider one, and nothing was lost.
+  if (e.waiting_for === 'wider_path') {
+    d.appendChild(textNode('entry-waiting',
+      t('entry.waiting.wider_path', {
+        size: fmtBytes(e.waiting_size), fits: fmtBytes(e.waiting_ceiling),
+      })));
+  }
   log.appendChild(d);
 }
+
 
 function textNode(cls, s) {
   const el = document.createElement('div');
