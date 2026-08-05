@@ -238,11 +238,8 @@ func gatewayAdvice(g gatewayResp) []string {
 		// and returning here would silently drop every other thing this
 		// person needs to know because one of them did not apply.
 		out = append(out, "No radio is attached. Plug an RNode modem in over "+
-			"USB and scan — this build drives one directly and it is the "+
-			"radio to reach for. A Meshtastic node also works and is attached "+
-			"by address at the bottom of this screen. Until one of them is "+
-			"here, this device can only reach people over the internet or the "+
-			"local network.")
+			"USB and scan below — until then this device reaches people only "+
+			"over the internet or the local network.")
 	case g.Radio.Reconnecting:
 		out = append(out, "The radio has gone away and is being redialled"+
 			retryPhrase(g.Radio)+". If it does not come back, check the cable "+

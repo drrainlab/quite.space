@@ -14,14 +14,14 @@ let gwTimer = null;
 // are the key's origin and never its keeper.
 let GW_PREPARED = null;
 
+// The radio lives in ONE place — the Radio tab of Settings — reachable from
+// the header chip and from Settings alike. It used to live in a dialog of its
+// own, with the Settings tab holding a paragraph and a button that closed
+// Settings to open it. That button existed only because the content was
+// somewhere else, which is a step a person pays for and nobody chose.
 function openGateway() {
-  dlgMesh.showModal();
-  refreshGateway();
-  clearInterval(gwTimer);
-  // A radio that is reconnecting changes state on its own; a screen that
-  // only updated on open would show a stale problem.
-  gwTimer = setInterval(refreshGateway, 4000);
-  dlgMesh.addEventListener('close', () => clearInterval(gwTimer), { once: true });
+  openSettings();
+  showSettingsCat('radio'); // which arms the poll — see armGatewayPoll
 }
 
 async function refreshGateway() {
@@ -69,6 +69,11 @@ function gwAdvice(g) {
 
 function gwRadioBlock(g) {
   const r = g.radio;
+  // With no radio and nothing that went wrong there is exactly one row to
+  // draw — "no radio attached" — and the state line at the top of the screen
+  // has already said it. A block whose whole content is a repetition is not
+  // evidence, it is noise.
+  if (!r.attached && !r.err && !r.attempts && !g.network && !g.config) return '';
   let state, cls;
   if (!r.attached) { state = 'no radio attached'; cls = 'off'; }
   else if (r.connected) { state = 'connected'; cls = 'on'; }
@@ -144,6 +149,10 @@ function gwProfileBlock(g) {
 
 function gwPresenceBlock(g) {
   if (!g.gateways || !g.gateways.length) {
+    // Who is on the mesh is a question about a mesh this device is not on.
+    // Once a radio is attached the same emptiness IS the reading, and it is
+    // shown.
+    if (!g.radio || !g.radio.attached) return '';
     return section('gateways', `<p class="hint">${esc(g.summary || '')}</p>`);
   }
   const rows = g.gateways.map(gw => {
@@ -185,6 +194,10 @@ function gwPinsBlock(g) {
   const warn = (g.pinWarnings || []).map(w =>
     `<p class="gw-off">${esc(w)}</p>`).join('');
   if (!rows.length && !warn) {
+    // Same rule as the presence block: nothing is pinned and there is no
+    // radio, so there is nothing this could be about. A pin that DOES exist
+    // is shown either way — it outlives the radio it was made for.
+    if (!g.radio || !g.radio.attached) return '';
     return section('trusted gateways', '<p class="hint">None. Until a gateway ' +
       'is pinned, its receipts prove nothing: messages still travel, but ' +
       'nothing can confirm anyone took them on.</p>');
@@ -386,10 +399,10 @@ let GW_SCANNING = false;
 function gwScanBlock(g) {
   const head = g.radio.attached
     ? ''
-    : `<p class="hint">No radio is attached yet. Plug an <b>RNode</b> modem in over USB
-       and scan \u2014 the device path is found for you, and it changes on its own after
-       a reset. A Meshtastic node is the other carrier this build speaks, and is
-       attached by address at the bottom of this screen.</p>`;
+    // The state line above already says a radio is needed and what kind. All
+    // that is left to say here is the one thing this button does for you.
+    : `<p class="hint">The device path is found for you \u2014 it changes on its
+       own after a reset.</p>`;
   const btn = `<div class="row">
       <button class="btn-tinted" onclick="gwScan()" ${GW_SCANNING ? 'disabled' : ''}>
         ${GW_SCANNING ? 'scanning\u2026' : 'Scan for radios'}</button>
@@ -501,3 +514,15 @@ async function gwAttach(port) {
     refreshGateway();
   } catch (err) { alert(err.message); }
 }
+
+// The Radio tab's poll, armed and disarmed by whatever reveals or hides it.
+// Separate from openGateway so the tab behaves the same however it was
+// reached — from the header chip, from the Settings tabs, or by a restored
+// tab on a later open.
+function armGatewayPoll() {
+  clearInterval(gwTimer);
+  gwTimer = setInterval(refreshGateway, 4000);
+  dlgSettings.addEventListener('close', stopGatewayPoll, { once: true });
+}
+
+function stopGatewayPoll() { clearInterval(gwTimer); }

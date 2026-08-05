@@ -277,6 +277,12 @@ async function openSettings() {
 let settingsCat = 'appearance';
 function showSettingsCat(cat) {
   settingsCat = cat;
+  // The Radio tab is a LIVE screen, not a form: a radio that is reconnecting
+  // changes state on its own. Reaching the tab by any route arms the poll,
+  // and leaving it disarms it — otherwise a person who wandered through
+  // Settings once would keep a four-second timer for the rest of the session.
+  if (cat === 'radio') { refreshGateway(); armGatewayPoll(); }
+  else stopGatewayPoll();
   document.querySelectorAll('#dlgSettings .settings-cat').forEach(el =>
     el.classList.toggle('active', el.dataset.cat === cat));
   document.querySelectorAll('#setTabs button').forEach(b =>
@@ -728,7 +734,10 @@ async function refresh() {
       : radio.connected
         ? `${radio.carrier} · messages ${(radio.transfer || {}).completed || 0}/${(radio.transfer || {}).attempted || 0}`
           + ` · frames ${(radio.transfer || {}).framesOut || 0} out · ${(radio.transfer || {}).framesIn || 0} in`
-        : (radio.error || mesh.err ? `disconnected: ${radio.error || mesh.err}` : 'not connected');
+        // Nothing attached and nothing broken: the advice line right below
+        // says so in a sentence that also says what to do about it. A bare
+        // "not connected" above it is the same fact told twice.
+        : (radio.error || mesh.err ? `disconnected: ${radio.error || mesh.err}` : '');
 
     spacesCache = await api('/api/spaces');
     // The sidebar is the Navigator's (NAV-1). It reconciles rather than
