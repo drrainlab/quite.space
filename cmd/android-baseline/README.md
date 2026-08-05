@@ -197,4 +197,166 @@ low-memory lane's.
 `core_pid` was compared across a force-stop, which is the easy case. The hard
 one is **background → return**, where the same comparison must show the pid
 *unchanged* — and where a scenario satisfied by an unnoticed restart has to be
-reported as a restart rather than passed. That is AR-0c, and it is next.
+reported as a restart rather than passed. That is AR-0c.
+
+---
+
+## 2026-08-05 — AR-0b, THE PHONE
+
+    Nothing Phone (1) · A063 / Spacewar · Android 15 (API 35) · arm64-v8a
+    Snapdragon 778G+ (lahaina) · 8 cores (Go sees 7) · MemTotal 7432272 kB
+    kernel 5.4.289-qgki · 1080×2400 @ 420 → 411 dp
+    fingerprint Nothing/SpacewarEEA/Spacewar:15/AQ3A.240929.001/
+                2602061016:user/release-keys
+
+The AVD was built from the `pixel_7` profile, which is 1080×2400 at density
+420 — so the rehearsal and the target come out at the **same 411 dp**, and at
+the same API level. No skew to correct for.
+
+### Desktop and phone, same harness commit, same corpora
+
+Corpus A, controlled, one space. `fresh-process`, **OS cache uncontrolled** —
+a fresh directory and a fresh process clear application state, never the
+kernel's page cache, and this report does not use the word "cold".
+
+| | desktop (darwin/arm64, 10 cores) | phone | ratio |
+|---|---|---|---|
+| `Inspect` (stat only) | p50 149 µs | p50 363 µs | 2.4× |
+| `VerifyPassphrase` (scrypt N=2^15 / 32 MiB) | p50 73.7 ms | p50 **128–141 ms** | **1.8×** |
+| replay, paired `Open−Verify` | 70 µs/event | **111 µs/event** (fit) | 1.6× |
+| `Open`, 16 000 events | — | **1.83 s** | — |
+| quicklink `seal` | p50 301 ms | p50 433 ms | 1.4× |
+| quicklink `open` — the redeem path | p50 304 ms | p50 **421 ms** | 1.4× |
+| quicklink `open` peak RSS | n/a (no procfs) | **137.2 MB** | — |
+
+**H2 was pessimistic and can be retired.** The reconnaissance modelled a
+3–6× ARM penalty on a memory-hard KDF and budgeted 250–500 ms; the measured
+figure is 1.8× and ~130 ms. **H3 likewise**: 1.5–3 s was modelled for the
+quick-link KDF, and it is 421 ms.
+
+    REPLAY SHAPE: LINEAR — slope grew 1.02× (criterion ≤ 1.25×)
+                  fit: 111 µs/event
+
+### Two methodology defects this run found, both mine
+
+Recorded because in both cases the wrong number would have gone into the table
+looking perfectly reasonable.
+
+**1. The quick-link memory figure was doubled by its own fixture.** The
+`quicklink-open` probe seals first (untimed) and then opens, and the first
+phone run reported a peak of **264.7 MB** — both 128 MiB scrypt allocations
+live at once. That is not the cost of opening an invitation: a person redeeming
+a link in a fresh app does the open and never the seal. The probe now collects
+and resets `VmHWM` via `/proc/self/clear_refs` between the two, and the honest
+figure is **137.2 MB — one KDF**.
+
+**2. The first replay-shape verdict was an artefact of small N.** At
+1K/2K/4K the phone reported `NONLINEAR — slope grew 5.02×`, while the
+per-event cost *fell* from 137 µs to 78 µs — which no superlinear process
+does. The two-slope test silently assumes a small constant, and opening a node
+costs a fixed amount before a single event is replayed; at N=1000 that constant
+dominated the difference being divided. Re-measured at **4K/8K/16K**, where it
+amortizes: `LINEAR`, slope grew 1.02×, per-event 93 → 101 → 106 µs.
+
+The harness now reports a least-squares fit beside the classification and
+**refuses to classify** when the fixed cost exceeds a third of the smallest
+measurement, saying so in the report rather than in somebody's head. The
+criterion itself was not touched — it was written before the data and moving it
+afterwards is precisely what the plan forbids.
+
+### Correctness — every check, on the phone
+
+| check | verdict | detail |
+|---|---|---|
+| `flock` internal | pass | taken and released |
+| `flock` external/emulated | pass (informational) | never auto-selected |
+| keystore create | pass | — |
+| reopen keeps identity | pass | same fingerprint |
+| wrong passphrase fails closed | pass | `storage: wrong passphrase or corrupted keystore` |
+| file modes | pass | dirs 0700, files 0600 |
+| truncated keystore → named failure, not a new identity | pass | named error; no second identity |
+| two processes, one data dir | pass | measured by the rig's `:contender`, not here |
+
+### The rig on the phone
+
+    core_pid == host_pid == 26372     uid 10393
+    files_dir  /data/user/0/space.quiet.arprobe/files
+    memory_class  256 MB   (large 512 MB)
+    system        2.2 GB available of 7.1 GB — a real device with real apps
+
+| gate | verdict | detail |
+|---|---|---|
+| core runs under the app UID | pass | in-process, not a subprocess |
+| `flock` on the real `filesDir` | pass | `:contender` pid 26092, same uid, distinct in `ps`, named refusal |
+| local HTTP API reachable | pass | `adb forward` + token |
+| `am force-stop` stops the core | pass | 0 processes; nothing resumed after a wait |
+| explicit restart | pass | pid 26372 → 26785 |
+| **identity survives force-stop** | **pass** | fingerprint `58fb ab86 d002 8d35 e51f 7fac …` unchanged |
+| `runtime_epoch` changes on reopen | pass | `1de0…` → `4193…` — the process dying and the node being reopened are reported as different facts |
+| `ApplicationExitInfo` joined on pid | pass | `pid=26372 USER_REQUESTED rss=157292 kB` |
+
+Two rig defects fixed by running it: a failed command dropped the `core` block
+from its answer, so a `start` against an already-running node lost the pid and
+fingerprint of the node that was running perfectly well; and three exit reasons
+rendered as bare `code_14/15/16`. Code 16 was `PACKAGE_UPDATED` — this rig's own
+reinstall. The freezer one matters most for what comes next: AR-0c's background
+gate has to tell *Android froze it* from *Android killed it*.
+
+### Where H3 actually stands now
+
+    quicklink open, peak RSS      137.2 MB
+    app memory class              256 MB   (192 MB on the emulator)
+
+One KDF against a 256 MB class is 53%. Stated carefully, because over-reading
+it is the easy mistake: the memory class governs the **Java heap**, and Go
+allocates natively, so this is not a hard ceiling — it is the framework's own
+statement of what device class this is. The number to watch is the low-memory
+lane's, and that lane's verdict is a finding rather than a gate failure.
+
+### Still open
+
+The low-memory screening lane, the beta-realistic corpus B on the phone, the
+topology axis (1×4K vs 4×1K vs 20×200), the probe-only staleness diagnostics —
+and all of AR-0c, which is the half that decides whether the core *lives* here
+rather than merely running.
+
+**AR-0b is not archived until the fixed rig re-runs it once**, so the frozen
+artefact carries `REASON_PACKAGE_UPDATED` rather than `code_16`, a status block
+on a failed `start`, the isolated quicklink-open probe, and the confound-aware
+shape classification. The numbers are not in doubt; the artefact should simply
+be the one a reader can trust without this paragraph.
+
+---
+
+## 2026-08-05 — `android-lifecycle-staging-1`, the relay AR-0c needs
+
+    91.201.114.71:7411 · Ubuntu 24.04 · x86_64 · 1 core · 2 GB
+    SPKI pin  A63rjukjUJkPVU98l0XPdKjRiDNXTVs1xCm9Xs7jyI4=
+    binary    cmd/terminal-relay @ 973b19b · sha256 44b9ef3a…
+
+A relay on the Mac would have tested the home NAT rather than the client's
+reconnect: it shares the phone's network, the same NAT, and a laptop that
+sleeps. So the network gate gets an endpoint that shares none of those.
+
+The name is deliberate. It is **not** an official relay and not a RU relay —
+it is a staging node, so it cannot quietly become production infrastructure.
+Dedicated `quietrelay` system user, hardened unit (`ProtectSystem=strict`,
+`NoNewPrivileges`, `RestrictAddressFamilies`, `MemoryMax=768M`),
+`Restart=always`, store in memory and zero-retention as the relay has always
+been.
+
+| gate | verdict | detail |
+|---|---|---|
+| service comes up | pass | `active`, 0 restarts |
+| reachable from the Mac | pass | tcp/7411 |
+| **persistent identity survives a restart** | **pass** | same SPKI pin before and after — the point of `--data`, and what makes pinning meaningful at all |
+| identity key at rest | pass | `relay-identity.pem` 0600, owned by `quietrelay` |
+| **the PHONE reaches it over the internet** | **pass** | the phone fetched the relay's identity and reported the same pin the server printed — a stronger proof than a ping, because it exercises the TLS identity path end to end |
+| TOFU pins it | pass | `{"status":"pinned"}`; the sync loop's failure cooldown cleared |
+
+One thing learned by getting it wrong: `POST /api/relay/trust` takes
+`fingerprint`, not `pin`. Sending the wrong field name makes the node compare
+the presented identity against an empty string and refuse with *"presented an
+unexpected identity (…)"* — quoting back the very pin that was sent, which
+reads like a mismatch in the relay and is in fact a mismatch in the request.
+Accurate, and briefly baffling.

@@ -8,6 +8,7 @@ import android.content.Intent;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Process;
+import android.os.SystemClock;
 import android.util.Log;
 import android.widget.TextView;
 
@@ -166,6 +167,20 @@ public class RigActivity extends Activity {
         out.put("files_dir", getFilesDir().getAbsolutePath());
         out.put("external_files_dir", String.valueOf(getExternalFilesDir(null)));
 
+        // The framework's two clocks, for the same reason the core reports its
+        // two: elapsedRealtime COUNTS deep sleep, uptimeMillis does NOT, and
+        // their difference across a Doze is the suspended time. Sampled here as
+        // well as in the core so a discrepancy between the Java and native
+        // views is visible rather than assumed away.
+        out.put("elapsed_realtime_ms", SystemClock.elapsedRealtime());
+        out.put("uptime_ms", SystemClock.uptimeMillis());
+        out.put("wall_clock_ms", System.currentTimeMillis()); // correlation ONLY
+
+        // The process's own memory, so the low-memory lane can separate the
+        // ART/JNI host's baseline from what an operation adds on top. VmHWM is
+        // the lifetime peak and is the only one that catches a transient.
+        readProcStatus(out);
+
         ActivityManager am = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
         if (am != null) {
             // What the framework will actually let this app have, which is the
@@ -228,7 +243,43 @@ public class RigActivity extends Activity {
             case ApplicationExitInfo.REASON_USER_STOPPED: return "USER_STOPPED";
             case ApplicationExitInfo.REASON_DEPENDENCY_DIED: return "DEPENDENCY_DIED";
             case ApplicationExitInfo.REASON_OTHER: return "OTHER";
+            // The three below appeared as bare "code_14/15/16" in the first
+            // phone run — 16 was this rig's own reinstall. An unnamed code in
+            // the exit column is the one place a reader will guess, and the
+            // freezer one especially matters: AR-0c's background gate has to
+            // tell "Android froze it" from "Android killed it".
+            case ApplicationExitInfo.REASON_FREEZER: return "FREEZER";
+            case ApplicationExitInfo.REASON_PACKAGE_STATE_CHANGE: return "PACKAGE_STATE_CHANGE";
+            case ApplicationExitInfo.REASON_PACKAGE_UPDATED: return "PACKAGE_UPDATED";
             default: return "code_" + r;
+        }
+    }
+
+    /**
+     * VmHWM (lifetime peak RSS) and VmRSS (settled) for this process. Read
+     * from procfs rather than from Debug.getMemoryInfo because the peak is the
+     * figure that matters and only procfs keeps it: a 128 MiB spike lasting a
+     * second is invisible to anything sampled afterwards.
+     */
+    private void readProcStatus(JSONObject out) {
+        try (java.io.BufferedReader r = new java.io.BufferedReader(
+                new java.io.FileReader("/proc/self/status"))) {
+            String line;
+            while ((line = r.readLine()) != null) {
+                if (line.startsWith("VmHWM:")) out.put("vm_hwm_kb", kbOf(line));
+                else if (line.startsWith("VmRSS:")) out.put("vm_rss_kb", kbOf(line));
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "procfs unreadable", e);
+        }
+    }
+
+    private static long kbOf(String line) {
+        String[] f = line.trim().split("\\s+");
+        try {
+            return f.length >= 2 ? Long.parseLong(f[1]) : 0;
+        } catch (NumberFormatException e) {
+            return 0;
         }
     }
 

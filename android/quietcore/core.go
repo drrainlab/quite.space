@@ -173,12 +173,29 @@ func Status() string {
 	mu.Lock()
 	defer mu.Unlock()
 
+	mono, boot := clocks()
 	s := map[string]any{
 		"state":              "stopped",
 		"core_pid":           os.Getpid(),
 		"process_started_at": processStartedAt.Format(time.RFC3339Nano),
 		"proc_start_ticks":   procStartTicks,
 		"go_version":         runtime.Version(),
+
+		// BOTH clocks, because their DIFFERENCE is the measurement.
+		//
+		// Go's time.Since reads CLOCK_MONOTONIC, which on Android STOPS while
+		// the device is suspended. CLOCK_BOOTTIME does not. Sampling both
+		// before and after a Doze gives the suspended time directly —
+		// (boot_delta − mono_delta) — rather than inferring it from a clock
+		// that was asleep for the part being measured.
+		//
+		// That is not an abstract nicety: three places in the tree age things
+		// with time.Since — the SyncClock calibration at node/listening.go,
+		// the relay pool's idle close, and the attention debounce — and every
+		// one of them will believe an overnight doze was minutes. This is the
+		// instrument that turns that from a reading of the code into a number.
+		"mono_ns": mono, // CLOCK_MONOTONIC — what time.Since sees
+		"boot_ns": boot, // CLOCK_BOOTTIME  — includes suspend
 	}
 	if lastError != "" {
 		s["last_error"] = lastError

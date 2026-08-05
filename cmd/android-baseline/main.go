@@ -283,10 +283,14 @@ func report(cond string, rs []*corpusRun, qlSeal, qlOpen *series,
 
 	fmt.Printf("\nquicklink    seal  %s\n", qlSeal.line())
 	fmt.Printf("             open  %s   ← the redeem path (N=2^17 / 128 MiB)\n", qlOpen.line())
-	fmt.Printf("  memory     seal: peak %s settled %s · go heap %s sys %s\n",
-		kb(sealMem.VmHWMKB), kb(sealMem.VmRSSKB), by(sealMem.HeapAll), by(sealMem.GoSys))
-	fmt.Printf("             open: peak %s settled %s · go heap %s sys %s\n",
-		kb(openMem.VmHWMKB), kb(openMem.VmRSSKB), by(openMem.HeapAll), by(openMem.GoSys))
+	fmt.Println("  memory     baseline is the process BEFORE the operation; the deltas are")
+	fmt.Println("             what the operation itself cost on top of the Go runtime")
+	fmt.Printf("     seal    baseline %s → peak %s (Δ %s) · settled %s (Δ %s) · go heap %s\n",
+		kb(sealMem.BaseRSSKB), kb(sealMem.VmHWMKB), kb(delta(sealMem.VmHWMKB, sealMem.BaseRSSKB)),
+		kb(sealMem.VmRSSKB), kb(delta(sealMem.VmRSSKB, sealMem.BaseRSSKB)), by(sealMem.HeapAll))
+	fmt.Printf("     open    baseline %s → peak %s (Δ %s) · settled %s (Δ %s) · go heap %s\n",
+		kb(openMem.BaseRSSKB), kb(openMem.VmHWMKB), kb(delta(openMem.VmHWMKB, openMem.BaseRSSKB)),
+		kb(openMem.VmRSSKB), kb(delta(openMem.VmRSSKB, openMem.BaseRSSKB)), by(openMem.HeapAll))
 
 	shape, shapeDetail := replayShape(rs)
 	fmt.Printf("\nREPLAY SHAPE: %s", shape)
@@ -387,6 +391,16 @@ func replayShape(rs []*corpusRun) (string, string) {
 }
 
 func secs(f float64) time.Duration { return time.Duration(f * float64(time.Second)) }
+
+// delta never goes below zero: a peak lower than the baseline means the
+// baseline was never read (no procfs), and a negative memory figure in a
+// report is worse than an honest n/a.
+func delta(a, b uint64) uint64 {
+	if a <= b {
+		return 0
+	}
+	return a - b
+}
 
 func kb(v uint64) string {
 	if v == 0 {

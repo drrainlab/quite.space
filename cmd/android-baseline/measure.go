@@ -37,11 +37,17 @@ type probeResult struct {
 	SealNS int64 `json:"seal_ns,omitempty"`
 	OpenQL int64 `json:"quicklink_open_ns,omitempty"`
 
-	VmHWMKB uint64 `json:"vm_hwm_kb,omitempty"` // lifetime peak RSS
-	VmRSSKB uint64 `json:"vm_rss_kb,omitempty"` // settled RSS
-	HeapAll uint64 `json:"go_heap_alloc,omitempty"`
-	HeapSys uint64 `json:"go_heap_sys,omitempty"`
-	GoSys   uint64 `json:"go_sys,omitempty"`
+	// Four numbers, not one, because they answer four different questions:
+	// what the Go runtime costs before anything happens, what the operation
+	// peaked at, what the operation ADDED over that baseline, and what it left
+	// behind. A single "peak RSS" cannot distinguish a cheap operation in an
+	// expensive runtime from an expensive one in a cheap runtime.
+	BaseRSSKB uint64 `json:"base_rss_kb,omitempty"` // before the operation
+	VmHWMKB   uint64 `json:"vm_hwm_kb,omitempty"`   // peak during it
+	VmRSSKB   uint64 `json:"vm_rss_kb,omitempty"`   // settled after it
+	HeapAll   uint64 `json:"go_heap_alloc,omitempty"`
+	HeapSys   uint64 `json:"go_heap_sys,omitempty"`
+	GoSys     uint64 `json:"go_sys,omitempty"`
 
 	Err string `json:"err,omitempty"`
 }
@@ -50,8 +56,20 @@ type probeResult struct {
 // a process that has done nothing else. Fresh-process isolation is not
 // fastidiousness here — a 128 MiB transient measured in a process that already
 // peaked at 128 MiB reads as no transient at all.
+//
+// EVERY duration below is monotonic: time.Since over a time.Now stamp reads
+// Go's monotonic clock, never the wall clock, so a clock adjustment mid-run
+// cannot produce a negative or absurd measurement. Wall clock appears nowhere
+// in this file. (CLOCK_MONOTONIC stops while a device is suspended, which is
+// exactly right for a CPU-bound operation and exactly wrong for measuring a
+// Doze — that is why android/quietcore reports CLOCK_BOOTTIME beside it.)
 func runProbe(kind, dir, pass string) probeResult {
 	r := probeResult{Probe: kind}
+	// The baseline is taken before a single byte of work, and the peak is
+	// reset with it: otherwise "peak" means "the largest thing this process
+	// ever did", including whatever the runtime did while starting.
+	r.BaseRSSKB = currentRSS()
+	resetPeakRSS()
 	switch kind {
 	case "rungs":
 		t0 := time.Now()
@@ -167,6 +185,24 @@ func readMemory(r *probeResult) {
 			r.VmRSSKB = kbOf(line)
 		}
 	}
+}
+
+// currentRSS is the settled resident size right now, in kB. Zero where there
+// is no procfs, which is every darwin run — and the report says n/a rather
+// than pretending the reading was taken.
+func currentRSS() uint64 {
+	f, err := os.Open("/proc/self/status")
+	if err != nil {
+		return 0
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		if line := sc.Text(); strings.HasPrefix(line, "VmRSS:") {
+			return kbOf(line)
+		}
+	}
+	return 0
 }
 
 // resetPeakRSS clears VmHWM so a later reading measures THIS operation rather

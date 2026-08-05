@@ -27,6 +27,15 @@ jobs:
           node-version: "22"
       - name: build (CGO_ENABLED=0)
         run: CGO_ENABLED=0 go build ./...
+      # AR-0. This proves LINK-TIME PORTABILITY and nothing else — that the
+      # tree still has no cgo, no build tag that excludes android, and no
+      # dependency that stopped compiling for it. It says nothing about what
+      # AR-0 actually measures: scrypt on an ARM core, a log replayed on
+      # flash, flock on the app's own volume, or a process the OS kills.
+      # Same spirit as cmd/wails-probe's split — BUILD is the hard gate, the
+      # RUN is somewhere else and is read by a person.
+      - name: build android/arm64 (portability only)
+        run: CGO_ENABLED=0 GOOS=android GOARCH=arm64 go build ./...
       - name: vet
         run: go vet ./...
       - name: test
