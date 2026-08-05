@@ -156,6 +156,16 @@ func (r *Runtime) AttachNotifications(fn func(NotificationCandidate)) uint64 {
 	// behind it is history — silently, once. Every later attach finds the
 	// marker already there and resumes from what the host actually
 	// acknowledged, which is why a restart does not re-announce a year.
+	// DAMAGED IS ITS OWN ANSWER. With no trustworthy watermark, neither
+	// redelivering nor taking a fresh baseline is safe: the first would
+	// announce an unknown amount of history, the second would silently decide
+	// that an unacknowledged event never happened. So the plane serves LIVE
+	// events — silence would be a second loss on top of the first — remembers
+	// nothing across a restart, and says so through NotificationPlaneState
+	// until somebody resets it deliberately.
+	if r.notifyLedger.isDamaged() {
+		return base
+	}
 	if !r.notifyLedger.activated() {
 		r.notifyLedger.activate(r.frontiers())
 		return base

@@ -18,6 +18,8 @@ package node
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -526,5 +528,114 @@ func TestActivationHappensOnceAndARestartIsNotAFirstRun(t *testing.T) {
 		t.Fatalf("after a restart: %d candidates, want exactly the 1 nobody "+
 			"acknowledged — 0 means the baseline moved and ate it, %d would mean "+
 			"activation ran a second time", len(second), history+1)
+	}
+}
+
+// AR-1b.5.3a — damage is not a first run.
+//
+// The behaviour this replaces sounded cautious and lost messages silently: a
+// damaged checkpoint was read as "never activated", so the next start took the
+// current frontier as a fresh baseline and every unacknowledged event became
+// history with nobody told. Silence about a flood is a good failure; silence
+// about a message is not.
+func TestADamagedCheckpointFallsBackToThePreviousGeneration(t *testing.T) {
+	dir := t.TempDir()
+
+	rt := openRuntime(t, dir, "alice")
+	tid, err := rt.CreateSpace("Room")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt.AttachNotifications(func(c NotificationCandidate) { rt.AckNotification(c.EventID) })
+	for i := 0; i < 3; i++ {
+		if _, err := rt.Say(tid, fmt.Sprintf("acknowledged %d", i), SayOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rt.Close()
+
+	// Two generations exist by now; tear the current one in half, exactly as
+	// a phone losing power mid-write would.
+	cur := filepath.Join(dir, notifyLedgerFile)
+	if _, err := os.Stat(filepath.Join(dir, notifyLedgerPrevFile)); err != nil {
+		t.Skipf("no previous generation was written yet: %v", err)
+	}
+	if err := os.WriteFile(cur, []byte(`{"schema_version":1,"activa`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	rt2 := openRuntime(t, dir, "alice")
+	defer rt2.Close()
+	if got := rt2.NotificationPlaneState(); got != NotifyPlaneActive {
+		t.Fatalf("plane state %q after losing ONE generation, want %q — the "+
+			"previous generation is intact and is exactly what it is for",
+			got, NotifyPlaneActive)
+	}
+}
+
+func TestLosingBothGenerationsIsNamedRatherThanTreatedAsAFreshStart(t *testing.T) {
+	dir := t.TempDir()
+
+	rt := openRuntime(t, dir, "alice")
+	tid, err := rt.CreateSpace("Room")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt.AttachNotifications(func(c NotificationCandidate) { rt.AckNotification(c.EventID) })
+	if _, err := rt.Say(tid, "acknowledged", SayOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	rt.Close()
+
+	for _, name := range []string{notifyLedgerFile, notifyLedgerPrevFile} {
+		p := filepath.Join(dir, name)
+		if _, err := os.Stat(p); err == nil {
+			if err := os.WriteFile(p, []byte("{"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	rt2 := openRuntime(t, dir, "alice")
+	defer rt2.Close()
+
+	if got := rt2.NotificationPlaneState(); got != NotifyPlaneDamaged {
+		t.Fatalf("plane state %q, want %q — reading damage as a first run is "+
+			"what turns an unacknowledged event into history nobody hears about",
+			got, NotifyPlaneDamaged)
+	}
+
+	// NO SILENT REBASELINE: attaching must not write a new baseline over an
+	// unknown one, because that is the act that makes the loss permanent and
+	// invisible.
+	before, _ := os.ReadFile(filepath.Join(dir, notifyLedgerFile))
+	rt2.AttachNotifications(func(NotificationCandidate) {})
+	after, _ := os.ReadFile(filepath.Join(dir, notifyLedgerFile))
+	if string(before) != string(after) {
+		t.Fatal("attaching over a damaged checkpoint rewrote it — a baseline invented " +
+			"on top of an unknown one is exactly the silent loss this state prevents")
+	}
+	if got := rt2.NotificationPlaneState(); got != NotifyPlaneDamaged {
+		t.Fatalf("plane state %q after attaching, want it to stay %q", got, NotifyPlaneDamaged)
+	}
+
+	// Live events still reach the host while damaged: durability is off, and
+	// making the person deaf as well would be a second loss on top of the
+	// first.
+	var live int
+	rt2.AttachNotifications(func(NotificationCandidate) { live++ })
+	if _, err := rt2.Say(tid, "while damaged", SayOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if live == 0 {
+		t.Error("a damaged checkpoint silenced live notifications too")
+	}
+
+	// And the way out is deliberate, never automatic.
+	if !rt2.ResetNotificationPlane() {
+		t.Fatal("an explicit reset did not recover the plane")
+	}
+	if got := rt2.NotificationPlaneState(); got != NotifyPlaneActive {
+		t.Fatalf("plane state %q after an explicit reset, want %q", got, NotifyPlaneActive)
 	}
 }
