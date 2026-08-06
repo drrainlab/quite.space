@@ -63,6 +63,18 @@ enum class PresentationPolicy {
     val mayShowText: Boolean
         get() = this == PREVIEW
 
+    /**
+     * Whether moving from [previous] to this mode must take system surfaces
+     * back.
+     *
+     * TIGHTENING IS THE ONLY DIRECTION THAT NEEDS WORK, and it needs it
+     * urgently: a shortcut published under PREVIEW carries the space's name
+     * and a Person into the launcher, and those do not expire on their own.
+     * Loosening publishes nothing by itself — the next notification does that,
+     * through the policy, the way everything else here does.
+     */
+    fun tightensFrom(previous: PresentationPolicy): Boolean = ordinal < previous.ordinal
+
     companion object {
         /**
          * The default until a person has been asked (AR-1b.7b).

@@ -61,7 +61,8 @@ internal class SystemPresenter(
 
     private val app = context.applicationContext
     private val nm = app.getSystemService(NotificationManager::class.java)
-    private val conversations = ConversationRenderer(app)
+    private val shortcuts = ShortcutRegistry(app)
+    private val conversations = ConversationRenderer(app, shortcuts)
 
     private val shown = LinkedHashMap<String, JSONObject>()
     private var presentCalls = 0
@@ -129,6 +130,30 @@ internal class SystemPresenter(
             Log.w(TAG, "notify refused for ${p.tag}", t)
         }
     }
+
+    /**
+     * A person changed what Android may know. Tightening takes the system
+     * surfaces back for every space that has one; loosening publishes nothing
+     * by itself, because publication belongs to the next notification and to
+     * the policy, never to a setting screen.
+     */
+    @Synchronized
+    fun applyPolicy(next: PresentationPolicy, spaceTags: Map<String, String>) {
+        val previous = policy
+        policy = next
+        if (!next.tightensFrom(previous)) return
+        for ((spaceId, tag) in spaceTags) {
+            try {
+                nm?.cancel(tag, NOTIFICATION_ID)     // the PREVIEW card first
+                shortcuts.teardownConversationSurface(spaceId, tag)
+            } catch (t: Throwable) {
+                Log.w(TAG, "could not take back the conversation surface for $spaceId", t)
+            }
+        }
+    }
+
+    /** What the system still holds for a space, for tests and diagnostics. */
+    fun publishedState(tag: String): Map<String, Any> = shortcuts.inspectPublishedState(tag)
 
     /** The last label seen for a device in this aggregation, or empty. */
     private fun senderOf(p: NotificationCoordinator.Presentation, device: String): String =

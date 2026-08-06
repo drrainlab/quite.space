@@ -3,9 +3,6 @@ package space.quiet.arprobe
 import android.app.Notification
 import android.app.Person
 import android.content.Context
-import android.content.Intent
-import android.content.pm.ShortcutInfo
-import android.content.pm.ShortcutManager
 import android.os.Build
 import android.util.Log
 
@@ -32,7 +29,10 @@ import android.util.Log
  * shortcut, and deleting it throws those away. It goes only when the space
  * does, or when the privacy mode tightens and the metadata must not survive.
  */
-internal class ConversationRenderer(context: Context) {
+internal class ConversationRenderer(
+    context: Context,
+    private val shortcuts: ShortcutRegistry,
+) {
 
     private val app = context.applicationContext
 
@@ -50,7 +50,6 @@ internal class ConversationRenderer(context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
         if (!r.useConversationSurface) return null
 
-        val shortcutId = shortcutId(p.tag)
         val people = HashMap<String, Person>()
         for (line in r.lines) {
             people.getOrPut(line.personKey) {
@@ -84,7 +83,12 @@ internal class ConversationRenderer(context: Context) {
             )
         }
 
-        if (r.publishShortcut) publishShortcut(p, r, shortcutId)
+        // THE SHORTCUT IS ASKED FOR, NOT ASSUMED. Publication is rate limited
+        // and can simply refuse, and a MessagingStyle notification whose
+        // shortcut does not exist is not a conversation — it is a notification
+        // claiming to be one. So a refusal returns null here and the caller
+        // falls back to the generic renderer, which is honest about what it is.
+        val shortcutId = shortcuts.ensurePreviewShortcut(p.spaceId, p.tag, r) ?: return null
 
         return Notification.Builder(app, NotificationPolicy.CHANNEL_MESSAGES)
             .setSmallIcon(R.drawable.ic_stat_quiet)
@@ -97,58 +101,6 @@ internal class ConversationRenderer(context: Context) {
             .build()
     }
 
-    /**
-     * The shortcut id carries the space's OPAQUE key, never its id — a
-     * shortcut is readable by the launcher, and the tag's whole reason for
-     * being opaque applies here identically.
-     */
-    private fun shortcutId(tag: String) = "conversation:" + tag.removePrefix("space:")
-
-    private fun publishShortcut(
-        p: NotificationCoordinator.Presentation,
-        r: ConversationProjection.Rendering,
-        id: String,
-    ) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
-        val sm = app.getSystemService(ShortcutManager::class.java) ?: return
-        val label = r.conversationTitle ?: "Quiet"
-        try {
-            val intent = Intent(app, QuietActivity::class.java)
-                .setAction(Intent.ACTION_VIEW)
-                .putExtra(QuietActivity.EXTRA_SPACE, p.spaceId)
-            val shortcut = ShortcutInfo.Builder(app, id)
-                .setLongLived(true)
-                .setShortLabel(label)
-                .setLongLabel(label)
-                .setIntent(intent)
-                .setPerson(
-                    Person.Builder()
-                        .setKey(r.lines.lastOrNull()?.personKey ?: id)
-                        .setName(r.lines.lastOrNull()?.senderLabel?.ifEmpty { label } ?: label)
-                        .build()
-                )
-                .build()
-            sm.pushDynamicShortcut(shortcut)
-        } catch (t: Throwable) {
-            Log.w(TAG, "could not publish the conversation shortcut", t)
-        }
-    }
-
-    /**
-     * Removes a space's conversation metadata. Called when the privacy mode
-     * TIGHTENS, in which case the system must not keep names it was told
-     * under a looser one — and privacy outranks the conversation settings a
-     * person may have made against the shortcut.
-     */
-    fun removeShortcut(tag: String) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
-        val sm = app.getSystemService(ShortcutManager::class.java) ?: return
-        try {
-            sm.removeLongLivedShortcuts(listOf(shortcutId(tag)))
-        } catch (t: Throwable) {
-            Log.w(TAG, "could not remove the conversation shortcut", t)
-        }
-    }
 
     companion object {
         private const val TAG = "quiet-notify"

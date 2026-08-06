@@ -141,6 +141,33 @@ class ConversationProjectionTest {
         )
     }
 
+    // ------------------------------------------------------- privacy moves
+
+    @Test
+    fun tighteningIsTheDirectionThatMustTakeSurfacesBack() {
+        // A shortcut published under PREVIEW carries the space's name and a
+        // Person into the launcher, and those do not expire on their own.
+        assertTrue(PresentationPolicy.HIDDEN.tightensFrom(PresentationPolicy.PREVIEW))
+        assertTrue(PresentationPolicy.SPACE.tightensFrom(PresentationPolicy.PREVIEW))
+        assertTrue(PresentationPolicy.HIDDEN.tightensFrom(PresentationPolicy.SPACE))
+    }
+
+    @Test
+    fun looseningPublishesNothingByItself() {
+        // Publication belongs to the next notification and to the policy —
+        // never to a settings screen deciding to be helpful.
+        assertFalse(PresentationPolicy.PREVIEW.tightensFrom(PresentationPolicy.HIDDEN))
+        assertFalse(PresentationPolicy.SPACE.tightensFrom(PresentationPolicy.HIDDEN))
+        assertFalse(PresentationPolicy.PREVIEW.tightensFrom(PresentationPolicy.PREVIEW))
+    }
+
+    @Test
+    fun anUnknownStoredModeFallsBackToTheStrictestOne() {
+        assertEquals(PresentationPolicy.HIDDEN, PresentationPolicy.parse(null))
+        assertEquals(PresentationPolicy.HIDDEN, PresentationPolicy.parse("whatever"))
+        assertEquals(PresentationPolicy.PREVIEW, PresentationPolicy.parse("preview"))
+    }
+
     @Test
     fun aSenderWithNoNameStillHasAnIdentity() {
         val r = ConversationProjection.of(
