@@ -104,10 +104,35 @@ start_world() {
   trust_relay "http://127.0.0.1:$PEER_PORT" "$PEER_TOKEN"
 }
 
+# ONE EXIT TRAP, and everything that has to happen on the way out lives in
+# it. A second `trap … EXIT` added later does not run alongside the first —
+# it REPLACES it — which is how the relay and the peer node were left running
+# after a run and the next one died on "address already in use". The screen
+# setting was the newcomer; the processes were the casualty.
+# KEEP THE DEVICE AWAKE FOR THE RUN, and say why.
+#
+# Every scenario presses HOME so the app is in the background — that is the
+# state a notification is FOR. On a phone that also means the screen goes off,
+# and with it Wi-Fi power save and eventually Doze, which delay inbound sync by
+# tens of seconds. The first scenario pays the most and fails on a budget that
+# every later one meets, which reads as a flaky product and is not.
+#
+# THIS GATE IS NOT ABOUT DOZE. Waking a sleeping phone for a message is its own
+# wave — a push path and a wake budget, deliberately out of AR-1b — and
+# measuring it here by accident would mean measuring it badly. So the screen
+# stays on while the cable is in, and it is restored at the end.
+keep_awake() {
+  "${ADB[@]}" shell svc power stayon usb >/dev/null 2>&1
+}
+restore_sleep() {
+  "${ADB[@]}" shell svc power stayon false >/dev/null 2>&1
+}
+
 stop_world() {
   pkill -f "terminal-relay --listen 0.0.0.0:$RELAY_PORT" 2>/dev/null
   pkill -f "data $PEER_DATA" 2>/dev/null
   pkill -f "$PEER_DATA" 2>/dev/null
+  restore_sleep
 }
 trap stop_world EXIT
 
@@ -246,16 +271,30 @@ import re, sys
 PKG = "'"$PKG"'"
 SUMMARY_TAG = "quite:summary"
 want = sys.argv[1]
-blocks, cur = [], None
+# ONE RECORD CAN APPEAR SEVERAL TIMES. dumpsys prints the live list, the
+# enqueued list and the ranking, and the same notification shows up in more
+# than one of them — which counted as three summaries above two
+# conversations and read as a product defect. The key is the identity
+# (0|pkg|id|tag|uid), so the key is what dedups them.
+seen, blocks, cur = set(), [], None
+
+def flush(b):
+    if not b or PKG not in b[0]:
+        return
+    m = re.search(r"key=(\S+)", b[0])
+    k = m.group(1) if m else b[0]
+    if k in seen:
+        return
+    seen.add(k)
+    blocks.append(b)
+
 for line in sys.stdin:
     if "NotificationRecord(" in line:
-        if cur and PKG in cur[0]:
-            blocks.append(cur)
+        flush(cur)
         cur = [line]
     elif cur is not None:
         cur.append(line)
-if cur and PKG in cur[0]:
-    blocks.append(cur)
+flush(cur)
 
 def tag_of(b):
     m = re.search(r"tag=(\S+)", b[0])
@@ -398,6 +437,38 @@ ensure_node() {
   "${ADB[@]}" forward "tcp:$FWD_PORT" "tcp:$PHONE_PORT" >/dev/null || return 1
   phone_api POST /api/settings "{\"relay\":\"$RELAY_ADDR\"}" >/dev/null
   wait_relay_healthy "http://127.0.0.1:$FWD_PORT" "$PHONE_TOKEN" 60 || return 1
+  return 0
+}
+
+# CLEAN UP AFTER ITSELF (SD-0).
+#
+# Every run used to leave its spaces on the phone forever — the protocol has
+# no leaving, so nothing removed them — and a device gated a dozen times ends
+# up carrying dozens of dead rooms. That is not only untidy: past ~32 spaces a
+# relay pull no longer fits in one request, every scenario gets slower, and a
+# gate that times out at scenario 10 looks like a product defect.
+#
+# ONLY WHAT THIS SCRIPT MADE. The filter is the "gate " title prefix these
+# scenarios create, matched exactly. Somebody's real conversations are on this
+# phone and nothing here may go near them.
+cleanup_gate_spaces() {
+  local ids
+  ids=$(phone_api GET /api/spaces | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+for s in (d if isinstance(d, list) else d.get("spaces", [])):
+    title = (s.get("display_title") or s.get("title") or "")
+    if title.startswith("gate "):
+        print(s["id"])
+' 2>/dev/null)
+  local n=0
+  for sid in $ids; do
+    phone_api DELETE "/api/spaces/$sid" >/dev/null && n=$((n+1))
+  done
+  [ "$n" -gt 0 ] && log "removed $n space(s) this gate created"
   return 0
 }
 
@@ -640,6 +711,7 @@ log "runtime_epoch $(core_field "$STATUS" runtime_epoch)  plane $(core_field "$S
 WANT=("$@")
 run_it() { [ ${#WANT[@]} -eq 0 ] && return 0; for w in "${WANT[@]}"; do [ "$w" = "$1" ] && return 0; done; return 1; }
 
+keep_awake
 ensure_node && report_space_count
 
 run_it 02 && scenario_02_new_event
@@ -650,6 +722,11 @@ run_it 13 && scenario_13_permission
 run_it 12 && scenario_12_retention
 run_it 11 && scenario_11_corrupt_checkpoint     # last: it damages the checkpoint
 [ ${#WANT[@]} -eq 0 ] && scenario_unreachable
+
+# After the verdicts, never before: a scenario that failed leaves its space
+# behind on purpose so it can be looked at, and cleanup that ran first would
+# take the evidence with it.
+ensure_node >/dev/null 2>&1 && cleanup_gate_spaces
 
 echo
 echo "AR-1b.5.6 — $(date -u +%Y-%m-%dT%H:%M:%SZ)"
