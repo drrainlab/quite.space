@@ -104,6 +104,26 @@ class NotificationSurfaceTest {
         }
     }
 
+    /**
+     * Wait for a count that STAYS. `settle` returns the instant the number is
+     * right, and several of these transitions pass through the right number on
+     * their way somewhere else: taking down a summary removes it, the system
+     * then sweeps the child, and the child is put back — three states, and the
+     * middle one has the same size as the last. A test that reads the middle
+     * one fails once in five runs and looks like a product bug.
+     */
+    private fun settleStable(want: Int, holdMs: Long = 400) {
+        repeat(50) {
+            settle(want)
+            var stable = true
+            repeat(4) {
+                Thread.sleep(holdMs / 4)
+                if (ours().size != want) stable = false
+            }
+            if (stable && ours().size == want) return
+        }
+    }
+
     private fun ours(): List<StatusBarNotification> =
         nm.activeNotifications.filter { it.packageName == ctx.packageName }
 
@@ -179,6 +199,13 @@ class NotificationSurfaceTest {
         arrive("e1", networkSpaceId, sender = secretSender, at = 1_000, seq = 1)
         arrive("e2", networkSpaceId, sender = secretSender, at = 2_000, seq = 2)
         settle(1)
+        // The SECOND message is an update to the same notification, so the
+        // count is 1 either way: wait for the content, not for the count.
+        repeat(40) {
+            val n = ours().firstOrNull()?.notification
+            if (n?.extras?.getParcelableArray(Notification.EXTRA_MESSAGES)?.size == 2) return@repeat
+            Thread.sleep(100)
+        }
 
         val sbn = ours().single()
         val shortcutId = sbn.notification.shortcutId
@@ -210,7 +237,7 @@ class NotificationSurfaceTest {
         presenter.policy = PresentationPolicy.SPACE
         arrive("a1", "SPACE_A_${networkSpaceId}")
         arrive("b1", "SPACE_B_${networkSpaceId}")
-        settle(3)
+        settleStable(3)
 
         val all = ours()
         val summaries = all.filter { it.tag == GroupSummary.TAG }
@@ -242,16 +269,15 @@ class NotificationSurfaceTest {
      * Left in the suite and ignored, so it is a question somebody can pick up
      * rather than an assertion quietly weakened until it passed.
      */
-    @org.junit.Ignore("AR-1b.6b.3: cancelling the summary appears to take the last child with it")
     @Test
     fun theSummaryGoesWhenOnlyOneConversationIsLeft() {
         presenter.policy = PresentationPolicy.SPACE
         arrive("a1", "SPACE_A_${networkSpaceId}")
         arrive("b1", "SPACE_B_${networkSpaceId}")
-        settle(3)
+        settleStable(3)
 
         coordinator.onRead("SPACE_A_${networkSpaceId}")
-        settle(1)
+        settleStable(1)
 
         val all = ours()
         assertTrue("no summary above a lone child", all.none { it.tag == GroupSummary.TAG })
@@ -260,6 +286,46 @@ class NotificationSurfaceTest {
                 all.map { it.tag }.toString(),
             1, all.size,
         )
+    }
+
+    /**
+     * And back again: the conversation that was left alone must still be
+     * gathered when a second one arrives.
+     *
+     * The obvious teardown — take the survivor out of the group, then cancel
+     * the summary — leaves it outside, and nothing puts it back: the next
+     * arrival posts a summary over one child while the other floats loose
+     * beside it. So the survivor stays grouped through the whole cycle, and
+     * this is the test that says so.
+     */
+    @Test
+    fun aConversationThatWasAloneIsGatheredAgainWhenAnotherArrives() {
+        presenter.policy = PresentationPolicy.SPACE
+        arrive("a1", "SPACE_A_${networkSpaceId}")
+        arrive("b1", "SPACE_B_${networkSpaceId}")
+        settleStable(3)
+
+        coordinator.onRead("SPACE_A_${networkSpaceId}")
+        settleStable(1)
+        assertEquals(
+            "the survivor must stay in the group it will be gathered by",
+            GroupSummary.KEY, ours().single().notification.group,
+        )
+
+        arrive("c1", "SPACE_C_${networkSpaceId}")
+        settleStable(3)
+
+        val all = ours()
+        val children = all.filter { it.tag != GroupSummary.TAG }
+        assertEquals("one summary above two conversations", 1, all.size - children.size)
+        assertEquals(2, children.size)
+        val dump = all.joinToString(" | ") { "${it.tag}=${it.notification.group}" }
+        for (c in children) {
+            assertEquals(
+                "a child outside the group is not gathered by the summary: $dump",
+                GroupSummary.KEY, c.notification.group,
+            )
+        }
     }
 
     // -------------------------------------------------- the privacy retreat

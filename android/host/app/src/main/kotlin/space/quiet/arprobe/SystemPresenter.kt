@@ -158,6 +158,65 @@ internal class SystemPresenter(
         }
     }
 
+    /**
+     * Take the summary down and keep the one conversation left underneath it.
+     *
+     * CAPTURE, CANCEL, WAIT, RE-POST. The removal of the children is not part
+     * of our cancel; it is a follow-up the system runs on its own time, so a
+     * re-post issued immediately can be swept away by a cascade that arrives
+     * afterwards. Two orderings that did not wait — ungroup-then-cancel, and
+     * cancel-then-repost — each passed once and failed on the next run, which
+     * is worse than failing.
+     *
+     * The survivor goes back UNCHANGED, group included: a lone child in a
+     * group renders exactly like a lone child, and taking it out would leave a
+     * state that has to be undone when the second conversation returns.
+     *
+     * SILENT, because nothing arrived; the person has already been told.
+     */
+    private fun dropSummaryKeeping(survivorTag: String?) {
+        val rebuilt = survivorTag?.let { tag ->
+            nm?.activeNotifications
+                ?.firstOrNull { it.tag == tag && it.id == NOTIFICATION_ID }
+                ?.let {
+                    Notification.Builder.recoverBuilder(app, it.notification)
+                        .setOnlyAlertOnce(true)
+                        .build()
+                }
+        }
+        nm?.cancel(GroupSummary.TAG, NOTIFICATION_ID)
+        if (rebuilt == null || survivorTag == null) return
+
+        awaitGone(GroupSummary.TAG)
+        nm?.notify(survivorTag, NOTIFICATION_ID, rebuilt)
+        if (!awaitPresent(survivorTag)) {
+            // One retry: the cascade can still land between the check and the
+            // post. Twice is enough — a third would be a loop against the
+            // system rather than a race with it.
+            nm?.notify(survivorTag, NOTIFICATION_ID, rebuilt)
+        }
+    }
+
+    /** Bounded wait, and only on the two-to-one transition. */
+    private fun awaitGone(tag: String) {
+        repeat(WAIT_STEPS) {
+            if (nm?.activeNotifications?.any { it.tag == tag && it.id == NOTIFICATION_ID } != true) {
+                return
+            }
+            Thread.sleep(WAIT_STEP_MS)
+        }
+    }
+
+    private fun awaitPresent(tag: String): Boolean {
+        repeat(WAIT_STEPS) {
+            if (nm?.activeNotifications?.any { it.tag == tag && it.id == NOTIFICATION_ID } == true) {
+                return true
+            }
+            Thread.sleep(WAIT_STEP_MS)
+        }
+        return false
+    }
+
     /** What the system still holds for a space, for tests and diagnostics. */
     fun publishedState(tag: String): Map<String, Any> = shortcuts.inspectPublishedState(tag)
 
@@ -197,8 +256,19 @@ internal class SystemPresenter(
             return
         }
         if (!GroupSummary.needed(active.size)) {
+            // A SUMMARY IS THE GROUP'S ANCHOR: cancelling it takes every
+            // remaining child with it. Measured rather than assumed —
+            //
+            //   posted 2 + summary  -> [summary, a, b]
+            //   cancel child a      -> [summary, b]
+            //   cancel summary      -> []                <- b is gone
+            //   ungroup b, then cancel summary -> [b]
+            //
+            // so tidying away the line above one conversation used to delete
+            // the conversation it was tidying up for: read one of two, and the
+            // other silently vanished from the shade.
             try {
-                nm?.cancel(GroupSummary.TAG, NOTIFICATION_ID)
+                dropSummaryKeeping(active.values.singleOrNull()?.tag)
             } catch (t: Throwable) {
                 Log.w(TAG, "could not take the summary down", t)
             }
@@ -290,5 +360,9 @@ internal class SystemPresenter(
          * int derived from it.
          */
         const val NOTIFICATION_ID = 1
+
+        /** Up to a second and a half, only on the two-to-one transition. */
+        const val WAIT_STEPS = 30
+        const val WAIT_STEP_MS = 50L
     }
 }
