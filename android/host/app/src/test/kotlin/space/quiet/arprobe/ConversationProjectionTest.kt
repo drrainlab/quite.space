@@ -177,4 +177,40 @@ class ConversationProjectionTest {
         assertTrue(r.lines[0].personKey.isNotEmpty())
         assertEquals("", r.lines[0].senderLabel)
     }
+
+    /**
+     * A PERSON IS NAMED ONCE AND EVERY MESSAGE OF THEIRS SHOWS UNDER IT, so
+     * the name has to be the one they use now.
+     *
+     * Found on a phone: somebody renamed themselves, the device applied the
+     * rename — its member list said the new name, and so did the notification
+     * title — while the messages underneath were still attributed to the old
+     * one, because the Person was built from whichever line came first.
+     */
+    @Test
+    fun aPersonIsCalledByTheirLatestName() {
+        val r = ConversationProjection.of(
+            PresentationPolicy.PREVIEW, "Room",
+            listOf(
+                item("e1", device = "dev-a", sender = "Old Name", text = "before"),
+                item("e2", device = "dev-a", sender = "New Name", text = "after"),
+            ),
+        ) { "person:$it" }
+
+        assertEquals("New Name", r.namesByPerson["person:dev-a"])
+    }
+
+    /** An empty label is not a rename: it is a candidate that carried none. */
+    @Test
+    fun anEmptyLabelDoesNotEraseAKnownName() {
+        val r = ConversationProjection.of(
+            PresentationPolicy.PREVIEW, "Room",
+            listOf(
+                item("e1", device = "dev-a", sender = "Known", text = "one"),
+                item("e2", device = "dev-a", sender = "", text = "two"),
+            ),
+        ) { "person:$it" }
+
+        assertEquals("Known", r.namesByPerson["person:dev-a"])
+    }
 }

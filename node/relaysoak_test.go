@@ -335,3 +335,115 @@ func TestSoakFiftySpacesRecoverFromRepeatedThrottling(t *testing.T) {
 	t.Logf("recovery: %d rounds, %d refusals, %d recoveries, nothing lost",
 		rounds, refusals, recoveries)
 }
+
+// The BACKGROUND sync, left to its own rhythm — which is the one a person
+// actually uses.
+//
+// WRITTEN BECAUSE THE PHONE GATE KEPT FAILING IN A MOVING PLACE. Whichever
+// check happened to run three minutes in reported "no notification arrived",
+// the relay's item count stopped growing, and both nodes reported themselves
+// healthy with nothing held. An earlier test drove PushToRelay and
+// PullFromRelay by hand and passed — which proves the two calls work and says
+// nothing about the loop that is supposed to make them, and the loop is where
+// RR-2's tiering decides that a quiet space may wait.
+//
+// So this one says nothing to either node: it sets the relay, waits, speaks,
+// and measures how long a message takes to arrive.
+func TestSoakBackgroundSyncKeepsDeliveringAfterAQuietSpell(t *testing.T) {
+	if os.Getenv("QUIET_RELAY_SOAK") != "1" {
+		t.Skip("set QUIET_RELAY_SOAK=1 (this one waits out a quiet window)")
+	}
+	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+	addr := "127.0.0.1:" + itoa(port)
+
+	sender := openRuntime(t, t.TempDir(), "alice")
+	defer sender.Close()
+	phone := openRuntime(t, t.TempDir(), "bob")
+	defer phone.Close()
+
+	var rooms []id.TerminalID
+	for _, title := range []string{"room A", "room B"} {
+		tid, err := sender.CreateSpace(title)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rooms = append(rooms, tid)
+	}
+	// Settings LAST, so both sides start their loops with the spaces in hand.
+	for _, rt := range []*Runtime{sender, phone} {
+		if err := rt.SetSettings(Settings{Relay: addr}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tid := range rooms {
+		info, err := sender.MintPass(tid, 1, 24, addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		reqID, err := phone.JoinByPass(info.Link)
+		if err != nil {
+			t.Fatal(err)
+		}
+		waitJoin(t, phone, reqID, JoinReady)
+	}
+
+	// arrival waits for a message WITHOUT touching either node's sync.
+	arrival := func(tid id.TerminalID, text string, limit time.Duration) time.Duration {
+		start := time.Now()
+		if _, err := sender.Say(tid, text, SayOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		for time.Since(start) < limit {
+			if sp, ok := phone.spaceForTest(tid); ok {
+				found := false
+				_ = sp.Log.Replay(func(a eventlog.Applied) error {
+					if a.Env != nil && a.Env.Schema == schemas.MessageText {
+						if e, ok := sp.State.EntryByID(a.ID); ok &&
+							e.Content.Text != nil && e.Content.Text.Text == text {
+							found = true
+						}
+					}
+					return nil
+				})
+				if found {
+					return time.Since(start)
+				}
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+		return -1
+	}
+
+	// Warm both, the way anybody's first minute looks.
+	for i, tid := range rooms {
+		if d := arrival(tid, fmt.Sprintf("warm %d", i), 90*time.Second); d < 0 {
+			t.Fatalf("room %d never received its first message", i)
+		} else {
+			t.Logf("room %d warm in %v", i, d)
+		}
+	}
+
+	// THE QUIET SPELL. Longer than RR-2's quietAfter, which is the window
+	// this test exists to walk into.
+	t.Log("going quiet for 90s")
+	time.Sleep(90 * time.Second)
+
+	for i, tid := range rooms {
+		d := arrival(tid, fmt.Sprintf("after the quiet %d", i), 2*time.Minute)
+		if d < 0 {
+			t.Fatalf("room %d: a message after a quiet spell never arrived — "+
+				"this is the phone's \"the conversation went silent\"", i)
+		}
+		t.Logf("room %d woke in %v", i, d)
+		// A number, not only a pass: a room that takes half a minute to wake
+		// is not broken and is not what anybody expects either.
+		if d > 30*time.Second {
+			t.Errorf("room %d took %v to wake — the loop is deciding to wait "+
+				"far longer than a person will", i, d)
+		}
+	}
+}

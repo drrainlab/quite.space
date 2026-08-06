@@ -53,6 +53,19 @@ object ConversationProjection {
         val publishShortcut: Boolean,
         val conversationTitle: String?,
         val lines: List<Line>,
+        /**
+         * What to CALL each person, by their opaque key — the LAST name seen
+         * for them in this aggregation, not the first.
+         *
+         * A conversation notification names a Person once and shows every one
+         * of their messages under that name. Building it from whichever line
+         * happened to come first meant a person who renamed themselves kept
+         * their old name in the shade until the whole aggregation closed, even
+         * though the device had already applied the rename and the member list
+         * said so. Found on a phone: the title said the new name and the
+         * messages underneath it said the old one.
+         */
+        val namesByPerson: Map<String, String>,
         /** What a generic notification says when the surface is not used. */
         val genericText: String,
     )
@@ -85,12 +98,20 @@ object ConversationProjection {
             }
 
         val n = items.size
+        // LAST WINS, per person. Lines are chronological, so the newest
+        // non-empty label is the one the sender is called by now.
+        val names = LinkedHashMap<String, String>()
+        for (line in lines) {
+            if (line.senderLabel.isNotEmpty()) names[line.personKey] = line.senderLabel
+        }
+
         return Rendering(
             policy = policy,
             useConversationSurface = policy.mayUseConversationSurface,
             publishShortcut = policy.mayPublishShortcut,
             conversationTitle = if (policy.mayNameSpace && spaceLabel.isNotEmpty()) spaceLabel else null,
             lines = lines,
+            namesByPerson = names,
             genericText = if (n == 1) "A new message" else "$n new messages",
         )
     }

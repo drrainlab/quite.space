@@ -23,7 +23,13 @@ type RelayDiagnostics struct {
 	RTTBucketMs int    `json:"rtt_bucket_ms,omitempty"`
 	Jitter      int    `json:"jitter_ms,omitempty"`
 	LoadClass   string `json:"load_class,omitempty"`
-	SyncActive  bool   `json:"sync_active"`
+	// ThrottledForMs is how long this node has decided NOT to ask, because
+	// the relay said to come back later (RR). Reported because a node that
+	// is deliberately waiting looks exactly like one that is broken: sync is
+	// active, the relay is healthy, and nothing is arriving. Zero when it is
+	// free to ask.
+	ThrottledForMs int    `json:"throttled_for_ms,omitempty"`
+	SyncActive     bool   `json:"sync_active"`
 	IntervalMs  int    `json:"interval_ms,omitempty"`
 	LastError   string `json:"last_error,omitempty"`
 	// Public spaces and where their traffic goes ("" = the personal relay).
@@ -51,6 +57,12 @@ func (r *Runtime) RelayDiagnosticsSnapshot() RelayDiagnostics {
 		if ref, err := ParseRelayRef(d.Primary); err == nil {
 			if ep, ok := ref.Resolve(BuiltinRelayRegistry); ok {
 				d.PrimaryHealth = r.pool().health(ep)
+				// Waiting on purpose is not the same as being broken, and
+				// from outside they are identical: sync active, relay
+				// healthy, nothing arriving.
+				if left, yes := r.relayThrottled(ep); yes {
+					d.ThrottledForMs = int(left.Milliseconds())
+				}
 				switch {
 				case ref.Official != "":
 					if desc, found := BuiltinRelayRegistry.ByID(ref.Official); found {

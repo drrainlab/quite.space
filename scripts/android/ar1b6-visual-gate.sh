@@ -68,7 +68,7 @@ PY
   case "$verdict" in
     pass) PASSED=$((PASSED+1));;
     fail) FAILED=$((FAILED+1));;
-    *) ;;
+    *) ;;   # info and skip are facts, not verdicts
   esac
   SUMMARY+=("$(printf '%-34s %-6s %s' "$check" "$verdict" "$reason")")
   log "$check → $verdict: $reason"
@@ -305,8 +305,21 @@ join_space() { # join_space <title> <sender name> → space id
   return 1
 }
 
-say() { peer_api POST "/api/spaces/$1/messages" \
-  "$(python3 -c 'import json,sys; print(json.dumps({"text": sys.argv[1]}))' "$2")" >/dev/null; }
+# SAYING SOMETHING HAS TO BE CHECKED. The first version discarded the answer,
+# so a peer that had died mid-run looked exactly like a phone that was not
+# notifying: every check failed with "no notification arrived" while the relay
+# had only ever received three items. A harness that cannot tell which side
+# stopped sends whoever runs it to debug the wrong half.
+say() {
+  local ans
+  ans=$(peer_api POST "/api/spaces/$1/messages" \
+    "$(python3 -c 'import json,sys; print(json.dumps({"text": sys.argv[1]}))' "$2")")
+  if ! printf '%s' "$ans" | grep -q '"id"'; then
+    log "the peer did not accept a message: $(printf '%s' "$ans" | head -c 160)"
+    return 1
+  fi
+  return 0
+}
 
 wait_for_records() { # wait_for_records <n> <seconds>
   local want=$1 secs=$2
@@ -373,10 +386,10 @@ clear_shade() {
 
 log "device: $("${ADB[@]}" shell getprop ro.product.model | tr -d '\r') API $("${ADB[@]}" shell getprop ro.build.version.sdk | tr -d '\r')"
 "${ADB[@]}" shell pm grant "$PKG" android.permission.POST_NOTIFICATIONS >/dev/null 2>&1
-# Awake for the run: every check here puts the app in the background, which on
-# a phone means the screen goes off and sync waits for Doze. Waking a sleeping
-# phone is its own wave; measuring it here by accident would measure it badly.
-"${ADB[@]}" shell svc power stayon usb >/dev/null 2>&1
+# Awake, and allowed to run in the background, for the length of the run.
+# See allow_background for why the second one is bought rather than assumed.
+keep_awake
+allow_background
 
 start_world
 ensure_node || fail "the node on the phone would not open"
@@ -388,6 +401,27 @@ cleanup_gate_spaces
 A=$(join_space "$SPACE_A" "$SENDER_ONE") || fail "could not join the first space"
 B=$(join_space "$SPACE_B" "$SENDER_ONE") || fail "could not join the second space"
 log "spaces: A=$A B=$B"
+
+# WARM BOTH ROOMS BEFORE ANY CHECK RUNS.
+#
+# A freshly joined space takes minutes to receive its first message on this
+# path — the pass completes, and the first sync of a new space is its own
+# round trip after that. This gate is about what a PERSON SEES, not about how
+# long the first sync takes (which b.5 measures), and the difference showed up
+# as "the second conversation never arrived" while the node reported zero
+# entries in it: not a notification defect at all.
+warm_space() { # warm_space <space id> <label>
+  local sp=$1 label=$2 n
+  say "$sp" "warming $label"
+  for _ in $(seq 1 60); do
+    sleep 3
+    n=$(delivered_count "$sp")
+    [ "${n:-0}" -gt 0 ] && { log "$label is warm after $n entr(y|ies)"; return 0; }
+  done
+  fail "$label never received anything; the checks below would be measuring sync"
+}
+warm_space "$A" "room A"
+warm_space "$B" "room B"
 
 # ---- 1. HIDDEN: a notification that says nothing about anything ------------
 clear_shade "$A" "$B"
@@ -444,8 +478,19 @@ else
 fi
 
 # ---- 4. two conversations, one summary -----------------------------------
+#
+# A LONGER BUDGET THAN THE OTHERS, AND THE REASON IS A FINDING RATHER THAN AN
+# EXCUSE. Room B has sat idle for the three checks above while room A was
+# written to repeatedly; its next message takes minutes to arrive, where a
+# message into the busy room takes seconds. The sender reports nothing held
+# and the phone eventually receives it, so nothing is lost — but a
+# conversation that has been quiet for a few minutes is slow to wake, and that
+# belongs to the availability wave, not to this gate. Measured here so the
+# number is on the record.
+b_sent_at=$(date +%s)
 say "$B" "$TEXT_TWO"
-if wait_for_records 2 40; then
+if wait_for_records 2 90; then
+  log "room B woke after $(( $(date +%s) - b_sent_at ))s"
   "${ADB[@]}" shell cmd statusbar expand-notifications >/dev/null; sleep 2
   shot two-and-summary >/dev/null
   "${ADB[@]}" shell cmd statusbar collapse >/dev/null
@@ -454,8 +499,26 @@ if wait_for_records 2 40; then
     && record "group.one-summary-above-two" pass "exactly one summary" \
     || record "group.one-summary-above-two" fail "$s summaries above two conversations"
 else
+  # THE SENDER'S OWN ACCOUNT OF WHY. Its diagnostics name the space it is
+  # holding frames for and the reason — "no recipient", "no relay" — which is
+  # the difference between a phone that is not notifying and a peer that never
+  # handed the message over.
+  held=$(peer_api GET /api/relay/diagnostics \
+    | python3 -c 'import json,sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    print("[]"); raise SystemExit
+print(json.dumps(d.get("held", [])))' 2>/dev/null)
+  # AND THE PHONE'S OWN ACCOUNT. A node that is waiting out a rate limit looks
+  # identical to one that is broken — sync active, relay healthy, nothing
+  # arriving — so it is asked directly whether it is waiting on purpose.
+  phone_wait=$(phone_api GET /api/relay/diagnostics \
+    | python3 -c 'import json,sys
+try: print(json.load(sys.stdin).get("throttled_for_ms", 0))
+except Exception: print(-1)' 2>/dev/null)
   record "group.one-summary-above-two" fail "the second conversation never arrived" \
-    "{\"entries_in_b\":$(delivered_count "$B"),\"records\":$(shade records)}"
+    "{\"entries_in_b\":$(delivered_count "$B"),\"records\":$(shade records),\"sender_held\":${held:-[]},\"phone_throttled_for_ms\":${phone_wait:-0}}"
 fi
 
 # ---- 5. read one: the summary goes, the other stays -----------------------
@@ -473,7 +536,17 @@ fi
 
 # ---- 6. a rename: the new name, and no trace of the old one --------------
 peer_api POST /api/identity/name "{\"name\":\"$SENDER_TWO\"}" >/dev/null
-sleep 2
+# A RENAME IS ITS OWN EVENT, NOT A FIELD ON THE MESSAGE. Renaming republishes
+# a manifest into every space, and the name on a notification is whatever the
+# core knew when it DECORATED the candidate — so a message sent two seconds
+# later is decorated with the old name, correctly, and the check fails for a
+# product that is working. Wait until the phone knows, then write.
+renamed=no
+for _ in $(seq 1 40); do
+  sleep 3
+  if phone_api GET "/api/spaces/$B/members" | grep -q -- "$SENDER_TWO"; then renamed=yes; break; fi
+done
+[ "$renamed" = yes ] || log "the phone never learned the new name; the check below will say so"
 say "$B" "$TEXT_ONE"
 # POLLED, AND FOR LONGER THAN AN ARRIVAL. A rename is not carried by the
 # message: it is its own event, and the name on a notification is whatever the
@@ -504,6 +577,27 @@ shot tightened-to-hidden >/dev/null
 leak_scan "tighten.takes-the-surfaces-back" "$SPACE_A" "$SPACE_B" "$SENDER_ONE" "$SENDER_TWO" "$TEXT_ONE" "$TEXT_TWO"
 
 # ---- 8. the lock screen, which is where a notification is most public ----
+#
+# OPT-IN, BECAUSE THIS ONE CANNOT CLEAN UP AFTER ITSELF. Photographing a lock
+# screen means putting the device to sleep, and on a phone with a PIN nothing
+# here can unlock it again — the harness has no business typing a passcode and
+# will not. So it runs only when asked, and whoever asks knows they will pick
+# the phone up afterwards:
+#
+#   LOCKSCREEN=1 SER=… ./scripts/android/ar1b6-visual-gate.sh
+#
+# Left out by default, the run ends with the phone awake and usable.
+if [ "${LOCKSCREEN:-0}" != "1" ]; then
+  record "lockscreen.photographed" skip "set LOCKSCREEN=1 — it leaves the phone locked"
+  keep_awake
+  cleanup_gate_spaces
+  echo
+  echo "AR-1b.6b.6 — $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  printf '%s\n' "${SUMMARY[@]}"
+  printf '\n%d passed, %d failed.  Shots: %s  Report: %s\n' "$PASSED" "$FAILED" "$SHOTS" "$REPORT"
+  exit $([ "$FAILED" -eq 0 ] && echo 0 || echo 1)
+fi
+
 clear_shade "$A" "$B"
 rig policy --es arg preview >/dev/null
 "${ADB[@]}" shell input keyevent KEYCODE_HOME; sleep 2

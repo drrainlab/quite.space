@@ -53,13 +53,18 @@ internal class ConversationRenderer(
         val people = HashMap<String, Person>()
         for (line in r.lines) {
             people.getOrPut(line.personKey) {
+                // The name comes from the PROJECTION, not from this line: a
+                // Person is named once and every message of theirs is shown
+                // under it, so taking whichever line came first left a
+                // renamed person under their old name until the aggregation
+                // closed. See Rendering.namesByPerson.
                 Person.Builder()
                     // The KEY is what Android threads a conversation by; the
                     // name is only what it shows. Keeping them separate is
                     // what lets somebody rename themselves without becoming a
                     // second person in the shade.
                     .setKey(line.personKey)
-                    .setName(line.senderLabel.ifEmpty { "…" })
+                    .setName((r.namesByPerson[line.personKey] ?: line.senderLabel).ifEmpty { "…" })
                     .setBot(false)
                     .build()
             }

@@ -961,3 +961,89 @@ func TestASpaceThePlaneHasNeverSeenDoesNotReplayItsWholeLog(t *testing.T) {
 			"in it", history, got)
 	}
 }
+
+// AR-1b.6b.6 — a person renames themselves, and the next notification says so.
+//
+// FOUND BY THE VISUAL GATE ON A PHONE, where the shade went on showing the old
+// name after the device had already applied the rename — its member list said
+// one thing and its notification said another. A name is the one thing on a
+// notification a person checks before deciding whether to look, so a stale one
+// is not cosmetic.
+//
+// The rename is its own event: renaming republishes a manifest into every
+// space, and the label is resolved when the candidate is DECORATED. So the
+// test does what the gate does — rename, sync, then speak — and asserts on the
+// candidate the host would receive.
+func TestARenameReachesTheNextNotification(t *testing.T) {
+	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+	addr := "127.0.0.1:" + itoa(port)
+
+	alice := openRuntime(t, t.TempDir(), "alice")
+	defer alice.Close()
+	bob := openRuntime(t, t.TempDir(), "bob")
+	defer bob.Close()
+	for _, rt := range []*Runtime{alice, bob} {
+		if err := rt.SetSettings(Settings{Relay: addr}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	tid, err := alice.CreateSpace("a room")
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := alice.MintPass(tid, 1, 24, addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reqID, err := bob.JoinByPass(info.Link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitJoin(t, bob, reqID, JoinReady)
+
+	var mu sync.Mutex
+	var got []NotificationCandidate
+	bob.AttachNotifications(func(c NotificationCandidate) {
+		mu.Lock()
+		got = append(got, c)
+		mu.Unlock()
+	})
+
+	if err := alice.SetName("Renamed Alice"); err != nil {
+		t.Fatal(err)
+	}
+	// The rename travels first, on its own. Then the message.
+	sync := func() {
+		for i := 0; i < 20; i++ {
+			_, _, _ = alice.PushToRelay(addr, tid)
+			_, _ = bob.PullFromRelay(addr)
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+	sync()
+	if _, err := alice.Say(tid, "after the rename", SayOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	sync()
+
+	mu.Lock()
+	defer mu.Unlock()
+	var last string
+	for _, c := range got {
+		if c.PreviewText == "after the rename" {
+			last = c.SenderLabel
+		}
+	}
+	if last == "" {
+		t.Fatalf("no candidate for the message; got %d candidate(s)", len(got))
+	}
+	if last != "Renamed Alice" {
+		t.Fatalf("the notification would say %q — a name a person changed and "+
+			"the device has already applied", last)
+	}
+}

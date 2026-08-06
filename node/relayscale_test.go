@@ -24,7 +24,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/drrainlab/quiet_places/kernel/eventlog"
 	"github.com/drrainlab/quiet_places/protocol/id"
+	"github.com/drrainlab/quiet_places/protocol/schemas"
 	"github.com/drrainlab/quiet_places/transports/lan"
 	"github.com/drrainlab/quiet_places/transports/relay"
 )
@@ -534,5 +536,83 @@ func TestANodeWaitsAsLongAsTheRelayAsked(t *testing.T) {
 	if !errors.As(err, &re2) || !re2.Throttled() {
 		t.Fatalf("a pull during the wait reached the network instead of "+
 			"answering from the deadline: %v", err)
+	}
+}
+
+// Two joined spaces, messages alternating between them, and both must arrive.
+//
+// WRITTEN BECAUSE A PHONE SAID OTHERWISE. In the visual gate the second space
+// joined received its first message and then nothing, while the first kept
+// working for minutes — which would be a serious defect (a conversation that
+// goes quiet with no error anywhere) or a harness artifact, and guessing
+// between those is how a real one gets dismissed.
+func TestBothJoinedSpacesKeepReceiving(t *testing.T) {
+	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+	addr := "127.0.0.1:" + itoa(port)
+
+	sender := openRuntime(t, t.TempDir(), "alice")
+	defer sender.Close()
+	phone := openRuntime(t, t.TempDir(), "bob")
+	defer phone.Close()
+	for _, rt := range []*Runtime{sender, phone} {
+		if err := rt.SetSettings(Settings{Relay: addr}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var rooms []id.TerminalID
+	for _, title := range []string{"room A", "room B"} {
+		tid, err := sender.CreateSpace(title)
+		if err != nil {
+			t.Fatal(err)
+		}
+		info, err := sender.MintPass(tid, 1, 24, addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		reqID, err := phone.JoinByPass(info.Link)
+		if err != nil {
+			t.Fatal(err)
+		}
+		waitJoin(t, phone, reqID, JoinReady)
+		rooms = append(rooms, tid)
+	}
+
+	// Alternating, the way the gate does it: warm both, then a message into
+	// one, then a message into the other.
+	deliver := func(tid id.TerminalID, text string) int {
+		if _, err := sender.Say(tid, text, SayOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < 60; i++ {
+			_, _, _ = sender.PushToRelay(addr, tid)
+			_, _ = phone.PullFromRelay(addr)
+			if sp, ok := phone.spaceForTest(tid); ok {
+				n := 0
+				_ = sp.Log.Replay(func(a eventlog.Applied) error {
+					if a.Env != nil && a.Env.Schema == schemas.MessageText {
+						n++
+					}
+					return nil
+				})
+				if n > 0 {
+					return n
+				}
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		return 0
+	}
+
+	for round, text := range []string{"warm A", "warm B", "one", "two", "three"} {
+		tid := rooms[round%2]
+		if got := deliver(tid, text); got == 0 {
+			t.Fatalf("round %d: %q never arrived in room %d — a conversation "+
+				"that goes quiet with nothing reporting it", round, text, round%2)
+		}
 	}
 }
