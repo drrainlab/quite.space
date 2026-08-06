@@ -310,3 +310,79 @@ func TestAFailedCycleResumesWhereItStoppedRatherThanAtTheBeginning(t *testing.T)
 		t.Fatalf("asked %v — a cycle must come round to the ones it skipped", asked)
 	}
 }
+
+// A CURSOR IS MEANINGLESS OVER A RANDOM ORDER, and the list it indexes came
+// from a Go map — whose iteration order is deliberately randomised.
+//
+// So "resume at chunk two" pointed at a different set of spaces every cycle.
+// The tail could still starve, and the starvation would MOVE, which is worse
+// than a fixed one: it reads as flakiness rather than as a bug.
+func TestTheSpacesADrainWalksComeBackInAStableOrder(t *testing.T) {
+	rt := openRuntime(t, t.TempDir(), "alice")
+	defer rt.Close()
+
+	for i := 0; i < 20; i++ {
+		if _, err := rt.CreateSpace(fmt.Sprintf("room %d", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	first := rt.relayMailboxSpaces()
+	if len(first) < 20 {
+		t.Fatalf("only %d spaces came back", len(first))
+	}
+	// Several times, because a random order that happens to repeat once proves
+	// nothing.
+	for round := 0; round < 8; round++ {
+		again := rt.relayMailboxSpaces()
+		if len(again) != len(first) {
+			t.Fatalf("round %d returned %d spaces, want %d", round, len(again), len(first))
+		}
+		for i := range first {
+			if again[i] != first[i] {
+				t.Fatalf("round %d differs at position %d — a chunk cursor over "+
+					"this list would point at different spaces every cycle, and "+
+					"the starvation it causes would move around", round, i)
+			}
+		}
+	}
+}
+
+// A collect that succeeded and a commit that failed are not the same as a
+// collect that was refused: they call for opposite responses — wait for the
+// relay, or stop asking it for anything until local storage works again — and
+// the cursor must not step past the chunk in either case.
+func TestACommitFailureIsNamedAndDoesNotAdvanceTheCursor(t *testing.T) {
+	rt := openRuntime(t, t.TempDir(), "alice")
+	defer rt.Close()
+
+	caps := make([][]byte, 6) // three chunks of two
+	for i := range caps {
+		caps[i] = []byte{byte(i)}
+	}
+
+	out, err := rt.collectInChunks(caps, 2, 0,
+		func(chunk [][]byte) ([][]byte, error) {
+			return [][]byte{[]byte("drained")}, nil
+		},
+		func(items [][]byte) (int, error) {
+			return 0, fmt.Errorf("storage: disk full")
+		})
+
+	if err == nil {
+		t.Fatal("a commit failure must be reported")
+	}
+	if out.Stop != stopCommitFailed {
+		t.Fatalf("stop reason %q, want %q — waiting for a retry-after when the "+
+			"real problem is local storage is the wrong action entirely",
+			out.Stop, stopCommitFailed)
+	}
+	if out.NextChunk != 0 {
+		t.Fatalf("NextChunk=%d after a failed commit on the first chunk — "+
+			"stepping past it would start serving the tail while storage is "+
+			"broken and hide the failure behind apparent progress", out.NextChunk)
+	}
+	if out.Served != 0 {
+		t.Fatalf("Served=%d: a chunk whose commit failed was not served", out.Served)
+	}
+}

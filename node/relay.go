@@ -8,6 +8,7 @@ package node
 import (
 	"errors"
 	"log"
+	"sort"
 	"time"
 
 	"github.com/drrainlab/quiet_places/kernel/assets"
@@ -530,6 +531,19 @@ func (r *Runtime) relayMailboxSpaces() []id.TerminalID {
 		}
 		out = append(out, tid)
 	}
+	// SORTED, because a chunk cursor is meaningless over a random order.
+	//
+	// Go randomises map iteration on purpose, so this list came back in a
+	// different order every call — which made "resume at chunk two" point at a
+	// different set of spaces each cycle. The tail could still starve, and the
+	// starvation would move around, which is worse than a fixed one: it looks
+	// like flakiness rather than like a bug.
+	//
+	// The same reason Log.Summary sorts by device id: a position only means
+	// something over a stable sequence.
+	sort.Slice(out, func(i, j int) bool {
+		return string(out[i][:]) < string(out[j][:])
+	})
 	return out
 }
 
@@ -575,7 +589,7 @@ func (r *Runtime) applyRelayItems(client *relay.Client, items [][]byte) (int, er
 			}
 			for _, a := range as {
 				st.space.AttachSyncApply(a)
-					applied++
+				applied++
 			}
 		}
 		// Carried blobs: verify-by-hash happens inside PutBlob addressing
@@ -604,6 +618,18 @@ func (r *Runtime) applyRelayItems(client *relay.Client, items [][]byte) (int, er
 // whose first field is the count of what was applied cannot be dropped by
 // accident: there is nothing to ignore, because the work is already done and
 // recorded by the time the error is read.
+// stopReason says why a cycle ended, because "partial" alone cannot tell a
+// caller whether to wait for a retry-after, discard a connection, or fix local
+// storage. Those are three different actions and one boolean picks none of
+// them.
+type stopReason string
+
+const (
+	stopNone          stopReason = ""
+	stopCollectFailed stopReason = "collect_failed"
+	stopCommitFailed  stopReason = "commit_failed"
+)
+
 type collectOutcome struct {
 	// Applied is how many events reached the log. Already durable — this is
 	// not a promise of future work.
@@ -616,6 +642,11 @@ type collectOutcome struct {
 	// is the chunk that failed, so the tail of a long list cannot starve
 	// behind a chunk that keeps being refused.
 	NextChunk int
+	// Stop says why the cycle ended. A collect that was refused and a commit
+	// that could not be written are both "partial", and they call for opposite
+	// responses — wait for the relay, or stop asking it for anything until
+	// local storage works again.
+	Stop stopReason
 }
 
 func (o collectOutcome) partial() bool { return o.Served < o.Chunks }
@@ -657,12 +688,20 @@ func (r *Runtime) collectInChunks(
 		part, err := collect(caps[off:end])
 		if err != nil {
 			out.NextChunk = c // resume HERE, not at the beginning
+			out.Stop = stopCollectFailed
 			return out, err
 		}
+		// THE CURSOR MOVES ONLY AFTER THE COMMIT. A collect that succeeded and
+		// a commit that failed leaves those messages gone from the relay and
+		// absent locally — the lease-and-acknowledge window this shape cannot
+		// close — but the cursor must not step past the chunk anyway. Stepping
+		// on would start systematically serving the tail while local storage
+		// is broken, and hide the failure behind apparent progress.
 		applied, err := commit(part)
 		out.Applied += applied
 		if err != nil {
 			out.NextChunk = c
+			out.Stop = stopCommitFailed
 			return out, err
 		}
 		out.Served++
