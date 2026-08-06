@@ -33,6 +33,7 @@ package quietcore
 
 import (
 	"encoding/hex"
+	"encoding/json"
 	"sync"
 	"sync/atomic"
 
@@ -66,6 +67,11 @@ type Candidate struct {
 	// not be able to silence or resurrect notifications on somebody else's
 	// phone.
 	OccurredAtUnixMs int64
+
+	// SourceSequence is this event's place in its author's chain — the same
+	// number the core's watermark counts, and the only thing a host can
+	// compare its own rows against when deciding what is safe to forget.
+	SourceSequence int64
 
 	// PresentationCursor is monotonic in this runtime's stream of applied
 	// events, assigned after verify and apply. Not a protocol frontier and not
@@ -174,6 +180,7 @@ func armRuntime(r *node.Runtime) {
 			SpaceID:            c.SpaceID.Hex(),
 			Device:             c.Device.Hex(),
 			Schema:             c.Schema,
+			SourceSequence:     int64(c.SourceSequence),
 			OccurredAtUnixMs:   int64(c.OccurredAtUnixMs),
 			PresentationCursor: int64(c.PresentationCursor),
 			AuthoredLocally:    c.AuthoredLocally,
@@ -299,4 +306,38 @@ func ResetNotificationPlane() bool {
 		return false
 	}
 	return r.ResetNotificationPlane()
+}
+
+// NotificationRetainFromJSON is the oldest sequence anything may still need,
+// per space and per device, as {"<space hex>":{"<device hex>":seq}}.
+//
+// It is the floor a host compacts against, and it is deliberately the minimum
+// across BOTH checkpoint generations. A damaged current checkpoint falls back
+// to the previous one and resumes from ITS watermark, replaying events the
+// newer one had already confirmed — so a host that had trimmed its tombstones
+// to the current line would meet those events again, believe them new, and
+// resurrect notifications the person dismissed a week ago.
+//
+// JSON because gomobile carries strings, not maps, and a flat encoding is
+// easier to read in a bug report than a generated wrapper type.
+func NotificationRetainFromJSON() string {
+	stateMu.Lock()
+	r := rt
+	stateMu.Unlock()
+	if r == nil {
+		return "{}"
+	}
+	out := map[string]map[string]uint64{}
+	for tid, devs := range r.NotificationRetainFrom() {
+		m := map[string]uint64{}
+		for dev, seq := range devs {
+			m[dev.Hex()] = seq
+		}
+		out[tid.Hex()] = m
+	}
+	b, err := json.Marshal(out)
+	if err != nil {
+		return "{}"
+	}
+	return string(b)
 }

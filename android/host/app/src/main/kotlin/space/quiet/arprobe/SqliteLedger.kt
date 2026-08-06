@@ -37,6 +37,9 @@ internal class SqliteLedger(context: Context) : NotificationCoordinator.Ledger {
 
     override fun tagFor(spaceId: String): String? = db.tagFor(spaceId)
 
+    override fun compact(retainFrom: Map<String, Map<String, Long>>): Int =
+        db.compact(retainFrom)
+
     /** Row counts by state, for the rig's status line. */
     fun stats(): Map<String, Int> = db.stats()
 }

@@ -102,6 +102,13 @@ class NotificationCoordinator(
 
         /** The opaque tag for a space, or null when it has never had one. */
         fun tagFor(spaceId: String): String?
+
+        /**
+         * Drops terminal rows the core can no longer replay. Returns how many
+         * went, so a harness can tell "nothing was eligible" from "compaction
+         * never ran".
+         */
+        fun compact(retainFrom: Map<String, Map<String, Long>>): Int
     }
 
     /** How the core is told it may stop replaying a candidate. */
@@ -140,6 +147,7 @@ class NotificationCoordinator(
         val spaceId: String,
         val device: String,
         val schema: String,
+        val sourceSequence: Long,
         val occurredAtUnixMs: Long,
         val presentationCursor: Long,
         val authoredLocally: Boolean,
@@ -321,6 +329,22 @@ class NotificationCoordinator(
             }
         }
     }
+
+    /**
+     * AR-1b.5.5 — forget what can never come back.
+     *
+     * `retainFrom` is the core's answer to "the oldest position I may still
+     * replay", per space and per device, and it is the minimum across BOTH
+     * checkpoint generations. Tombstones behind it are unreachable and may go;
+     * tombstones at or after it must stay, because a damaged checkpoint falls
+     * back to the older generation and replays what the newer one had already
+     * confirmed. A host that trimmed to the CURRENT watermark would meet those
+     * events again, believe them new, and resurrect notifications a person
+     * dismissed a week ago.
+     */
+    @Synchronized
+    fun compact(retainFrom: Map<String, Map<String, Long>>): Int =
+        ledger.compact(retainFrom)
 
     /** Decision counts, for the rig's status line and for AR-1b.11. */
     @Synchronized

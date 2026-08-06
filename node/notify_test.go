@@ -774,7 +774,7 @@ func TestTheRetentionFloorHoldsBackWhatNobodyHasConfirmed(t *testing.T) {
 		}
 	}
 
-	floor := rt.NotificationRetentionFloor()[tid][rt.Device.ID]
+	floor := rt.NotificationDeliveredThrough()[tid][rt.Device.ID]
 	if floor == 0 {
 		t.Fatal("the floor did not move at all — acknowledgements are not reaching it")
 	}
@@ -794,5 +794,106 @@ func TestTheRetentionFloorHoldsBackWhatNobodyHasConfirmed(t *testing.T) {
 		t.Fatalf("retention floor %d is at or past the tip %d while %d events are "+
 			"unacknowledged — compaction guided by this would drop what the host "+
 			"is still owed", floor, tip, 5-acked)
+	}
+}
+
+// AR-1b.5.5 gates 1 and 2 — an acknowledgement out of order does not move the
+// watermark past the gap, and closing the gap releases everything at once.
+//
+// The failure this prevents is quiet: acknowledging 40 while 38 is still owed
+// would, on a crash, resume from 40 and treat 38 and 39 as history. The
+// person's two missing messages would never be mentioned again.
+func TestAnAcknowledgementOutOfOrderDoesNotJumpTheGap(t *testing.T) {
+	dir := t.TempDir()
+	rt := openRuntime(t, dir, "alice")
+	defer rt.Close()
+	tid, err := rt.CreateSpace("Room")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var mu sync.Mutex
+	var got []NotificationCandidate
+	rt.AttachNotifications(func(c NotificationCandidate) {
+		mu.Lock()
+		got = append(got, c)
+		mu.Unlock()
+	})
+	for i := 0; i < 4; i++ {
+		if _, err := rt.Say(tid, fmt.Sprintf("event %d", i), SayOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mu.Lock()
+	all := append([]NotificationCandidate(nil), got...)
+	mu.Unlock()
+	if len(all) != 4 {
+		t.Fatalf("%d candidates, want 4", len(all))
+	}
+
+	before := rt.NotificationDeliveredThrough()[tid][rt.Device.ID]
+
+	// Acknowledge the LAST one only. The watermark must not move at all: the
+	// three before it are still owed.
+	rt.AckNotification(all[3].EventID)
+	if now := rt.NotificationDeliveredThrough()[tid][rt.Device.ID]; now != before {
+		t.Fatalf("the watermark moved to %d on an out-of-order acknowledgement "+
+			"(was %d) — the events in the gap would become history", now, before)
+	}
+
+	// Close the gap. The watermark should now pass ALL of them, including the
+	// one acknowledged early: the out-of-order set exists exactly so that
+	// acknowledgement is not thrown away.
+	rt.AckNotification(all[0].EventID)
+	rt.AckNotification(all[1].EventID)
+	rt.AckNotification(all[2].EventID)
+
+	after := rt.NotificationDeliveredThrough()[tid][rt.Device.ID]
+	if after != all[3].SourceSequence {
+		t.Fatalf("after closing the gap the watermark is %d, want %d — the early "+
+			"acknowledgement was dropped rather than remembered",
+			after, all[3].SourceSequence)
+	}
+}
+
+// AR-1b.5.5 gate 4/5 — what a consumer may compact must survive a checkpoint
+// ROLLBACK, not merely the current generation.
+func TestRetainFromIsBehindTheOlderGenerationNotTheNewerOne(t *testing.T) {
+	dir := t.TempDir()
+	rt := openRuntime(t, dir, "alice")
+	defer rt.Close()
+	tid, err := rt.CreateSpace("Room")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rt.AttachNotifications(func(c NotificationCandidate) { rt.AckNotification(c.EventID) })
+	if _, err := rt.Say(tid, "first", SayOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	rt.notifyLedger.flush() // generation 1 on disk
+
+	early := rt.NotificationDeliveredThrough()[tid][rt.Device.ID]
+	for i := 0; i < 3; i++ {
+		if _, err := rt.Say(tid, fmt.Sprintf("later %d", i), SayOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rt.notifyLedger.flush() // current moves ahead; the older one steps back
+
+	through := rt.NotificationDeliveredThrough()[tid][rt.Device.ID]
+	retain := rt.NotificationRetainFrom()[tid][rt.Device.ID]
+
+	if through <= early {
+		t.Fatalf("the current watermark did not advance (%d), so this proves nothing", through)
+	}
+	// The floor must sit behind what the PREVIOUS generation knew, because a
+	// damaged current file resumes from that one and replays the difference.
+	// Trimming to `through` would leave the core replaying events a host had
+	// already forgotten, which is how a dismissed notification comes back.
+	if retain > early+1 {
+		t.Fatalf("retain-from is %d, past the older generation's watermark %d — "+
+			"a rollback would replay events a consumer had already trimmed, and "+
+			"a dismissed notification would return as news", retain, early)
 	}
 }

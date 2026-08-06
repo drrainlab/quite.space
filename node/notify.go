@@ -57,6 +57,12 @@ type NotificationCandidate struct {
 	Device  id.DeviceID
 	Schema  string
 
+	// SourceSequence is this event's place in its author's chain — the same
+	// number the watermark counts. A host needs it to compact its own
+	// tombstones: "is this event behind the oldest position the core may
+	// replay" is a question about sequences, and an event id cannot answer it.
+	SourceSequence uint64
+
 	// OccurredAtUnixMs is the AUTHOR's clock, in milliseconds, unverified.
 	// For ordering what a person is shown — never for deciding what is new:
 	// that is what PresentationCursor is for, and a device with a skewed
@@ -275,6 +281,7 @@ func (r *Runtime) candidateOf(tid id.TerminalID, s *terminals.Space,
 		SpaceID:            tid,
 		Device:             a.Env.Device,
 		Schema:             a.Env.Schema,
+		SourceSequence:     a.Env.Sequence,
 		OccurredAtUnixMs:   a.Env.CreatedAt * 1000, // the protocol counts seconds
 		PresentationCursor: cursor,
 		AuthoredLocally:    a.Env.Device == r.Device.ID,
@@ -334,18 +341,45 @@ func clipRunes(s string, max int) string {
 	return string(r[:max]) + "…"
 }
 
-// NotificationRetentionFloor is what log compaction must not cross.
+// NotificationDeliveredThrough is the last sequence, per space and per device,
+// that the host has confirmed holding. Everything at or below it has safely
+// reached Android.
 //
-// There is no compaction in this tree today — no snapshot, no checkpoint,
-// nothing collapses a segment — and when it arrives this is the contract it
-// has to consult. Journal-as-outbox holds only while the journal still holds
-// the events: an event dropped before the host acknowledged it cannot be
-// redelivered by anybody, and the failure is completely silent, because the
-// watermark says "not yet confirmed" about something that no longer exists.
+// Named for what it IS rather than for what somebody might do with it. The
+// earlier name — a "retention floor" — is the shape an off-by-one lives in:
+// one reader takes 37 to mean "37 must be kept", another takes it to mean
+// "everything up to 37 may go", and the disagreement shows up as a lost
+// notification months later. Use NotificationRetainFrom for the other
+// question; it answers in the units the question is asked in.
+func (r *Runtime) NotificationDeliveredThrough() map[id.TerminalID]map[id.DeviceID]uint64 {
+	return r.notifyWatermarks(false)
+}
+
+// NotificationRetainFrom is the OLDEST sequence anything may still need: the
+// first that must survive, per space and per device. A compactor may collapse
+// everything strictly before it, and nothing at or after it.
 //
-// Per space, per device, the last sequence the host has confirmed. Anything
-// AFTER it is still owed to somebody and may not be collapsed away.
-func (r *Runtime) NotificationRetentionFloor() map[id.TerminalID]map[id.DeviceID]uint64 {
+// It is deliberately the minimum across BOTH checkpoint generations, not the
+// current one. The checkpoint is written as current + previous precisely so
+// that damage falls back rather than guesses — and a fallback resumes from the
+// OLDER watermark, replaying events the newer one had already confirmed. A
+// consumer that trimmed to the current generation would, on that rollback,
+// find the core replaying events it had thrown away: the log could not produce
+// them, and a host that had already deleted its tombstones would treat them as
+// new and resurrect notifications a person dismissed a week ago.
+//
+// So the floor is what the OLDEST recoverable generation still needs.
+func (r *Runtime) NotificationRetainFrom() map[id.TerminalID]map[id.DeviceID]uint64 {
+	out := r.notifyWatermarks(true)
+	for _, m := range out {
+		for dev, seq := range m {
+			m[dev] = seq + 1 // the first that must survive, not the last that may go
+		}
+	}
+	return out
+}
+
+func (r *Runtime) notifyWatermarks(acrossGenerations bool) map[id.TerminalID]map[id.DeviceID]uint64 {
 	out := map[id.TerminalID]map[id.DeviceID]uint64{}
 	if r.notifyLedger == nil {
 		return out
@@ -355,7 +389,11 @@ func (r *Runtime) NotificationRetentionFloor() map[id.TerminalID]map[id.DeviceID
 	for tid, st := range r.spaces {
 		m := map[id.DeviceID]uint64{}
 		for _, ch := range st.space.Log.Summary() {
-			m[ch.Device] = r.notifyLedger.confirmedSeq(tid, ch.Device)
+			if acrossGenerations {
+				m[ch.Device] = r.notifyLedger.recoverableSeq(tid, ch.Device)
+			} else {
+				m[ch.Device] = r.notifyLedger.confirmedSeq(tid, ch.Device)
+			}
 		}
 		out[tid] = m
 	}

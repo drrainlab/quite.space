@@ -70,6 +70,7 @@ internal class NotificationDb(context: Context) :
               space_id            TEXT NOT NULL,
               device              TEXT NOT NULL,
               schema              TEXT NOT NULL,
+              source_sequence     INTEGER NOT NULL,
               occurred_at_unix_ms INTEGER NOT NULL,
               state               TEXT NOT NULL,
               generation          INTEGER NOT NULL,
@@ -111,6 +112,7 @@ internal class NotificationDb(context: Context) :
                 put("space_id", c.spaceId)
                 put("device", c.device)
                 put("schema", c.schema)
+                put("source_sequence", c.sourceSequence)
                 put("occurred_at_unix_ms", c.occurredAtUnixMs)
                 put("state", STATE_PENDING)
                 put("generation", generation)
@@ -229,6 +231,49 @@ internal class NotificationDb(context: Context) :
             }
         }
         return out
+    }
+
+    /**
+     * AR-1b.5.5 — drop what can never be replayed, and nothing else.
+     *
+     * Only TERMINAL rows, and only those strictly behind the floor the core
+     * gave. `pending` and `presented` are still part of a live aggregation and
+     * are never touched; a row at or after the floor is still reachable by a
+     * checkpoint rollback, and deleting it is how a dismissed notification
+     * comes back as news.
+     *
+     * The opaque key is NOT dropped with the rows: it is the space's stable
+     * identity in the shade, and re-minting it would split one conversation's
+     * notifications in two. It goes only when the space itself does.
+     */
+    fun compact(retainFrom: Map<String, Map<String, Long>>): Int {
+        val terminal = arrayOf(
+            STATE_DISMISSED, STATE_READ,
+            STATE_SUPPRESSED_ON_SCREEN, STATE_SUPPRESSED_PERMISSION,
+        )
+        var removed = 0
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            for ((spaceId, devices) in retainFrom) {
+                for ((device, floor) in devices) {
+                    if (floor <= 0) continue
+                    val marks = terminal.joinToString(",") { "?" }
+                    val args = mutableListOf(spaceId, device, floor.toString())
+                    args.addAll(terminal)
+                    removed += db.delete(
+                        "notification_events",
+                        "space_id = ? AND device = ? AND source_sequence < ? " +
+                            "AND state IN ($marks)",
+                        args.toTypedArray(),
+                    )
+                }
+            }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+        return removed
     }
 
     fun stats(): Map<String, Int> {

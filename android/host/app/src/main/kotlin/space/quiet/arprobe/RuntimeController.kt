@@ -111,6 +111,7 @@ class RuntimeController private constructor(appContext: Context) {
                 spaceId = c.spaceID,
                 device = c.device,
                 schema = c.schema,
+                sourceSequence = c.sourceSequence,
                 occurredAtUnixMs = c.occurredAtUnixMs,
                 presentationCursor = c.presentationCursor,
                 authoredLocally = c.authoredLocally,
@@ -139,6 +140,7 @@ class RuntimeController private constructor(appContext: Context) {
         worker.execute {
             try {
                 notifications.recoverPending()
+                this@RuntimeController.compactNotifications()
             } catch (t: Throwable) {
                 Log.w(TAG, "pending recovery failed", t)
             }
@@ -192,6 +194,32 @@ class RuntimeController private constructor(appContext: Context) {
             return
         }
         Quietcore.armNotifications(sink)
+    }
+
+    /**
+     * Forget the tombstones the core can no longer replay (AR-1b.5.5).
+     *
+     * The floor comes from the CORE, and it is the minimum across both
+     * checkpoint generations — not the current watermark. A damaged checkpoint
+     * falls back to the older generation and replays what the newer one had
+     * confirmed; a host that trimmed to the current line would meet those
+     * events again, believe them new, and resurrect notifications a person
+     * dismissed a week ago.
+     *
+     * Runs after recovery, on the controller's own thread, never on the path
+     * an arriving candidate takes.
+     */
+    private fun compactNotifications() {
+        val root = JSONObject(Quietcore.notificationRetainFromJSON())
+        val floors = HashMap<String, Map<String, Long>>()
+        for (space in root.keys()) {
+            val devices = root.getJSONObject(space)
+            val m = HashMap<String, Long>()
+            for (device in devices.keys()) m[device] = devices.getLong(device)
+            floors[space] = m
+        }
+        val removed = notifications.compact(floors)
+        if (removed > 0) Log.i(TAG, "compacted $removed unreachable notification rows")
     }
 
     /**

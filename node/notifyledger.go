@@ -376,6 +376,30 @@ func (l *notifyLedger) confirmedSeq(tid id.TerminalID, dev id.DeviceID) uint64 {
 	return l.state.Confirmed[tid.Hex()][dev.Hex()]
 }
 
+// recoverableSeq is the watermark of the OLDEST generation that could still be
+// loaded — the minimum of current and previous.
+//
+// If the current checkpoint is damaged, load() falls back to the previous one
+// and resumes from ITS watermark, replaying what the newer generation had
+// already confirmed. Anything a consumer trims must therefore be behind that
+// older line, not behind the current one: the difference between the two is
+// exactly the window in which a rollback resurrects notifications a person had
+// already dealt with.
+func (l *notifyLedger) recoverableSeq(tid id.TerminalID, dev id.DeviceID) uint64 {
+	l.mu.Lock()
+	cur := l.state.Confirmed[tid.Hex()][dev.Hex()]
+	l.mu.Unlock()
+
+	prev, ok := readNotifyLedgerFile(l.prevPath)
+	if !ok {
+		return cur
+	}
+	if p := prev.Confirmed[tid.Hex()][dev.Hex()]; p < cur {
+		return p
+	}
+	return cur
+}
+
 // note remembers where an emitted candidate sits, so its acknowledgement can
 // be turned into a watermark.
 func (l *notifyLedger) note(eid id.EventID, p notifyPosition) {

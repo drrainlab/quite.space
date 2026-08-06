@@ -76,6 +76,20 @@ class NotificationCoordinatorTest {
 
         override fun tagFor(spaceId: String): String? = keys[spaceId]?.let { "space:$it" }
 
+        override fun compact(retainFrom: Map<String, Map<String, Long>>): Int {
+            val terminal = setOf(
+                NotificationDb.STATE_DISMISSED, NotificationDb.STATE_READ,
+                NotificationDb.STATE_SUPPRESSED_ON_SCREEN,
+                NotificationDb.STATE_SUPPRESSED_PERMISSION,
+            )
+            val gone = rows.filterValues { r ->
+                val floor = retainFrom[r.c.spaceId]?.get(r.c.device) ?: 0L
+                r.state in terminal && floor > 0 && r.c.sourceSequence < floor
+            }.keys.toList()
+            gone.forEach { rows.remove(it) }
+            return gone.size
+        }
+
         fun state(eventId: String): String? = rows[eventId]?.state
 
         private fun close(spaceId: String, terminal: String) {
@@ -141,6 +155,7 @@ class NotificationCoordinatorTest {
         spaceId = spaceId,
         device = device,
         schema = schema,
+        sourceSequence = cursor + 1,
         occurredAtUnixMs = 1_700_000_000_000L + (++cursor),
         presentationCursor = cursor,
         authoredLocally = authoredLocally,
@@ -391,6 +406,58 @@ class NotificationCoordinatorTest {
         // And when storage comes back, the core's redelivery lands normally.
         assertEquals(NotificationCoordinator.Decision.PRESENTED, arrive("e1", "space-a"))
         assertEquals(listOf("e1"), acked)
+    }
+
+    // ---------------------------------------------------------- compaction
+
+    @Test
+    fun compactionDropsOnlyWhatCanNeverComeBack() {
+        fresh()
+        arrive("e1", "space-a")     // sequence 1, presented
+        arrive("e2", "space-a")     // sequence 2, presented
+        co.onDismissed("space-a")   // both terminal
+        arrive("e3", "space-a")     // sequence 3, live again
+
+        // The core says: everything below sequence 3 is unreachable.
+        val removed = co.compact(mapOf("space-a" to mapOf("device-b" to 3L)))
+
+        assertEquals("the two dismissed rows behind the floor", 2, removed)
+        assertEquals(
+            "a live row must never be compacted, whatever the floor says",
+            NotificationDb.STATE_PRESENTED, ledger.state("e3"),
+        )
+        // And the dedup memory that was dropped is genuinely unreachable: the
+        // core cannot replay it, so nothing can bring it back to ask about.
+        assertEquals(null, ledger.state("e1"))
+    }
+
+    @Test
+    fun aTombstoneAtTheFloorSurvivesBecauseARollbackCanStillReplayIt() {
+        fresh()
+        arrive("e1", "space-a")     // sequence 1
+        co.onDismissed("space-a")
+
+        // The floor is the OLDER generation's line: sequence 1 is still
+        // replayable if the current checkpoint is damaged, so its tombstone
+        // must stay — otherwise the replay would look like news and the
+        // dismissed notification would return.
+        assertEquals(0, co.compact(mapOf("space-a" to mapOf("device-b" to 1L))))
+        assertEquals(NotificationDb.STATE_DISMISSED, ledger.state("e1"))
+    }
+
+    @Test
+    fun compactionNeverTouchesTheSpacesOpaqueKey() {
+        fresh()
+        arrive("e1", "space-a")
+        val tag = presenter.presented[0].tag
+        co.onDismissed("space-a")
+        co.compact(mapOf("space-a" to mapOf("device-b" to 99L)))
+
+        arrive("e2", "space-a")
+        assertEquals(
+            "re-minting the key would split one conversation's notifications in two",
+            tag, presenter.presented[1].tag,
+        )
     }
 
     @Test
