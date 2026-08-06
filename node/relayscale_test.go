@@ -17,8 +17,10 @@
 package node
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"sync"
 	"testing"
 	"time"
 
@@ -416,5 +418,79 @@ func TestARelayRefusalDoesNotKillAHealthyConnection(t *testing.T) {
 	}
 	if !isConnFatal(lan.ErrConnClosed) {
 		t.Error("a closed transport connection is fatal")
+	}
+}
+
+// AR/RR — the relay says when to come back, and the node does not ask sooner.
+//
+// A rate limit refuses because it wants less traffic, so another request is
+// not a retry: it is the thing being asked to stop, and it keeps the window
+// from refilling. That is what a cooldown loop is from the outside — two sides
+// spending a minute proving the same point to each other — and it is why one
+// never recovers on its own.
+func TestANodeWaitsAsLongAsTheRelayAsked(t *testing.T) {
+	limits := relay.DefaultLimits()
+	limits.CollectRatePerMin = 1
+	srv, port, err := relay.StartServer("127.0.0.1:0", limits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Closed twice on purpose below, so once: the deferred call is only a
+	// safety net for a t.Fatal on the way there.
+	closeRelay := sync.OnceFunc(func() { srv.Close() })
+	defer closeRelay()
+	addr := "127.0.0.1:" + itoa(port)
+
+	rt := openRuntime(t, t.TempDir(), "alice")
+	defer rt.Close()
+	if err := rt.SetSettings(Settings{Relay: addr}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.CreateSpace("room"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Spend the budget until the relay refuses.
+	var refusal error
+	for i := 0; i < 6 && refusal == nil; i++ {
+		_, refusal = rt.PullFromRelay(addr)
+	}
+	if refusal == nil {
+		t.Skip("the relay never refused; nothing to wait out")
+	}
+
+	var re relay.ErrRelay
+	if !errors.As(refusal, &re) || !re.Throttled() {
+		t.Fatalf("expected a throttle, got %v", refusal)
+	}
+	if re.RetryAfter <= 0 {
+		t.Fatal("the relay refused without saying how long to wait")
+	}
+
+	left, throttled := rt.relayThrottled(addr)
+	if !throttled {
+		t.Fatal("the node did not remember the deadline it was given — the next " +
+			"tick would ask again immediately, which is exactly what was refused")
+	}
+	if left <= 0 || left > time.Minute {
+		t.Fatalf("remaining wait %v is not inside the relay's own window", left)
+	}
+
+	// AND THE PROOF THAT NOTHING WENT OUT: the relay is closed. If the node
+	// asks anyway it meets a dead socket and says so; if it honours the
+	// deadline it answers "throttled" without touching the network.
+	//
+	// A timing check was tried first and did not discriminate — a local relay
+	// refuses in under a millisecond, so "it was fast" is true whether or not
+	// the request happened.
+	closeRelay()
+	_, err = rt.PullFromRelay(addr)
+	if err == nil {
+		t.Fatal("a pull during the wait should not have gone out")
+	}
+	var re2 relay.ErrRelay
+	if !errors.As(err, &re2) || !re2.Throttled() {
+		t.Fatalf("a pull during the wait reached the network instead of "+
+			"answering from the deadline: %v", err)
 	}
 }

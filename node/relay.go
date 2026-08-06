@@ -710,6 +710,45 @@ func (r *Runtime) collectInChunks(
 	return out, nil
 }
 
+// throttledUntil is when a relay may be asked again, and asking before then is
+// the one response a rate limit specifically did not want.
+//
+// The relay says how long to wait; this remembers it. Without the memory the
+// next tick asks again immediately, is refused again, and the two sides spend
+// a minute proving the same point to each other — which is how a cooldown loop
+// looks from the outside and why it never recovers.
+func (r *Runtime) relayThrottled(addr string) (time.Duration, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	until, ok := r.relayWaitUntil[addr]
+	if !ok {
+		return 0, false
+	}
+	left := time.Until(until)
+	if left <= 0 {
+		delete(r.relayWaitUntil, addr)
+		return 0, false
+	}
+	return left, true
+}
+
+// noteRefusal records a relay's own answer about when to come back. Only a
+// refusal that waiting fixes sets a deadline: a malformed request would fail
+// identically after any wait, and sleeping on it would hide a bug behind a
+// delay.
+func (r *Runtime) noteRefusal(addr string, err error) {
+	var re relay.ErrRelay
+	if !errors.As(err, &re) || !re.Throttled() || re.RetryAfter <= 0 {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.relayWaitUntil == nil {
+		r.relayWaitUntil = map[string]time.Time{}
+	}
+	r.relayWaitUntil[addr] = time.Now().Add(re.RetryAfter)
+}
+
 // chunkCursor remembers where each relay's next drain should begin.
 //
 // In memory only, deliberately: it exists to stop the tail of a long list
@@ -816,12 +855,21 @@ func (r *Runtime) PullFromRelay(addr string) (applied int, err error) {
 	// process that dies between the relay's answer and the local commit loses
 	// that chunk. Closing that needs the relay to keep the batch until the
 	// client acknowledges it, which is a protocol change and its own decision.
+	// ASKING WHILE THROTTLED IS THE ONE RESPONSE THE RELAY RULED OUT. It
+	// refused because it wanted less traffic, so another request is not a
+	// retry — it is the thing being asked to stop, and it keeps the window
+	// from ever refilling.
+	if left, yes := r.relayThrottled(addr); yes {
+		return applied, relay.ErrRelay{Reason: relay.ReasonRateLimited, RetryAfter: left}
+	}
+
 	outcome, chunkErr := r.collectInChunks(caps, maxCapsPerCollect, r.chunkCursor(addr),
 		client.Collect,
 		func(items [][]byte) (int, error) { return r.applyRelayItems(client, items) })
 	applied += outcome.Applied
 	if chunkErr != nil {
 		opErr = chunkErr
+		r.noteRefusal(addr, chunkErr)
 	}
 	r.rememberChunkCursor(addr, outcome)
 

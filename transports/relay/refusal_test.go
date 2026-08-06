@@ -15,6 +15,7 @@ import (
 	"errors"
 	"strconv"
 	"testing"
+	"time"
 )
 
 func addrOf(port int) string { return "127.0.0.1:" + strconv.Itoa(port) }
@@ -101,5 +102,85 @@ func TestAnUnknownRefusalIsNotGuessedAt(t *testing.T) {
 	}
 	if re.Throttled() {
 		t.Fatal("an unknown refusal is not a promise that waiting helps")
+	}
+}
+
+// A REFUSAL THAT WAITING WILL FIX SAYS HOW LONG TO WAIT.
+//
+// Without it a client has to guess, and both guesses are wrong: too eager is
+// more load on a relay that just asked for less, and too patient is somebody's
+// messages sitting on a relay for no reason.
+//
+// A DURATION, not a deadline. The two clocks have never been assumed to agree
+// anywhere else in this protocol, and a timestamp would make a client with a
+// skewed clock either hammer a quiet relay or sleep for hours.
+func TestARateLimitSaysHowLongToWait(t *testing.T) {
+	limits := DefaultLimits()
+	limits.CollectRatePerMin = 1
+	srv, port, err := StartServer("127.0.0.1:0", limits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+
+	c, err := DialClient(addrOf(port))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	cap1 := make([]byte, CapLen)
+	if _, err := c.Collect([][]byte{cap1}); err != nil {
+		t.Fatal(err)
+	}
+	_, err = c.Collect([][]byte{cap1})
+
+	var re ErrRelay
+	if !errors.As(err, &re) {
+		t.Fatalf("got %T: %v", err, err)
+	}
+	if re.RetryAfter <= 0 {
+		t.Fatal("a rate limit with no wait leaves the client guessing, and both " +
+			"guesses are wrong")
+	}
+	if re.RetryAfter > time.Minute {
+		t.Fatalf("retry-after %v is longer than the limiter's own window — a "+
+			"client would sit out a budget that had already refilled", re.RetryAfter)
+	}
+	// Never "try again now": a zero wait is the same hammering the limit
+	// exists to stop.
+	if re.RetryAfter < time.Second {
+		t.Fatalf("retry-after %v is effectively immediate", re.RetryAfter)
+	}
+}
+
+// A refusal that waiting will NOT fix must not carry a wait: it would send a
+// caller to sleep and then fail identically, forever.
+func TestARequestShapeRefusalCarriesNoWait(t *testing.T) {
+	srv, port, err := StartServer("127.0.0.1:0", DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+
+	c, err := DialClient(addrOf(port))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	caps := make([][]byte, DefaultLimits().CollectMaxHints+1)
+	for i := range caps {
+		caps[i] = make([]byte, CapLen)
+	}
+	_, err = c.Collect(caps)
+
+	var re ErrRelay
+	if !errors.As(err, &re) {
+		t.Fatalf("got %T: %v", err, err)
+	}
+	if re.RetryAfter != 0 {
+		t.Fatalf("a request-shape refusal carried a wait of %v — sleeping and "+
+			"asking again identically fails identically", re.RetryAfter)
 	}
 }

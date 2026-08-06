@@ -252,6 +252,20 @@ const (
 	keyProtoMax  = 12
 	keyLoad      = 13
 	keyAccepting = 14 // 1 = accepting new sessions
+
+	// keyRetryAfterMs — how long a refused caller should wait, in
+	// milliseconds, sent with a rate-limit refusal.
+	//
+	// A DURATION RATHER THAN A DEADLINE, deliberately: the two clocks have
+	// never been assumed to agree anywhere else in this protocol, and a
+	// timestamp would make a client with a skewed clock either hammer a relay
+	// that asked for quiet or sleep for hours. A duration is relative to the
+	// moment the answer arrived, which both sides can measure.
+	//
+	// Append-only, and unknown keys are skipped, so an older relay that never
+	// sends it and an older client that never reads it both keep working — the
+	// client simply falls back to waiting out the limiter's own window.
+	keyRetryAfterMs = 15
 )
 
 // Msg is one relay protocol message.
@@ -263,6 +277,9 @@ type Msg struct {
 	Hints   [][]byte
 	Items   [][]byte
 	Reason  string
+	// RetryAfterMs accompanies a refusal that waiting will fix. Zero means the
+	// relay did not say, not that the answer is "immediately".
+	RetryAfterMs uint64
 	Now     uint64   // unix ms (msgTimeOK / msgProbeOK)
 	Caps    [][]byte // PH-1: collect capabilities (msgCollectCap)
 	// RR-3 probe fields.
@@ -292,6 +309,9 @@ func (m *Msg) Encode() []byte {
 		n++
 	}
 	if m.Reason != "" {
+		n++
+	}
+	if m.RetryAfterMs != 0 {
 		n++
 	}
 	if m.Now != 0 {
@@ -347,6 +367,10 @@ func (m *Msg) Encode() []byte {
 	if m.Reason != "" {
 		buf = codec.AppendUint(buf, keyReason)
 		buf = codec.AppendText(buf, m.Reason)
+	}
+	if m.RetryAfterMs != 0 {
+		buf = codec.AppendUint(buf, keyRetryAfterMs)
+		buf = codec.AppendUint(buf, m.RetryAfterMs)
 	}
 	if m.Now != 0 {
 		buf = codec.AppendUint(buf, keyNow)
@@ -409,6 +433,8 @@ func DecodeMsg(data []byte) (*Msg, error) {
 			m.Expires, er = d.ReadUint()
 		case keyNow:
 			m.Now, er = d.ReadUint()
+		case keyRetryAfterMs:
+			m.RetryAfterMs, er = d.ReadUint()
 		case keyReason:
 			// READ, because it was written and never read. The encoder has
 			// always sent the reason a relay refused for, and the decoder

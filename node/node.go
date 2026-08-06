@@ -142,6 +142,10 @@ type Runtime struct {
 	// and let the tail starve behind one that keeps failing.
 	relayChunkAt map[string]int
 
+	// relayWaitUntil is when each relay may be asked again, from its own
+	// retry-after. Asking sooner is precisely what it refused.
+	relayWaitUntil map[string]time.Time
+
 	// relayClk is the SyncClock calibration against a common relay (LR-2).
 	relayClk relayClock
 
