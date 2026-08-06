@@ -81,6 +81,15 @@ internal class NotificationDb(context: Context) :
             """.trimIndent()
         )
         db.execSQL("CREATE INDEX idx_events_space_state ON notification_events(space_id, state)")
+        db.execSQL(
+            """
+            CREATE TABLE notification_people (
+              sender_device     TEXT PRIMARY KEY,
+              opaque_person_key TEXT NOT NULL UNIQUE,
+              last_known_label  TEXT
+            )
+            """.trimIndent()
+        )
     }
 
     override fun onUpgrade(db: SQLiteDatabase, old: Int, new: Int) {
@@ -137,7 +146,7 @@ internal class NotificationDb(context: Context) :
             )
             val items = aggregationLocked(db, c.spaceId, generation)
             db.setTransactionSuccessful()
-            return Insert(tag = "space:$key", items = items)
+            return Insert(tag = "space:$key", spaceLabel = c.spaceLabel, items = items)
         } finally {
             db.endTransaction()
         }
@@ -226,6 +235,7 @@ internal class NotificationDb(context: Context) :
                 val gen = querySpaceLong(readableDatabase, spaceId, "active_generation")
                 out[spaceId] = Recovery(
                     tag = "space:$key",
+                    spaceLabel = spaceLabelOf(spaceId),
                     items = aggregationLocked(readableDatabase, spaceId, gen),
                 )
             }
@@ -355,6 +365,54 @@ internal class NotificationDb(context: Context) :
         throw IllegalStateException("could not allocate a notification key for a space")
     }
 
+    /**
+     * The device-local opaque key for a sender, minted once and remembered.
+     *
+     * 128 bits with UNIQUE and a retry, like the space's tag and for the same
+     * reason: what leaves this process must be stable enough for Android to
+     * thread a conversation with, and meaningless to anything that reads it.
+     *
+     * The label is kept beside it — not as identity, only so a renamed person
+     * shows their new name under the SAME key rather than arriving as somebody
+     * new.
+     */
+    fun personKey(device: String, label: String): String {
+        val db = writableDatabase
+        db.rawQuery(
+            "SELECT opaque_person_key FROM notification_people WHERE sender_device = ?",
+            arrayOf(device),
+        ).use { c ->
+            if (c.moveToNext()) {
+                val key = c.getString(0)
+                if (label.isNotEmpty()) {
+                    db.execSQL(
+                        "UPDATE notification_people SET last_known_label = ? WHERE sender_device = ?",
+                        arrayOf(label, device),
+                    )
+                }
+                return key
+            }
+        }
+        repeat(8) {
+            try {
+                val v = ContentValues().apply {
+                    put("sender_device", device)
+                    put("opaque_person_key", randomKey())
+                    put("last_known_label", label)
+                }
+                db.insertOrThrow("notification_people", null, v)
+            } catch (e: SQLiteConstraintException) {
+                // A key collision at 128 bits, or another thread got there
+                // first. Both are answered by reading it back.
+            }
+            db.rawQuery(
+                "SELECT opaque_person_key FROM notification_people WHERE sender_device = ?",
+                arrayOf(device),
+            ).use { c -> if (c.moveToNext()) return c.getString(0) }
+        }
+        throw IllegalStateException("could not allocate a person key")
+    }
+
     /** The opaque tag for a space, or null when it has never had one. */
     fun tagFor(spaceId: String): String? = existingSpaceKey(spaceId)?.let { "space:$it" }
 
@@ -377,8 +435,31 @@ internal class NotificationDb(context: Context) :
         return b.joinToString("") { "%02x".format(it) }
     }
 
-    class Insert(val tag: String, val items: List<NotificationCoordinator.Item>)
-    class Recovery(val tag: String, val items: List<NotificationCoordinator.Item>)
+    class Insert(
+        val tag: String,
+        val spaceLabel: String,
+        val items: List<NotificationCoordinator.Item>,
+    )
+
+    class Recovery(
+        val tag: String,
+        val spaceLabel: String,
+        val items: List<NotificationCoordinator.Item>,
+    )
+
+    /**
+     * The space's last known label, from whichever live row still carries one.
+     * Empty is ordinary: a terminal row has had its snapshot wiped, and a
+     * space whose manifest never arrived never had one.
+     */
+    private fun spaceLabelOf(spaceId: String): String {
+        readableDatabase.rawQuery(
+            "SELECT space_label FROM notification_events WHERE space_id = ? " +
+                "AND space_label IS NOT NULL AND space_label != '' " +
+                "ORDER BY occurred_at_unix_ms DESC LIMIT 1",
+            arrayOf(spaceId),
+        ).use { c -> return if (c.moveToNext()) c.getString(0) ?: "" else "" }
+    }
 
     companion object {
         const val NAME = "quiet-notifications.db"

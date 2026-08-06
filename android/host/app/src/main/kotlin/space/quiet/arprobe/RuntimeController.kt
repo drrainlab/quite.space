@@ -86,8 +86,8 @@ class RuntimeController private constructor(appContext: Context) {
      * with a screen would forget on every rotation which notifications it had
      * already shown, and show them again.
      */
-    private val presenter = SystemPresenter(this.app)
     private val ledger = SqliteLedger(this.app)
+    private val presenter = SystemPresenter(this.app, ledger)
 
     val notifications: NotificationCoordinator = NotificationCoordinator(
         presenter,

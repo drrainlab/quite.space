@@ -104,6 +104,16 @@ class NotificationCoordinator(
         fun tagFor(spaceId: String): String?
 
         /**
+         * The device-local opaque key for a sender, minted on first sight.
+         *
+         * Never the device id and never the name: Android expects a stable,
+         * distinguishable Person identity across republications, a name merges
+         * two strangers who share one, and a device id would turn the system's
+         * conversation metadata into a map of who this person talks to.
+         */
+        fun personKey(device: String, label: String): String
+
+        /**
          * Drops terminal rows the core can no longer replay. Returns how many
          * went, so a harness can tell "nothing was eligible" from "compaction
          * never ran".
@@ -116,11 +126,22 @@ class NotificationCoordinator(
         fun ack(eventId: String)
     }
 
-    class Insert(val tag: String, val items: List<Item>)
-    class Recovery(val tag: String, val items: List<Item>)
+    class Insert(val tag: String, val spaceLabel: String, val items: List<Item>)
+    class Recovery(val tag: String, val spaceLabel: String, val items: List<Item>)
 
-    /** What a host needs in order to render. Data, never behaviour. */
-    class Presentation(val spaceId: String, val tag: String, items: List<Item>) {
+    /**
+     * What a host needs in order to render. Data, never behaviour.
+     *
+     * The space's LABEL rides here rather than being looked up: a renderer
+     * asking storage for a name would be a second place that decides what may
+     * be shown, and the privacy policy has to have exactly one.
+     */
+    class Presentation(
+        val spaceId: String,
+        val tag: String,
+        val spaceLabel: String,
+        items: List<Item>,
+    ) {
         val items: List<Item> = items.toList()
     }
 
@@ -256,7 +277,7 @@ class NotificationCoordinator(
             return count(Decision.SUPPRESSED_SPACE_ON_SCREEN)
         }
 
-        presenter.present(Presentation(c.spaceId, inserted.tag, inserted.items))
+        presenter.present(Presentation(c.spaceId, inserted.tag, inserted.spaceLabel, inserted.items))
         ledger.markPresented(c.eventId)
         return count(Decision.PRESENTED)
     }
@@ -274,7 +295,7 @@ class NotificationCoordinator(
         if (!enabled) return
         for ((spaceId, r) in ledger.pendingBySpace()) {
             if (r.items.isEmpty()) continue
-            presenter.present(Presentation(spaceId, r.tag, r.items))
+            presenter.present(Presentation(spaceId, r.tag, r.spaceLabel, r.items))
             for (item in r.items) ledger.markPresented(item.eventId)
         }
     }

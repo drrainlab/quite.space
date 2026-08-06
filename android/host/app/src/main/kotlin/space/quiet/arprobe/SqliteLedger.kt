@@ -14,7 +14,9 @@ internal class SqliteLedger(context: Context) : NotificationCoordinator.Ledger {
     private val db = NotificationDb(context)
 
     override fun insertPending(c: NotificationCoordinator.Candidate) =
-        db.insertPending(c)?.let { NotificationCoordinator.Insert(it.tag, it.items) }
+        db.insertPending(c)?.let {
+            NotificationCoordinator.Insert(it.tag, it.spaceLabel, it.items)
+        }
 
     override fun markPresented(eventId: String) = db.markPresented(eventId)
 
@@ -27,13 +29,15 @@ internal class SqliteLedger(context: Context) : NotificationCoordinator.Ledger {
 
     override fun pendingBySpace(): Map<String, NotificationCoordinator.Recovery> =
         db.pendingBySpace().mapValues { (_, r) ->
-            NotificationCoordinator.Recovery(r.tag, r.items)
+            NotificationCoordinator.Recovery(r.tag, r.spaceLabel, r.items)
         }
 
     override fun activeBySpace(): Map<String, NotificationCoordinator.Recovery> =
         db.activeBySpace().mapValues { (_, r) ->
-            NotificationCoordinator.Recovery(r.tag, r.items)
+            NotificationCoordinator.Recovery(r.tag, r.spaceLabel, r.items)
         }
+
+    override fun personKey(device: String, label: String): String = db.personKey(device, label)
 
     override fun tagFor(spaceId: String): String? = db.tagFor(spaceId)
 

@@ -53,10 +53,15 @@ import org.json.JSONObject
  * AR-1b.8, with its two tests: a warm process with an existing Activity, and a
  * cold Activity with the runtime alive.
  */
-internal class SystemPresenter(context: Context) : NotificationCoordinator.Presenter {
+internal class SystemPresenter(
+    context: Context,
+    private val ledger: SqliteLedger,
+    @Volatile var policy: PresentationPolicy = PresentationPolicy.DEFAULT,
+) : NotificationCoordinator.Presenter {
 
     private val app = context.applicationContext
     private val nm = app.getSystemService(NotificationManager::class.java)
+    private val conversations = ConversationRenderer(app)
 
     private val shown = LinkedHashMap<String, JSONObject>()
     private var presentCalls = 0
@@ -67,11 +72,32 @@ internal class SystemPresenter(context: Context) : NotificationCoordinator.Prese
         presentCalls++
         record(p)
 
+        // WHICH RENDERER IS A PRIVACY DECISION, not a capability one. The
+        // conversation surface carries names and people into system metadata
+        // that a generic notification does not, so it is reachable only
+        // through a policy a person has chosen — and until AR-1b.7 asks them,
+        // the default is the strict mode and this branch is never taken.
+        val rendering = ConversationProjection.of(
+            policy, p.spaceLabel, p.items,
+        ) { device -> ledger.personKey(device, senderOf(p, device)) }
+
+        if (rendering.useConversationSurface) {
+            val conversation = conversations.build(
+                p, rendering, openSpace(p.spaceId), dismissed(p.spaceId),
+            )
+            if (conversation != null) {
+                post(p, conversation)
+                return
+            }
+            // Too old for conversations: fall through to the generic one
+            // rather than show nothing.
+        }
+
         val n = p.items.size
         val notification = Notification.Builder(app, NotificationPolicy.CHANNEL_MESSAGES)
             .setSmallIcon(R.drawable.ic_stat_quiet)
-            .setContentTitle("Quiet")
-            .setContentText(if (n == 1) "A new message" else "$n new messages")
+            .setContentTitle(rendering.conversationTitle ?: "Quiet")
+            .setContentText(rendering.genericText)
             // The AUTHOR's clock, and it is not ours: used for ordering the
             // shade, never for deciding what is new. That decision belongs to
             // the coordinator's own memory, where a skewed remote clock cannot
@@ -89,8 +115,12 @@ internal class SystemPresenter(context: Context) : NotificationCoordinator.Prese
             .setDeleteIntent(dismissed(p.spaceId))
             .build()
 
+        post(p, notification)
+    }
+
+    private fun post(p: NotificationCoordinator.Presentation, n: Notification) {
         try {
-            nm?.notify(p.tag, NOTIFICATION_ID, notification)
+            nm?.notify(p.tag, NOTIFICATION_ID, n)
         } catch (t: Throwable) {
             // A refused permission is an ordinary state and the coordinator
             // already stops presenting when it knows — but the person can
@@ -99,6 +129,10 @@ internal class SystemPresenter(context: Context) : NotificationCoordinator.Prese
             Log.w(TAG, "notify refused for ${p.tag}", t)
         }
     }
+
+    /** The last label seen for a device in this aggregation, or empty. */
+    private fun senderOf(p: NotificationCoordinator.Presentation, device: String): String =
+        p.items.lastOrNull { it.device == device && it.senderLabel.isNotEmpty() }?.senderLabel ?: ""
 
     @Synchronized
     override fun clear(spaceId: String, tag: String) {

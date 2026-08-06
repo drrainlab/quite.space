@@ -43,7 +43,7 @@ class NotificationCoordinatorTest {
             keys.getOrPut(c.spaceId) { "k${keys.size}" }
             val gen = generations.getOrPut(c.spaceId) { 0 }
             rows[c.eventId] = Row(c, gen, NotificationDb.STATE_PENDING)
-            return NotificationCoordinator.Insert(tagFor(c.spaceId)!!, live(c.spaceId))
+            return NotificationCoordinator.Insert(tagFor(c.spaceId)!!, c.spaceLabel, live(c.spaceId))
         }
 
         override fun markPresented(eventId: String) {
@@ -62,7 +62,7 @@ class NotificationCoordinatorTest {
             rows.values.filter { it.state == NotificationDb.STATE_PENDING }
                 .groupBy { it.c.spaceId }
                 .mapValues { (space, _) ->
-                    NotificationCoordinator.Recovery(tagFor(space)!!, live(space))
+                    NotificationCoordinator.Recovery(tagFor(space)!!, "Room", live(space))
                 }
 
         override fun activeBySpace(): Map<String, NotificationCoordinator.Recovery> =
@@ -71,10 +71,14 @@ class NotificationCoordinatorTest {
                     it.state == NotificationDb.STATE_PRESENTED
             }.groupBy { it.c.spaceId }
                 .mapValues { (space, _) ->
-                    NotificationCoordinator.Recovery(tagFor(space)!!, live(space))
+                    NotificationCoordinator.Recovery(tagFor(space)!!, "Room", live(space))
                 }
 
         override fun tagFor(spaceId: String): String? = keys[spaceId]?.let { "space:$it" }
+
+        val personKeys = mutableMapOf<String, String>()
+        override fun personKey(device: String, label: String): String =
+            personKeys.getOrPut(device) { "person${personKeys.size}" }
 
         override fun compact(retainFrom: Map<String, Map<String, Long>>): Int {
             val terminal = setOf(
