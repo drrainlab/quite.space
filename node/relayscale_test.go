@@ -19,6 +19,9 @@ package node
 import (
 	"fmt"
 	"testing"
+	"time"
+
+	"github.com/drrainlab/quiet_places/protocol/id"
 
 	"github.com/drrainlab/quiet_places/transports/relay"
 )
@@ -54,5 +57,177 @@ func TestManySpacesDoNotOverflowOneCollect(t *testing.T) {
 			"as the person holds that many spaces — and from the interface it "+
 			"looks like messages have simply stopped.",
 			spaces, err, relay.DefaultLimits().CollectMaxHints)
+	}
+}
+
+// The split must be by HINTS, not by spaces — a space is not one capability.
+//
+// A private space costs two (the current bucket and the previous one) and a
+// public one costs more, so a chunker that counted spaces would send a
+// perfectly legal-looking thirty-two and still cross the ceiling the moment
+// the set was mixed. The invariants below are about the expanded list, which
+// is the only thing the server ever sees.
+func TestCollectChunksAreBoundedAndLoseNothing(t *testing.T) {
+	const limit = maxCapsPerCollect
+
+	for _, n := range []int{0, 1, limit - 1, limit, limit + 1, 3*limit + 7} {
+		caps := make([][]byte, n)
+		for i := range caps {
+			caps[i] = []byte{byte(i), byte(i >> 8)}
+		}
+
+		var chunks [][][]byte
+		for off := 0; off < len(caps); off += limit {
+			end := min(off+limit, len(caps))
+			chunks = append(chunks, caps[off:end])
+		}
+
+		seen := 0
+		for i, c := range chunks {
+			if len(c) > limit {
+				t.Fatalf("n=%d: chunk %d carries %d hints, past the server's %d",
+					n, i, len(c), limit)
+			}
+			if len(c) == 0 {
+				t.Fatalf("n=%d: chunk %d is empty — an empty request is a round "+
+					"trip that asks nothing", n, i)
+			}
+			seen += len(c)
+		}
+		if seen != n {
+			t.Fatalf("n=%d: %d hints survived chunking — a hint dropped at a "+
+				"boundary is a mailbox nobody drains", n, seen)
+		}
+	}
+}
+
+// Fifty spaces, and the events must come back from the first, the middle and
+// the last of them: a chunker that served the beginning of the list and quietly
+// stopped would look identical to one that worked, right up until somebody
+// noticed their oldest conversation had gone quiet.
+func TestFiftySpacesAreAllServedByOnePull(t *testing.T) {
+	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+	addr := "127.0.0.1:" + itoa(port)
+
+	alice := openRuntime(t, t.TempDir(), "alice")
+	defer alice.Close()
+	bob := openRuntime(t, t.TempDir(), "bob")
+	defer bob.Close()
+	for _, rt := range []*Runtime{alice, bob} {
+		if err := rt.SetSettings(Settings{Relay: addr}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	const spaces = 50
+	tids := make([]id.TerminalID, 0, spaces)
+	for i := 0; i < spaces; i++ {
+		tid, err := alice.CreateSpace(fmt.Sprintf("room %d", i))
+		if err != nil {
+			t.Fatal(err)
+		}
+		tids = append(tids, tid)
+	}
+
+	// Bob joins the three that matter: the first, the middle and the last.
+	watched := []int{0, spaces / 2, spaces - 1}
+	for _, i := range watched {
+		info, err := alice.MintPass(tids[i], 1, 24, addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		reqID, err := bob.JoinByPass(info.Link)
+		if err != nil {
+			t.Fatal(err)
+		}
+		waitJoin(t, bob, reqID, JoinReady)
+	}
+
+	for _, i := range watched {
+		if _, err := alice.Say(tids[i], fmt.Sprintf("hello from room %d", i), SayOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Pushed per space, which is what the sending side does anyway: the
+	// ceiling this test is about is on the DRAINING side.
+	for _, i := range watched {
+		if _, _, err := alice.PushToRelay(addr, tids[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// One pull, fifty spaces: it must not be refused, and it must serve every
+	// chunk rather than the first one.
+	deadline := time.Now().Add(30 * time.Second)
+	served := map[int]bool{}
+	for time.Now().Before(deadline) && len(served) < len(watched) {
+		if _, err := bob.PullFromRelay(addr); err != nil {
+			t.Fatalf("a pull across %d spaces failed: %v", spaces, err)
+		}
+		for _, i := range watched {
+			if served[i] {
+				continue
+			}
+			sp, ok := bob.spaceForTest(tids[i])
+			if ok && sp.Log.Len() > 0 {
+				served[i] = true
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	for _, i := range watched {
+		if !served[i] {
+			t.Fatalf("room %d of %d was never served — the first, the middle and "+
+				"the last must all arrive, or a chunker that stops early looks "+
+				"exactly like one that works", i, spaces)
+		}
+	}
+}
+
+// PARTIAL IS ITS OWN ANSWER, and the reason is that Collect is DESTRUCTIVE:
+// the relay hands items over and forgets them. So a chunk that fails after
+// earlier ones succeeded must not discard what they drained — those messages
+// exist nowhere else — and it must not be reported as a complete pass either,
+// because the spaces in the failed chunk were never served.
+//
+// Driven against a collect that fails on the second call, which no real relay
+// will do on request. An earlier version of this test asked a rate-limited
+// server to misbehave at the right moment and could pass three different ways,
+// including by skipping — a test with a skip in its success path is a test
+// nobody has to look at.
+func TestAFailedChunkKeepsWhatTheEarlierOnesDrained(t *testing.T) {
+	caps := make([][]byte, 5)
+	for i := range caps {
+		caps[i] = []byte{byte(i)}
+	}
+
+	calls := 0
+	items, err := collectInChunks(func(chunk [][]byte) ([][]byte, error) {
+		calls++
+		if calls == 2 {
+			return nil, fmt.Errorf("relay: rate limited")
+		}
+		return [][]byte{[]byte("drained")}, nil
+	}, caps, 2)
+
+	if err == nil {
+		t.Fatal("a failed chunk must be reported: the spaces in it were never " +
+			"served, and calling the cycle complete would advance state as " +
+			"though they had been")
+	}
+	if len(items) != 1 {
+		t.Fatalf("%d items survived the failure, want the 1 the first chunk "+
+			"drained — Collect is destructive, so discarding it loses that "+
+			"message on both sides", len(items))
+	}
+	if calls != 2 {
+		t.Fatalf("%d calls: the loop must stop asking after a failure rather "+
+			"than spending the rest of the chunks against a server that has "+
+			"already refused", calls)
 	}
 }

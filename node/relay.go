@@ -539,6 +539,39 @@ func (r *Runtime) relayMailboxSpaces() []id.TerminalID {
 // exactly what happened — the public path split and the private one did not.
 const maxCapsPerCollect = 64
 
+// collectInChunks drains a set of capabilities in requests the server will
+// accept, and returns everything that arrived even when one of them failed.
+//
+// A FAILED CHUNK DOES NOT DISCARD THE ONES BEFORE IT, and that is not
+// tidiness — Collect is DESTRUCTIVE. The relay hands items over and forgets
+// them, so throwing away what earlier chunks drained would lose those
+// messages permanently, on both sides, with nothing anywhere reporting it.
+//
+// And it is not reported as success either: the spaces in the failed chunk
+// were never served, so the caller gets what arrived AND the error. Calling
+// the whole cycle complete would advance state as though every mailbox had
+// been drained.
+//
+// A free function with the collect passed in, so the semantics can be driven
+// against a caller that fails on the second chunk — which no relay will do on
+// request.
+func collectInChunks(
+	collect func([][]byte) ([][]byte, error),
+	caps [][]byte,
+	limit int,
+) ([][]byte, error) {
+	var items [][]byte
+	for off := 0; off < len(caps); off += limit {
+		end := min(off+limit, len(caps))
+		part, err := collect(caps[off:end])
+		if err != nil {
+			return items, err
+		}
+		items = append(items, part...)
+	}
+	return items, nil
+}
+
 func (r *Runtime) PullFromRelay(addr string) (applied int, err error) {
 	if err := r.relayGate(); err != nil {
 		return 0, err
@@ -598,15 +631,19 @@ func (r *Runtime) PullFromRelay(addr string) (applied int, err error) {
 	// The public ingress path has split its capabilities since PA-1, with a
 	// comment saying why. This one — the path every ordinary private space
 	// uses — did not.
-	var items [][]byte
-	for off := 0; off < len(caps); off += maxCapsPerCollect {
-		end := min(off+maxCapsPerCollect, len(caps))
-		part, err := client.Collect(caps[off:end])
-		if err != nil {
-			opErr = err
-			return 0, err
-		}
-		items = append(items, part...)
+	// A FAILED CHUNK DOES NOT DISCARD THE ONES BEFORE IT, and that is not
+	// tidiness — Collect is DESTRUCTIVE. The relay hands the items over and
+	// forgets them, so returning early with everything the first chunks
+	// drained would lose those messages permanently, on both sides, with
+	// nothing anywhere reporting it.
+	//
+	// So the loop stops asking and the caller keeps what arrived. The cycle
+	// reports the error as well as the count: the chunk that failed was never
+	// served, and calling the whole collect successful would advance state as
+	// though it had been.
+	items, chunkErr := collectInChunks(client.Collect, caps, maxCapsPerCollect)
+	if chunkErr != nil {
+		opErr = chunkErr
 	}
 	for _, item := range items {
 		parts, err := bundle.DecodeParts(item)
@@ -657,6 +694,13 @@ func (r *Runtime) PullFromRelay(addr string) (applied int, err error) {
 		}
 		r.persistEpochsLocked(terminal, st.space)
 		r.mu.Unlock()
+	}
+	// PARTIAL IS ITS OWN ANSWER. What arrived has been applied and is not
+	// undone — it is already gone from the relay — but the cycle says the
+	// chunk that failed was never served, so nothing upstream can mistake this
+	// for a complete pass over every space.
+	if chunkErr != nil {
+		return applied, chunkErr
 	}
 	return applied, nil
 }
