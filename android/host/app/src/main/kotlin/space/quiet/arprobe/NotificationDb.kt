@@ -251,6 +251,14 @@ internal class NotificationDb(context: Context) :
      */
     fun activeBySpace(): Map<String, Recovery> = bySpace(arrayOf(STATE_PENDING, STATE_PRESENTED))
 
+    /**
+     * Only what we believe Android is HOLDING right now. Separate from
+     * [activeBySpace] because reconciling against the system must not touch a
+     * pending row: pending means not posted yet, so its absence from the shade
+     * is correct rather than evidence that anything was cleared.
+     */
+    fun presentedBySpace(): Map<String, Recovery> = bySpace(arrayOf(STATE_PRESENTED))
+
     private fun bySpace(states: Array<String>): Map<String, Recovery> {
         val out = LinkedHashMap<String, Recovery>()
         val marks = states.joinToString(",") { "?" }

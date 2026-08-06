@@ -328,6 +328,47 @@ class NotificationSurfaceTest {
         }
     }
 
+    /**
+     * AR-1b.6b.6 — the ledger, checked against what Android actually holds.
+     *
+     * FOUND BY THE LIVE GATE ON A PHONE: the shade held two conversations, the
+     * ledger counted seven, and the summary above them said "7 new signals"
+     * about five notifications nobody could see. Notifications leave without
+     * telling us — a force-stop, a reboot, the system pruning a package that
+     * has posted too many — and each one leaves a row saying `presented`.
+     *
+     * Simulated here by cancelling one behind the coordinator's back, which is
+     * exactly what those events look like from inside the app.
+     */
+    @Test
+    fun aConversationAndroidHasLostStopsBeingCounted() {
+        presenter.policy = PresentationPolicy.SPACE
+        arrive("a1", "SPACE_A_${networkSpaceId}")
+        arrive("b1", "SPACE_B_${networkSpaceId}")
+        settleStable(3)
+
+        // Behind the app's back, the way a force-stop or a reboot does it.
+        val lost = ours().first { it.tag != GroupSummary.TAG }.tag!!
+        nm.cancel(lost, SystemPresenter.NOTIFICATION_ID)
+        settleStable(2)
+
+        coordinator.reconcileWithSystem(presenter.liveTags())
+        settleStable(1)
+
+        val left = ours()
+        assertTrue(
+            "a summary must not survive above one conversation, and it did " +
+                "because the ledger still counted the one Android dropped: " +
+                left.map { it.tag },
+            left.none { it.tag == GroupSummary.TAG },
+        )
+        assertEquals("the conversation still on screen must stay", 1, left.size)
+        assertEquals(
+            "the lost one must be closed, not left live",
+            0, ledger.activeBySpace().count { it.value.tag == lost },
+        )
+    }
+
     // -------------------------------------------------- the privacy retreat
 
     @Test

@@ -224,9 +224,62 @@ phone_api() { # phone_api <method> <path> [body] — over USB, never the network
   fi
 }
 
-notif_records() { "${ADB[@]}" shell dumpsys notification --noredact 2>/dev/null | grep -cE "NotificationRecord.*$PKG"; }
-notif_tags()    { "${ADB[@]}" shell dumpsys notification --noredact 2>/dev/null | grep -E "NotificationRecord.*$PKG" | grep -o 'tag=[^ ]*'; }
-notif_text()    { "${ADB[@]}" shell dumpsys notification --noredact 2>/dev/null | grep -A 30 "NotificationRecord.*$PKG" | grep -o 'android.text=String ([^)]*)' | head -1; }
+# THE SHADE, READ BLOCK BY BLOCK AND ONLY OURS.
+#
+# TWO REASONS IT IS NOT A `grep -c`. This runs on somebody's actual phone, and
+# everything in `dumpsys notification` that is not this package is their
+# private life: the reader below keeps a record only when its own header names
+# our package, so nothing else is ever printed or stored.
+#
+# And since AR-1b.6b the app posts a GROUP SUMMARY, which is a record like any
+# other to grep. Counting it made "one message" arrive as two records, and
+# reading the first text in the dump returned the summary's line — "7 new
+# signals" — instead of the conversation's. Every scenario here is about
+# conversations, so the summary is counted separately and never mistaken for
+# one.
+shade() { # shade <records|tags|text|summaries>
+  "${ADB[@]}" shell dumpsys notification --noredact 2>/dev/null | python3 -c '
+import re, sys
+PKG = "'"$PKG"'"
+SUMMARY_TAG = "quite:summary"
+want = sys.argv[1]
+blocks, cur = [], None
+for line in sys.stdin:
+    if "NotificationRecord(" in line:
+        if cur and PKG in cur[0]:
+            blocks.append(cur)
+        cur = [line]
+    elif cur is not None:
+        cur.append(line)
+if cur and PKG in cur[0]:
+    blocks.append(cur)
+
+def tag_of(b):
+    m = re.search(r"tag=(\S+)", b[0])
+    return m.group(1) if m else ""
+
+children = [b for b in blocks if tag_of(b) != SUMMARY_TAG]
+if want == "records":
+    print(len(children))
+elif want == "summaries":
+    print(len(blocks) - len(children))
+elif want == "tags":
+    for b in children:
+        print("tag=" + tag_of(b))
+elif want == "text":
+    for b in children:
+        for line in b:
+            m = re.search(r"android\.text=String \(([^)]*)\)", line)
+            if m:
+                print("android.text=String (%s)" % m.group(1))
+                sys.exit(0)
+' "$1"
+}
+
+notif_records()   { shade records; }
+notif_tags()      { shade tags; }
+notif_text()      { shade text; }
+notif_summaries() { shade summaries; }
 
 pull_ledger() {
   "${ADB[@]}" exec-out run-as "$PKG" cat databases/quiet-notifications.db > "$OUT/ledger.db" 2>/dev/null
@@ -380,7 +433,7 @@ scenario_10_two_spaces() {
     tags=$(notif_tags | sort -u | grep -c 'space:')
     [ "$tags" -ge 2 ] && break
   done
-  local summary; summary=$(notif_tags | grep -c 'quite:summary')
+  local summary; summary=$(notif_summaries)
   if [ "$tags" -ge 2 ] && [ "$summary" -eq 1 ]; then
     record 10-two-spaces pass "two spaces, two tags, and exactly one summary above them" \
       "{\"space_a\":\"$a\",\"space_b\":\"$b\",\"distinct_space_tags\":$tags,\"summaries\":$summary}"

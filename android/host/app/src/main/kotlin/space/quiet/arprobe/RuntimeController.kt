@@ -139,6 +139,24 @@ class RuntimeController private constructor(appContext: Context) {
         // own thread because it touches SQLite.
         worker.execute {
             try {
+                // FIRST: what the ledger thinks is on screen, checked against
+                // what Android is holding. A force-stop or a reboot takes the
+                // shade without telling anyone, and the rows left behind make
+                // the summary count conversations nobody can see. Before
+                // recovery, deliberately — a row posted a moment ago by
+                // recoverPending may not be visible to getActiveNotifications
+                // yet, and reconciling against that window would take down
+                // exactly what was just restored.
+                val live = try {
+                    presenter.liveTags()
+                } catch (t: Throwable) {
+                    // Not knowing is not the same as "nothing is there":
+                    // reconciling against an empty set would dismiss every
+                    // live conversation because one binder call failed.
+                    Log.w(TAG, "skipping reconcile: could not read the active set", t)
+                    null
+                }
+                if (live != null) notifications.reconcileWithSystem(live)
                 notifications.recoverPending()
                 this@RuntimeController.compactNotifications()
             } catch (t: Throwable) {

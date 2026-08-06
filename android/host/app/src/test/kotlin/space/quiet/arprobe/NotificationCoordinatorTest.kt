@@ -74,6 +74,13 @@ class NotificationCoordinatorTest {
                     NotificationCoordinator.Recovery(tagFor(space)!!, "Room", live(space))
                 }
 
+        override fun presentedBySpace(): Map<String, NotificationCoordinator.Recovery> =
+            rows.values.filter { it.state == NotificationDb.STATE_PRESENTED }
+                .groupBy { it.c.spaceId }
+                .mapValues { (space, _) ->
+                    NotificationCoordinator.Recovery(tagFor(space)!!, "Room", live(space))
+                }
+
         override fun tagFor(spaceId: String): String? = keys[spaceId]?.let { "space:$it" }
 
         val personKeys = mutableMapOf<String, String>()
@@ -471,4 +478,67 @@ class NotificationCoordinatorTest {
         co.setEnabled(false)
         assertEquals(listOf("space-a"), presenter.cleared)
     }
+
+    // ------------------------------- what the ledger believes, against Android
+
+    /**
+     * A notification the ledger calls `presented` and Android does not hold —
+     * a force-stop, a reboot, the system pruning a package with too many — is
+     * treated as a swipe: the aggregation closes and the DEDUP MEMORY STAYS.
+     *
+     * The live gate is what found this. The shade held two conversations, the
+     * ledger counted seven, and the summary above them said so.
+     */
+    @Test
+    fun aNotificationAndroidNoLongerHoldsIsTreatedAsSwipedAway() {
+        fresh()
+        arrive("e1", "a")
+        arrive("e2", "b")
+        assertEquals(NotificationDb.STATE_PRESENTED, ledger.state("e1"))
+
+        // Android kept b and lost a.
+        co.reconcileWithSystem(setOf(ledger.tagFor("b")!!))
+
+        assertEquals(
+            "a conversation Android is not holding must stop being counted",
+            NotificationDb.STATE_DISMISSED, ledger.state("e1"),
+        )
+        assertEquals(
+            "and the one it IS holding must be left alone",
+            NotificationDb.STATE_PRESENTED, ledger.state("e2"),
+        )
+
+        // The dedup memory survives: the same event must not come back.
+        assertEquals(
+            NotificationCoordinator.Decision.SUPPRESSED_ALREADY_PRESENTED,
+            arrive("e1", "a"),
+        )
+    }
+
+    /**
+     * PENDING IS NOT MISSING. A row that has not been posted yet is absent
+     * from the shade because that is correct, and dismissing it would throw
+     * away the one thing recovery exists to put back.
+     */
+    @Test
+    fun aPendingRowIsNotDismissedForBeingAbsentFromTheShade() {
+        fresh()
+        // Insert succeeds; the row stays pending because presenting threw.
+        val breaking = object : NotificationCoordinator.Presenter {
+            override fun present(p: NotificationCoordinator.Presentation) =
+                throw IllegalStateException("the shade is unavailable")
+            override fun clear(spaceId: String, tag: String) = Unit
+        }
+        val c2 = NotificationCoordinator(breaking, ledger) { acked.add(it) }
+        runCatching { c2.onCandidate(candidate("e1", "a")) }
+        assertEquals(NotificationDb.STATE_PENDING, ledger.state("e1"))
+
+        c2.reconcileWithSystem(emptySet())
+
+        assertEquals(
+            "reconciling against the system must not touch what was never posted",
+            NotificationDb.STATE_PENDING, ledger.state("e1"),
+        )
+    }
+
 }

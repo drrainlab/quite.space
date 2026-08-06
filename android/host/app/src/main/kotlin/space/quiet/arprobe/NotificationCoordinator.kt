@@ -100,6 +100,9 @@ class NotificationCoordinator(
          */
         fun activeBySpace(): Map<String, Recovery>
 
+        /** Only what we believe the system is holding: presented, not pending. */
+        fun presentedBySpace(): Map<String, Recovery>
+
         /** The opaque tag for a space, or null when it has never had one. */
         fun tagFor(spaceId: String): String?
 
@@ -297,6 +300,40 @@ class NotificationCoordinator(
             if (r.items.isEmpty()) continue
             presenter.present(Presentation(spaceId, r.tag, r.spaceLabel, r.items))
             for (item in r.items) ledger.markPresented(item.eventId)
+        }
+    }
+
+    /**
+     * AR-1b.6b.6 — what the ledger believes, checked against what Android
+     * actually holds.
+     *
+     * FOUND BY THE LIVE GATE, and it is the summary that made it visible: the
+     * shade held two conversations while the ledger counted seven, so the line
+     * above them said "7 new signals" about five notifications that were not
+     * there. Notifications leave the shade in ways nothing tells us about — a
+     * force-stop, a reboot, the system pruning a package that has posted too
+     * many — and every one of those leaves a row saying `presented` for
+     * something nobody can see.
+     *
+     * WHAT IS *NOT* DONE HERE is re-posting them. A notification that vanished
+     * because the person cleared it, or because the phone restarted, must stay
+     * gone: bringing seven old conversations back after a reboot is the phone
+     * arguing with the person. So a vanished notification is treated exactly
+     * as a swipe — the aggregation closes, the DEDUP MEMORY STAYS, and nothing
+     * is announced twice.
+     *
+     * PENDING ROWS ARE NOT TOUCHED. Pending means not posted yet, so its
+     * absence from the shade is correct rather than evidence of anything.
+     */
+    @Synchronized
+    fun reconcileWithSystem(liveTags: Set<String>) {
+        if (!enabled) return
+        for ((spaceId, r) in ledger.presentedBySpace()) {
+            if (liveTags.contains(r.tag)) continue
+            ledger.dismiss(spaceId)
+            // Cancels nothing — it is already gone — but recomputes the line
+            // above the ones that are left, which is the point.
+            presenter.clear(spaceId, r.tag)
         }
     }
 

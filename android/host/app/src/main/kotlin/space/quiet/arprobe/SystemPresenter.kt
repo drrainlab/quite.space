@@ -217,6 +217,21 @@ internal class SystemPresenter(
         return false
     }
 
+    /** Every tag Android is holding for this app right now. */
+    fun liveTags(): Set<String> = try {
+        nm?.activeNotifications
+            ?.filter { it.id == NOTIFICATION_ID && it.tag != null }
+            ?.map { it.tag!! }
+            ?.toSet()
+            ?: emptySet()
+    } catch (t: Throwable) {
+        Log.w(TAG, "could not read the active set", t)
+        // EMPTY WOULD MEAN "EVERYTHING IS GONE" to the reconciler, which would
+        // dismiss every live conversation because a binder call failed. The
+        // caller must treat null as "do not reconcile".
+        throw t
+    }
+
     /** What the system still holds for a space, for tests and diagnostics. */
     fun publishedState(tag: String): Map<String, Any> = shortcuts.inspectPublishedState(tag)
 
@@ -351,7 +366,7 @@ internal class SystemPresenter(
         .put("clear_calls", clearCalls)
         .put("live", JSONArray().also { arr -> shown.values.forEach { arr.put(it) } })
 
-    private companion object {
+    companion object {
         const val TAG = "quiet-notify"
 
         /**

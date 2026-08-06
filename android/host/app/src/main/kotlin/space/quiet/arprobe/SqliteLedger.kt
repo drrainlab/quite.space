@@ -37,6 +37,11 @@ internal class SqliteLedger(context: Context) : NotificationCoordinator.Ledger {
             NotificationCoordinator.Recovery(r.tag, r.spaceLabel, r.items)
         }
 
+    override fun presentedBySpace(): Map<String, NotificationCoordinator.Recovery> =
+        db.presentedBySpace().mapValues { (_, r) ->
+            NotificationCoordinator.Recovery(r.tag, r.spaceLabel, r.items)
+        }
+
     override fun personKey(device: String, label: String): String = db.personKey(device, label)
 
     override fun tagFor(spaceId: String): String? = db.tagFor(spaceId)
