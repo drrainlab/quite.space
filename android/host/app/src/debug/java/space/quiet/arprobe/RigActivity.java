@@ -135,6 +135,24 @@ public class RigActivity extends Activity {
                 // The space currently on screen, as the interface would say it
                 // through the bridge — so a gate can prove suppression without
                 // driving a WebView.
+                // AR-1c.4. The MODE, without a finger on a screen. The product
+                // path is the switch in the interface; a gate that has to tap
+                // at pixels to reach a thirty-minute measurement is a gate
+                // nobody runs twice.
+                //
+                // Started from THIS activity, which is visible when the intent
+                // arrives — the same condition Android 12+ puts on the real
+                // switch, not a way around it.
+                case "stay": {
+                    boolean on = "on".equals(arg);
+                    rc.setAvailabilityRequested(on);
+                    if (on) {
+                        AvailabilityService.start(this);
+                    } else {
+                        AvailabilityService.stop(this);
+                    }
+                    break;
+                }
                 case "visible":
                     rc.reportVisibleSpace(arg == null || arg.isEmpty() ? null : arg);
                     break;

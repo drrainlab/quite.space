@@ -160,6 +160,7 @@ class AvailabilityService : Service() {
          * background in the general case, and the restriction is the right
          * shape: a mode nobody switched on has no business existing.
          */
+        @JvmStatic
         fun start(context: Context) {
             val i = Intent(context, AvailabilityService::class.java)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -169,6 +170,7 @@ class AvailabilityService : Service() {
             }
         }
 
+        @JvmStatic
         fun stop(context: Context) {
             context.startService(
                 Intent(context, AvailabilityService::class.java).setAction(ACTION_STOP)

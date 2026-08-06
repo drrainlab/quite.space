@@ -447,3 +447,105 @@ func TestSoakBackgroundSyncKeepsDeliveringAfterAQuietSpell(t *testing.T) {
 		}
 	}
 }
+
+// A relay that dies and comes back, and two nodes that have to notice.
+//
+// WHAT A STALE SOCKET LOOKS LIKE FROM INSIDE: nothing. The connection is
+// still an object, the pool still hands it out, sync is still "active" and
+// the health word is still green — and every message goes into a socket with
+// nobody on the other end. That is the failure this reproduces on purpose,
+// because it is indistinguishable from working until somebody notices a
+// conversation has been silent for an hour.
+//
+// The AR-1c gate found it on a phone; this is the same thing without one, so
+// it can be fixed in seconds rather than in three-minute rounds.
+func TestSoakARelayThatComesBackIsFoundAgain(t *testing.T) {
+	if os.Getenv("QUIET_RELAY_SOAK") != "1" {
+		t.Skip("set QUIET_RELAY_SOAK=1 (this one restarts a relay mid-test)")
+	}
+	// A FIXED PORT, because the point is that it comes back at the SAME
+	// address — a new address would be an ordinary reconnection somewhere
+	// else, which nobody doubts.
+	const addr = "127.0.0.1:37411"
+	srv, _, err := relay.StartServer(addr, relay.DefaultLimits())
+	if err != nil {
+		t.Skipf("cannot bind %s: %v", addr, err)
+	}
+
+	sender := openRuntime(t, t.TempDir(), "alice")
+	defer sender.Close()
+	phone := openRuntime(t, t.TempDir(), "bob")
+	defer phone.Close()
+
+	tid, err := sender.CreateSpace("a room")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rt := range []*Runtime{sender, phone} {
+		if err := rt.SetSettings(Settings{Relay: addr}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	info, err := sender.MintPass(tid, 1, 24, addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reqID, err := phone.JoinByPass(info.Link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitJoin(t, phone, reqID, JoinReady)
+
+	arrival := func(text string, limit time.Duration) time.Duration {
+		start := time.Now()
+		if _, err := sender.Say(tid, text, SayOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		for time.Since(start) < limit {
+			if sp, ok := phone.spaceForTest(tid); ok {
+				found := false
+				_ = sp.Log.Replay(func(a eventlog.Applied) error {
+					if e, ok := sp.State.EntryByID(a.ID); ok &&
+						e.Content.Text != nil && e.Content.Text.Text == text {
+						found = true
+					}
+					return nil
+				})
+				if found {
+					return time.Since(start)
+				}
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+		return -1
+	}
+
+	if d := arrival("before", 90*time.Second); d < 0 {
+		srv.Close()
+		t.Fatal("nothing arrived before the relay was touched")
+	} else {
+		t.Logf("before: %v", d)
+	}
+
+	// The relay dies with every connection open and comes back at the same
+	// address a moment later. Both nodes now hold sockets to a process that
+	// does not exist.
+	srv.Close()
+	time.Sleep(3 * time.Second)
+	again, _, err := relay.StartServer(addr, relay.DefaultLimits())
+	if err != nil {
+		t.Fatalf("the relay could not come back: %v", err)
+	}
+	defer again.Close()
+
+	d := arrival("after the relay came back", 2*time.Minute)
+	if d < 0 {
+		t.Fatal("a message sent after the relay came back never arrived — " +
+			"the connection is dead and nothing on either side noticed")
+	}
+	t.Logf("after: %v", d)
+	if d > 30*time.Second {
+		t.Errorf("it took %v to notice a dead connection; a person calls that "+
+			"silence, not recovery", d)
+	}
+}
