@@ -409,6 +409,15 @@ func DecodeMsg(data []byte) (*Msg, error) {
 			m.Expires, er = d.ReadUint()
 		case keyNow:
 			m.Now, er = d.ReadUint()
+		case keyReason:
+			// READ, because it was written and never read. The encoder has
+			// always sent the reason a relay refused for, and the decoder
+			// skipped the key — so every refusal arrived at the client as
+			// `relay: ` with nothing after it. Diagnostics said nothing, and
+			// anything wanting to tell a rate limit from a malformed request
+			// had to guess from context, which is how classification by
+			// substring gets invented in the first place.
+			m.Reason, er = d.ReadText()
 		case keyBody:
 			var b []byte
 			b, er = d.ReadBytes()

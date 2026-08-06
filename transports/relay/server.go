@@ -300,7 +300,7 @@ func (s *Server) handle(m *Msg, cs *connState) *Msg {
 			return &Msg{Type: msgError, Reason: "malformed put"}
 		}
 		if !spend(&cs.writes, &cs.writeWindow, s.limits.writeRatePerMin()) {
-			return &Msg{Type: msgError, Reason: "rate limited"}
+			return &Msg{Type: msgError, Reason: ReasonRateLimited}
 		}
 		expires := m.Expires
 		maxExpiry := now + uint64(s.limits.MaxTTL/time.Second)
@@ -313,7 +313,7 @@ func (s *Server) handle(m *Msg, cs *connState) *Msg {
 			Ciphertext:      m.Body,
 		})
 		if !ok {
-			return &Msg{Type: msgError, Reason: "quota exceeded or item too large"}
+			return &Msg{Type: msgError, Reason: ReasonQuotaExceeded}
 		}
 		// The receipt proves exactly accepted_by_relay and nothing more
 		// (ADR-008): the expiry is echoed so the sender knows the deadline.
@@ -324,18 +324,18 @@ func (s *Server) handle(m *Msg, cs *connState) *Msg {
 		// rejected drain must never look the same to an old client. Metered
 		// (RR-3): a dead verb must not be the cheapest thing to spin.
 		if !spend(&cs.collects, &cs.collectWindow, s.limits.collectRatePerMin()) {
-			return &Msg{Type: msgError, Reason: "rate limited"}
+			return &Msg{Type: msgError, Reason: ReasonRateLimited}
 		}
-		return &Msg{Type: msgError, Reason: "collect requires a capability"}
+		return &Msg{Type: msgError, Reason: ReasonNoCapability}
 	case msgCollectCap:
 		// Draining is destructive, so it gets the same shape of bounds Fetch
 		// has had since PA-0: rate, hint count, reply bytes. Without the byte
 		// budget one collect could be asked to move the entire store.
 		if !spend(&cs.collects, &cs.collectWindow, s.limits.collectRatePerMin()) {
-			return &Msg{Type: msgError, Reason: "rate limited"}
+			return &Msg{Type: msgError, Reason: ReasonRateLimited}
 		}
 		if len(m.Caps) > s.limits.collectMaxHints() {
-			return &Msg{Type: msgError, Reason: "too many hints"}
+			return &Msg{Type: msgError, Reason: ReasonTooManyHints}
 		}
 		budget := s.limits.collectMaxBytes()
 		var items [][]byte
@@ -361,7 +361,7 @@ func (s *Server) handle(m *Msg, cs *connState) *Msg {
 		// participant asking THIS relay gets the same one. Metered (RR-3):
 		// an unmetered echo is a free amplification target.
 		if !spend(&cs.collects, &cs.collectWindow, s.limits.collectRatePerMin()) {
-			return &Msg{Type: msgError, Reason: "rate limited"}
+			return &Msg{Type: msgError, Reason: ReasonRateLimited}
 		}
 		return &Msg{Type: msgTimeOK, Now: uint64(time.Now().UnixMilli())}
 	case msgProbe:
@@ -369,7 +369,7 @@ func (s *Server) handle(m *Msg, cs *connState) *Msg {
 		// wall clock, nonce echoed. No durable state; metered like a collect
 		// so a probe storm pays the same rail as any other read.
 		if !spend(&cs.collects, &cs.collectWindow, s.limits.collectRatePerMin()) {
-			return &Msg{Type: msgError, Reason: "rate limited"}
+			return &Msg{Type: msgError, Reason: ReasonRateLimited}
 		}
 		return &Msg{
 			Type: msgProbeOK, Nonce: m.Nonce,
@@ -382,7 +382,7 @@ func (s *Server) handle(m *Msg, cs *connState) *Msg {
 			return &Msg{Type: msgError, Reason: "malformed replace"}
 		}
 		if !spend(&cs.writes, &cs.writeWindow, s.limits.writeRatePerMin()) {
-			return &Msg{Type: msgError, Reason: "rate limited"}
+			return &Msg{Type: msgError, Reason: ReasonRateLimited}
 		}
 		expires := m.Expires
 		maxExpiry := now + uint64(s.limits.MaxTTL/time.Second)
@@ -394,7 +394,7 @@ func (s *Server) handle(m *Msg, cs *connState) *Msg {
 			ExpiresAt:       expires,
 			Ciphertext:      m.Body,
 		}) {
-			return &Msg{Type: msgError, Reason: "quota exceeded or item too large"}
+			return &Msg{Type: msgError, Reason: ReasonQuotaExceeded}
 		}
 		return &Msg{Type: msgPutOK, Expires: expires}
 	case msgFetch:
@@ -403,10 +403,10 @@ func (s *Server) handle(m *Msg, cs *connState) *Msg {
 		// BEFORE the budget is spent (RR-3 consistency fix — a rejected
 		// oversize request used to charge the window anyway).
 		if len(m.Hints) > s.limits.fetchMaxHints() {
-			return &Msg{Type: msgError, Reason: "too many hints"}
+			return &Msg{Type: msgError, Reason: ReasonTooManyHints}
 		}
 		if !spend(&cs.fetches, &cs.fetchWindow, s.limits.fetchRatePerMin()) {
-			return &Msg{Type: msgError, Reason: "rate limited"}
+			return &Msg{Type: msgError, Reason: ReasonRateLimited}
 		}
 		budget := s.limits.fetchMaxBytes()
 		var items [][]byte
@@ -431,10 +431,64 @@ func (s *Server) handle(m *Msg, cs *connState) *Msg {
 
 // ---- Client ----
 
+// The reasons a relay refuses, as CONSTANTS the server sends and the client
+// classifies by. Two private copies of one string is how a classification
+// drifts from what is actually sent — this codebase has already paid for that
+// once, when a pool looked for "use of closed" while the transport said
+// "lan: connection closed" and a dead connection was never retired.
+const (
+	ReasonRateLimited   = "rate limited"
+	ReasonTooManyHints  = "too many hints"
+	ReasonNoCapability  = "collect requires a capability"
+	ReasonQuotaExceeded = "quota exceeded or item too large"
+)
+
+// RefusalKind says what a relay's refusal MEANS, because "the relay said no"
+// covers three situations that call for three different responses.
+type RefusalKind int
+
+const (
+	// RefusalUnknown — an older or newer relay refusing for a reason this
+	// build does not recognise. Treated as retryable-but-unhelpful: the
+	// connection is fine, and guessing harder would be inventing semantics.
+	RefusalUnknown RefusalKind = iota
+	// RefusalThrottled — asking again later will work. The connection is
+	// HEALTHY: a rate limit is a schedule, not a broken socket, and throwing
+	// the connection away makes the next attempt more expensive for exactly
+	// the reason it was refused.
+	RefusalThrottled
+	// RefusalRequestShape — this request was malformed or too big for this
+	// relay. Asking again identically will fail identically, so it is a bug
+	// or a version mismatch and belongs in a diagnostic, not in a retry loop.
+	// The connection is healthy.
+	RefusalRequestShape
+)
+
 // ErrRelay wraps a relay-reported error.
+//
+// It is a REFUSAL, never a dead connection: the relay answered. Callers ask
+// Kind rather than reading Reason, so the classification lives in one place
+// beside the constants the server sends.
 type ErrRelay struct{ Reason string }
 
 func (e ErrRelay) Error() string { return "relay: " + e.Reason }
+
+// Kind classifies the refusal. Matched against the constants above rather
+// than by substring: a message that changes wording must break a compile or a
+// test, not silently change a policy.
+func (e ErrRelay) Kind() RefusalKind {
+	switch e.Reason {
+	case ReasonRateLimited:
+		return RefusalThrottled
+	case ReasonTooManyHints, ReasonQuotaExceeded, ReasonNoCapability:
+		return RefusalRequestShape
+	default:
+		return RefusalUnknown
+	}
+}
+
+// Throttled reports whether waiting is the right response.
+func (e ErrRelay) Throttled() bool { return e.Kind() == RefusalThrottled }
 
 // Client is one connection to a relay.
 type Client struct {

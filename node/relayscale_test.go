@@ -18,11 +18,12 @@ package node
 
 import (
 	"fmt"
+	"io"
 	"testing"
 	"time"
 
 	"github.com/drrainlab/quiet_places/protocol/id"
-
+	"github.com/drrainlab/quiet_places/transports/lan"
 	"github.com/drrainlab/quiet_places/transports/relay"
 )
 
@@ -384,5 +385,36 @@ func TestACommitFailureIsNamedAndDoesNotAdvanceTheCursor(t *testing.T) {
 	}
 	if out.Served != 0 {
 		t.Fatalf("Served=%d: a chunk whose commit failed was not served", out.Served)
+	}
+}
+
+// A REFUSAL IS NOT A DEAD SOCKET, and the pool must not treat it as one.
+//
+// Discarding a healthy connection because the relay asked for less traffic is
+// the worst possible response: the next attempt costs a fresh TLS handshake,
+// which is more load on the relay that had just said it was busy. And a
+// request the relay considers malformed will fail identically however many
+// connections are opened for it.
+func TestARelayRefusalDoesNotKillAHealthyConnection(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		reason string
+	}{
+		{"a rate limit is a schedule", relay.ReasonRateLimited},
+		{"a hint ceiling is a request-shape problem", relay.ReasonTooManyHints},
+		{"a quota is about this item, not the socket", relay.ReasonQuotaExceeded},
+		{"an unknown reason is not guessed at", "something a newer relay says"},
+	} {
+		if isConnFatal(relay.ErrRelay{Reason: tc.reason}) {
+			t.Errorf("%s: %q was treated as a dead connection", tc.name, tc.reason)
+		}
+	}
+
+	// And the things that ARE the connection dying still are.
+	if !isConnFatal(io.EOF) {
+		t.Error("EOF is the connection ending")
+	}
+	if !isConnFatal(lan.ErrConnClosed) {
+		t.Error("a closed transport connection is fatal")
 	}
 }
