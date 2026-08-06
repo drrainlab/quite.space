@@ -92,10 +92,39 @@ internal class NotificationDb(context: Context) :
         )
     }
 
+    /**
+     * MIGRATIONS ADD; THEY NEVER DROP. Dropping a table here would drop the
+     * dedup memory, and an upgrade would re-announce everything still live —
+     * a person reinstalling would be told about every message they had
+     * already read.
+     *
+     * THIS EXISTED BECAUSE THE VERSION DID NOT MOVE. Two schema changes —
+     * `source_sequence` on events, and the whole `notification_people` table —
+     * were added while VERSION stayed at 1, so an install created before them
+     * kept the old schema and every insert failed against a column that was
+     * not there. The failure was correct at every layer and invisible from
+     * outside: the insert threw, the candidate was NOT acknowledged (which is
+     * exactly right — see DEFERRED_STORAGE_UNAVAILABLE), the core kept
+     * replaying it, and nothing was ever shown. It took an instrumented test
+     * to say the word "no such table" out loud.
+     */
     override fun onUpgrade(db: SQLiteDatabase, old: Int, new: Int) {
-        // There is one version. When there are two, a migration goes here —
-        // and dropping the table would be dropping the dedup memory, which
-        // turns an upgrade into a re-announcement of everything still live.
+        if (old < 2) {
+            runCatching {
+                db.execSQL(
+                    "ALTER TABLE notification_events ADD COLUMN source_sequence INTEGER NOT NULL DEFAULT 0"
+                )
+            }
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS notification_people (
+                  sender_device     TEXT PRIMARY KEY,
+                  opaque_person_key TEXT NOT NULL UNIQUE,
+                  last_known_label  TEXT
+                )
+                """.trimIndent()
+            )
+        }
     }
 
     // ------------------------------------------------------------ the writes
@@ -286,6 +315,25 @@ internal class NotificationDb(context: Context) :
         return removed
     }
 
+    /**
+     * Empties the ledger. FOR TESTS ONLY, and named so — the product has no
+     * business forgetting what it has shown, and a compaction that could be
+     * mistaken for this one would be a way to resurrect every notification a
+     * person has already dealt with.
+     */
+    fun wipeForTest() {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            db.execSQL("DELETE FROM notification_events")
+            db.execSQL("DELETE FROM notification_spaces")
+            db.execSQL("DELETE FROM notification_people")
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
     fun stats(): Map<String, Int> {
         val out = LinkedHashMap<String, Int>()
         readableDatabase.rawQuery(
@@ -463,7 +511,9 @@ internal class NotificationDb(context: Context) :
 
     companion object {
         const val NAME = "quiet-notifications.db"
-        const val VERSION = 1
+        // 2 — source_sequence and notification_people. Every schema change
+        // moves this, or an existing install quietly stops storing anything.
+        const val VERSION = 2
 
         const val STATE_PENDING = "pending"
         const val STATE_PRESENTED = "presented"

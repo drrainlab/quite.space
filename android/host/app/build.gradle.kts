@@ -17,6 +17,14 @@ android {
         versionCode = 1
         versionName = "ar0"
         ndk { abiFilters += "arm64-v8a" }
+
+        // AR-1b.6b.5. The structural notification tests are INSTRUMENTED
+        // rather than JVM: what has to be asserted is what Android actually
+        // holds — active notifications, their extras, and the shortcut
+        // surfaces — and that only exists on a device. They need no relay and
+        // no network: b.5 proved delivery, and this proves the projection of
+        // an already-accepted state into system surfaces.
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
@@ -48,6 +56,9 @@ android {
         }
         getByName("test") {
             java.srcDirs("src/test/kotlin")
+        }
+        getByName("androidTest") {
+            java.srcDirs("src/androidTest/kotlin")
         }
     }
 
@@ -87,4 +98,8 @@ dependencies {
     // rather than needing a booted device to answer whether a swipe clears
     // the dedup.
     testImplementation("junit:junit:4.13.2")
+
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test:rules:1.6.1")
 }

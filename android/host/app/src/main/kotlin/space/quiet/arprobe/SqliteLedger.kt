@@ -44,6 +44,9 @@ internal class SqliteLedger(context: Context) : NotificationCoordinator.Ledger {
     override fun compact(retainFrom: Map<String, Map<String, Long>>): Int =
         db.compact(retainFrom)
 
+    /** Empties the ledger. Tests only — see NotificationDb.wipeForTest. */
+    fun wipeForTest() = db.wipeForTest()
+
     /** Row counts by state, for the rig's status line. */
     fun stats(): Map<String, Int> = db.stats()
 }
