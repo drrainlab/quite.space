@@ -210,6 +210,19 @@ class RuntimeController private constructor(appContext: Context) {
     fun notificationPolicy(): PresentationPolicy = presenter.policy
 
     /**
+     * The same two facts the bridge carries, as a door the DEBUG RIG can
+     * knock on — NotificationCoordinator is internal, so a Java harness cannot
+     * reach it directly.
+     *
+     * Public here rather than the coordinator made visible: this is the
+     * narrowest thing that works, and it keeps the plane's own type out of a
+     * surface that exists for a measurement harness.
+     */
+    fun reportVisibleSpace(spaceId: String?) = notifications.onVisibleSpace(spaceId)
+
+    fun reportRead(spaceId: String) = notifications.onRead(spaceId)
+
+    /**
      * What the person's answer to the permission means, all the way down.
      *
      * A refusal does not merely stop the host from posting: it DISARMS the

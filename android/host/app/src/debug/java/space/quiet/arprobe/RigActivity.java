@@ -82,13 +82,14 @@ public class RigActivity extends Activity {
         final String pass = intent.getStringExtra("pass");
         final String name = intent.getStringExtra("name");
         final boolean lan = intent.getBooleanExtra("lan", false);
+        final String arg = intent.getStringExtra("arg");
 
         new Thread(new Runnable() {
-            @Override public void run() { execute(cmd, seq, pass, name, lan); }
+            @Override public void run() { execute(cmd, seq, pass, name, lan, arg); }
         }, "ar0-cmd").start();
     }
 
-    private void execute(String cmd, int seq, String pass, String name, boolean lan) {
+    private void execute(String cmd, int seq, String pass, String name, boolean lan, String arg) {
         JSONObject out = new JSONObject();
         try {
             out.put("seq", seq);
@@ -116,6 +117,29 @@ public class RigActivity extends Activity {
                     awaitState(rc, "unavailable");
                     break;
                 case "status":
+                    break;
+                // AR-1b.6b.6. The privacy policy is a PERSON'S choice made in
+                // the interface, and a visual gate has to reach all three
+                // levels without a finger on a screen. Debug-only, like the
+                // rest of this file: the product path is the bridge, and this
+                // one exists so the levels can be photographed.
+                case "policy": {
+                    PresentationPolicy p;
+                    if ("hidden".equals(arg)) p = PresentationPolicy.HIDDEN;
+                    else if ("space".equals(arg)) p = PresentationPolicy.SPACE;
+                    else if ("preview".equals(arg)) p = PresentationPolicy.PREVIEW;
+                    else { out.put("ok", false); out.put("error", "unknown policy: " + arg); break; }
+                    rc.setNotificationPolicy(p);
+                    break;
+                }
+                // The space currently on screen, as the interface would say it
+                // through the bridge — so a gate can prove suppression without
+                // driving a WebView.
+                case "visible":
+                    rc.reportVisibleSpace(arg == null || arg.isEmpty() ? null : arg);
+                    break;
+                case "read":
+                    if (arg != null && !arg.isEmpty()) rc.reportRead(arg);
                     break;
                 case "quicklink":
                     // The low-memory lane. Runs the 128 MiB KDF HERE, under the

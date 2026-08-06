@@ -439,6 +439,45 @@ class NotificationSurfaceTest {
         }
     }
 
+    /**
+     * TIGHTENING REACHES THE CONVERSATIONS NOBODY IS LOOKING AT.
+     *
+     * Found by the visual gate on a phone: a space was read — so its
+     * notification was gone and it was no longer "active" — and then the
+     * policy was tightened to HIDDEN. Taking the surfaces back space by space
+     * only covered what still had a live card, so that conversation's
+     * long-lived shortcut stayed in the system's shortcut store with the
+     * space's name on it, visible in the share sheet and to Direct Share,
+     * after the person had asked for nothing to be shown at all.
+     */
+    @Test
+    fun tighteningAlsoTakesBackTheSurfaceOfAConversationAlreadyRead() {
+        presenter.policy = PresentationPolicy.PREVIEW
+        arrive("a1", "SPACE_A_${networkSpaceId}")
+        settleStable(1)
+        val tag = ours().single().tag!!
+        assertTrue("nothing to take back otherwise", shortcutIds().isNotEmpty())
+
+        // Read it: the notification goes, the conversation surface stays —
+        // which is correct, and is exactly the state that used to survive.
+        coordinator.onRead("SPACE_A_${networkSpaceId}")
+        settleStable(0)
+        assertTrue(
+            "the long-lived shortcut is supposed to outlive a read",
+            shortcutIds().contains("conversation:" + tag.removePrefix("space:")),
+        )
+
+        presenter.applyPolicy(PresentationPolicy.HIDDEN, emptyMap())
+        Thread.sleep(500)
+
+        for (label in shortcutLabels()) {
+            assertFalse(
+                "a shortcut still names the space after tightening: $label",
+                label.contains(secretSpace),
+            )
+        }
+    }
+
     // ---------------------------------------------------------------- tools
 
     private fun shortcutIds(): List<String> {

@@ -57,7 +57,7 @@ internal class ShortcutRegistry(context: Context) {
      * key and never from its protocol id. A shortcut id is readable by the
      * launcher, so the tag's reason for being opaque applies here identically.
      */
-    fun idFor(tag: String): String = "conversation:" + tag.removePrefix("space:")
+    fun idFor(tag: String): String = ID_PREFIX + tag.removePrefix("space:")
 
     /**
      * Publishes or refreshes the conversation shortcut for a PREVIEW
@@ -150,6 +150,62 @@ internal class ShortcutRegistry(context: Context) {
     }
 
     /**
+     * Every conversation surface this app has published, retired at once.
+     *
+     * TIGHTENING HAS TO REACH THE ONES NOBODY IS LOOKING AT. Taking the
+     * surfaces back space by space only covers conversations that still have a
+     * live notification — and a conversation that was READ has none. Its
+     * shortcut is long-lived by design, so it sat in the system's shortcut
+     * store carrying the space's name, visible in the share sheet and to
+     * Direct Share, after a person had asked for nothing to be shown at all.
+     *
+     * Found by the visual gate: after PREVIEW → HIDDEN, a sentinel space name
+     * was still in `dumpsys shortcut`, on a conversation whose notification
+     * had been taken down twenty seconds earlier.
+     *
+     * The intents are LEFT ALONE rather than rebuilt: an id encodes the space
+     * it opens and this method does not know which space each one was for.
+     * Sanitising the labels is what the privacy choice is about; a surviving
+     * pinned shortcut that still opens its own conversation is correct.
+     */
+    fun retireEveryConversationSurface() {
+        val sm = manager ?: return
+        val ids = try {
+            (sm.dynamicShortcuts + sm.pinnedShortcuts)
+                .map { it.id }
+                .filter { it.startsWith(ID_PREFIX) }
+                .distinct()
+        } catch (t: Throwable) {
+            Log.w(TAG, "could not list the published shortcuts", t)
+            return
+        }
+        if (ids.isEmpty()) return
+        try {
+            sm.updateShortcuts(
+                ids.map {
+                    ShortcutInfo.Builder(app, it)
+                        .setShortLabel(GENERIC_LABEL)
+                        .setLongLabel(GENERIC_LABEL)
+                        .build()
+                }
+            )
+        } catch (t: Throwable) {
+            Log.w(TAG, "could not sanitise the published shortcuts", t)
+        }
+        try {
+            sm.removeLongLivedShortcuts(ids)
+        } catch (t: Throwable) {
+            Log.w(TAG, "could not remove the published shortcuts", t)
+        }
+        try {
+            val pinned = sm.pinnedShortcuts.map { it.id }.filter { it in ids }
+            if (pinned.isNotEmpty()) sm.disableShortcuts(pinned, DISABLED_MESSAGE)
+        } catch (t: Throwable) {
+            Log.w(TAG, "could not disable the pinned shortcuts", t)
+        }
+    }
+
+    /**
      * What the system currently holds for this conversation, across all three
      * surfaces. For tests and for a diagnostic line — a teardown that only
      * cleared the surface it happened to know about would look identical to
@@ -182,6 +238,9 @@ internal class ShortcutRegistry(context: Context) {
         private const val TAG = "quiet-notify"
 
         /** No space name, no sender: what a sanitised surface is allowed to say. */
+        /** Every conversation shortcut this app publishes starts with it. */
+        const val ID_PREFIX = "conversation:"
+
         const val GENERIC_LABEL = "Quiet"
 
         /** Neutral on purpose — see step three. */

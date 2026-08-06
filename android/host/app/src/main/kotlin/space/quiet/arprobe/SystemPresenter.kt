@@ -148,6 +148,15 @@ internal class SystemPresenter(
         val previous = policy
         policy = next
         if (!next.tightensFrom(previous)) return
+        // FIRST, EVERYTHING EVER PUBLISHED. Going space by space below only
+        // reaches conversations that still have a live notification, and a
+        // conversation that was read has none — its long-lived shortcut went
+        // on naming the space after the person asked for nothing to be shown.
+        try {
+            shortcuts.retireEveryConversationSurface()
+        } catch (t: Throwable) {
+            Log.w(TAG, "could not retire the published conversation surfaces", t)
+        }
         for ((spaceId, tag) in spaceTags) {
             try {
                 nm?.cancel(tag, NOTIFICATION_ID)     // the PREVIEW card first
