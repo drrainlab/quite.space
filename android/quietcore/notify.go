@@ -36,6 +36,7 @@ import (
 	"encoding/json"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/drrainlab/quiet_places/node"
 	"github.com/drrainlab/quiet_places/protocol/id"
@@ -101,6 +102,22 @@ type Candidate struct {
 //	it must return promptly and must not call back into the core
 type NotificationSink interface {
 	OnCandidate(c *Candidate)
+	// OnSpaceForgotten says a space was deleted from this device (SD-0), so
+	// the host can take down what it is showing for it. It arrives on the
+	// SAME queue as candidates and therefore cannot overtake one: a host that
+	// cancelled a notification and then received a queued candidate for the
+	// same space would put the conversation back on a screen somebody had
+	// just cleared.
+	//
+	// spaceID is the network id, hex — the same string OnCandidate carries.
+	OnSpaceForgotten(spaceID string)
+}
+
+// notifyItem is one thing to tell the host: an arrival, or a space that is
+// gone. One queue for both, because their ORDER is the whole point.
+type notifyItem struct {
+	cand      *Candidate
+	forgotten string // space id hex; set when cand is nil
 }
 
 var (
@@ -109,7 +126,7 @@ var (
 	// and Status must never queue behind a host.
 	notifyMu   sync.Mutex
 	notifySink NotificationSink
-	notifyQ    chan *Candidate
+	notifyQ    chan notifyItem
 
 	notifyDelivered atomic.Int64
 	notifyDropped   atomic.Int64
@@ -132,7 +149,7 @@ func ArmNotifications(sink NotificationSink) {
 	notifyMu.Lock()
 	notifySink = sink
 	if sink != nil && notifyQ == nil {
-		notifyQ = make(chan *Candidate, notifyQueueDepth)
+		notifyQ = make(chan notifyItem, notifyQueueDepth)
 		go notifyPump(notifyQ)
 	}
 	notifyMu.Unlock()
@@ -162,8 +179,10 @@ func armRuntime(r *node.Runtime) {
 
 	if !live {
 		r.ArmNotifications(nil)
+		r.AttachSpaceForgotten(nil)
 		return
 	}
+	r.AttachSpaceForgotten(func(tid id.TerminalID) { sendForgotten(tid.Hex()) })
 	// AttachNotifications, not ArmNotifications: the baseline cursor is read
 	// and the sink installed in ONE critical section, so no event can be
 	// applied between a host learning where it stands and being able to hear.
@@ -175,7 +194,7 @@ func armRuntime(r *node.Runtime) {
 			return
 		}
 		select {
-		case q <- &Candidate{
+		case q <- notifyItem{cand: &Candidate{
 			EventID:            c.EventID.Hex(),
 			SpaceID:            c.SpaceID.Hex(),
 			Device:             c.Device.Hex(),
@@ -187,7 +206,7 @@ func armRuntime(r *node.Runtime) {
 			SpaceLabel:         c.SpaceLabel,
 			SenderLabel:        c.SenderLabel,
 			PreviewText:        c.PreviewText,
-		}:
+		}}:
 		default:
 			// Drop, count, and never block: this runs inside the absorb path,
 			// where waiting on a host would stall sync for everybody.
@@ -196,18 +215,50 @@ func armRuntime(r *node.Runtime) {
 	})))
 }
 
+// sendForgotten queues a deletion for the host.
+//
+// IT WAITS WHERE A CANDIDATE WOULD BE DROPPED. A dropped candidate is a
+// notification that arrives late; a dropped deletion is a conversation the
+// person deleted still sitting in their shade until something else happens to
+// take it down. This also runs on a deliberate API call rather than inside
+// the absorb path, so a bounded wait costs nobody's sync.
+func sendForgotten(spaceID string) {
+	notifyMu.Lock()
+	q := notifyQ
+	notifyMu.Unlock()
+	if q == nil {
+		return
+	}
+	select {
+	case q <- notifyItem{forgotten: spaceID}:
+	case <-time.After(2 * time.Second):
+		notifyDropped.Add(1)
+	}
+}
+
 // notifyPump is the one goroutine that calls Java. It outlives Stop and Start
 // so a restarted core reuses it rather than leaking a pump per open.
-func notifyPump(q chan *Candidate) {
-	for c := range q {
+func notifyPump(q chan notifyItem) {
+	for it := range q {
 		notifyMu.Lock()
 		s := notifySink
 		notifyMu.Unlock()
 		if s == nil {
-			continue // disarmed while queued — the candidate simply expires
+			continue // disarmed while queued — the item simply expires
 		}
-		deliver(s, c)
+		if it.cand != nil {
+			deliver(s, it.cand)
+			continue
+		}
+		deliverForgotten(s, it.forgotten)
 	}
+}
+
+// deliverForgotten isolates the host the same way deliver does. It does NOT
+// count as a delivered candidate: nothing arrived, something left.
+func deliverForgotten(s NotificationSink, spaceID string) {
+	defer func() { _ = recover() }()
+	s.OnSpaceForgotten(spaceID)
 }
 
 // deliver isolates the host's failure from the core's liveness. A Java

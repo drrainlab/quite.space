@@ -68,6 +68,14 @@ class NotificationCoordinator(
          * ever take down again.
          */
         fun clear(spaceId: String, tag: String)
+
+        /**
+         * The space is gone for good: take down the conversation surface too
+         * (SD-0). Separate from [clear] because clearing is ordinary — a read
+         * conversation keeps its shortcut so the next message threads onto it
+         * — and this one is not: there will be no next message.
+         */
+        fun retireConversation(spaceId: String, tag: String)
     }
 
     /**
@@ -102,6 +110,14 @@ class NotificationCoordinator(
 
         /** Only what we believe the system is holding: presented, not pending. */
         fun presentedBySpace(): Map<String, Recovery>
+
+        /**
+         * The space was deleted from this device (SD-0): remove its rows and
+         * its opaque key. Nothing is retained — see NotificationDb.forgetSpace
+         * for why a tombstone here would be a record of something somebody
+         * asked to be rid of, kept against a replay that cannot happen.
+         */
+        fun forgetSpace(spaceId: String)
 
         /** The opaque tag for a space, or null when it has never had one. */
         fun tagFor(spaceId: String): String?
@@ -334,6 +350,39 @@ class NotificationCoordinator(
             // Cancels nothing — it is already gone — but recomputes the line
             // above the ones that are left, which is the point.
             presenter.clear(spaceId, r.tag)
+        }
+    }
+
+    /**
+     * SD-0 — the space is gone from this device, so what is on the screen for
+     * it goes now.
+     *
+     * NOT AT THE NEXT RECONCILIATION. A person said "forget this space" and
+     * the core forgot it; a shade still showing the conversation as a live
+     * thing is the two halves disagreeing in the direction the person can see.
+     * The core says so the moment the deletion commits, and this is the other
+     * end of that seam.
+     *
+     * IT RUNS EVEN WHEN NOTIFICATIONS ARE OFF, unlike everything else here.
+     * `enabled` guards PRODUCING notifications; taking one down is the
+     * opposite kind of act, and skipping it because the person had already
+     * turned notifications off would leave the one card they cannot explain.
+     */
+    @Synchronized
+    fun forgetSpace(spaceId: String) {
+        // THE TAG IS READ FIRST AND THE ROWS GO SECOND, because the opaque key
+        // is stored with them and cancelling needs it — a presenter that
+        // rebuilt the tag from the space id would cancel under an identity it
+        // never posted under.
+        val tag = ledger.tagFor(spaceId)
+        ledger.forgetSpace(spaceId)
+        if (tag != null) {
+            // AFTER the rows are gone: clear() recomputes the line above the
+            // conversations that are left, and it reads the ledger to do it.
+            // Called the other way round, the summary counts the space that
+            // was just deleted and goes on hanging over a single conversation.
+            presenter.clear(spaceId, tag)
+            presenter.retireConversation(spaceId, tag)
         }
     }
 

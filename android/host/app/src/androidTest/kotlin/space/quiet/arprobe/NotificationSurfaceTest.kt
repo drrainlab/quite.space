@@ -369,6 +369,46 @@ class NotificationSurfaceTest {
         )
     }
 
+    /**
+     * SD-0 on the real surfaces: forgetting a space takes its notification,
+     * its place in the summary and its conversation shortcut with it.
+     *
+     * The summary is the part worth watching. Two conversations have one
+     * above them; forget one and the line must go, because a summary over a
+     * single conversation tells a person the same thing twice — and a summary
+     * that still counted the deleted one would tell them something untrue.
+     */
+    @Test
+    fun forgettingASpaceTakesItsSurfacesWithIt() {
+        presenter.policy = PresentationPolicy.PREVIEW
+        arrive("a1", "SPACE_A_${networkSpaceId}")
+        arrive("b1", "SPACE_B_${networkSpaceId}")
+        settleStable(3)
+        val gone = "SPACE_A_${networkSpaceId}"
+        val goneTag = ledger.tagFor(gone)!!
+        assertTrue("nothing to retire otherwise", shortcutIds().isNotEmpty())
+
+        coordinator.forgetSpace(gone)
+        settleStable(1)
+
+        val left = ours()
+        assertTrue("the deleted conversation is still in the shade: ${left.map { it.tag }}",
+            left.none { it.tag == goneTag })
+        assertTrue("a summary must not survive above one conversation",
+            left.none { it.tag == GroupSummary.TAG })
+        assertEquals("the other conversation must stay", 1, left.size)
+
+        val id = "conversation:" + goneTag.removePrefix("space:")
+        assertFalse("the long-lived shortcut outlived the space", shortcutIds().contains(id))
+        // The surviving space is NOT checked for its label here: both rooms in
+        // this fixture carry the same sentinel, so "no shortcut names it" would
+        // fail for the conversation that is still there and still allowed to.
+        // Identity is what this test can speak to, and identity is what a
+        // stale conversation surface leaks.
+        // And nothing is left saying it ever existed.
+        assertNull("the opaque key survived the space", ledger.tagFor(gone))
+    }
+
     // -------------------------------------------------- the privacy retreat
 
     @Test

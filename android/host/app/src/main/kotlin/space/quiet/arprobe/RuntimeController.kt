@@ -100,7 +100,19 @@ class RuntimeController private constructor(appContext: Context) {
         { eventId -> Quietcore.ackNotification(eventId) },
     )
 
-    private val sink = NotificationSink { c: Candidate ->
+    // TWO METHODS NOW, so it cannot stay a SAM lambda: arrivals, and spaces
+    // that are gone. Both come off the same Go queue in order, which is what
+    // stops a queued arrival from re-posting a conversation that was just
+    // deleted.
+    private val sink = object : NotificationSink {
+        override fun onSpaceForgotten(spaceID: String) {
+            // Called on a Go goroutine like the other one. Cancelling a
+            // notification and closing rows is local work — no call back into
+            // the core, which is what the binding's contract forbids.
+            notifications.forgetSpace(spaceID)
+        }
+
+        override fun onCandidate(c: Candidate) {
         // Called on a GO goroutine. It must return promptly and must not reach
         // back into the core — the emit path runs inside the runtime's own
         // critical section, and a call back in from here would deadlock
@@ -120,6 +132,7 @@ class RuntimeController private constructor(appContext: Context) {
                 previewText = c.previewText,
             )
         )
+        }
     }
 
     init {

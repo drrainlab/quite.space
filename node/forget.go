@@ -96,7 +96,19 @@ func (r *Runtime) DeleteSpace(tid id.TerminalID) error {
 		return fmt.Errorf("node: could not record the deletion: %w", err)
 	}
 	root := r.root
+	forgot := r.notify.forgetHook()
 	r.mu.Unlock()
+
+	// TOLD BEFORE THE FILES GO, and after the commit — the host has surfaces
+	// of its own to take down and no way to learn about this otherwise. If it
+	// throws, that is its problem and not a reason to leave the events on
+	// disk: the deletion is already committed.
+	if forgot != nil {
+		func() {
+			defer func() { _ = recover() }()
+			forgot(tid)
+		}()
+	}
 
 	// 3. Cleanup. Failures here are reported but do not un-delete anything —
 	// the space is already gone, and the sweep at the next open will retry.

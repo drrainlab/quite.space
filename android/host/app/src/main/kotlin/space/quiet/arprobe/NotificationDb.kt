@@ -203,6 +203,36 @@ internal class NotificationDb(context: Context) :
     /** The interface actually showed the conversation. */
     fun read(spaceId: String) = closeGeneration(spaceId, STATE_READ)
 
+    /**
+     * SD-0 — the space was deleted from this device, so its rows go with it.
+     *
+     * EVERYTHING, INCLUDING THE OPAQUE KEY. Every other terminal state keeps
+     * a tombstone, because the events still exist in a log that will sync
+     * again and the dedup memory is what stops them being announced twice.
+     * Here the log itself is gone. What would be left is a table saying how
+     * many messages arrived in a space somebody asked to be rid of, kept
+     * against a replay that cannot happen.
+     *
+     * SAFE BECAUSE OF THE ORDER ON THE OTHER SIDE. The core tells the host
+     * about a deletion through the SAME queue as candidates, so anything
+     * already in flight for this space has been handled before this runs and
+     * is removed by it. Nothing can arrive afterwards: the space does not
+     * exist. And if the person joins again tomorrow, the core takes a fresh
+     * baseline at attach, so the imported history is history and announces
+     * nothing.
+     */
+    fun forgetSpace(spaceId: String) {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            db.execSQL("DELETE FROM notification_events WHERE space_id = ?", arrayOf(spaceId))
+            db.execSQL("DELETE FROM notification_spaces WHERE space_id = ?", arrayOf(spaceId))
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
     private fun closeGeneration(spaceId: String, terminal: String) {
         val db = writableDatabase
         db.beginTransaction()

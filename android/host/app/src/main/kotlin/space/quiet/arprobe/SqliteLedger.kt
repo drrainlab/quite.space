@@ -44,6 +44,8 @@ internal class SqliteLedger(context: Context) : NotificationCoordinator.Ledger {
 
     override fun personKey(device: String, label: String): String = db.personKey(device, label)
 
+    override fun forgetSpace(spaceId: String) = db.forgetSpace(spaceId)
+
     override fun tagFor(spaceId: String): String? = db.tagFor(spaceId)
 
     override fun compact(retainFrom: Map<String, Map<String, Long>>): Int =

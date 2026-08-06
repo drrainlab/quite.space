@@ -278,3 +278,62 @@ func TestTheDeleteRouteRemovesTheSpaceAndSaysWhatItDid(t *testing.T) {
 		t.Fatalf("deleting a space that is not here answered %d, want 404", code)
 	}
 }
+
+// The host has surfaces of its own — a notification, a group summary, a
+// conversation shortcut — and no way to learn that a space is gone. So it is
+// told, at the moment the deletion commits.
+//
+// THE ALTERNATIVE IS THE WORST KIND OF DISAGREEMENT: a person says "forget
+// this space", the core forgets it, and the shade goes on showing the
+// conversation as a live thing. The person is right and the notification is a
+// leftover — but the notification is the part they can see.
+func TestTheHostIsToldWhenASpaceIsForgotten(t *testing.T) {
+	rt := openRuntime(t, t.TempDir(), "alice")
+	defer rt.Close()
+
+	var told []id.TerminalID
+	rt.AttachSpaceForgotten(func(tid id.TerminalID) { told = append(told, tid) })
+
+	tid, err := rt.CreateSpace("a room")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.DeleteSpace(tid); err != nil {
+		t.Fatal(err)
+	}
+	if len(told) != 1 || told[0] != tid {
+		t.Fatalf("the host was not told which space to take down: %v", told)
+	}
+
+	// A deletion that did not happen must not be announced: a host that took
+	// a conversation down for a failed delete would be showing less than the
+	// core holds, which is the one direction nothing can repair.
+	var nobody id.TerminalID
+	nobody[0] = 7
+	_ = rt.DeleteSpace(nobody)
+	if len(told) != 1 {
+		t.Fatalf("a failed deletion was announced: %v", told)
+	}
+}
+
+// A host that throws is a host's problem. The deletion is already committed
+// when it is told, and letting an exception from the other side of a language
+// boundary abort the cleanup would leave the events on disk — the exact thing
+// the person asked to be rid of.
+func TestAHostThatFailsDoesNotStopTheDeletion(t *testing.T) {
+	rt := openRuntime(t, t.TempDir(), "alice")
+	defer rt.Close()
+	rt.AttachSpaceForgotten(func(id.TerminalID) { panic("the host is broken") })
+
+	tid, err := rt.CreateSpace("a room")
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := rt.root.EventsDir(tid)
+	if err := rt.DeleteSpace(tid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(events); !os.IsNotExist(err) {
+		t.Fatal("a broken host left somebody's messages on disk")
+	}
+}

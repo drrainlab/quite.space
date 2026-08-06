@@ -113,6 +113,14 @@ type notifySink struct {
 	mu     sync.Mutex
 	fn     func(NotificationCandidate)
 	cursor uint64
+	// forgotten is told when a space is deleted from this device (SD-0).
+	//
+	// SEPARATE FROM THE CANDIDATE PATH BUT SENT THROUGH THE SAME HOST QUEUE,
+	// so it cannot overtake a candidate for the space it is retiring. A host
+	// that cancelled a notification and then received a queued candidate for
+	// the same space would put the conversation straight back on a screen
+	// somebody had just cleared it from.
+	forgotten func(id.TerminalID)
 }
 
 // attach installs the sink and returns the cursor as it stood at that instant.
@@ -122,6 +130,20 @@ func (s *notifySink) attach(fn func(NotificationCandidate)) uint64 {
 	defer s.mu.Unlock()
 	s.fn = fn
 	return s.cursor
+}
+
+// attachForgotten installs the deletion callback, under the same lock as the
+// sink so a host cannot be half-attached.
+func (s *notifySink) attachForgotten(fn func(id.TerminalID)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.forgotten = fn
+}
+
+func (s *notifySink) forgetHook() func(id.TerminalID) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.forgotten
 }
 
 // next advances the cursor and returns the sink to call, or nil when nothing
@@ -398,4 +420,16 @@ func (r *Runtime) notifyWatermarks(acrossGenerations bool) map[id.TerminalID]map
 		out[tid] = m
 	}
 	return out
+}
+
+// AttachSpaceForgotten installs the callback that says a space was deleted
+// from this device, so the host can take down what it is showing for it
+// instead of waiting for the next reconciliation.
+//
+// WITHOUT IT, THE TWO HALVES DISAGREE IN THE WORST DIRECTION: a person says
+// "forget this space" and the shade goes on showing the conversation as a
+// live thing. The person is right and the notification is a leftover, but the
+// notification is the part they can see.
+func (r *Runtime) AttachSpaceForgotten(fn func(id.TerminalID)) {
+	r.notify.attachForgotten(fn)
 }

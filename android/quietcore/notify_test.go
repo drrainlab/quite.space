@@ -27,9 +27,16 @@ import (
 // recordingSink stands in for the Java side. It is deliberately slow-safe:
 // the pump calls it on a Go goroutine, so the test's own reads are locked.
 type recordingSink struct {
-	mu   sync.Mutex
-	got  []*Candidate
-	hold chan struct{} // when non-nil, OnCandidate blocks until closed
+	mu        sync.Mutex
+	got       []*Candidate
+	forgotten []string
+	hold      chan struct{} // when non-nil, OnCandidate blocks until closed
+}
+
+func (s *recordingSink) OnSpaceForgotten(spaceID string) {
+	s.mu.Lock()
+	s.forgotten = append(s.forgotten, spaceID)
+	s.mu.Unlock()
 }
 
 func (s *recordingSink) OnCandidate(c *Candidate) {
@@ -250,4 +257,68 @@ func TestASlowHostIsDroppedAndCountedRatherThanStallingTheCore(t *testing.T) {
 	if _, ok := m["notify_dropped"]; !ok {
 		t.Fatal("status carries no notify_dropped — the drop is invisible where it matters")
 	}
+}
+
+// SD-0 across the boundary: forgetting a space reaches the host, IN ORDER,
+// behind the candidates that were already queued for it.
+//
+// THE ORDER IS THE WHOLE REASON IT SHARES THE QUEUE. A host that cancelled a
+// notification and then received a candidate for the same space would put the
+// conversation straight back on a screen somebody had just cleared it from —
+// and from outside it would look exactly like the deletion never worked.
+func TestForgettingASpaceReachesTheHostAfterItsCandidates(t *testing.T) {
+	dir := t.TempDir()
+	sink := &recordingSink{hold: make(chan struct{})}
+	ArmNotifications(sink)
+	defer ArmNotifications(nil)
+
+	if err := Start(dir, "ar1b-binding-passphrase", "author", false); err != nil {
+		t.Fatal(err)
+	}
+	defer Stop()
+
+	stateMu.Lock()
+	r := rt
+	stateMu.Unlock()
+	if r == nil {
+		t.Fatal("no runtime after Start")
+	}
+	tid, err := r.CreateSpace("a room")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A second device's event is what produces a candidate; our own does not.
+	if _, err := r.Say(tid, "one line", node.SayOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The deletion queues behind whatever is already in flight.
+	done := make(chan error, 1)
+	go func() { done <- r.DeleteSpace(tid) }()
+	time.Sleep(300 * time.Millisecond)
+
+	sink.mu.Lock()
+	early := len(sink.forgotten)
+	sink.mu.Unlock()
+	if early != 0 {
+		t.Fatal("the deletion overtook a candidate still being handled")
+	}
+
+	close(sink.hold)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		sink.mu.Lock()
+		ok := len(sink.forgotten) == 1 && sink.forgotten[0] == tid.Hex()
+		sink.mu.Unlock()
+		if ok {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	t.Fatalf("the host was never told the space is gone: %v", sink.forgotten)
 }

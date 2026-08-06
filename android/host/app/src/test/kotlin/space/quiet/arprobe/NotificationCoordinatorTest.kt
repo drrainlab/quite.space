@@ -1,6 +1,7 @@
 package space.quiet.arprobe
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -81,6 +82,13 @@ class NotificationCoordinatorTest {
                     NotificationCoordinator.Recovery(tagFor(space)!!, "Room", live(space))
                 }
 
+        override fun forgetSpace(spaceId: String) {
+            rows.values.filter { it.c.spaceId == spaceId }.map { it.c.eventId }
+                .forEach { rows.remove(it) }
+            keys.remove(spaceId)
+            generations.remove(spaceId)
+        }
+
         override fun tagFor(spaceId: String): String? = keys[spaceId]?.let { "space:$it" }
 
         val personKeys = mutableMapOf<String, String>()
@@ -139,6 +147,11 @@ class NotificationCoordinatorTest {
 
         override fun clear(spaceId: String, tag: String) {
             cleared.add(spaceId)
+        }
+
+        val retired = mutableListOf<String>()
+        override fun retireConversation(spaceId: String, tag: String) {
+            retired.add(spaceId)
         }
     }
 
@@ -528,6 +541,7 @@ class NotificationCoordinatorTest {
             override fun present(p: NotificationCoordinator.Presentation) =
                 throw IllegalStateException("the shade is unavailable")
             override fun clear(spaceId: String, tag: String) = Unit
+            override fun retireConversation(spaceId: String, tag: String) = Unit
         }
         val c2 = NotificationCoordinator(breaking, ledger) { acked.add(it) }
         runCatching { c2.onCandidate(candidate("e1", "a")) }
@@ -539,6 +553,56 @@ class NotificationCoordinatorTest {
             "reconciling against the system must not touch what was never posted",
             NotificationDb.STATE_PENDING, ledger.state("e1"),
         )
+    }
+
+
+    // ------------------------------------------ a space that is gone for good
+
+    /**
+     * SD-0 — "forget this space" reaches the shade at once.
+     *
+     * NOT AT THE NEXT RECONCILIATION, which is what the reverse pass does for
+     * notifications ANDROID lost. This is the other direction: the person is
+     * the one who decided, and a card still sitting there afterwards is the
+     * two halves disagreeing in the only direction they can see.
+     */
+    @Test
+    fun forgettingASpaceTakesItsNotificationDownNow() {
+        fresh()
+        arrive("e1", "a")
+        arrive("e2", "b")
+        assertEquals(NotificationDb.STATE_PRESENTED, ledger.state("e1"))
+
+        co.forgetSpace("a")
+
+        assertTrue("the notification must be cancelled", presenter.cleared.contains("a"))
+        assertTrue("the conversation surface must be retired", presenter.retired.contains("a"))
+        assertNull("nothing may be left saying this space existed", ledger.state("e1"))
+        assertEquals(
+            "and the space that was not deleted must be untouched",
+            NotificationDb.STATE_PRESENTED, ledger.state("e2"),
+        )
+    }
+
+    /**
+     * IT RUNS WITH NOTIFICATIONS OFF TOO. `enabled` guards producing them;
+     * taking one down is the opposite act. A person who had already turned
+     * notifications off and then deleted a space would otherwise be left with
+     * the one card nothing explains — posted before they switched off, and
+     * now belonging to nothing.
+     */
+    @Test
+    fun forgettingWorksEvenWhenNotificationsAreOff() {
+        fresh()
+        arrive("e1", "a")
+        co.setEnabled(false)
+        presenter.cleared.clear()
+
+        co.forgetSpace("a")
+
+        assertTrue("a disabled plane must still take its cards down",
+            presenter.cleared.contains("a"))
+        assertNull(ledger.state("e1"))
     }
 
 }

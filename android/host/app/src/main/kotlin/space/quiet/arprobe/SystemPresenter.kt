@@ -217,6 +217,24 @@ internal class SystemPresenter(
         return false
     }
 
+    /**
+     * SD-0 — the conversation surface of a space that no longer exists.
+     *
+     * Sanitise, then remove: exactly the order applyPolicy uses, and for the
+     * same reason. A PINNED shortcut cannot be deleted by the app, so the last
+     * thing that can be done about it is to make sure whatever survives says
+     * nothing — no space name, no person, no thread.
+     */
+    @Synchronized
+    override fun retireConversation(spaceId: String, tag: String) {
+        shown.remove(spaceId)
+        try {
+            shortcuts.teardownConversationSurface(spaceId, tag)
+        } catch (t: Throwable) {
+            Log.w(TAG, "could not retire the conversation surface for $spaceId", t)
+        }
+    }
+
     /** Every tag Android is holding for this app right now. */
     fun liveTags(): Set<String> = try {
         nm?.activeNotifications
