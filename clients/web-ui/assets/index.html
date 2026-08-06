@@ -499,6 +499,10 @@
     <button data-cat="radio" onclick="showSettingsCat('radio')">Radio</button>
     <button data-cat="attention" onclick="showSettingsCat('attention'); qrLoadSettings()">Attention</button>
     <button data-cat="ai" onclick="showSettingsCat('ai')">AI</button>
+    <!-- Shown only where a host is listening: on a desktop browser there are
+         no system notifications to have a policy about. -->
+    <button data-cat="notifications" id="setTabNotifications" style="display:none"
+            onclick="showSettingsCat('notifications'); notifSyncUI()">Notifications</button>
   </div>
   <!-- The Radio tab IS the radio screen. It used to be a paragraph and a
        button that closed Settings and opened a second dialog holding the
@@ -642,6 +646,30 @@
     <p class="hint" style="margin-left:4px">“Discover” opens this catalog — itself just a public broadcast space of space-cards. Point it anywhere: anyone can run their own catalog.</p>
   </div>
   </div>
+  <!-- AR-1b.7b — what the phone's own notification surfaces may say.
+       Three levels, each described by what it PUBLISHES rather than by how
+       friendly it is: everything here is visible on a lock screen and to
+       every notification listener the person has ever granted access to,
+       and that is the fact the choice is actually about. -->
+  <div class="settings-cat" data-cat="notifications">
+  <div class="settings-sec">
+    <p class="hint">What notifications may show</p>
+    <div class="segmented" id="notifPolicy">
+      <button data-v="hidden" onclick="notifPick('hidden')">Nothing</button>
+      <button data-v="space" onclick="notifPick('space')">Space name</button>
+      <button data-v="preview" onclick="notifPick('preview')">Full preview</button>
+    </div>
+    <p class="hint" id="notifPolicyWhat" style="margin-left:4px"></p>
+  </div>
+  <div class="settings-sec">
+    <p class="hint" style="margin-left:4px">A notification is not private. Its text appears on the lock screen and is
+      readable by every app you have given notification access to. That is why
+      this starts at "Nothing" — the setting is yours to raise, not ours to
+      assume.</p>
+    <p class="hint warn" id="notifMsg" style="margin-left:4px"></p>
+  </div>
+  </div>
+
   <div class="settings-cat" data-cat="attention">
   <div class="settings-sec">
     <p class="hint">Local AI attention</p>
@@ -1042,5 +1070,9 @@
 <script src="catalog.js"></script>
 <script src="share.js"></script>
 <script src="app.js"></script>
+<!-- LAST, and after app.js on purpose: quietOpen reaches into the shell's
+     own `current` and `refresh`, and a host may call it the moment the page
+     loads. -->
+<script src="host.js"></script>
 </body>
 </html>

@@ -87,7 +87,7 @@ class RuntimeController private constructor(appContext: Context) {
      * already shown, and show them again.
      */
     private val ledger = SqliteLedger(this.app)
-    private val presenter = SystemPresenter(this.app, ledger)
+    private val presenter = SystemPresenter(this.app, ledger, storedPolicy(app))
 
     val notifications: NotificationCoordinator = NotificationCoordinator(
         presenter,
@@ -177,6 +177,37 @@ class RuntimeController private constructor(appContext: Context) {
             }
         }
     }
+
+    /**
+     * AR-1b.7b — what Android may know, remembered on THIS DEVICE.
+     *
+     * Device-local and not in the log, deliberately. The choice is about the
+     * shade of one phone: a person may want previews on the handset in their
+     * pocket and nothing at all on the tablet in the kitchen, and syncing it
+     * would take that away in the name of consistency. It is also nobody
+     * else's business, and everything in the log becomes somebody else's
+     * business eventually.
+     *
+     * ONE WRITER. The presenter holds the live value; this is where it comes
+     * from at startup and where it goes when it changes, so a restart cannot
+     * quietly return to the default after somebody chose otherwise.
+     */
+    fun setNotificationPolicy(next: PresentationPolicy) {
+        enabledPrefs.edit().putString(KEY_POLICY, next.name).commit()
+        val tags = try {
+            ledger.activeBySpace().mapValues { (_, r) -> r.tag }
+        } catch (t: Throwable) {
+            Log.w(TAG, "could not read the active set for a policy change", t)
+            emptyMap()
+        }
+        // TIGHTENING TAKES THE SURFACES BACK IMMEDIATELY; loosening publishes
+        // nothing by itself. Choosing "hidden" asks for what is already on the
+        // screen to stop saying things, not merely for the next message to say
+        // less.
+        presenter.applyPolicy(next, tags)
+    }
+
+    fun notificationPolicy(): PresentationPolicy = presenter.policy
 
     /**
      * What the person's answer to the permission means, all the way down.
@@ -365,6 +396,14 @@ class RuntimeController private constructor(appContext: Context) {
             n.put("presenter", presenter.snapshot())
             n.put("ledger", JSONObject(ledger.stats() as Map<*, *>))
             n.put("plane", Quietcore.notificationPlaneState())
+            // AR-1b.8 — what the INTERFACE has told this host. Without it,
+            // "the bridge is wired" is only checkable by watching a
+            // notification not appear, which is the hardest kind of fact to
+            // read from outside. Presence, not content: whether a space is on
+            // screen, never which one.
+            n.put("bridge_visible_space", notifications.hasVisibleSpace())
+            n.put("bridge_reads", notifications.readCount())
+            n.put("policy", presenter.policy.name.lowercase())
             out.put("notifications", n)
         } catch (e: Exception) {
             Log.w(TAG, "snapshot failed", e)
@@ -384,6 +423,21 @@ class RuntimeController private constructor(appContext: Context) {
     }
 
     companion object {
+        private const val KEY_POLICY = "presentation_policy"
+
+        /**
+         * The stored choice, or the strict default. An unreadable or unknown
+         * value falls back to HIDDEN rather than to the friendliest option:
+         * every other setting publishes something about a conversation, and a
+         * default nobody chose is how that happens by accident.
+         */
+        private fun storedPolicy(app: Context): PresentationPolicy {
+            val raw = app.getSharedPreferences("quiet-notifications", Context.MODE_PRIVATE)
+                .getString(KEY_POLICY, null) ?: return PresentationPolicy.DEFAULT
+            return runCatching { PresentationPolicy.valueOf(raw) }
+                .getOrDefault(PresentationPolicy.DEFAULT)
+        }
+
         private const val TAG = "quiet-runtime"
         private const val KEY_ENABLED = "notifications_enabled"
 

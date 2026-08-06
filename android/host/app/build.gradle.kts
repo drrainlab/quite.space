@@ -27,6 +27,16 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    testOptions {
+        unitTests {
+            // android.util.Log throws "not mocked" by default, which turns a
+            // test of a REFUSAL — the path that logs why it refused — into a
+            // test of the logger. Returning defaults keeps the assertion on
+            // the behaviour under test.
+            isReturnDefaultValues = true
+        }
+    }
+
     buildTypes {
         // DEBUG ONLY, and that is load-bearing rather than lazy: `run-as` needs
         // a debuggable package, and `run-as` is how the harness reads filesDir

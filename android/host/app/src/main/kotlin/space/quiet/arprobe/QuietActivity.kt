@@ -61,6 +61,14 @@ class QuietActivity : ComponentActivity() {
 
     private lateinit var root: FrameLayout
     private lateinit var web: WebView
+
+    /**
+     * The token the node minted for this session, and the bridge's whole
+     * admission test. Empty until the interface is shown, which is correct:
+     * before there is a session there is nobody to admit.
+     */
+    @Volatile
+    private var sessionToken: String = ""
     private lateinit var gate: NotificationPermissionGate
 
     private var statusPanel: View? = null
@@ -109,6 +117,18 @@ class QuietActivity : ComponentActivity() {
             settings.allowContentAccess = false
             webChromeClient = WebChromeClient()
             webViewClient = LocalOnlyClient()
+            // AR-1b.8 — the interface's way back. Registered once, on the one
+            // WebView this app has, and every method on it demands the node's
+            // own session token: see HostBridge for why the origin lock is not
+            // considered enough on its own.
+            addJavascriptInterface(
+                HostBridge(
+                    token = { sessionToken },
+                    coordinator = controller.notifications,
+                    policy = { controller.setNotificationPolicy(it) },
+                ),
+                "QuietHost",
+            )
         }
         root.addView(
             web,
@@ -197,6 +217,7 @@ class QuietActivity : ComponentActivity() {
         val token = core.optString("session_token", "")
         if (port == 0 || token.isEmpty()) return
 
+        sessionToken = token
         val url = "http://127.0.0.1:$port/?token=$token"
         statusPanel?.let { root.removeView(it); statusPanel = null }
         web.visibility = View.VISIBLE

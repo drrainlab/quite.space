@@ -267,6 +267,16 @@ const I18N = {
     // with a route CHOSEN, which is a queue — say that and nothing more.
     'share.state.queued': ({ route }) => `queued for ${route}`,
 
+    // what a phone's notifications may say (AR-1b.7b). Each line describes
+    // what the level PUBLISHES — to a lock screen and to every notification
+    // listener on the device — rather than how friendly it is, because that
+    // is the fact somebody is actually choosing between.
+    'notif.hidden': 'A notification says only that something arrived. No space, no sender, no text.',
+    'notif.space': 'The space may be named. The sender and the message stay out of it.',
+    'notif.preview': 'The space, who wrote, and the message itself — in the shade and on the lock screen.',
+    'notif.saved': 'Saved on this device.',
+    'notif.failed': 'Could not save that here.',
+
     // deleting a space (SD-0). THE WORDS ARE THE FEATURE: every one of these
     // strings exists to stop somebody assuming a promise the system cannot
     // keep. "Delete" alone would be read as "delete for everyone", which no

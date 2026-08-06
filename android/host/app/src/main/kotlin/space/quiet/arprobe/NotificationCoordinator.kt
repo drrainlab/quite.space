@@ -221,6 +221,7 @@ class NotificationCoordinator(
     /** Set by the host when a screen resumes and cleared when it pauses. */
     private var foreground = false
     private var visibleSpace: String? = null
+    private var reads = 0
 
     /** False when the person refused the permission (AR-1b.3 asks for it). */
     private var enabled = true
@@ -403,6 +404,19 @@ class NotificationCoordinator(
     }
 
     /**
+     * Whether the interface says a conversation is on screen — for
+     * diagnostics, and deliberately NOT which one. A harness needs to know the
+     * bridge is wired; the space on screen is the person's business and would
+     * be a second place a conversation's identity is written down.
+     */
+    @Synchronized
+    fun hasVisibleSpace(): Boolean = visibleSpace != null
+
+    /** How many times the interface has said it showed a conversation. */
+    @Synchronized
+    fun readCount(): Int = reads
+
+    /**
      * The person swiped the shade clear. The live aggregation closes; the
      * dedup memory stays. Losing the dedup here is what makes a notification
      * come back on the next sync tick — the phone arguing with the person.
@@ -419,6 +433,7 @@ class NotificationCoordinator(
      */
     @Synchronized
     fun onRead(spaceId: String) {
+        reads++
         ledger.read(spaceId)
         ledger.tagFor(spaceId)?.let { presenter.clear(spaceId, it) }
     }

@@ -1262,6 +1262,10 @@ async function refreshSpace() {
     // you are already reading.
     api('/api/attention/viewing', { method: 'POST', body: JSON.stringify({ space: current }) })
       .catch(() => {});
+    // And tell the HOST, where there is one. Same fact, different consumer:
+    // the node ranks attention with it, an Android host stops posting
+    // notifications about the conversation on the screen.
+    if (typeof HOST !== 'undefined') HOST.visibleSpace(current);
     if (typeof pubView !== 'undefined' && pubView !== 'chat') switchView('chat');
   }
   // Incremental feed render, four paths: (1) nothing changed → nothing
@@ -1365,6 +1369,11 @@ async function refreshSpace() {
     feedSig = sig; feedContentSig = contentSig;
     if (stick) log.scrollTop = log.scrollHeight;
   }
+  // THE MESSAGES ARE ON THE SCREEN — now the notification may come down. Said
+  // here rather than when the space was selected: selecting starts a fetch
+  // that may never return, and taking a notification down for messages that
+  // never rendered loses it for something nobody saw.
+  if (typeof HOST !== 'undefined') HOST.read(current);
   // The delta baseline for the NEXT tick — updated on every path, including
   // rebuilds. A rebuild never fires arrivals (no patchRow ran), but it must
   // still move the baseline forward or the next quiet tick would replay the

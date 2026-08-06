@@ -156,6 +156,17 @@ public class RigActivity extends Activity {
         } catch (Exception e) {
             Log.w(TAG, "host facts failed", e);
         }
+        // The HOST's own view, beside the core's. `core` is what the binding
+        // reports; this is what the Android half decided — the notification
+        // plane's counters and, since AR-1b.8, whether the interface has
+        // reached back through the bridge at all. Without it, "the bridge is
+        // wired" can only be checked by watching a notification NOT appear,
+        // which is the hardest kind of fact to read from outside.
+        try {
+            out.put("host", RuntimeController.get(this).snapshot());
+        } catch (Exception e) {
+            Log.w(TAG, "host snapshot failed", e);
+        }
         write(out);
         post(out);
     }
