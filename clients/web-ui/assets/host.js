@@ -70,6 +70,17 @@ const HOST = (() => {
     setNotificationPolicy(name) {
       return call('setNotificationPolicy', name) === true;
     },
+
+    /**
+     * AR-1c — the "stay connected" mode.
+     *
+     * THE ONE CALL HERE WITH A COST. It reaches a foreground service, which
+     * Android only lets an app start from a visible screen — so it must be
+     * driven by a person pressing something, never by a poll or a page load.
+     */
+    setStayConnected(on) {
+      return call('setStayConnected', !!on) === true;
+    },
   };
 })();
 
@@ -152,5 +163,31 @@ if (typeof document !== 'undefined') {
     const tab = document.getElementById('setTabNotifications');
     if (tab && HOST.present) tab.style.display = '';
     notifSyncUI();
+    staySyncUI();
   });
+}
+
+
+// ---- the "stay connected" mode (AR-1c) ----
+//
+// ASKED FOR, NEVER ASSUMED. Holding a connection costs battery, and Android
+// makes an app say so with a permanent notification for exactly that reason.
+// So the switch starts off, the sentence beside it says what it buys and what
+// it costs, and nothing here turns it on by itself.
+let stayChoice = localStorage.getItem('stay.connected.echo') === '1';
+
+function stayPick(on) {
+  const msg = document.getElementById('stayMsg');
+  if (!HOST.setStayConnected(on)) {
+    if (msg) msg.textContent = t('stay.failed');
+    return;
+  }
+  stayChoice = !!on;
+  localStorage.setItem('stay.connected.echo', stayChoice ? '1' : '0');
+  if (msg) msg.textContent = stayChoice ? t('stay.on') : t('stay.off');
+  staySyncUI();
+}
+
+function staySyncUI() {
+  pickSeg('stayMode', stayChoice ? 'on' : 'off');
 }

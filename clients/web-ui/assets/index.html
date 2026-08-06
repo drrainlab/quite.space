@@ -662,6 +662,18 @@
     <p class="hint" id="notifPolicyWhat" style="margin-left:4px"></p>
   </div>
   <div class="settings-sec">
+    <p class="hint">Staying connected</p>
+    <div class="segmented" id="stayMode">
+      <button data-v="off" onclick="stayPick(false)">Off</button>
+      <button data-v="on" onclick="stayPick(true)">Stay connected</button>
+    </div>
+    <p class="hint" style="margin-left:4px">While this is on, Quiet holds its connection even when you are not
+      looking at it, and Android shows a permanent notice saying so. It uses
+      battery. With it off, messages arrive while the app is running and are
+      caught up when you come back.</p>
+    <p class="hint warn" id="stayMsg" style="margin-left:4px"></p>
+  </div>
+  <div class="settings-sec">
     <p class="hint" style="margin-left:4px">A notification is not private. Its text appears on the lock screen and is
       readable by every app you have given notification access to. That is why
       this starts at "Nothing" — the setting is yours to raise, not ours to

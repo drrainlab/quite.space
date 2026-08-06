@@ -44,6 +44,7 @@ internal class HostBridge(
     private val token: () -> String,
     private val coordinator: NotificationCoordinator,
     private val policy: (PresentationPolicy) -> Unit,
+    private val stayConnected: (Boolean) -> Unit,
 ) {
 
     /** True when the caller proved it is the page our own node served. */
@@ -116,6 +117,24 @@ internal class HostBridge(
             else -> return false
         }
         policy(next)
+        return true
+    }
+
+    /**
+     * AR-1c — the person switched the "stay connected" mode on or off.
+     *
+     * IT REACHES A FOREGROUND SERVICE, which is why it may only be called
+     * from the page inside a VISIBLE Activity: Android 12+ forbids starting
+     * one from the background, and the restriction is the right shape — a
+     * mode that spends somebody's battery has no business starting itself.
+     *
+     * This is the one bridge verb with a cost attached, and it is still the
+     * person's own fact: they pressed a switch that is about their device.
+     */
+    @JavascriptInterface
+    fun setStayConnected(pass: String?, on: Boolean): Boolean {
+        if (!admitted(pass)) return refuse("setStayConnected")
+        stayConnected(on)
         return true
     }
 

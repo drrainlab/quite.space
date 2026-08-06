@@ -44,6 +44,17 @@ internal object NotificationPolicy {
 
     /** The two product channels of AR-1b.2. Ids are frozen once created. */
     const val CHANNEL_MESSAGES = "quite.messages"
+
+    /**
+     * AR-1c — the "staying connected" mode's own channel.
+     *
+     * SEPARATE, AND LOW. It carries one permanent card that is not news and
+     * must never make a sound; putting it on the messages channel would mean
+     * a person silencing a mode also silences their messages, or the reverse.
+     * Low importance is also what makes it sit quietly at the bottom of the
+     * shade, which is where a state belongs.
+     */
+    const val CHANNEL_CONNECTION = "quite.connection"
     const val CHANNEL_SIGNALS = "quite.signals"
 
     private val NOTIFIABLE = setOf(

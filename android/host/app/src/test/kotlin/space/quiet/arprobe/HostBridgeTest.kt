@@ -47,7 +47,10 @@ class HostBridgeTest {
     private var policy: PresentationPolicy? = null
     private var token = "the-session-token"
 
-    private val bridge = HostBridge({ token }, coordinator) { policy = it }
+    private var staying: Boolean? = null
+    private val bridge = HostBridge(
+        { token }, coordinator, { policy = it }, { staying = it },
+    )
 
     @Test
     fun aCallerWithoutTheTokenIsRefusedAndChangesNothing() {
@@ -55,9 +58,11 @@ class HostBridgeTest {
         assertFalse(bridge.read("", "space-a"))
         assertFalse(bridge.visibleSpace("guess", "space-a"))
         assertFalse(bridge.setNotificationPolicy("guess", "preview"))
+        assertFalse(bridge.setStayConnected("guess", true))
 
         assertTrue("nothing may have been read", ledger.readSpaces.isEmpty())
         assertNull("and no policy may have been set", policy)
+        assertNull("and no mode may have been switched on", staying)
     }
 
     /**

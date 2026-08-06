@@ -126,6 +126,17 @@ class QuietActivity : ComponentActivity() {
                     token = { sessionToken },
                     coordinator = controller.notifications,
                     policy = { controller.setNotificationPolicy(it) },
+                    // STARTED FROM HERE, not from the service or the core:
+                    // this Activity is the visible thing a person pressed,
+                    // and that is exactly what Android 12+ requires.
+                    stayConnected = { on ->
+                        controller.setAvailabilityRequested(on)
+                        if (on) {
+                            AvailabilityService.start(this@QuietActivity)
+                        } else {
+                            AvailabilityService.stop(this@QuietActivity)
+                        }
+                    },
                 ),
                 "QuietHost",
             )
@@ -183,6 +194,24 @@ class QuietActivity : ComponentActivity() {
         // which is the safe direction to be wrong in.
         controller.notifications.onForeground(true)
         applyPermissionState()
+        // AR-1c — THE MODE COMES BACK HERE, AND ONLY HERE.
+        //
+        // A foreground service does not survive a process death, and nothing
+        // may start one from the background: Android 12+ forbids it, and the
+        // rule is the right shape. So the mode's INTENTION is durable and its
+        // SERVICE is not, and this screen — visible, in front of the person
+        // who asked for it — is the one place allowed to reconcile the two.
+        //
+        // In onResume rather than beside the WebView load: coming back to an
+        // Activity that was never destroyed is the ordinary way somebody
+        // returns, and it does not reload anything.
+        //
+        // What this deliberately does NOT do is survive a reboot on its own.
+        // That needs its own decision, and a mode that quietly reappeared
+        // after a restart would be a battery cost nobody re-consented to.
+        if (controller.availabilityRequested() && controller.availabilityLeaseCount() == 0) {
+            AvailabilityService.start(this)
+        }
     }
 
     override fun onPause() {

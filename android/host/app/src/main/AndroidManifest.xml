@@ -10,8 +10,16 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- No foreground service and no FCM: AR-1c and AR-1d, each with its own
-         honest battery contract. -->
+    <!-- AR-1c: the "stay connected" MODE. remoteMessaging rather than
+         dataSync, deliberately — Android 15 caps background dataSync at six
+         hours a day, and a mode whose whole purpose is being reachable would
+         go quiet in the evening with nothing to show for it. remoteMessaging
+         describes carrying messages between devices, which is what this is.
+
+         Still no FCM: waking a phone that is not holding a connection is
+         AR-1d, with its own contract. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING" />
 
     <application
         android:name=".QuietApp"
@@ -37,6 +45,14 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- NOT exported: it is started by this app, from a visible screen,
+             after a person asked for it. Nothing outside has any business
+             switching on a mode that spends their battery. -->
+        <service
+            android:name=".AvailabilityService"
+            android:exported="false"
+            android:foregroundServiceType="remoteMessaging" />
 
         <!-- The swipe, coming back. NOT exported: nothing outside this app has
              any business telling it a notification was cleared, and an

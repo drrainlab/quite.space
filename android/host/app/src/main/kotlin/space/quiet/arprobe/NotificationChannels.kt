@@ -54,6 +54,19 @@ internal object NotificationChannels {
 
         nm.createNotificationChannel(
             NotificationChannel(
+                NotificationPolicy.CHANNEL_CONNECTION,
+                "Staying connected",
+                NotificationManager.IMPORTANCE_LOW,
+            ).apply {
+                description = "Shown while Quiet is deliberately holding a connection."
+                setShowBadge(false)
+                enableVibration(false)
+                setSound(null, null)
+            }
+        )
+
+        nm.createNotificationChannel(
+            NotificationChannel(
                 NotificationPolicy.CHANNEL_SIGNALS,
                 "Signals",
                 NotificationManager.IMPORTANCE_HIGH,

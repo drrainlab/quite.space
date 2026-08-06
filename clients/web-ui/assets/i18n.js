@@ -277,6 +277,13 @@ const I18N = {
     'notif.saved': 'Saved on this device.',
     'notif.failed': 'Could not save that here.',
 
+    // the "stay connected" mode (AR-1c). It costs battery and Android makes
+    // an app say so; these say it in the interface too, rather than leaving
+    // the system's own notice to explain a choice nobody was told about.
+    'stay.on': 'On. Android will show a permanent notice while it lasts.',
+    'stay.off': 'Off. Messages arrive while Quiet is running.',
+    'stay.failed': 'This device cannot hold the mode.',
+
     // deleting a space (SD-0). THE WORDS ARE THE FEATURE: every one of these
     // strings exists to stop somebody assuming a promise the system cannot
     // keep. "Delete" alone would be read as "delete for everyone", which no

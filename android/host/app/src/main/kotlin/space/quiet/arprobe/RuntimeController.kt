@@ -222,6 +222,74 @@ class RuntimeController private constructor(appContext: Context) {
 
     fun reportRead(spaceId: String) = notifications.onRead(spaceId)
 
+    // ------------------------------------------------- AR-1c availability
+
+    /**
+     * How many holders are asking this process to stay reachable.
+     *
+     * A LEASE, NOT A SECOND OWNER. The runtime belongs here and always has;
+     * a holder — today only the foreground service — says "keep it open while
+     * I exist" and hands that back when it stops. Counted rather than boolean
+     * because there will be more than one holder (a wake worker in AR-1d), and
+     * a second holder arriving must not be able to end the first one's claim.
+     */
+    private val availabilityLeases = java.util.concurrent.atomic.AtomicInteger(0)
+
+    /**
+     * Whether the PERSON has the mode switched on. Separate from the leases:
+     * a lease is a live holder, this is an intention, and it is what survives
+     * the process so the switch does not lie after a restart.
+     */
+    fun availabilityRequested(): Boolean =
+        enabledPrefs.getBoolean(KEY_AVAILABILITY, false)
+
+    fun setAvailabilityRequested(on: Boolean) {
+        enabledPrefs.edit().putBoolean(KEY_AVAILABILITY, on).commit()
+        publish()
+    }
+
+    fun acquireAvailabilityLease(): Int {
+        val n = availabilityLeases.incrementAndGet()
+        publish()
+        return n
+    }
+
+    fun releaseAvailabilityLease(): Int {
+        // Floored at zero: a double release is a bug in a holder, and it must
+        // not drive the count negative and then swallow a real holder's claim
+        // on the way back up.
+        val n = availabilityLeases.updateAndGet { if (it > 0) it - 1 else 0 }
+        publish()
+        return n
+    }
+
+    fun availabilityLeaseCount(): Int = availabilityLeases.get()
+
+    /** What the permanent notification says, gathered in one place. */
+    internal fun availabilitySnapshot(): AvailabilityText.State {
+        val alive = isAlive()
+        var relays = 0
+        var since = -1L
+        if (alive) {
+            try {
+                val core = snapshot().optJSONObject("core")
+                val d = core?.optJSONObject("relay")
+                if (d != null) {
+                    if (d.optString("primary").isNotEmpty()) relays++
+                    if (d.optString("backup").isNotEmpty()) relays++
+                    val ago = d.optInt("seconds_since_pull", -1)
+                    since = if (ago >= 0) ago.toLong() else -1L
+                }
+            } catch (t: Throwable) {
+                // A snapshot that cannot be read is not a reason to fail the
+                // mode; the card says what it knows.
+                Log.w(TAG, "could not read the relay state for the card", t)
+            }
+        }
+        return AvailabilityText.State(relays, since, alive)
+    }
+
+
     /**
      * What the person's answer to the permission means, all the way down.
      *
@@ -417,6 +485,12 @@ class RuntimeController private constructor(appContext: Context) {
             n.put("bridge_visible_space", notifications.hasVisibleSpace())
             n.put("bridge_reads", notifications.readCount())
             n.put("policy", presenter.policy.name.lowercase())
+            // AR-1c. The MODE and its LEASES are separate facts: one is what
+            // the person asked for, the other is who is currently holding the
+            // process to it. A gate that could only see the first would call
+            // a service that failed to start "on".
+            n.put("availability_requested", availabilityRequested())
+            n.put("availability_leases", availabilityLeaseCount())
             out.put("notifications", n)
         } catch (e: Exception) {
             Log.w(TAG, "snapshot failed", e)
@@ -437,6 +511,7 @@ class RuntimeController private constructor(appContext: Context) {
 
     companion object {
         private const val KEY_POLICY = "presentation_policy"
+        private const val KEY_AVAILABILITY = "availability_mode"
 
         /**
          * The stored choice, or the strict default. An unreadable or unknown
