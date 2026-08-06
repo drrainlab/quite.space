@@ -114,6 +114,11 @@ internal class SystemPresenter(
             .setAutoCancel(false)
             .setContentIntent(openSpace(p.spaceId))
             .setDeleteIntent(dismissed(p.spaceId))
+            // Grouped whichever renderer built it: a summary that could only
+            // gather conversation-style children would leave the strict modes
+            // with a flat list and no way to collapse it.
+            .setGroup(GroupSummary.KEY)
+            .setGroupAlertBehavior(Notification.GROUP_ALERT_CHILDREN)
             .build()
 
         post(p, notification)
@@ -122,6 +127,7 @@ internal class SystemPresenter(
     private fun post(p: NotificationCoordinator.Presentation, n: Notification) {
         try {
             nm?.notify(p.tag, NOTIFICATION_ID, n)
+            updateSummary()
         } catch (t: Throwable) {
             // A refused permission is an ordinary state and the coordinator
             // already stops presenting when it knows — but the person can
@@ -165,8 +171,53 @@ internal class SystemPresenter(
         shown.remove(spaceId)
         try {
             nm?.cancel(tag, NOTIFICATION_ID)
+            updateSummary()
         } catch (t: Throwable) {
             Log.w(TAG, "cancel failed for $spaceId", t)
+        }
+    }
+
+    /**
+     * Recomputed after every change rather than posted once and forgotten.
+     *
+     * The summary exists only for two or more conversations — one child with a
+     * line above it is a person told the same thing twice — so it appears at
+     * two and is cancelled again at one. Doing that by recomputation is what
+     * makes dismiss, read, suppression and a closed generation all correct
+     * without any of them knowing the summary exists.
+     *
+     * GROUP_ALERT_CHILDREN on both sides: the children make the sound, and a
+     * summary that alerted too would double every arrival.
+     */
+    private fun updateSummary() {
+        val active = try {
+            ledger.activeBySpace()
+        } catch (t: Throwable) {
+            Log.w(TAG, "could not read the active set for the summary", t)
+            return
+        }
+        if (!GroupSummary.needed(active.size)) {
+            try {
+                nm?.cancel(GroupSummary.TAG, NOTIFICATION_ID)
+            } catch (t: Throwable) {
+                Log.w(TAG, "could not take the summary down", t)
+            }
+            return
+        }
+        val messages = active.values.sumOf { it.items.size }
+        val summary = Notification.Builder(app, NotificationPolicy.CHANNEL_MESSAGES)
+            .setSmallIcon(R.drawable.ic_stat_quiet)
+            .setContentTitle(GroupSummary.title(policy))
+            .setContentText(GroupSummary.text(policy, active.size, messages))
+            .setGroup(GroupSummary.KEY)
+            .setGroupSummary(true)
+            .setGroupAlertBehavior(Notification.GROUP_ALERT_CHILDREN)
+            .setAutoCancel(false)
+            .build()
+        try {
+            nm?.notify(GroupSummary.TAG, NOTIFICATION_ID, summary)
+        } catch (t: Throwable) {
+            Log.w(TAG, "could not post the summary", t)
         }
     }
 

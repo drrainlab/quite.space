@@ -197,9 +197,16 @@ unlock_node() {
   "${ADB[@]}" shell input text "$PASS"
   "${ADB[@]}" shell input keyevent KEYCODE_BACK
   sleep 1
+  "${ADB[@]}" shell uiautomator dump /sdcard/g.xml >/dev/null 2>&1
   bounds=$("${ADB[@]}" shell cat /sdcard/g.xml | tr '<' '\n' | grep 'text="Open"' \
            | grep -o 'bounds="\[[0-9]*,[0-9]*\]\[[0-9]*,[0-9]*\]"' | head -1)
-  "${ADB[@]}" shell input tap 540 "$(printf '%s' "$bounds" | sed 's/.*\[[0-9]*,\([0-9]*\)\]\[[0-9]*,\([0-9]*\)\].*/\1 \2/' | awk '{print int(($1+$2)/2)}')"
+  local oy
+  oy=$(printf '%s' "$bounds" | sed 's/.*\[[0-9]*,\([0-9]*\)\]\[[0-9]*,\([0-9]*\)\].*/\1 \2/' | awk '{print int(($1+$2)/2)}')
+  # The dump is taken again AFTER the keyboard closes: the first one was taken
+  # with the passphrase field focused, and the button had moved. A stale
+  # coordinate taps the keyboard and the gate reports "the node would not come
+  # back" about a node nobody ever asked to open.
+  "${ADB[@]}" shell input tap 540 "${oy:-1284}"
   for _ in $(seq 1 30); do
     sleep 2
     [ "$(core_field "$(rig status)" state)" = "alive" ] && return 0
@@ -362,11 +369,23 @@ scenario_10_two_spaces() {
     || { record 10-two-spaces fail "could not join two fresh spaces"; return; }
   "${ADB[@]}" shell input keyevent KEYCODE_HOME; sleep 2
   say_to "$a" "gate 10 a"; say_to "$b" "gate 10 b"
-  sleep 14
-  local tags; tags=$(notif_tags | sort -u | wc -l | tr -d ' ')
-  if [ "$tags" -ge 2 ]; then
-    record 10-two-spaces pass "two spaces, two tags, two entries" \
-      "{\"space_a\":\"$a\",\"space_b\":\"$b\",\"distinct_tags\":$tags}"
+  # POLLED, NOT SLEPT. A fixed wait passes only while an earlier scenario has
+  # already warmed the path: run this one alone and the same 14 seconds are
+  # spent on the pool's first dial, and the gate reports "0 distinct tags" for
+  # a product that was working. Two children plus a summary is three records,
+  # so the wait is for the TAGS, which is what the scenario is actually about.
+  local tags=0
+  for _ in $(seq 1 30); do
+    sleep 2
+    tags=$(notif_tags | sort -u | grep -c 'space:')
+    [ "$tags" -ge 2 ] && break
+  done
+  local summary; summary=$(notif_tags | grep -c 'quite:summary')
+  if [ "$tags" -ge 2 ] && [ "$summary" -eq 1 ]; then
+    record 10-two-spaces pass "two spaces, two tags, and exactly one summary above them" \
+      "{\"space_a\":\"$a\",\"space_b\":\"$b\",\"distinct_space_tags\":$tags,\"summaries\":$summary}"
+  elif [ "$tags" -ge 2 ]; then
+    record 10-two-spaces fail "two spaces but $summary summaries — a group needs exactly one"
   else
     record 10-two-spaces fail "$tags distinct tags for two spaces"
   fi

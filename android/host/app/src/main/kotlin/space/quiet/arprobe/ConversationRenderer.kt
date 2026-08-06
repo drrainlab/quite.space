@@ -97,15 +97,13 @@ internal class ConversationRenderer(
             .setAutoCancel(false)
             .setContentIntent(contentIntent)
             .setDeleteIntent(deleteIntent)
-            .setGroup(GROUP_KEY)
+            .setGroup(GroupSummary.KEY)
+            .setGroupAlertBehavior(Notification.GROUP_ALERT_CHILDREN)
             .build()
     }
 
 
     companion object {
         private const val TAG = "quiet-notify"
-
-        /** One group for every live conversation; the summary lands in b.6b. */
-        const val GROUP_KEY = "quite.active_conversations"
     }
 }
