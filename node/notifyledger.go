@@ -369,6 +369,38 @@ func (l *notifyLedger) reset(frontiers map[id.TerminalID][]eventlog.ChainState) 
 	return l.activate(frontiers)
 }
 
+// baselineIfUnknown gives a space its first watermark: whatever it already
+// holds at the moment the plane first sees it is history.
+//
+// THE DOOR THIS CLOSES. Activation freezes the frontier of every space open at
+// the time — but a space JOINED LATER has no entry at all, and confirmedSeq
+// answers zero for anything it has never heard of. The live path is safe,
+// because join history is installed before the absorb funnel exists; the
+// REDELIVERY path is not, because it walks the log from the watermark, and a
+// watermark of zero makes an imported history look entirely unacknowledged.
+// The first restart after joining a long-running room would have handed the
+// host every message ever written in it.
+//
+// A space with no entry has never had a candidate delivered for it, so there
+// is nothing owed: taking its current frontier as the baseline cannot hide a
+// message that was already on its way to somebody.
+func (l *notifyLedger) baselineIfUnknown(tid id.TerminalID, chains []eventlog.ChainState) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.damaged || !l.state.Activated {
+		return
+	}
+	if _, known := l.state.Confirmed[tid.Hex()]; known {
+		return
+	}
+	m := map[string]uint64{}
+	for _, c := range chains {
+		m[c.Device.Hex()] = c.ContiguousUntil
+	}
+	l.state.Confirmed[tid.Hex()] = m
+	l.saveLocked()
+}
+
 // confirmedSeq is the last sequence of one chain the host has acknowledged.
 func (l *notifyLedger) confirmedSeq(tid id.TerminalID, dev id.DeviceID) uint64 {
 	l.mu.Lock()

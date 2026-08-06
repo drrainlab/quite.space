@@ -897,3 +897,67 @@ func TestRetainFromIsBehindTheOlderGenerationNotTheNewerOne(t *testing.T) {
 			"a dismissed notification would return as news", retain, early)
 	}
 }
+
+// AR-1b.5.6 scenario 01 — a space the plane has never seen, whose log is
+// already full.
+//
+// A space JOINED AFTER activation has no entry in the watermark, and
+// confirmedSeq answers zero for anything it has never heard of. The live path
+// is safe — join history is installed before the absorb funnel exists — but
+// REDELIVERY walks the log from the watermark, and a watermark of zero means
+// the whole imported history is "unacknowledged". The first restart after
+// joining a long-running room would hand the host every message ever written
+// in it.
+//
+// THE SITUATION IS BUILT DIRECTLY RATHER THAN THROUGH A JOIN, and that is a
+// correction rather than a shortcut. The first version of this test joined a
+// real space over a real relay — and the history never arrived before the node
+// closed, so it passed identically with the fix removed. A test that cannot
+// reach its hazard is worse than no test: it reports safety it never checked.
+//
+// So the state is constructed exactly: a full log, and a ledger that has never
+// heard of the space — which is what a join, a restore, or an imported backup
+// all leave behind.
+func TestASpaceThePlaneHasNeverSeenDoesNotReplayItsWholeLog(t *testing.T) {
+	dir := t.TempDir()
+
+	rt := openRuntime(t, dir, "alice")
+	tid, err := rt.CreateSpace("Long Room")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt.AttachNotifications(func(c NotificationCandidate) { rt.AckNotification(c.EventID) })
+	const history = 25
+	for i := 0; i < history; i++ {
+		if _, err := rt.Say(tid, fmt.Sprintf("already read %d", i), SayOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rt.Close()
+
+	// Forget the space, keeping the plane activated: the state a join leaves.
+	l := newNotifyLedger(dir)
+	l.mu.Lock()
+	delete(l.state.Confirmed, tid.Hex())
+	l.saveLocked()
+	l.mu.Unlock()
+
+	rt2 := openRuntime(t, dir, "alice")
+	defer rt2.Close()
+	var mu sync.Mutex
+	var got int
+	rt2.AttachNotifications(func(NotificationCandidate) {
+		mu.Lock()
+		got++
+		mu.Unlock()
+	})
+
+	mu.Lock()
+	defer mu.Unlock()
+	if got > 0 {
+		t.Fatalf("a space with %d events that the plane had never seen produced %d "+
+			"candidates — everything already in it must be history, or joining a "+
+			"long-running room means being told about every message ever written "+
+			"in it", history, got)
+	}
+}

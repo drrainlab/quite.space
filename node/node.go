@@ -517,6 +517,13 @@ func (r *Runtime) attach(tid id.TerminalID, s *terminals.Space) {
 		s.OnBlock = r.onBlockEvent(tid)
 	}
 	st := &spaceState{space: s, eng: kernelsync.NewEngine(s.Log)}
+	// AR-1b.5.6: a space the notification plane has never seen starts from
+	// where it is now. Without this, a room joined after activation has no
+	// watermark, and the first restart redelivers its entire imported history
+	// as if nobody had ever been told.
+	if r.notifyLedger != nil {
+		r.notifyLedger.baselineIfUnknown(tid, s.Log.Summary())
+	}
 	// Links adopted BEFORE this space existed still carry it: media fetch
 	// and the peer count read st.conns, and a space created during the
 	// session must not look peerless on a radio that is right there.
