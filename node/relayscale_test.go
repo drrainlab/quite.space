@@ -73,33 +73,60 @@ func TestManySpacesDoNotOverflowOneCollect(t *testing.T) {
 func TestCollectChunksAreBoundedAndLoseNothing(t *testing.T) {
 	const limit = maxCapsPerCollect
 
+	// EVERY START POSITION, because the cursor is where a cycle resumes after
+	// a failure and a rotation that covers only part of the list starves the
+	// same spaces forever.
 	for _, n := range []int{0, 1, limit - 1, limit, limit + 1, 3*limit + 7} {
-		caps := make([][]byte, n)
-		for i := range caps {
-			caps[i] = []byte{byte(i), byte(i >> 8)}
-		}
-
-		var chunks [][][]byte
-		for off := 0; off < len(caps); off += limit {
-			end := min(off+limit, len(caps))
-			chunks = append(chunks, caps[off:end])
-		}
-
-		seen := 0
-		for i, c := range chunks {
-			if len(c) > limit {
-				t.Fatalf("n=%d: chunk %d carries %d hints, past the server's %d",
-					n, i, len(c), limit)
+		for start := 0; start <= 4; start++ {
+			caps := make([][]byte, n)
+			for i := range caps {
+				caps[i] = []byte{byte(i), byte(i >> 8)}
 			}
-			if len(c) == 0 {
-				t.Fatalf("n=%d: chunk %d is empty — an empty request is a round "+
-					"trip that asks nothing", n, i)
+
+			seen := map[string]int{}
+			var requests [][][]byte
+			rt := &Runtime{}
+			out, err := rt.collectInChunks(caps, limit, start,
+				func(part [][]byte) ([][]byte, error) {
+					requests = append(requests, part)
+					return part, nil
+				},
+				func(items [][]byte) (int, error) {
+					for _, c := range items {
+						seen[string(c)]++
+					}
+					return len(items), nil
+				})
+			if err != nil {
+				t.Fatalf("n=%d start=%d: %v", n, start, err)
 			}
-			seen += len(c)
-		}
-		if seen != n {
-			t.Fatalf("n=%d: %d hints survived chunking — a hint dropped at a "+
-				"boundary is a mailbox nobody drains", n, seen)
+
+			for i, c := range requests {
+				if len(c) > limit {
+					t.Fatalf("n=%d: request %d carries %d hints, past the "+
+						"server's %d", n, i, len(c), limit)
+				}
+				if len(c) == 0 {
+					t.Fatalf("n=%d: request %d is empty — an empty request is "+
+						"a round trip that asks nothing", n, i)
+				}
+			}
+			if len(seen) != n {
+				t.Fatalf("n=%d start=%d: %d of %d hints were served in one "+
+					"cycle — a hint left behind is a mailbox nobody drains, "+
+					"and it is the SAME one every time", n, start, len(seen), n)
+			}
+			for c, times := range seen {
+				if times != 1 {
+					t.Fatalf("n=%d: a hint was collected %d times; Collect is "+
+						"destructive, so asking twice is asking for nothing",
+						n, times)
+					_ = c
+				}
+			}
+			if out.Applied != n {
+				t.Fatalf("n=%d: reported %d applied out of %d", n, out.Applied, n)
+			}
 		}
 	}
 }
@@ -148,6 +175,21 @@ func TestFiftySpacesAreAllServedByOnePull(t *testing.T) {
 			t.Fatal(err)
 		}
 		waitJoin(t, bob, reqID, JoinReady)
+	}
+
+	// AND BOB HOLDS FIFTY OF HIS OWN, which is the point: the capability
+	// ceiling is on the side that DRAINS. Fifty spaces at the sender cost the
+	// receiver nothing — with three joined spaces bob sends six hints and this
+	// test passed against a chunker that served only the first request.
+	// Creating them locally is cheap; joining fifty over a relay is minutes.
+	for i := len(watched); i < spaces; i++ {
+		if _, err := bob.CreateSpace(fmt.Sprintf("bob room %d", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := len(bob.relayMailboxSpaces()); n < spaces {
+		t.Fatalf("bob holds %d spaces, not %d — his pull would fit in one "+
+			"request and this test would be about the sender", n, spaces)
 	}
 
 	for _, i := range watched {
