@@ -533,6 +533,12 @@ func (r *Runtime) relayMailboxSpaces() []id.TerminalID {
 	return out
 }
 
+// maxCapsPerCollect mirrors the relay's own CollectMaxHints. Both paths that
+// drain a mailbox bound themselves by it, and they share ONE constant: two
+// private copies of the same server limit is how they drift apart, which is
+// exactly what happened — the public path split and the private one did not.
+const maxCapsPerCollect = 64
+
 func (r *Runtime) PullFromRelay(addr string) (applied int, err error) {
 	if err := r.relayGate(); err != nil {
 		return 0, err
@@ -566,7 +572,7 @@ func (r *Runtime) PullFromRelay(addr string) (applied int, err error) {
 
 	now := uint64(time.Now().Unix())
 	self := r.Device.ID
-	var caps [][]byte
+	var caps [][]byte //nolint:prealloc // two per space, plus reply boxes
 	for _, tid := range tids {
 		b := relay.Bucket(now)
 		caps = append(caps, relay.CapFor(tid, self, b))
@@ -577,10 +583,30 @@ func (r *Runtime) PullFromRelay(addr string) (applied int, err error) {
 	// PH-1 reply boxes: media answers for public spaces come back here, to
 	// an address nobody else can drain.
 	caps = append(caps, r.replyBoxCaps(tids, relay.Bucket(now))...)
-	items, err := client.Collect(caps)
-	if err != nil {
-		opErr = err
-		return 0, err
+
+	// SPLIT, BECAUSE THE SERVER BOUNDS ONE CALL AND THIS PATH SENDS TWO
+	// CAPABILITIES PER SPACE.
+	//
+	// The relay refuses a Collect carrying more than CollectMaxHints (64), and
+	// with the current and previous bucket per space that ceiling arrives at
+	// about thirty-two spaces — plus a reply box for each public one. Past it
+	// EVERY tick was refused, for as long as the person held that many spaces,
+	// and from the interface it looked like messages had simply stopped: the
+	// node was running, the relay was reachable, and the failures read as a
+	// flaky connection.
+	//
+	// The public ingress path has split its capabilities since PA-1, with a
+	// comment saying why. This one — the path every ordinary private space
+	// uses — did not.
+	var items [][]byte
+	for off := 0; off < len(caps); off += maxCapsPerCollect {
+		end := min(off+maxCapsPerCollect, len(caps))
+		part, err := client.Collect(caps[off:end])
+		if err != nil {
+			opErr = err
+			return 0, err
+		}
+		items = append(items, part...)
 	}
 	for _, item := range items {
 		parts, err := bundle.DecodeParts(item)

@@ -524,7 +524,6 @@ func (r *Runtime) collectPublicIngressBatch(addr string, tids []id.TerminalID) (
 	}
 	// The server bounds caps per request; split when many spaces overflow it.
 	var items [][]byte
-	const maxCapsPerCollect = 64
 	for off := 0; off < len(caps); off += maxCapsPerCollect {
 		end := min(off+maxCapsPerCollect, len(caps))
 		part, err := client.Collect(caps[off:end])
