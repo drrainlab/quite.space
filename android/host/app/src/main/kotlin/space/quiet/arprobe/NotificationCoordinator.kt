@@ -160,6 +160,14 @@ class NotificationCoordinator(
         SUPPRESSED_ALREADY_PRESENTED,
         SUPPRESSED_SPACE_ON_SCREEN,
         SUPPRESSED_DISABLED,
+
+        /**
+         * The durable insert failed. NOT a suppression and not a loss: the
+         * candidate was never acknowledged, so the core still holds it and
+         * will offer it again on the next attach. A full disk or a locked
+         * database becomes a late notification rather than a missing one.
+         */
+        DEFERRED_STORAGE_UNAVAILABLE,
     }
 
     /** Set by the host when a screen resumes and cleared when it pauses. */
@@ -203,7 +211,18 @@ class NotificationCoordinator(
 
         // DURABLE FIRST. From here the host owns this candidate whatever
         // happens next, and only then is the core told it may stop replaying.
-        val inserted = ledger.insertPending(c)
+        //
+        // A FAILED TRANSACTION IS NOT ACKNOWLEDGED, and that is the whole
+        // safety property: the core keeps the candidate, replays it on the
+        // next attach, and a database that could not be written costs a
+        // delay rather than a message. Acknowledging first — or catching the
+        // failure and carrying on — would drop it from both sides at once,
+        // silently, on the day a phone ran out of storage.
+        val inserted = try {
+            ledger.insertPending(c)
+        } catch (t: Throwable) {
+            return count(Decision.DEFERRED_STORAGE_UNAVAILABLE)
+        }
         acker.ack(c.eventId)
 
         if (inserted == null) {

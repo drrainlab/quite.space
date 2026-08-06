@@ -366,6 +366,33 @@ class NotificationCoordinatorTest {
         assertEquals(0, presenter.presented.size)
     }
 
+    // ------------------------------------------------- storage that will not
+
+    @Test
+    fun aFailedTransactionIsNotAcknowledgedSoTheCoreKeepsIt() {
+        // Gate 5, the host half. A full disk or a locked database must cost a
+        // LATE notification, never a missing one — and the only thing standing
+        // between those two outcomes is that the acknowledgement does not
+        // happen.
+        fresh()
+        val failing = object : NotificationCoordinator.Ledger by ledger {
+            override fun insertPending(c: NotificationCoordinator.Candidate) =
+                throw IllegalStateException("disk full")
+        }
+        val co2 = NotificationCoordinator(presenter, failing) { acked.add(it) }
+
+        assertEquals(
+            NotificationCoordinator.Decision.DEFERRED_STORAGE_UNAVAILABLE,
+            co2.onCandidate(candidate("e1", "space-a")),
+        )
+        assertTrue("an unstored candidate must NOT be acknowledged", acked.isEmpty())
+        assertEquals(0, presenter.presented.size)
+
+        // And when storage comes back, the core's redelivery lands normally.
+        assertEquals(NotificationCoordinator.Decision.PRESENTED, arrive("e1", "space-a"))
+        assertEquals(listOf("e1"), acked)
+    }
+
     @Test
     fun switchingNotificationsOffTakesTheLiveOnesDown() {
         fresh()

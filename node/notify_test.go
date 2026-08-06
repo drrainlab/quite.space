@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/drrainlab/quiet_places/kernel/eventlog"
 	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/transports/relay"
 )
@@ -637,5 +638,161 @@ func TestLosingBothGenerationsIsNamedRatherThanTreatedAsAFreshStart(t *testing.T
 	}
 	if got := rt2.NotificationPlaneState(); got != NotifyPlaneActive {
 		t.Fatalf("plane state %q after an explicit reset, want %q", got, NotifyPlaneActive)
+	}
+}
+
+// AR-1b.5.4, gate 3 — activation racing with events being applied.
+//
+// Activation and delivery are two acts against a moving log, and the claim is
+// not that they cannot interleave — it is that an event can only land on one
+// side of the line. Either it is behind the baseline, and history, or it is
+// past it and owed to the host. What must never happen is an event that is
+// neither: past the baseline and never delivered, which is a message nobody
+// hears about and nothing reports.
+//
+// WHAT THIS TEST PROVES, AND WHY IT SURVIVES A BROKEN ORDERING. Attaching the
+// sink before reading the baseline is the obvious defence, and inverting it —
+// read the frontier, sleep, then subscribe — does NOT fail this test. That is
+// not a weakness of the assertion; it is the second defence doing its job: an
+// event lost in that window is past the watermark, so the next attach
+// redelivers it. Disabling redelivery instead DOES fail (the unacknowledged
+// test above catches it).
+//
+// So this asserts the property the product actually needs — nothing past the
+// watermark is unreachable — and it takes BOTH mechanisms breaking to fail.
+// The ordering has its own test (TestAttachingIsAtomicWithEmission), where it
+// is the only thing standing between a host and a gap in its cursor stream.
+func TestActivationRacingWithAppliesLosesNothing(t *testing.T) {
+	dir := t.TempDir()
+	rt := openRuntime(t, dir, "alice")
+	defer rt.Close()
+	tid, err := rt.CreateSpace("Room")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var mu sync.Mutex
+	delivered := map[id.EventID]bool{}
+
+	// The writer runs across the activation, so the first attach happens in
+	// the middle of a stream rather than in a quiet moment nobody races.
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	written := make(chan id.EventID, 512)
+	go func() {
+		defer close(done)
+		for i := 0; ; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			eid, err := rt.Say(tid, fmt.Sprintf("during activation %d", i), SayOptions{})
+			if err != nil {
+				return
+			}
+			written <- eid
+		}
+	}()
+
+	time.Sleep(5 * time.Millisecond) // let some events land BEFORE activation
+	rt.AttachNotifications(func(c NotificationCandidate) {
+		mu.Lock()
+		delivered[c.EventID] = true
+		mu.Unlock()
+	})
+	time.Sleep(20 * time.Millisecond)
+	close(stop)
+	<-done
+	close(written)
+
+	// Detaching and attaching again is what a host does after a restart: it
+	// asks for everything still unacknowledged. Nothing here acknowledges, so
+	// every event past the baseline must come back.
+	rt.AttachNotifications(nil)
+	rt.AttachNotifications(func(c NotificationCandidate) {
+		mu.Lock()
+		delivered[c.EventID] = true
+		mu.Unlock()
+	})
+
+	// THE INVARIANT, stated against the watermark rather than against a
+	// hopeful proxy. An event at or below the confirmed sequence is history
+	// and is meant to be silent; every event ABOVE it is owed to the host and
+	// must have been delivered — live, or by the redelivery above.
+	//
+	// An earlier version of this test asked the ledger whether an event was
+	// "still pending", which is also false for an event that was never
+	// delivered at all: it would have passed on exactly the loss it exists to
+	// catch. The log's own sequence numbers are the only honest comparison.
+	rt.mu.Lock()
+	st := rt.spaces[tid]
+	var late []string
+	_ = st.space.Log.Replay(func(a eventlog.Applied) error {
+		if a.Env == nil {
+			return nil
+		}
+		confirmed := rt.notifyLedger.confirmedSeq(tid, a.Env.Device)
+		mu.Lock()
+		got := delivered[a.ID]
+		mu.Unlock()
+		if a.Env.Sequence > confirmed && !got {
+			late = append(late, fmt.Sprintf("seq %d (watermark %d)", a.Env.Sequence, confirmed))
+		}
+		return nil
+	})
+	rt.mu.Unlock()
+
+	if len(late) > 0 {
+		t.Fatalf("%d events are past the watermark and were never delivered, "+
+			"live or on a fresh attach: %v — each is a message nobody would ever "+
+			"be told about, and nothing anywhere reports it", len(late), late)
+	}
+}
+
+// AR-1b.5.4, gate 12 — what log compaction may not cross.
+func TestTheRetentionFloorHoldsBackWhatNobodyHasConfirmed(t *testing.T) {
+	dir := t.TempDir()
+	rt := openRuntime(t, dir, "alice")
+	defer rt.Close()
+	tid, err := rt.CreateSpace("Room")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	acked := 0
+	rt.AttachNotifications(func(c NotificationCandidate) {
+		// Only the first two are acknowledged: the rest are still owed.
+		if acked < 2 {
+			rt.AckNotification(c.EventID)
+			acked++
+		}
+	})
+	for i := 0; i < 5; i++ {
+		if _, err := rt.Say(tid, fmt.Sprintf("event %d", i), SayOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	floor := rt.NotificationRetentionFloor()[tid][rt.Device.ID]
+	if floor == 0 {
+		t.Fatal("the floor did not move at all — acknowledgements are not reaching it")
+	}
+	// The floor must be BEHIND the tip: everything after it is still owed to
+	// the host, and a compactor that collapsed it would leave the watermark
+	// pointing at events that no longer exist.
+	var tip uint64
+	r := rt // the log's own view
+	r.mu.Lock()
+	for _, ch := range r.spaces[tid].space.Log.Summary() {
+		if ch.Device == r.Device.ID {
+			tip = ch.ContiguousUntil
+		}
+	}
+	r.mu.Unlock()
+	if floor >= tip {
+		t.Fatalf("retention floor %d is at or past the tip %d while %d events are "+
+			"unacknowledged — compaction guided by this would drop what the host "+
+			"is still owed", floor, tip, 5-acked)
 	}
 }

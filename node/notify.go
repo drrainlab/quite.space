@@ -333,3 +333,31 @@ func clipRunes(s string, max int) string {
 	}
 	return string(r[:max]) + "…"
 }
+
+// NotificationRetentionFloor is what log compaction must not cross.
+//
+// There is no compaction in this tree today — no snapshot, no checkpoint,
+// nothing collapses a segment — and when it arrives this is the contract it
+// has to consult. Journal-as-outbox holds only while the journal still holds
+// the events: an event dropped before the host acknowledged it cannot be
+// redelivered by anybody, and the failure is completely silent, because the
+// watermark says "not yet confirmed" about something that no longer exists.
+//
+// Per space, per device, the last sequence the host has confirmed. Anything
+// AFTER it is still owed to somebody and may not be collapsed away.
+func (r *Runtime) NotificationRetentionFloor() map[id.TerminalID]map[id.DeviceID]uint64 {
+	out := map[id.TerminalID]map[id.DeviceID]uint64{}
+	if r.notifyLedger == nil {
+		return out
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for tid, st := range r.spaces {
+		m := map[id.DeviceID]uint64{}
+		for _, ch := range st.space.Log.Summary() {
+			m[ch.Device] = r.notifyLedger.confirmedSeq(tid, ch.Device)
+		}
+		out[tid] = m
+	}
+	return out
+}
