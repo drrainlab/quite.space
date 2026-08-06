@@ -137,6 +137,11 @@ type Runtime struct {
 	// keys. Held from before the store is unlocked until shutdown completes.
 	lock *storage.DirLock
 
+	// relayChunkAt is where each relay's next drain begins (RR). A cycle that
+	// always started at the first chunk would re-serve the same spaces forever
+	// and let the tail starve behind one that keeps failing.
+	relayChunkAt map[string]int
+
 	// relayClk is the SyncClock calibration against a common relay (LR-2).
 	relayClk relayClock
 

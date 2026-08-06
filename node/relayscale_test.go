@@ -206,28 +206,107 @@ func TestAFailedChunkKeepsWhatTheEarlierOnesDrained(t *testing.T) {
 		caps[i] = []byte{byte(i)}
 	}
 
+	rt := openRuntime(t, t.TempDir(), "alice")
+	defer rt.Close()
+
 	calls := 0
-	items, err := collectInChunks(func(chunk [][]byte) ([][]byte, error) {
-		calls++
-		if calls == 2 {
-			return nil, fmt.Errorf("relay: rate limited")
-		}
-		return [][]byte{[]byte("drained")}, nil
-	}, caps, 2)
+	var order []string
+	out, err := rt.collectInChunks(caps, 2, 0,
+		func(chunk [][]byte) ([][]byte, error) {
+			calls++
+			order = append(order, fmt.Sprintf("collect%d", calls))
+			if calls == 2 {
+				return nil, fmt.Errorf("relay: rate limited")
+			}
+			return [][]byte{[]byte("drained")}, nil
+		},
+		func(items [][]byte) (int, error) {
+			order = append(order, "commit")
+			return len(items), nil
+		})
 
 	if err == nil {
 		t.Fatal("a failed chunk must be reported: the spaces in it were never " +
 			"served, and calling the cycle complete would advance state as " +
 			"though they had been")
 	}
-	if len(items) != 1 {
-		t.Fatalf("%d items survived the failure, want the 1 the first chunk "+
-			"drained — Collect is destructive, so discarding it loses that "+
-			"message on both sides", len(items))
+	if out.Applied != 1 {
+		t.Fatalf("Applied=%d, want the 1 the first chunk drained — Collect is "+
+			"destructive, so losing it loses that message on both sides", out.Applied)
 	}
 	if calls != 2 {
-		t.Fatalf("%d calls: the loop must stop asking after a failure rather "+
+		t.Fatalf("%d collects: the loop must stop asking after a failure rather "+
 			"than spending the rest of the chunks against a server that has "+
 			"already refused", calls)
+	}
+
+	// PER-CHUNK DURABILITY, asserted as an ORDER rather than as a count. A
+	// collector that gathered every chunk and applied them at the end would
+	// satisfy every other assertion here and still put all of them inside one
+	// window in which a dying process loses the lot.
+	want := []string{"collect1", "commit", "collect2"}
+	if fmt.Sprint(order) != fmt.Sprint(want) {
+		t.Fatalf("order was %v, want %v — each chunk must be made durable "+
+			"before the next is requested", order, want)
+	}
+	if !out.partial() {
+		t.Fatalf("a cycle that served %d of %d chunks is partial", out.Served, out.Chunks)
+	}
+}
+
+// After a failure the next cycle continues from the chunk that failed, not
+// from the beginning.
+//
+// Otherwise a chunk that keeps being refused — which is what a rate limit
+// produces once it starts biting — re-serves the same first spaces forever and
+// the tail of a long list is never drained at all. The person sees their
+// oldest conversations go quiet and nothing anywhere says why.
+func TestAFailedCycleResumesWhereItStoppedRatherThanAtTheBeginning(t *testing.T) {
+	rt := openRuntime(t, t.TempDir(), "alice")
+	defer rt.Close()
+
+	caps := make([][]byte, 6) // three chunks of two
+	for i := range caps {
+		caps[i] = []byte{byte(i)}
+	}
+	noop := func(items [][]byte) (int, error) { return 0, nil }
+
+	// The second chunk refuses.
+	var asked []int
+	out, err := rt.collectInChunks(caps, 2, 0,
+		func(chunk [][]byte) ([][]byte, error) {
+			asked = append(asked, int(chunk[0][0]))
+			if chunk[0][0] == 2 {
+				return nil, fmt.Errorf("relay: rate limited")
+			}
+			return nil, nil
+		}, noop)
+	if err == nil {
+		t.Fatal("the second chunk was supposed to fail")
+	}
+	if out.NextChunk != 1 {
+		t.Fatalf("NextChunk=%d, want the chunk that failed (1)", out.NextChunk)
+	}
+
+	// The next cycle starts there and comes back round to the beginning.
+	asked = nil
+	out2, err := rt.collectInChunks(caps, 2, out.NextChunk,
+		func(chunk [][]byte) ([][]byte, error) {
+			asked = append(asked, int(chunk[0][0]))
+			return nil, nil
+		}, noop)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(asked) == 0 || asked[0] != 2 {
+		t.Fatalf("the next cycle asked %v first, want the chunk that was "+
+			"refused — starting at the beginning again is how the tail starves", asked)
+	}
+	if out2.Served != out2.Chunks {
+		t.Fatalf("a full pass served %d of %d chunks", out2.Served, out2.Chunks)
+	}
+	// And it wrapped: every chunk was asked exactly once.
+	if len(asked) != 3 {
+		t.Fatalf("asked %v — a cycle must come round to the ones it skipped", asked)
 	}
 }

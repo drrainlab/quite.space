@@ -539,37 +539,160 @@ func (r *Runtime) relayMailboxSpaces() []id.TerminalID {
 // exactly what happened — the public path split and the private one did not.
 const maxCapsPerCollect = 64
 
-// collectInChunks drains a set of capabilities in requests the server will
-// accept, and returns everything that arrived even when one of them failed.
+// applyRelayItems is the durable half of one chunk: everything collected is
+// ingested and applied before the next request goes out.
+func (r *Runtime) applyRelayItems(client *relay.Client, items [][]byte) (int, error) {
+	applied := 0
+	for _, item := range items {
+		parts, err := bundle.DecodeParts(item)
+		if err != nil {
+			continue // not a bundle we understand; ignore quietly
+		}
+		terminal, frames, blobs := parts.Terminal, parts.Frames, parts.Blobs
+		r.mu.Lock()
+		_, known := r.spaces[terminal]
+		r.mu.Unlock()
+		if !known {
+			continue // not our space; also nothing to answer with
+		}
+		// A relay media request rode along: answer with any wanted blobs we
+		// hold, pushed into the requester's inbox (the response half of
+		// on-demand media over the relay). Runs without r.mu — it does network
+		// I/O.
+		if len(parts.Wants) > 0 {
+			r.answerWants(client, terminal, parts.Wanter, parts.Wants, parts.ReplyBox, false)
+		}
+		r.mu.Lock()
+		st, ok := r.spaces[terminal]
+		if !ok {
+			r.mu.Unlock()
+			continue
+		}
+		for _, f := range frames {
+			as, err := st.space.Log.Ingest(f)
+			if err != nil {
+				continue
+			}
+			for _, a := range as {
+				st.space.AttachSyncApply(a)
+					applied++
+			}
+		}
+		// Carried blobs: verify-by-hash happens inside PutBlob addressing
+		// (content-addressed store recomputes the id); possession proves
+		// nothing about access — decryption still needs the block's key.
+		for _, b := range blobs {
+			_, _ = r.root.PutBlob(b)
+		}
+		// A delivered manifest may unlock chunk indexing.
+		for h := range r.assetIdx.manifestOwner {
+			if r.root.HasBlob(h) {
+				r.onBlobStored(h)
+			}
+		}
+		r.persistEpochsLocked(terminal, st.space)
+		r.mu.Unlock()
+	}
+	return applied, nil
+}
+
+// collectOutcome is what a drain actually did, as a value rather than a pair.
 //
-// A FAILED CHUNK DOES NOT DISCARD THE ONES BEFORE IT, and that is not
-// tidiness — Collect is DESTRUCTIVE. The relay hands items over and forgets
-// them, so throwing away what earlier chunks drained would lose those
-// messages permanently, on both sides, with nothing anywhere reporting it.
+// THE SHAPE IS THE POINT. `(items, err)` invites the most ordinary line in Go
+// — `if err != nil { return err }` — and with a DESTRUCTIVE collect that line
+// silently throws away messages the relay has already forgotten. A struct
+// whose first field is the count of what was applied cannot be dropped by
+// accident: there is nothing to ignore, because the work is already done and
+// recorded by the time the error is read.
+type collectOutcome struct {
+	// Applied is how many events reached the log. Already durable — this is
+	// not a promise of future work.
+	Applied int
+	// Chunks is how many chunks the capabilities were split into, and Served
+	// how many completed. Served < Chunks is a partial pass.
+	Chunks int
+	Served int
+	// NextChunk is where the following cycle should start. After a failure it
+	// is the chunk that failed, so the tail of a long list cannot starve
+	// behind a chunk that keeps being refused.
+	NextChunk int
+}
+
+func (o collectOutcome) partial() bool { return o.Served < o.Chunks }
+
+// collectInChunks drains capabilities in requests the server will accept,
+// making each chunk durable BEFORE asking for the next.
 //
-// And it is not reported as success either: the spaces in the failed chunk
-// were never served, so the caller gets what arrived AND the error. Calling
-// the whole cycle complete would advance state as though every mailbox had
-// been drained.
+// The order is what bounds the loss: Collect is destructive, so several chunks
+// held in memory are several chunks a dying process loses at once. Committing
+// between requests reduces that to one chunk — the most this shape can promise
+// without the relay holding a batch until the client acknowledges it.
 //
-// A free function with the collect passed in, so the semantics can be driven
-// against a caller that fails on the second chunk — which no relay will do on
-// request.
-func collectInChunks(
-	collect func([][]byte) ([][]byte, error),
+// It starts at `start` rather than at zero. A cycle that always began at the
+// beginning would re-serve the same spaces every time and let the tail starve
+// behind a chunk that keeps failing — which is exactly what a rate limit
+// produces once it starts biting.
+func (r *Runtime) collectInChunks(
 	caps [][]byte,
 	limit int,
-) ([][]byte, error) {
-	var items [][]byte
-	for off := 0; off < len(caps); off += limit {
+	start int,
+	collect func([][]byte) ([][]byte, error),
+	commit func([][]byte) (int, error),
+) (collectOutcome, error) {
+	out := collectOutcome{}
+	if len(caps) == 0 || limit <= 0 {
+		return out, nil
+	}
+	out.Chunks = (len(caps) + limit - 1) / limit
+	if start < 0 || start >= out.Chunks {
+		start = 0
+	}
+	out.NextChunk = start
+
+	for i := 0; i < out.Chunks; i++ {
+		c := (start + i) % out.Chunks
+		off := c * limit
 		end := min(off+limit, len(caps))
+
 		part, err := collect(caps[off:end])
 		if err != nil {
-			return items, err
+			out.NextChunk = c // resume HERE, not at the beginning
+			return out, err
 		}
-		items = append(items, part...)
+		applied, err := commit(part)
+		out.Applied += applied
+		if err != nil {
+			out.NextChunk = c
+			return out, err
+		}
+		out.Served++
+		out.NextChunk = (c + 1) % out.Chunks
 	}
-	return items, nil
+	return out, nil
+}
+
+// chunkCursor remembers where each relay's next drain should begin.
+//
+// In memory only, deliberately: it exists to stop the tail of a long list
+// starving inside one running process, and a cursor persisted across restarts
+// would be a second thing to get wrong for a hazard that ends when the process
+// does.
+func (r *Runtime) chunkCursor(addr string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.relayChunkAt == nil {
+		return 0
+	}
+	return r.relayChunkAt[addr]
+}
+
+func (r *Runtime) rememberChunkCursor(addr string, o collectOutcome) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.relayChunkAt == nil {
+		r.relayChunkAt = map[string]int{}
+	}
+	r.relayChunkAt[addr] = o.NextChunk
 }
 
 func (r *Runtime) PullFromRelay(addr string) (applied int, err error) {
@@ -641,60 +764,28 @@ func (r *Runtime) PullFromRelay(addr string) (applied int, err error) {
 	// reports the error as well as the count: the chunk that failed was never
 	// served, and calling the whole collect successful would advance state as
 	// though it had been.
-	items, chunkErr := collectInChunks(client.Collect, caps, maxCapsPerCollect)
+	// PER CHUNK: COLLECT, THEN MAKE IT DURABLE, THEN ASK FOR THE NEXT ONE.
+	//
+	// Collect is destructive — the relay hands the items over and forgets
+	// them — so holding several chunks in memory and applying them at the end
+	// puts every message of every earlier chunk inside one window in which a
+	// dying process loses all of them at once. Committing between requests
+	// bounds that window to a single chunk, which is the most this shape can
+	// promise without a lease-and-acknowledge round trip in the protocol.
+	//
+	// What is still NOT promised, and is written down rather than implied: a
+	// process that dies between the relay's answer and the local commit loses
+	// that chunk. Closing that needs the relay to keep the batch until the
+	// client acknowledges it, which is a protocol change and its own decision.
+	outcome, chunkErr := r.collectInChunks(caps, maxCapsPerCollect, r.chunkCursor(addr),
+		client.Collect,
+		func(items [][]byte) (int, error) { return r.applyRelayItems(client, items) })
+	applied += outcome.Applied
 	if chunkErr != nil {
 		opErr = chunkErr
 	}
-	for _, item := range items {
-		parts, err := bundle.DecodeParts(item)
-		if err != nil {
-			continue // not a bundle we understand; ignore quietly
-		}
-		terminal, frames, blobs := parts.Terminal, parts.Frames, parts.Blobs
-		r.mu.Lock()
-		_, known := r.spaces[terminal]
-		r.mu.Unlock()
-		if !known {
-			continue // not our space; also nothing to answer with
-		}
-		// A relay media request rode along: answer with any wanted blobs we
-		// hold, pushed into the requester's inbox (the response half of
-		// on-demand media over the relay). Runs without r.mu — it does network
-		// I/O.
-		if len(parts.Wants) > 0 {
-			r.answerWants(client, terminal, parts.Wanter, parts.Wants, parts.ReplyBox, false)
-		}
-		r.mu.Lock()
-		st, ok := r.spaces[terminal]
-		if !ok {
-			r.mu.Unlock()
-			continue
-		}
-		for _, f := range frames {
-			as, err := st.space.Log.Ingest(f)
-			if err != nil {
-				continue
-			}
-			for _, a := range as {
-				st.space.AttachSyncApply(a)
-				applied++
-			}
-		}
-		// Carried blobs: verify-by-hash happens inside PutBlob addressing
-		// (content-addressed store recomputes the id); possession proves
-		// nothing about access — decryption still needs the block's key.
-		for _, b := range blobs {
-			_, _ = r.root.PutBlob(b)
-		}
-		// A delivered manifest may unlock chunk indexing.
-		for h := range r.assetIdx.manifestOwner {
-			if r.root.HasBlob(h) {
-				r.onBlobStored(h)
-			}
-		}
-		r.persistEpochsLocked(terminal, st.space)
-		r.mu.Unlock()
-	}
+	r.rememberChunkCursor(addr, outcome)
+
 	// PARTIAL IS ITS OWN ANSWER. What arrived has been applied and is not
 	// undone — it is already gone from the relay — but the cycle says the
 	// chunk that failed was never served, so nothing upstream can mistake this
