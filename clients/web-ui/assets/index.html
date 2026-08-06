@@ -719,6 +719,24 @@
   <div class="row" style="justify-content:flex-end"><button class="btn-filled" onclick="dlgSettings.close()">Done</button></div>
 </dialog>
 
+<!-- SD-0. Three sentences, because each is something a person could
+     reasonably assume and be wrong about: what goes, what stays with everyone
+     else, and that nothing is announced. Written out here rather than filled
+     in from JS, the way every other dialog in this file is. -->
+<dialog id="dlgDeleteSpace">
+  <h3 id="delSpaceTitle">Delete this space from this device?</h3>
+  <p class="hint" style="margin-left:4px"><b id="delSpaceName"></b></p>
+  <p class="hint" id="delSpaceWhat"></p>
+  <p class="hint" id="delSpaceOthers"></p>
+  <p class="hint" id="delSpaceBack"></p>
+  <p class="hint warn" id="delSpaceMsg" style="margin-left:4px"></p>
+  <div class="row">
+    <span style="flex:1"></span>
+    <button class="btn-plain" onclick="dlgDeleteSpace.close()">Cancel</button>
+    <button class="btn-filled danger" id="delSpaceGo" onclick="confirmDeleteSpace()">Delete here</button>
+  </div>
+</dialog>
+
 <dialog id="dlgCustomize" class="sheet">
   <h3>Customize this space</h3>
   <p class="hint" id="custPreview" style="margin-left:4px">A signed appearance for everyone here.</p>

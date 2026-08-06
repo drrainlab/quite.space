@@ -401,6 +401,23 @@ func (l *notifyLedger) baselineIfUnknown(tid id.TerminalID, chains []eventlog.Ch
 	l.saveLocked()
 }
 
+// forget drops a space's watermark, for a space this device no longer has.
+//
+// Leaving it would be a small leak of the wrong kind: the watermark names a
+// space and its devices, and it would outlive the conversation it describes.
+// It also matters if the person joins that space again later — an inherited
+// watermark would suppress the first messages of the new copy, which is the
+// one failure mode a notification plane may never have.
+func (l *notifyLedger) forget(tid id.TerminalID) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if _, known := l.state.Confirmed[tid.Hex()]; !known {
+		return
+	}
+	delete(l.state.Confirmed, tid.Hex())
+	l.saveLocked()
+}
+
 // confirmedSeq is the last sequence of one chain the host has acknowledged.
 func (l *notifyLedger) confirmedSeq(tid id.TerminalID, dev id.DeviceID) uint64 {
 	l.mu.Lock()

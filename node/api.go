@@ -83,6 +83,9 @@ func (a *APIServer) Handler() http.Handler {
 	mux.HandleFunc("POST /api/identity/name", a.auth(a.handleSetName))
 	mux.HandleFunc("GET /api/spaces", a.auth(a.handleSpaces))
 	mux.HandleFunc("POST /api/spaces", a.auth(a.handleCreateSpace))
+	// SD-0. DELETE, because that is what it is — and it deletes THIS
+	// DEVICE'S copy, which is the only copy anybody here can speak for.
+	mux.HandleFunc("DELETE /api/spaces/{id}", a.auth(a.handleDeleteSpace))
 	mux.HandleFunc("GET /api/spaces/{id}/messages", a.auth(a.handleMessages))
 	mux.HandleFunc("POST /api/spaces/{id}/messages", a.auth(a.handleSay))
 	mux.HandleFunc("GET /api/spaces/{id}/state", a.auth(a.handleState))
@@ -569,6 +572,38 @@ func (a *APIServer) handleCreateSpace(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, map[string]string{"id": tid.Hex()})
+}
+
+// SD-0 — deleting this device's copy of a space.
+//
+// THE RESPONSE SAYS WHAT WAS ACTUALLY DONE, in the same words the interface
+// uses, because this is the operation where a comfortable phrase does real
+// harm: nobody else's copy is touched, nothing is sent, and the people in the
+// space are not told. A person deleting a conversation deserves to know
+// exactly which of those they are getting.
+//
+// It is not idempotent-by-pretending: deleting a space that is not here
+// answers 404 rather than "ok". A client that reports success for a space it
+// could not find will one day report it for the wrong one.
+func (a *APIServer) handleDeleteSpace(w http.ResponseWriter, r *http.Request) {
+	tid, err := a.spaceID(r)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := a.rt.DeleteSpace(tid); err != nil {
+		if errors.Is(err, ErrNoSuchSpace) {
+			httpErr(w, http.StatusNotFound, err)
+			return
+		}
+		httpErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, map[string]any{
+		"deleted": tid.Hex(),
+		"scope":   "this_device",
+		"note":    "Deleted from this device. Other members keep their copy.",
+	})
 }
 
 type messageResp struct {

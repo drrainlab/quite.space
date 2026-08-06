@@ -2409,3 +2409,14 @@ header .nav-act { padding: 5px 11px 5px 10px; min-height: 30px; }
   color: var(--muted, #9a93a8);
   opacity: .9;
 }
+
+/* SD-0 — the one destructive control in the space panel.
+   Set apart by a rule and by distance, not by shouting: it sits below the
+   member list with space above it, so it cannot be hit on the way to
+   anything else. The colour says what it is; the label says where it
+   applies. */
+.space-danger { margin: 22px 4px 8px; padding-top: 12px;
+  border-top: 1px solid var(--line, rgba(255,255,255,.08)); }
+.space-danger .btn-plain.danger { color: var(--warn, #e0a); padding-left: 0; }
+.space-danger .btn-plain.danger:hover { text-decoration: underline; }
+#dlgDeleteSpace .btn-filled.danger { background: var(--warn, #e0a); color: #fff; }

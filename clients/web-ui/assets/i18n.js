@@ -267,6 +267,19 @@ const I18N = {
     // with a route CHOSEN, which is a queue — say that and nothing more.
     'share.state.queued': ({ route }) => `queued for ${route}`,
 
+    // deleting a space (SD-0). THE WORDS ARE THE FEATURE: every one of these
+    // strings exists to stop somebody assuming a promise the system cannot
+    // keep. "Delete" alone would be read as "delete for everyone", which no
+    // local-first system can do and this one will not imply.
+    'space.delete.btn': 'Delete from this device',
+    'space.delete.title': 'Delete this space from this device?',
+    'space.delete.what': 'Its messages and the media only this device holds will be removed from here.',
+    'space.delete.others': 'Everyone else keeps their copy. Nobody is told.',
+    'space.delete.back': 'A new invite can bring it back — the history you deleted will not come with it.',
+    'space.delete.confirm': 'Delete here',
+    'space.delete.working': 'Deleting…',
+    'space.delete.failed': ({ why }) => `Not deleted: ${why}`,
+
     // conversation
     'conv.member': 'member',
     'conv.you': 'You',

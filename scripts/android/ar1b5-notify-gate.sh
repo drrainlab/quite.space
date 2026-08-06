@@ -67,6 +67,9 @@ PY
   case "$verdict" in
     pass) PASSED=$((PASSED+1));;
     fail) FAILED=$((FAILED+1));;
+    # Not a verdict: a fact about the fixture, recorded so a slow run can be
+    # explained afterwards. It must not be counted as anything.
+    info) ;;
     *)    SKIPPED=$((SKIPPED+1));;
   esac
   SUMMARY+=("$(printf '%-26s %-7s %s' "$scenario" "$verdict" "$reason")")
@@ -281,9 +284,48 @@ notif_tags()      { shade tags; }
 notif_text()      { shade text; }
 notif_summaries() { shade summaries; }
 
+# THE WAL IS PART OF THE DATABASE, and leaving it behind is how this harness
+# lied for two runs. SQLiteOpenHelper writes ahead: the newest rows live in
+# `-wal` until a checkpoint folds them in. Pulling only the `.db` gave a stale
+# snapshot, and pushing a modified `.db` back beside the ORIGINAL `-wal` was
+# worse — SQLite replayed the old log on open and the edit simply vanished.
+#
+# Scenario 07 is the one that caught it: it sets every presented row back to
+# pending to reproduce a crash, the edit disappeared, and the shade stayed
+# empty. It had been "passing" only because the count included the group
+# summary, so a run that recovered nothing still looked like it recovered one.
 pull_ledger() {
+  rm -f "$OUT/ledger.db" "$OUT/ledger.db-wal" "$OUT/ledger.db-shm"
   "${ADB[@]}" exec-out run-as "$PKG" cat databases/quiet-notifications.db > "$OUT/ledger.db" 2>/dev/null
+  "${ADB[@]}" exec-out run-as "$PKG" cat databases/quiet-notifications.db-wal > "$OUT/ledger.db-wal" 2>/dev/null
+  "${ADB[@]}" exec-out run-as "$PKG" cat databases/quiet-notifications.db-shm > "$OUT/ledger.db-shm" 2>/dev/null
+  [ -s "$OUT/ledger.db-wal" ] || rm -f "$OUT/ledger.db-wal" "$OUT/ledger.db-shm"
   [ -s "$OUT/ledger.db" ]
+}
+
+# Fold the log into the file, so ONE file is the whole database and pushing it
+# back cannot be undone by a log left on the device.
+flatten_ledger() {
+  python3 - "$OUT/ledger.db" <<'PYEOF'
+import sqlite3, sys
+c = sqlite3.connect(sys.argv[1])
+c.execute("PRAGMA journal_mode=DELETE")
+c.commit()
+c.close()
+PYEOF
+  rm -f "$OUT/ledger.db-wal" "$OUT/ledger.db-shm"
+}
+
+# Put it back as the app's ONLY database: any log still on the device would be
+# replayed over what we just wrote.
+push_ledger() {
+  flatten_ledger
+  "${ADB[@]}" push "$OUT/ledger.db" /data/local/tmp/g.db >/dev/null 2>&1
+  "${ADB[@]}" shell chmod 666 /data/local/tmp/g.db
+  "${ADB[@]}" shell "run-as $PKG cp /data/local/tmp/g.db databases/quiet-notifications.db"
+  "${ADB[@]}" shell "run-as $PKG rm -f databases/quiet-notifications.db-journal \
+                                        databases/quiet-notifications.db-wal \
+                                        databases/quiet-notifications.db-shm"
 }
 
 ledger_states() {
@@ -359,6 +401,28 @@ ensure_node() {
   return 0
 }
 
+# HOW MANY SPACES THIS NODE IS CARRYING, reported once per run.
+#
+# SPACES ACCUMULATE AND NOTHING REMOVES THEM: there is no leaving a space in
+# the protocol, so every gate run leaves its own behind and a phone that has
+# been gated a dozen times holds dozens. That is not a leak, but it changes
+# what is being measured — past ~32 spaces a pull no longer fits in one
+# request and is served in chunks — and it makes each scenario slower. A run
+# that starts to time out at scenario 10 is explained by this number, so the
+# number is printed rather than left to be rediscovered.
+report_space_count() {
+  local n
+  n=$(phone_api GET /api/spaces | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    print(len(d if isinstance(d, list) else d.get("spaces", [])))
+except Exception:
+    print(0)' 2>/dev/null)
+  log "the node carries $n space(s)$([ "${n:-0}" -gt 32 ] && printf ' — past the single-request ceiling, pulls are chunked')"
+  record 00-fixture info "spaces the node carries" "{\"spaces\":${n:-0}}"
+}
+
 # Each scenario starts from an empty shade and a node that is actually
 # reachable. Isolation is not a comment here: a leftover record from the
 # previous scenario is exactly how a count-based assertion goes green for the
@@ -428,7 +492,7 @@ scenario_10_two_spaces() {
   # a product that was working. Two children plus a summary is three records,
   # so the wait is for the TAGS, which is what the scenario is actually about.
   local tags=0
-  for _ in $(seq 1 30); do
+  for _ in $(seq 1 45); do
     sleep 2
     tags=$(notif_tags | sort -u | grep -c 'space:')
     [ "$tags" -ge 2 ] && break
@@ -446,21 +510,30 @@ scenario_10_two_spaces() {
 
 scenario_07_before_notify() {
   begin_scenario || { record 07-before-notify fail "the node would not come back"; return; }
+  # IT BRINGS ITS OWN MESSAGE. The first version flipped whatever presented
+  # rows the earlier scenarios had left behind, and AR-1b.6b.6 made that
+  # impossible: reconciling at startup closes rows the shade no longer holds,
+  # so after the force-stop this scenario opens with there is nothing left to
+  # flip and it was reproducing an empty database.
+  local sp; sp=$(new_shared_space 07) || { record 07-before-notify skip "could not join a fresh space"; return; }
+  "${ADB[@]}" shell input keyevent KEYCODE_HOME; sleep 2
+  say_to "$sp" "gate 07"
+  wait_for_notification 40 || { record 07-before-notify fail "no notification to crash after"; return; }
+
   # Crash after the acknowledgement, before the system was told. Reproduced
-  # exactly rather than raced: the row is put back to `pending`, which is what
-  # a process dying between the two leaves behind.
-  pull_ledger || { record 07-before-notify skip "no ledger on the device yet"; return; }
-  python3 - "$OUT/ledger.db" <<'PY'
+  # exactly rather than raced: the row goes back to `pending`, which is what a
+  # process dying between the two leaves behind — and `pending` is precisely
+  # what reconciliation must NOT touch, because it was never posted.
+  "${ADB[@]}" shell am force-stop "$PKG"; sleep 2
+  pull_ledger || { record 07-before-notify fail "no ledger on the device"; return; }
+  python3 - "$OUT/ledger.db" <<'PYEOF'
 import sqlite3, sys
 c = sqlite3.connect(sys.argv[1])
-c.execute("update notification_events set state='pending' where state='presented'")
+n = c.execute("update notification_events set state='pending' where state='presented'").rowcount
 c.commit()
-PY
-  "${ADB[@]}" push "$OUT/ledger.db" /data/local/tmp/g.db >/dev/null 2>&1
-  "${ADB[@]}" shell chmod 666 /data/local/tmp/g.db
-  "${ADB[@]}" shell am force-stop "$PKG"; sleep 2
-  "${ADB[@]}" shell "run-as $PKG cp /data/local/tmp/g.db databases/quiet-notifications.db"
-  "${ADB[@]}" shell "run-as $PKG rm -f databases/quiet-notifications.db-journal"
+print(f"07: {n} row(s) put back to pending", file=sys.stderr)
+PYEOF
+  push_ledger
   local before; before=$(notif_records)
   ensure_node || { record 07-before-notify fail "the node would not reopen"; return; }
   sleep 4
@@ -566,6 +639,8 @@ log "runtime_epoch $(core_field "$STATUS" runtime_epoch)  plane $(core_field "$S
 
 WANT=("$@")
 run_it() { [ ${#WANT[@]} -eq 0 ] && return 0; for w in "${WANT[@]}"; do [ "$w" = "$1" ] && return 0; done; return 1; }
+
+ensure_node && report_space_count
 
 run_it 02 && scenario_02_new_event
 run_it 09 && scenario_09_dismiss_replay

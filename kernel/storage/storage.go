@@ -148,6 +148,18 @@ type Keystore struct {
 	SelfManifestFrame []byte
 	// Spaces holds per-space metadata needed to reopen them.
 	Spaces map[id.TerminalID]SpaceMeta
+	// Forgotten records spaces this device was told to delete, and when
+	// (unix seconds). It holds NO title, no members and no content: a
+	// tombstone that named what it buried would defeat the point of
+	// burying it.
+	//
+	// It exists for two jobs. Removing a space is several file operations
+	// after one keystore write, so a process that dies in the middle leaves
+	// events on disk for a space nobody lists — the sweep at open finishes
+	// the job. And a join saga already in flight when the person pressed
+	// delete must not quietly bring the space back; that is not a decision
+	// they made twice.
+	Forgotten map[id.TerminalID]int64
 	// Settings is an opaque local-settings blob owned by the node layer
 	// (UI prefs + LLM config, including the API key). Encrypted at rest with
 	// the rest of the keystore; never leaves the device except to the
@@ -255,6 +267,7 @@ func NewKeystore(p *identity.Principal, d *identity.Device) *Keystore {
 		TerminalSeeds: map[id.TerminalID][]byte{},
 		Epochs:        map[id.TerminalID][]crypto.EpochKey{},
 		Spaces:        map[id.TerminalID]SpaceMeta{},
+		Forgotten:     map[id.TerminalID]int64{},
 	}
 }
 
@@ -289,6 +302,7 @@ const (
 	ksKeyNavigator = 14 // NAV-0 device-local Navigator arrangement
 	ksKeyAgent     = 15 // AI-0 the local Agent Terminal and its space
 	ksKeyRadio     = 16 // the radio this device attaches, and its segment seed
+	ksKeyForgotten = 17 // SD-0 spaces this device was told to forget
 )
 
 // ksMapArity is how many top-level pairs encode() writes, and it MUST equal
@@ -296,7 +310,7 @@ const (
 // which is a poor place for a number that bricks every keystore when it is
 // wrong: too few and the trailing pair goes unread, so Done() fails and
 // nobody can open their data again. Named here, next to the keys it counts.
-const ksMapArity = 16
+const ksMapArity = 17
 
 func (k *Keystore) encode() []byte {
 	buf := codec.AppendMap(nil, ksMapArity)
@@ -377,7 +391,28 @@ func (k *Keystore) encode() []byte {
 	buf = appendAgentRecord(buf, k.Agent)
 	buf = codec.AppendUint(buf, ksKeyRadio)
 	buf = appendRadioRecord(buf, k.Radio)
+	buf = codec.AppendUint(buf, ksKeyForgotten)
+	buf = codec.AppendArray(buf, len(k.Forgotten))
+	for _, f := range sortedForgotten(k.Forgotten) {
+		buf = codec.AppendArray(buf, 2)
+		buf = codec.AppendBytes(buf, f.id[:])
+		buf = codec.AppendUint(buf, uint64(f.at))
+	}
 	return buf
+}
+
+type forgottenEntry struct {
+	id id.TerminalID
+	at int64
+}
+
+func sortedForgotten(m map[id.TerminalID]int64) []forgottenEntry {
+	out := make([]forgottenEntry, 0, len(m))
+	for tid, at := range m {
+		out = append(out, forgottenEntry{tid, at})
+	}
+	sortByID(out, func(f forgottenEntry) id.TerminalID { return f.id })
+	return out
 }
 
 type pubPubEntry struct {
@@ -475,6 +510,7 @@ func decodeKeystore(data []byte) (*Keystore, error) {
 		TerminalSeeds: map[id.TerminalID][]byte{},
 		Epochs:        map[id.TerminalID][]crypto.EpochKey{},
 		Spaces:        map[id.TerminalID]SpaceMeta{},
+		Forgotten:     map[id.TerminalID]int64{},
 	}
 	for {
 		key, ok, er := m.Next()
@@ -744,6 +780,33 @@ func decodeKeystore(data []byte) (*Keystore, error) {
 			k.Agent, er = readAgentRecord(d)
 		case ksKeyRadio:
 			k.Radio, er = readRadioRecord(d)
+		case ksKeyForgotten:
+			var n int
+			n, er = d.ReadArray()
+			for i := 0; i < n && er == nil; i++ {
+				var pair int
+				if pair, er = d.ReadArray(); er != nil || pair != 2 {
+					if er == nil {
+						er = errors.New("storage: malformed forgotten entry")
+					}
+					break
+				}
+				var raw []byte
+				if raw, er = d.ReadBytes(); er != nil {
+					break
+				}
+				var at uint64
+				if at, er = d.ReadUint(); er != nil {
+					break
+				}
+				var tid id.TerminalID
+				if len(raw) != len(tid) {
+					er = errors.New("storage: forgotten entry is not a terminal id")
+					break
+				}
+				copy(tid[:], raw)
+				k.Forgotten[tid] = int64(at)
+			}
 		default:
 			er = d.SkipItem()
 		}
@@ -838,6 +901,21 @@ func (r *Root) GetBlob(h id.Hash) ([]byte, error) {
 func (r *Root) HasBlob(h id.Hash) bool {
 	_, err := os.Stat(r.blobPath(h))
 	return err == nil
+}
+
+// DeleteBlob removes one blob. Missing is not an error: the caller is
+// deleting, and a blob that is already gone is the desired state.
+//
+// NOTHING HERE KNOWS WHO ELSE REFERS TO IT. Blobs are content-addressed and
+// shared between spaces by design — two people sending the same photo store
+// it once — so the decision that a blob is unreferenced belongs to the layer
+// that holds the index, and this is only the hands.
+func (r *Root) DeleteBlob(h id.Hash) error {
+	err := os.Remove(r.blobPath(h))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
 }
 
 func (r *Root) blobPath(h id.Hash) string {

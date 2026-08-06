@@ -469,6 +469,11 @@ func Open(dataDir string, passphrase []byte, displayName string) (rt *Runtime, e
 			}
 		}
 	}
+	// SD-0: finish any deletion the last process did not live to finish.
+	// Before the saga is restored and before anything is served: events on
+	// disk for a space nobody lists are the messages somebody asked to be
+	// rid of, still readable by anything holding the key.
+	r.sweepForgotten()
 	// Restore both halves of the join saga AND the intent to act on them:
 	// a durable journal whose doors nobody watches is the same bug wearing
 	// a different coat (QL-0, ADR-012 invariant 7).

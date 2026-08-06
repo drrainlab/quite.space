@@ -1449,6 +1449,62 @@ async function refreshSpace() {
     mbox.appendChild(d);
   }
   hereMembers = nextHere;
+
+  // SD-0 — leaving a place tidy.
+  //
+  // AT THE BOTTOM OF THE PANEL, not in the toolbar beside "invite": deleting
+  // a conversation is not a thing to do with a stray tap next to the button
+  // that shares it. The wording is the feature — "from this device" is the
+  // whole promise, and putting it on the button means nobody has to have read
+  // the dialog to know what they pressed.
+  const danger = document.createElement('div');
+  danger.className = 'space-danger';
+  const del = document.createElement('button');
+  del.className = 'btn-plain danger';
+  del.id = 'deleteSpaceBtn';
+  del.textContent = t('space.delete.btn');
+  del.onclick = () => openDeleteSpace();
+  danger.appendChild(del);
+  mbox.appendChild(danger);
+}
+
+// The confirmation, and what it has to say.
+//
+// Three facts, because each one is a thing somebody could reasonably assume
+// and be wrong about: the messages go from HERE, the other members keep
+// theirs, and nobody is told. The last is not an apology — a person deleting
+// a conversation often needs precisely that it is quiet — but it must not be
+// a surprise afterwards.
+function openDeleteSpace() {
+  const sp = currentSpace();
+  if (!sp) return;
+  document.getElementById('delSpaceName').textContent = spaceName(sp);
+  document.getElementById('delSpaceTitle').textContent = t('space.delete.title');
+  document.getElementById('delSpaceWhat').textContent = t('space.delete.what');
+  document.getElementById('delSpaceOthers').textContent = t('space.delete.others');
+  document.getElementById('delSpaceBack').textContent = t('space.delete.back');
+  document.getElementById('delSpaceGo').textContent = t('space.delete.confirm');
+  document.getElementById('delSpaceMsg').textContent = '';
+  document.getElementById('dlgDeleteSpace').showModal();
+}
+
+async function confirmDeleteSpace() {
+  const sp = currentSpace();
+  if (!sp) return;
+  const msg = document.getElementById('delSpaceMsg');
+  msg.textContent = t('space.delete.working');
+  try {
+    await api(`/api/spaces/${sp.id}`, { method: 'DELETE' });
+  } catch (e) {
+    // Said plainly and left open: a failed deletion that closes its own
+    // dialog reads exactly like a successful one.
+    msg.textContent = t('space.delete.failed', { why: String(e.message || e) });
+    return;
+  }
+  document.getElementById('dlgDeleteSpace').close();
+  current = null;
+  spacesCache = spacesCache.filter(s => s.id !== sp.id);
+  await refresh();
 }
 
 function fmtAge(s) {
