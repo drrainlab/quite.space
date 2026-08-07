@@ -2451,7 +2451,16 @@ header .nav-act { padding: 5px 11px 5px 10px; min-height: 30px; }
   .nav-act, .nav-more, .nav-sec-add, #tglNav, #protoToggle,
   header .nav-act, header .conn-chip,
   .settings-tabs button, .segmented button {
-    min-height: 44px; min-width: 44px;
+    min-height: 44px;
+  }
+  /* WIDTH ONLY FOR THE SQUARE ONES — an icon with no text has no width of
+     its own, and a text button already has more than 44 px of it.
+     The first attempt set both axes on everything here and the header
+     wrapped onto FOUR rows at 360 dp: "Chat", "Posts" and "Shelf" are wider
+     than they are tall, and forcing a width on each spent the one axis a
+     phone cannot spare. Seen on the device, not in the rule. */
+  .icon-btn, .nav-more, .nav-sec-add, #tglNav {
+    min-width: 44px;
   }
   /* Padding rather than height where the control is a text row: growing the
      box would push the layout around; growing the reachable area does not. */
