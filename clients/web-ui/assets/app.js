@@ -2245,6 +2245,18 @@ function openWizard() {
     mo.appendChild(d);
   });
   updSeed();
+  // THE VISIBILITY CHOICE IS RESET, AND IT WAS NOT.
+  //
+  // wizVis/wizMode are module-level and the Private button's `sel` class is
+  // baked into the markup, so a wizard that had been walked once kept the
+  // previous answer while SHOWING the default. Latent until a preset set
+  // them for you: pick a public template, cancel, create an ordinary space,
+  // and the screen says Private while wizPolicy() returns public — an
+  // irrevocable link on a space somebody believed was theirs alone.
+  //
+  // Through the real functions, so the buttons and the hint repaint too.
+  pickWizVis('private');
+  pickWizMode('community');
   wizStep(1);
   dlgWiz.showModal();
 }
