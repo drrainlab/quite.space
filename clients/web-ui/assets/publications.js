@@ -687,7 +687,7 @@ function buildSpaceCard(o) {
   return doc;
 }
 
-// onKindChange: picking "space card" seeds the space-link template so the
+// onKindChange: picking "a link to another place" seeds the link template so the
 // author only has to paste the share link. A directory DECLARES itself in
 // its signed policy; a card's own hint is only a note about where it points.
 function onKindChange() {

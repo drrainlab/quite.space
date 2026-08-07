@@ -885,7 +885,10 @@
     <select id="compKind" class="comp-kind" onchange="onKindChange()">
       <option value="article">article</option><option value="note">note</option>
       <option value="release">release</option><option value="log">log</option>
-      <option value="space">space card</option>
+      <!-- Named for what it IS to a reader, not for the protocol object it
+           produces. The one-press way to make one is "+ Add space" inside a
+           directory; this stays for anybody composing by hand. -->
+      <option value="space">a link to another place</option>
     </select>
   </div>
   <div id="compCover"></div>
