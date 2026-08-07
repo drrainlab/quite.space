@@ -2443,8 +2443,13 @@ header .nav-act { padding: 5px 11px 5px 10px; min-height: 30px; }
 @media (pointer: coarse) {
   :root { --tap: 44px; }
 
-  /* These set their own size and never asked --tap for it. */
+  /* These set their own size and never asked --tap for it. The header's
+     rule is MORE SPECIFIC than a bare class — `header .nav-act` beats
+     `.nav-act` — so the floor has to be stated at the same specificity or it
+     silently loses and the button stays 30 px tall. Found by measuring after
+     the first attempt rather than by reading. */
   .nav-act, .nav-more, .nav-sec-add, #tglNav, #protoToggle,
+  header .nav-act, header .conn-chip,
   .settings-tabs button, .segmented button {
     min-height: 44px; min-width: 44px;
   }
