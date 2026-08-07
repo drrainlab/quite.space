@@ -78,12 +78,36 @@ type previewStore struct {
 	sessions map[string]*previewSession
 }
 
+// dropLocked is the ONE way a session leaves the table.
+//
+// It exists because there were three ways and none of them closed the
+// fetcher: the goroutine went on running and its share of
+// previewGlobalBudget went on being held until the process exited, while
+// sessionFetcher.close's own doc comment claimed every death path called
+// it. A session that browsing evicts is now indistinguishable from one the
+// runtime shut down.
+//
+// Lock order, stated because it is the reason this is safe to call while
+// holding ps.mu: close takes f.mu, then sessionStore.release takes s.mu,
+// then budgetRelease takes previewBudget.mu. Nothing in that chain reaches
+// back to ps.mu or to r.mu.
+func (ps *previewStore) dropLocked(pid string) {
+	s := ps.sessions[pid]
+	if s == nil {
+		return
+	}
+	if s.fetcher != nil {
+		s.fetcher.close()
+	}
+	delete(ps.sessions, pid)
+}
+
 func (ps *previewStore) get(pid string) *previewSession {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 	s := ps.sessions[pid]
 	if s == nil || time.Since(s.born) > previewTTL {
-		delete(ps.sessions, pid)
+		ps.dropLocked(pid)
 		return nil
 	}
 	return s
@@ -99,7 +123,7 @@ func (ps *previewStore) put(s *previewSession) {
 	}
 	for k, v := range ps.sessions {
 		if time.Since(v.born) > previewTTL {
-			delete(ps.sessions, k)
+			ps.dropLocked(k)
 		}
 	}
 	for len(ps.sessions) >= previewCap {
@@ -109,7 +133,7 @@ func (ps *previewStore) put(s *previewSession) {
 				oldest, at = k, v.born
 			}
 		}
-		delete(ps.sessions, oldest)
+		ps.dropLocked(oldest)
 	}
 	ps.sessions[s.id] = s
 }
@@ -119,11 +143,8 @@ func (ps *previewStore) put(s *previewSession) {
 func (ps *previewStore) closeAll() {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
-	for k, v := range ps.sessions {
-		if v.fetcher != nil {
-			v.fetcher.close()
-		}
-		delete(ps.sessions, k)
+	for k := range ps.sessions {
+		ps.dropLocked(k)
 	}
 }
 
