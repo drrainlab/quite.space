@@ -136,27 +136,32 @@ func TestUnknownOfficialIDIsUnavailable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ep, ok := ref.Resolve(BuiltinRelayRegistry); ok || ep != "" {
+	// The SHIPPED registry: this test's subject is what the binary carries,
+	// and the suite runs against an empty one (relayreg_testmain_test.go).
+	if ep, ok := ref.Resolve(shippedRelayRegistry); ok || ep != "" {
 		t.Fatalf("an unknown official id resolved to %q", ep)
 	}
 	// The known one does resolve.
 	known, _ := ParseRelayRef("official:local-dev")
-	if ep, ok := known.Resolve(BuiltinRelayRegistry); !ok || ep != "127.0.0.1:7411" {
+	if ep, ok := known.Resolve(shippedRelayRegistry); !ok || ep != "127.0.0.1:7411" {
 		t.Fatalf("local-dev resolved to %q %v", ep, ok)
 	}
 }
 
 func TestRegistryCompatibilityFilter(t *testing.T) {
-	if got := BuiltinRelayRegistry.Compatible(1, 1); len(got) != 1 {
-		t.Fatalf("expected the local-dev entry, got %d", len(got))
+	// Every shipped relay speaks protocol 1, and none speaks 2 — a count
+	// rather than a fixed number, so adding a relay is not a test edit.
+	if got := shippedRelayRegistry.Compatible(1, 1); len(got) != len(shippedRelayRegistry.Relays) {
+		t.Fatalf("%d of %d shipped relays are usable at protocol 1",
+			len(got), len(shippedRelayRegistry.Relays))
 	}
-	if got := BuiltinRelayRegistry.Compatible(2, 9); len(got) != 0 {
+	if got := shippedRelayRegistry.Compatible(2, 9); len(got) != 0 {
 		t.Fatal("a protocol-2 client matched a protocol-1 relay")
 	}
 }
 
 func TestLocalLANProfile(t *testing.T) {
-	d, _ := BuiltinRelayRegistry.ByID("local-dev")
+	d, _ := shippedRelayRegistry.ByID("local-dev")
 	if !d.LocalLAN() {
 		t.Fatal("loopback without pins must be the local-lan profile")
 	}

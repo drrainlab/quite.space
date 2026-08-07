@@ -44,7 +44,7 @@ func (r *Runtime) pickHealthy(addrs []string) string {
 // configured address for custom.
 func (r *Runtime) personalRelayLadder() []string {
 	s := r.GetSettings()
-	if s.RelayMode != "automatic" {
+	if !relayIsAutomatic(s) {
 		if s.Relay == "" {
 			return nil
 		}

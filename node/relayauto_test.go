@@ -16,6 +16,7 @@ package node
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 // autoModeRuntime is a node configured the way the app configures itself:
@@ -109,5 +110,192 @@ func TestWithNoRelayAtAllTheRefusalStillSaysSo(t *testing.T) {
 	space := newPublicSpace(t, rt, "a public room")
 	if _, err := rt.ComposePublicLink(space, nil); err == nil {
 		t.Fatal("a link was composed with no relay to put in it")
+	}
+}
+
+// Switching to automatic used to save the preference and do nothing: the
+// only thing that ever ran a selection was Open, so a node that had never
+// measured anything sat with NO personal relay until somebody restarted
+// it — and every screen that needs one refused meanwhile, which is how the
+// defect above stayed hidden.
+//
+// The state that matters is an EMPTY selection: with a last-known-good on
+// disk the resolvers answer from relays.json whether or not anything ran,
+// so seeding one would make this test pass against the broken code. It did,
+// on the first attempt.
+func TestSwitchingToAutomaticSelectsWithoutARestart(t *testing.T) {
+	rt := openRuntime(t, t.TempDir(), "alice")
+	defer rt.Close()
+	srv, addr := setUpRelay(t, rt)
+	defer srv.Close()
+
+	// Selection only ever probes REGISTRY entries, so point the registry at
+	// the relay this test actually has.
+	withRelayRegistry(t, RelayDescriptor{
+		ID: "local-dev", Endpoint: addr, Region: "local", Priority: 100,
+		ProtocolMin: 1, ProtocolMax: 1, Official: true,
+		Roles: []string{RelayRoleBootstrap, RelayRolePersonalInbox},
+	})
+
+	// Custom mode, and NOTHING measured yet.
+	s := rt.GetSettings()
+	s.RelayMode = "custom"
+	s.Relay = addr
+	if err := rt.SetSettings(s); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.updateRelayState(func(st *RelayLocalState) {
+		st.SelectedPrimary = ""
+		st.SelectedBackup = ""
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if rt.ResolvePersonalRelay() != addr {
+		t.Fatal("test premise wrong: custom mode is not using the configured address")
+	}
+
+	s = rt.GetSettings()
+	s.RelayMode = "automatic"
+	s.Relay = ""
+	if err := rt.SetSettings(s); err != nil {
+		t.Fatal(err)
+	}
+
+	// The measurement runs in the background, exactly as at Open — nothing
+	// here waits on a probe, so neither does a person pressing Save.
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if got := rt.ResolvePersonalRelay(); got != "" {
+			if got != addr {
+				t.Fatalf("selected %q, wanted the only reachable relay %q", got, addr)
+			}
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatal("switching to automatic left the node with no relay until a restart")
+}
+
+// The ladder is MEASURED, so the nearest reachable relay wins: a relay on
+// this machine beats one across the internet whenever it is up, and the
+// remote one is what a node falls to when it is not. Priority is only an
+// administrative tie-break and must never override that.
+func TestTheRegistryPrefersWhateverIsNearer(t *testing.T) {
+	// The SHIPPED registry, not the empty one the suite runs against —
+	// this test's subject is what the binary carries.
+	var local, remote *RelayDescriptor
+	for i := range shippedRelayRegistry.Relays {
+		switch shippedRelayRegistry.Relays[i].ID {
+		case "local-dev":
+			local = &shippedRelayRegistry.Relays[i]
+		case "staging-1":
+			remote = &shippedRelayRegistry.Relays[i]
+		}
+	}
+	if local == nil || remote == nil {
+		t.Fatal("the registry lost one of its two entries")
+	}
+	if local.Priority <= remote.Priority {
+		t.Fatal("the local relay stopped being the administrative first choice")
+	}
+	// Both must be candidates at all, or the ladder has only one rung.
+	cands := shippedRelayRegistry.Compatible(RelayProtocolVersionMin, RelayProtocolVersionMax)
+	if len(cands) < 2 {
+		t.Fatalf("only %d relay is a candidate — nothing to fall back to", len(cands))
+	}
+	// A relay reached across the internet is PINNED; one on this machine is
+	// the local-lan profile and deliberately is not.
+	if len(remote.SPKIPins) == 0 {
+		t.Fatal("a relay dialled over the internet must carry a pin")
+	}
+	if len(local.SPKIPins) != 0 {
+		t.Fatal("the loopback relay gained a pin — that is the local-lan profile gone")
+	}
+	// A different region, so backup selection has real failure-domain
+	// diversity to work with rather than two names for one place.
+	if local.Region == remote.Region {
+		t.Fatal("both relays claim one region — the backup would share its fate")
+	}
+}
+
+// A FRESH INSTALL measures. "" has always meant legacy-custom, which is the
+// right conservative reading for a node somebody already set up — but on a
+// brand-new one it meant no relay, no probe, and an app that quietly does
+// nothing until its owner goes looking for a settings field. That is the
+// state every build handed to a friend starts in.
+func TestAFreshInstallMeasuresRatherThanSittingIdle(t *testing.T) {
+	dir := t.TempDir()
+
+	// Stand a relay up first, and point the registry at it — selection only
+	// ever probes registry entries.
+	host := openRuntime(t, t.TempDir(), "host")
+	defer host.Close()
+	srv, addr := setUpRelay(t, host)
+	defer srv.Close()
+	withRelayRegistry(t, RelayDescriptor{
+		ID: "local-dev", Endpoint: addr, Region: "local", Priority: 100,
+		ProtocolMin: 1, ProtocolMax: 1, Official: true,
+		Roles: []string{RelayRoleBootstrap, RelayRolePersonalInbox},
+	})
+
+	// A node opened for the very first time: no settings blob at all.
+	fresh := openRuntime(t, dir, "newcomer")
+	defer fresh.Close()
+	if got := fresh.GetSettings().RelayMode; got != "" {
+		t.Fatalf("test premise wrong: a fresh node reports mode %q", got)
+	}
+
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if fresh.ResolvePersonalRelay() == addr {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatal("a fresh install never looked for a relay")
+}
+
+// ...and somebody who DID choose custom keeps exactly that, blank address
+// included. A preference is not a gap to be helpfully filled in.
+func TestADeliberateCustomChoiceIsNotOverridden(t *testing.T) {
+	dir := t.TempDir()
+	rt := openRuntime(t, dir, "alice")
+	s := rt.GetSettings()
+	s.RelayMode = "custom"
+	s.Relay = ""
+	if err := rt.SetSettings(s); err != nil {
+		t.Fatal(err)
+	}
+	rt.Close()
+
+	again := openRuntime(t, dir, "alice")
+	defer again.Close()
+	if got := again.GetSettings().RelayMode; got != "custom" {
+		t.Fatalf("the chosen mode changed to %q", got)
+	}
+	time.Sleep(500 * time.Millisecond)
+	if got := again.ResolvePersonalRelay(); got != "" {
+		t.Fatalf("a deliberate custom-with-no-relay node was given %q anyway", got)
+	}
+}
+
+// The settings screen reports the mode IN EFFECT. A fresh node measures, so
+// showing it "Custom" — which the API did, because it mapped "" to custom
+// unconditionally — would be a plain lie about what the node is doing.
+func TestTheSettingsScreenSaysWhichModeIsActuallyInEffect(t *testing.T) {
+	cases := []struct {
+		name  string
+		s     Settings
+		wants string
+	}{
+		{"a fresh node", Settings{}, "automatic"},
+		{"chose automatic", Settings{RelayMode: "automatic"}, "automatic"},
+		{"chose custom, blank", Settings{RelayMode: "custom"}, "custom"},
+		{"pre-modes, with an address", Settings{Relay: "203.0.113.7:7411"}, "custom"},
+	}
+	for _, c := range cases {
+		if got := settingsJSON(c.s)["relay_mode"]; got != c.wants {
+			t.Errorf("%s: screen says %q, node does %q", c.name, got, c.wants)
+		}
 	}
 }

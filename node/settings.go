@@ -68,6 +68,24 @@ func (r *Runtime) GetSettings() Settings {
 	return s
 }
 
+// relayIsAutomatic is the ONE reading of the relay mode, used by the code
+// that starts a selection and by the code that consumes one. They used to
+// disagree: Open measured for a fresh node while the resolver, seeing "",
+// treated it as custom-with-no-address and returned nothing — so the node
+// probed, chose a primary, wrote it down, and then refused to use it.
+//
+//	"automatic"           → measured
+//	"" AND no address     → measured. Nobody has expressed a preference:
+//	                        a fresh install, or a pre-RR-0 node that had no
+//	                        relay and was therefore doing nothing anyway.
+//	"" AND an address     → that address. A node somebody set up before
+//	                        modes existed keeps exactly what it had.
+//	"custom"              → exactly what was configured, blank included.
+//	                        A choice is not a gap to be helpfully filled.
+func relayIsAutomatic(s Settings) bool {
+	return s.RelayMode == "automatic" || (s.RelayMode == "" && s.Relay == "")
+}
+
 // ErrBadRelayMode is a relay mode this build does not understand.
 type ErrBadRelayMode struct{ Mode string }
 
@@ -119,13 +137,28 @@ func (r *Runtime) SetSettings(s Settings) error {
 	}
 	r.ks.Settings = b
 	err = r.saveKeystore()
-	// Restart the loop when the address OR the cadence changed.
+	// Restart the loop when the address, the cadence OR THE MODE changed.
+	//
+	// The mode used to be missing from this list, and the consequence was
+	// invisible in the worst way: switching to automatic saved the
+	// preference and then did nothing at all, because the only thing that
+	// ever ran a selection was Open. The node sat with no personal relay
+	// — measured 60 s and counting — until somebody restarted it, and
+	// every screen that needs one refused meanwhile.
 	relayChanged := s.Relay != cur.Relay || s.RelaySyncSeconds != cur.RelaySyncSeconds
-	r.mu.Unlock() // release before applyRelaySync (it takes r.mu itself)
+	modeChanged := s.RelayMode != cur.RelayMode
+	r.mu.Unlock() // release before either call (both take r.mu themselves)
 	if err != nil {
 		return err
 	}
-	if relayChanged {
+	switch {
+	case modeChanged && relayIsAutomatic(s):
+		// The same background path Open takes: last-known-good applies at
+		// once, a re-measure happens only when the network moved or the
+		// reading is stale. Nothing here waits on a probe.
+		r.startAutomaticRelay(relayInterval(s))
+	case relayChanged || modeChanged:
+		// Custom, or a changed address: exactly what was configured.
 		r.applyRelaySync(s.Relay, relayInterval(s))
 	}
 	return nil
@@ -159,9 +192,13 @@ func (r *Runtime) TestLLM(ctx context.Context) error {
 
 // settingsJSON is the API view: it carries has_key instead of the key itself.
 func settingsJSON(s Settings) map[string]any {
-	mode := s.RelayMode
-	if mode == "" {
-		mode = "custom" // "" is legacy-custom; the API always says which
+	// Report the mode IN EFFECT, not the stored string. "" means custom on
+	// a node that has an address and automatic on one that does not, and a
+	// screen showing "Custom" while the node measures would be a plain lie
+	// about what it is doing.
+	mode := "custom"
+	if relayIsAutomatic(s) {
+		mode = "automatic"
 	}
 	return map[string]any{
 		"theme": s.Theme, "preset": s.Preset, "render_mode": s.RenderMode,

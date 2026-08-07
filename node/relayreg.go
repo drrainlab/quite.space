@@ -122,6 +122,34 @@ var BuiltinRelayRegistry = RelayRegistry{
 			Official: true,
 			// no pins: local-lan profile
 		},
+		{
+			// The shared test relay. Named for what it IS: standing this box
+			// up (ADR/plan, 2026-08-05) came with the warning that it must
+			// never drift into being production infrastructure, and a label
+			// saying "official EU relay" is exactly how that drift starts.
+			//
+			// It sits BELOW local-dev on priority, but priority is only an
+			// administrative tie-break: selection is measured, so a relay on
+			// this machine wins on RTT whenever it is up, and this one is
+			// what a node falls to when it is not.
+			ID:          "staging-1",
+			Endpoint:    "91.201.114.71:7411",
+			Label:       "Shared test relay",
+			Region:      "eu",
+			Priority:    50,
+			ProtocolMin: 1,
+			ProtocolMax: 1,
+			Roles: []string{
+				RelayRoleBootstrap, RelayRolePersonalInbox,
+				RelayRoleSpaceRendezvous, RelayRolePublicHost,
+			},
+			Official: true,
+			// Verified from the running box with `terminal relay
+			// show-identity`, and identical to the pin recorded when it was
+			// stood up — RR-1's persistent identity key held across every
+			// restart since. A SET so rotation is [current, next].
+			SPKIPins: []string{"A63rjukjUJkPVU98l0XPdKjRiDNXTVs1xCm9Xs7jyI4="},
+		},
 	},
 }
 

@@ -111,6 +111,13 @@ func TestPersonalResolverModes(t *testing.T) {
 	}
 
 	// Automatic with a measured selection: the registry-resolved endpoint.
+	// The suite runs with an empty registry (see relayreg_testmain_test.go),
+	// so the name this test resolves is installed here rather than borrowed
+	// from whatever the binary happens to ship.
+	withRelayRegistry(t, RelayDescriptor{
+		ID: "local-dev", Endpoint: "127.0.0.1:7411", Region: "local",
+		ProtocolMin: 1, ProtocolMax: 1, Official: true,
+	})
 	if err := r.updateRelayState(func(st *RelayLocalState) {
 		st.SelectedPrimary = "official:local-dev"
 	}); err != nil {

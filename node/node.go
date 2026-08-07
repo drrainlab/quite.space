@@ -491,7 +491,7 @@ func Open(dataDir string, passphrase []byte, displayName string) (rt *Runtime, e
 	// Resume background relay sync. Automatic mode (RR-3) resolves its
 	// primary from measurements in the background — unlock never waits on
 	// a probe; custom mode uses exactly the configured address.
-	if s := r.GetSettings(); s.RelayMode == "automatic" {
+	if s := r.GetSettings(); relayIsAutomatic(s) {
 		r.startAutomaticRelay(relayInterval(s))
 	} else if s.Relay != "" {
 		r.applyRelaySync(s.Relay, relayInterval(s))
