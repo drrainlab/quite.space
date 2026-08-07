@@ -41,17 +41,21 @@ type propsJSON struct {
 }
 
 type documentJSON struct {
-	DocumentID string      `json:"document_id,omitempty"`
-	Kind       string      `json:"kind"`
-	Title      string      `json:"title"`
-	Summary    string      `json:"summary,omitempty"`
-	Cover      string      `json:"cover,omitempty"`
-	Authors    []string    `json:"authors,omitempty"`
-	Tags       []string    `json:"tags,omitempty"`
-	Layout     string      `json:"layout,omitempty"`
-	Discussion string      `json:"discussion,omitempty"`
-	Visibility string      `json:"visibility_intent"`
-	Blocks     []blockJSON `json:"blocks"`
+	DocumentID string   `json:"document_id,omitempty"`
+	Kind       string   `json:"kind"`
+	Title      string   `json:"title"`
+	Summary    string   `json:"summary,omitempty"`
+	Cover      string   `json:"cover,omitempty"`
+	Authors    []string `json:"authors,omitempty"`
+	Tags       []string `json:"tags,omitempty"`
+	Layout     string   `json:"layout,omitempty"`
+	Discussion string   `json:"discussion,omitempty"`
+	Visibility string   `json:"visibility_intent"`
+	// KindHint is a space-card's note about its target (CAT-0b). omitempty
+	// so every document written before it existed keeps exactly the JSON
+	// shape it had — the same rule the atmosphere pointer follows.
+	KindHint string      `json:"kind_hint,omitempty"`
+	Blocks   []blockJSON `json:"blocks"`
 	// A POINTER, so a post without one produces no key at all rather than an
 	// empty object. Every publication written before AM-1 must keep exactly
 	// the JSON shape it had, and the reader treats the field's presence as
@@ -211,6 +215,11 @@ func documentFromJSON(dj documentJSON) (*publication.Document, error) {
 		Kind: dj.Kind, Title: strings.TrimSpace(dj.Title), Summary: dj.Summary,
 		Cover: dj.Cover, DisplayAuthors: dj.Authors, Tags: dj.Tags,
 		Layout: dj.Layout, Discussion: dj.Discussion, Visibility: dj.Visibility,
+		// Accepted, never DERIVED. The authoring client inspects a pasted
+		// link once and records what the target said; a node that inferred
+		// it would be probing on somebody's behalf, which is the fan-out
+		// CAT-0a refused.
+		KindHint: dj.KindHint,
 	}
 	if doc.Visibility == "" {
 		doc.Visibility = "space"
@@ -248,6 +257,7 @@ func documentToJSON(doc *publication.Document) documentJSON {
 		Kind:       doc.Kind, Title: doc.Title, Summary: doc.Summary,
 		Cover: doc.Cover, Authors: doc.DisplayAuthors, Tags: doc.Tags,
 		Layout: doc.Layout, Discussion: doc.Discussion, Visibility: doc.Visibility,
+		KindHint: doc.KindHint,
 	}
 	for _, b := range doc.Blocks {
 		dj.Blocks = append(dj.Blocks, blockToJSON(b))
@@ -687,6 +697,9 @@ func (a *APIServer) handleListPublications(w http.ResponseWriter, r *http.Reques
 			// (CAT-0a). Absent for every other kind, so nothing else grows.
 			if p.Document.Kind == "space" {
 				out[len(out)-1]["link"] = spaceCardTarget(p.Document)
+				if p.Document.KindHint != "" {
+					out[len(out)-1]["kind_hint"] = p.Document.KindHint
+				}
 			}
 		}
 		return nil

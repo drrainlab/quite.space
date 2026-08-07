@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/drrainlab/quiet_places/protocol/id"
+	"github.com/drrainlab/quiet_places/protocol/publication"
 	"github.com/drrainlab/quiet_places/terminals"
 )
 
@@ -152,4 +153,26 @@ func policyOf(t *testing.T, rt *Runtime, tid id.TerminalID) terminals.SpacePolic
 		t.Fatal(err)
 	}
 	return pol
+}
+
+// The word "directory" exists in two packages and cannot be shared: layering
+// forbids protocol/publication importing terminals. So it is duplicated on
+// purpose — the same arrangement validRelayRefSyntax has with ParseRelayRef —
+// and this test lives in the one package that imports both, so the two halves
+// cannot drift apart unnoticed.
+func TestTheHintVocabularyMatchesTheSignedOne(t *testing.T) {
+	card := &publication.Document{
+		DocumentID: [16]byte{7},
+		Kind:       "space",
+		Title:      "a directory",
+		Visibility: "public-intent",
+		KindHint:   terminals.SpaceKindDirectory,
+		Blocks: []publication.Block{{
+			ID: "l1", Type: "link",
+			RawProps: publication.EncodeTextProps(publication.TextProps{Text: "qs:abc"}),
+		}},
+	}
+	if err := publication.Validate(card, func(string) bool { return true }); err != nil {
+		t.Fatalf("the signed vocabulary and the hint vocabulary have drifted: %v", err)
+	}
 }

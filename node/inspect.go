@@ -65,7 +65,18 @@ type SpaceInspection struct {
 	Join    string
 	Frozen  bool
 
-	Cards      []InspectedCard
+	Cards []InspectedCard
+	// CardsTotal is how many this READING carried, and Truncated says
+	// whether the listing bound cut it.
+	//
+	// Neither is a claim about how many the space holds. The projection is
+	// bounded in BYTES and drops its oldest frames to fit, so a stranger
+	// sees what the publisher's last projection could carry, and that is
+	// the only truth available to somebody who holds no replica.
+	//
+	// The two ceilings lie close together and neither reliably binds first:
+	// the same 203 posts arrived as 194 on one run and 201 on the next,
+	// because frame sizes vary and so does where the byte budget lands.
 	CardsTotal int
 	Truncated  bool
 }
@@ -82,6 +93,10 @@ type InspectedCard struct {
 	Tags       []string
 	Author     string
 	Clock      uint64
+	// KindHint is the card author's note about the target (CAT-0b), and it
+	// settles nothing: this same inspection, run on the target, is what
+	// does. Absent means unknown, never "ordinary".
+	KindHint string
 	// Link is the target of a space-card, absent for every other kind.
 	// Produced by spaceCardTarget — the same one definition the ordinary
 	// publications list uses, so the two cannot disagree about where a
@@ -158,6 +173,7 @@ func (r *Runtime) InspectPublicSpace(reference string, refresh bool) (*SpaceInsp
 			c.Tags = p.Document.Tags
 			if p.Document.Kind == "space" {
 				c.Link = spaceCardTarget(p.Document)
+				c.KindHint = p.Document.KindHint
 			}
 		}
 		out.Cards = append(out.Cards, c)
@@ -221,6 +237,9 @@ func (a *APIServer) handlePublicInspect(w http.ResponseWriter, r *http.Request) 
 		if c.Link != "" {
 			row["link"] = c.Link
 		}
+		if c.KindHint != "" {
+			row["kind_hint"] = c.KindHint
+		}
 		cards = append(cards, row)
 	}
 	out := map[string]any{
@@ -254,4 +273,3 @@ func (a *APIServer) handlePreviewClose(w http.ResponseWriter, r *http.Request) {
 	a.rt.previews.drop(r.PathValue("pid"))
 	writeJSON(w, map[string]bool{"ok": true})
 }
-

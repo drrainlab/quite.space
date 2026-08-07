@@ -37,6 +37,15 @@ const (
 var allowedKinds = map[string]bool{
 	"article": true, "note": true, "release": true, "log": true, "space": true,
 }
+
+// allowedKindHint is the closed vocabulary of a space-card's kind hint
+// (CAT-0b). The word "directory" is deliberately duplicated from
+// terminals.SpaceKindDirectory — this package cannot import terminals, the
+// layering runs the other way — exactly as validRelayRefSyntax duplicates
+// node.ParseRelayRef. A test in node, which imports both, keeps them in
+// step.
+var allowedKindHint = map[string]bool{"directory": true, "space": true}
+
 var allowedVisibility = map[string]bool{"space": true, "public-intent": true}
 var allowedDiscussion = map[string]bool{"": true, "thread": true, "off": true}
 var allowedLayout = map[string]bool{"": true, "editorial": true, "compact": true}
@@ -79,6 +88,22 @@ type Document struct {
 	// Atmosphere is the environment this post is meant to be read in
 	// (post.atmosphere.v1). Optional; absent means an ordinary post.
 	Atmosphere *Atmosphere
+	// KindHint is what the AUTHORING CLIENT saw when it looked at this
+	// card's target (CAT-0b): "directory" or "space". Space-cards only.
+	//
+	// It is a hint and settles nothing. It rides the CARD's document,
+	// signed by the CARD's author, so it means "when I listed this, the
+	// target said it was a directory" — never what the target says now.
+	// Inspecting the target is what settles that, and an inspect answer
+	// replaces a hint rather than merging with it.
+	//
+	// Absent means UNKNOWN, not "ordinary": a card written before this
+	// existed, or by a client that could not reach the target at the time,
+	// carries nothing. Nothing may gate on it — not authorization, not
+	// eligibility, not a decision to dial. Its only job is to let a listing
+	// draw the right affordance without probing every row, which is the
+	// fan-out CAT-0a refused.
+	KindHint string
 	// RawExtra holds document-level keys this build does not understand,
 	// verbatim, so an editor cannot silently delete what a newer client
 	// wrote. See the note on Extra below.
@@ -132,12 +157,13 @@ const (
 	docKeyVisibility = 10
 	docKeyBlocks     = 11
 	docKeyAtmosphere = 12
+	docKeyKindHint   = 13
 
 	// maxKnownDocKey is the highest key this build understands. ADR-009 makes
 	// the wire-key table append-only, so anything above this was added by a
 	// newer version and anything at or below it we either know or must not
 	// pretend to preserve.
-	maxKnownDocKey = docKeyAtmosphere
+	maxKnownDocKey = docKeyKindHint
 )
 
 // MaxRawExtraBytes bounds what an unknown-key passenger may weigh. Without a
@@ -177,6 +203,9 @@ func (doc *Document) Encode() []byte {
 		n++
 	}
 	if doc.Atmosphere != nil {
+		n++
+	}
+	if doc.KindHint != "" {
 		n++
 	}
 	extra := doc.retainableExtra()
@@ -230,6 +259,10 @@ func (doc *Document) Encode() []byte {
 	if doc.Atmosphere != nil {
 		buf = codec.AppendUint(buf, docKeyAtmosphere)
 		buf = doc.Atmosphere.encode(buf)
+	}
+	if doc.KindHint != "" {
+		buf = codec.AppendUint(buf, docKeyKindHint)
+		buf = codec.AppendText(buf, doc.KindHint)
 	}
 	// Last, and only keys above the known range: ADR-009's table is
 	// append-only, so everything we do not recognise was added later and
@@ -394,6 +427,12 @@ func decodeDocument(d *codec.Decoder) (*Document, error) {
 			}
 		case docKeyAtmosphere:
 			doc.Atmosphere, er = decodeAtmosphere(d)
+		case docKeyKindHint:
+			// Tolerant on read: an unrecognised hint from a later build is
+			// kept verbatim and means nothing here, exactly as an unknown
+			// qp.kind does. Refusing it would make a card unreadable over a
+			// field that confers nothing.
+			doc.KindHint, er = d.ReadText()
 		default:
 			// Must-ignore (ADR-009) — but ignore is not the same as forget.
 			// Keep the bytes so an edit round-trip through this build does

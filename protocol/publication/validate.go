@@ -51,6 +51,23 @@ func Validate(doc *Document, assetOK func(hexID string) bool) error {
 			return err
 		}
 	}
+	// A kind hint is about a TARGET, so only a card that has one may carry
+	// it. Without this rule key 13 becomes a general-purpose annotation
+	// slot, and it will be used as one.
+	if doc.KindHint != "" {
+		if doc.Kind != "space" {
+			return errors.New("publication: a kind hint belongs to a space card")
+		}
+		if err := checkText(doc.KindHint, 40, "kind_hint"); err != nil {
+			return err
+		}
+		// Strict on write, tolerant on read (see Decode): garbage is never
+		// signed, while garbage that arrives already signed from a later
+		// build is kept and means nothing here.
+		if !allowedKindHint[doc.KindHint] {
+			return fmt.Errorf("publication: kind hint %q not allowed", doc.KindHint)
+		}
+	}
 
 	// Atmosphere bounds are its own business; its ASSETS resolve through
 	// the unified pass below, exactly like a cover image — an atmosphere
