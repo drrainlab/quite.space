@@ -58,7 +58,10 @@ class RuntimeController private constructor(appContext: Context) {
      */
     private val app: Context = appContext.applicationContext
 
-    private val worker = Executors.newSingleThreadExecutor { r ->
+    // SCHEDULED, not merely single-threaded: AR-1c.6's storage retry needs a
+    // delay, and giving it its own thread would mean two threads touching
+    // SQLite — the one thing this executor exists to prevent.
+    private val worker = Executors.newSingleThreadScheduledExecutor { r ->
         Thread(r, "quiet-runtime").apply { isDaemon = false }
     }
 
@@ -92,6 +95,13 @@ class RuntimeController private constructor(appContext: Context) {
     val notifications: NotificationCoordinator = NotificationCoordinator(
         presenter,
         ledger,
+        // AR-1c.6 — a retry after storage refused, on the controller's own
+        // worker. The same thread SQLite is touched from everywhere else, so
+        // a retry cannot race the arrival it is retrying.
+        { delayMs, run ->
+            worker.schedule({ run() }, delayMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+            Unit
+        },
         // The acknowledgement goes straight to the core: from here the log may
         // stop replaying this candidate, because the host has it in its own
         // durable storage. Called on the Go goroutine that delivered it, and

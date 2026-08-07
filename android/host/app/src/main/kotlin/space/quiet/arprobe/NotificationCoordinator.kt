@@ -51,6 +51,17 @@ package space.quiet.arprobe
 class NotificationCoordinator(
     private val presenter: Presenter,
     private val ledger: Ledger,
+    /**
+     * AR-1c.6 — how a retry gets back here later.
+     *
+     * INJECTED so a test can drive it without a clock, and placed BEFORE the
+     * acker so `NotificationCoordinator(presenter, ledger) { ack(it) }` still
+     * means what it always did: the trailing lambda is the acknowledgement,
+     * and a caller that does not care about retries does not mention them.
+     * The default does nothing, which is exactly the old behaviour — the core
+     * keeps the candidate and replays it on the next attach.
+     */
+    private val schedule: (delayMs: Long, run: () -> Unit) -> Unit = { _, _ -> },
     private val acker: Acker,
 ) {
 
@@ -270,6 +281,11 @@ class NotificationCoordinator(
         val inserted = try {
             ledger.insertPending(c)
         } catch (t: Throwable) {
+            // AND TRY AGAIN WITHOUT WAITING FOR A RESTART. A database that
+            // was locked for a second should cost a second, not a session:
+            // the core's replay is a real guarantee but it only fires when
+            // something re-attaches, which on a phone can be hours.
+            deferForRetry(c)
             return count(Decision.DEFERRED_STORAGE_UNAVAILABLE)
         }
         acker.ack(c.eventId)
@@ -281,11 +297,24 @@ class NotificationCoordinator(
             return count(Decision.SUPPRESSED_ALREADY_PRESENTED)
         }
 
+        return count(presentInserted(c, inserted))
+    }
+
+    /**
+     * Everything after a candidate is safely stored: the rules that decide
+     * whether it is SHOWN.
+     *
+     * Shared with the storage retry, so a candidate that arrived a second
+     * late is treated exactly like one that arrived on time — a second path
+     * with its own copy of these rules is how a suppression stops applying to
+     * half the messages.
+     */
+    private fun presentInserted(c: Candidate, inserted: Insert): Decision {
         if (!enabled) {
             // Terminal, not queued: turning notifications on next week must
             // not produce last week's messages.
             ledger.markSuppressed(c.eventId, NotificationDb.STATE_SUPPRESSED_PERMISSION)
-            return count(Decision.SUPPRESSED_DISABLED)
+            return Decision.SUPPRESSED_DISABLED
         }
 
         // AR-1b.7: keyed on the VISIBLE SPACE and a resumed screen — never on
@@ -294,12 +323,12 @@ class NotificationCoordinator(
         // both. Recorded anyway, so a later reconnect cannot resurrect it.
         if (foreground && c.spaceId == visibleSpace) {
             ledger.markSuppressed(c.eventId, NotificationDb.STATE_SUPPRESSED_ON_SCREEN)
-            return count(Decision.SUPPRESSED_SPACE_ON_SCREEN)
+            return Decision.SUPPRESSED_SPACE_ON_SCREEN
         }
 
         presenter.present(Presentation(c.spaceId, inserted.tag, inserted.spaceLabel, inserted.items))
         ledger.markPresented(c.eventId)
-        return count(Decision.PRESENTED)
+        return Decision.PRESENTED
     }
 
     /**
@@ -386,6 +415,87 @@ class NotificationCoordinator(
             presenter.retireConversation(spaceId, tag)
         }
     }
+
+    // --------------------------------------------------- storage that failed
+
+    /**
+     * Candidates the disk refused, waiting to be offered again.
+     *
+     * BOUNDED, AND SMALL. This is a bridge over a moment, not a queue: if the
+     * storage is gone for good, holding a thousand candidates in memory helps
+     * nobody and the process that dies holding them loses nothing anyway —
+     * NONE of them were acknowledged, so the core still has every one. Past
+     * the bound a candidate simply is not retried, which is exactly the
+     * behaviour that existed before.
+     */
+    private val awaitingStorage = LinkedHashMap<String, Candidate>()
+    private var retryAttempt = 0
+    private var retryArmed = false
+
+    private fun deferForRetry(c: Candidate) {
+        if (awaitingStorage.size >= MAX_DEFERRED) return
+        awaitingStorage[c.eventId] = c
+        armRetry()
+    }
+
+    /**
+     * ONE TIMER FOR ALL OF THEM, backing off. Ten candidates arriving into a
+     * full disk are ten symptoms of one problem, and ten timers would hammer
+     * the thing that is already failing.
+     *
+     * The backoff doubles from a second and stops at a minute; after
+     * [MAX_ATTEMPTS] rounds the whole set is dropped from memory. Dropped is
+     * not lost: nothing here was ever acknowledged, so the core replays all
+     * of it on the next attach — which is where this started and where it
+     * ends if the disk really is gone.
+     */
+    private fun armRetry() {
+        if (retryArmed) return
+        retryArmed = true
+        val delay = RETRY_BASE_MS shl minOf(retryAttempt, 6)
+        schedule(minOf(delay, RETRY_MAX_MS)) { retryStorage() }
+    }
+
+    @Synchronized
+    private fun retryStorage() {
+        retryArmed = false
+        if (awaitingStorage.isEmpty()) {
+            retryAttempt = 0
+            return
+        }
+        retryAttempt++
+        val pending = awaitingStorage.values.toList()
+        var stored = 0
+        for (c in pending) {
+            val inserted = try {
+                ledger.insertPending(c)
+            } catch (t: Throwable) {
+                continue // still unavailable; the rest of this round will fail too
+            }
+            awaitingStorage.remove(c.eventId)
+            stored++
+            // From here it is an ordinary arrival: acknowledged because it is
+            // durable, and shown unless a rule says otherwise.
+            acker.ack(c.eventId)
+            if (inserted != null) count(presentInserted(c, inserted))
+        }
+        if (stored > 0) retryAttempt = 0
+        when {
+            awaitingStorage.isEmpty() -> retryAttempt = 0
+            retryAttempt >= MAX_ATTEMPTS -> {
+                // Give up in memory, deliberately and quietly: the core is
+                // still holding every one of these.
+                awaitingStorage.clear()
+                retryAttempt = 0
+                count(Decision.DEFERRED_STORAGE_UNAVAILABLE)
+            }
+            else -> armRetry()
+        }
+    }
+
+    /** How many candidates are waiting for storage right now. */
+    @Synchronized
+    fun deferredForStorage(): Int = awaitingStorage.size
 
     /** A screen resumed. Which space it is showing is a separate fact. */
     @Synchronized
@@ -485,6 +595,12 @@ class NotificationCoordinator(
     }
 
     companion object {
+        /** A bridge over a moment, not a queue: see awaitingStorage. */
+        const val MAX_DEFERRED = 32
+        const val MAX_ATTEMPTS = 6
+        const val RETRY_BASE_MS = 1_000L
+        const val RETRY_MAX_MS = 60_000L
+
         /** Messages kept per space for aggregation (AR-1b.6's MessagingStyle). */
         const val MESSAGES_PER_SPACE = 8
     }

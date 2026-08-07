@@ -34,12 +34,14 @@ class NotificationCoordinatorTest {
             var state: String,
         )
 
+        var failInserts = false
         val rows = LinkedHashMap<String, Row>()
         val keys = mutableMapOf<String, String>()
         val generations = mutableMapOf<String, Int>()
 
         override fun insertPending(c: NotificationCoordinator.Candidate):
             NotificationCoordinator.Insert? {
+            if (failInserts) throw IllegalStateException("the database is locked")
             if (rows.containsKey(c.eventId)) return null
             keys.getOrPut(c.spaceId) { "k${keys.size}" }
             val gen = generations.getOrPut(c.spaceId) { 0 }
@@ -603,6 +605,92 @@ class NotificationCoordinatorTest {
         assertTrue("a disabled plane must still take its cards down",
             presenter.cleared.contains("a"))
         assertNull(ledger.state("e1"))
+    }
+
+
+    // ------------------------------------------- storage that was not there
+
+    /**
+     * A LOCKED DATABASE SHOULD COST A SECOND, NOT A SESSION.
+     *
+     * The candidate is still never acknowledged while it is unstored — that
+     * is the safety property and it does not move. What changes is that the
+     * host tries again inside the live runtime instead of waiting for
+     * something to re-attach, which on a phone can be hours away.
+     */
+    @Test
+    fun aCandidateTheDiskRefusedIsRetriedWithoutARestart() {
+        presenter = FakePresenter()
+        ledger = FakeLedger()
+        acked = mutableListOf()
+        val pending = mutableListOf<() -> Unit>()
+        ledger.failInserts = true
+        co = NotificationCoordinator(
+            presenter, ledger, { _, run -> pending.add(run) }, { acked.add(it) },
+        )
+
+        assertEquals(
+            NotificationCoordinator.Decision.DEFERRED_STORAGE_UNAVAILABLE,
+            co.onCandidate(candidate("e1", "a")),
+        )
+        assertTrue("nothing may be acknowledged that is not stored", acked.isEmpty())
+        assertEquals(1, co.deferredForStorage())
+        assertEquals("and nothing is shown for it either", 0, presenter.presented.size)
+
+        // The disk comes back, and the retry that was already scheduled runs.
+        ledger.failInserts = false
+        assertEquals("a retry must have been scheduled", 1, pending.size)
+        pending.removeAt(0)()
+
+        assertEquals("now it is acknowledged", listOf("e1"), acked)
+        assertEquals("and shown", 1, presenter.presented.size)
+        assertEquals(0, co.deferredForStorage())
+    }
+
+    /**
+     * IT GIVES UP, AND GIVING UP IS SAFE. After a bounded number of rounds the
+     * memory is cleared — nothing there was ever acknowledged, so the core
+     * still holds every candidate and replays them on the next attach. The
+     * alternative is a process that grows a queue forever against a disk that
+     * is not coming back.
+     */
+    @Test
+    fun itStopsRetryingAndLeavesTheCoreHoldingEverything() {
+        presenter = FakePresenter()
+        ledger = FakeLedger()
+        acked = mutableListOf()
+        val pending = mutableListOf<() -> Unit>()
+        ledger.failInserts = true
+        co = NotificationCoordinator(
+            presenter, ledger, { _, run -> pending.add(run) }, { acked.add(it) },
+        )
+
+        co.onCandidate(candidate("e1", "a"))
+        repeat(NotificationCoordinator.MAX_ATTEMPTS + 2) {
+            if (pending.isNotEmpty()) pending.removeAt(0)()
+        }
+
+        assertEquals("it must stop scheduling", 0, co.deferredForStorage())
+        assertTrue(
+            "and it must never have acknowledged what it could not store",
+            acked.isEmpty(),
+        )
+    }
+
+    /** The queue is a bridge, not a bucket. */
+    @Test
+    fun theWaitingSetIsBounded() {
+        presenter = FakePresenter()
+        ledger = FakeLedger()
+        acked = mutableListOf()
+        ledger.failInserts = true
+        co = NotificationCoordinator(presenter, ledger, { _, _ -> }, { acked.add(it) })
+
+        repeat(NotificationCoordinator.MAX_DEFERRED + 20) { i ->
+            co.onCandidate(candidate("e$i", "a"))
+        }
+        assertEquals(NotificationCoordinator.MAX_DEFERRED, co.deferredForStorage())
+        assertTrue("none of them may be acknowledged", acked.isEmpty())
     }
 
 }
