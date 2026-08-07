@@ -68,7 +68,7 @@ type previewSession struct {
 	kind   string
 	frozen bool
 	assets map[string]*schemas.AssetRef
-	born    time.Time
+	born   time.Time
 	// fetcher drives the swarm for this session (PM-2). Every death path
 	// of the session closes it — that is what makes "nothing survives"
 	// true for in-flight downloads too.
