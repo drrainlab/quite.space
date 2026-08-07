@@ -6,6 +6,25 @@
 
 let pubView = 'chat';        // chat | posts (per open space)
 let openDocID = null;        // article currently open
+
+/**
+ * READING MODE: an open article gets the screen.
+ *
+ * Both side columns shut, the space's own bar goes, and what is left is the
+ * post and the way back out of it. Deliberately an OVERRIDE rather than a
+ * state change — it sets one class and stores nothing, so whatever somebody
+ * had folded or unfolded is exactly what returns when they leave. Calling
+ * setPanel here instead would quietly rewrite their arrangement every time
+ * they read something.
+ *
+ * It is set in the two places the article actually appears and disappears,
+ * not wherever an article is mentioned: reading is "the article is on
+ * screen", and any other definition drifts from that within a wave.
+ * @param {boolean} on
+ */
+function setReading(on) {
+  document.body.classList.toggle('reading', !!on);
+}
 let composerDoc = null;      // documentJSON being edited
 let composerBase = '';       // base_revision_event_id when editing
 
@@ -17,6 +36,9 @@ function randHex16() {
 
 function switchView(v) {
   pubView = v;
+  // Chat and Shelf are not reading, and neither is the post FEED — only an
+  // open article is. refreshPosts() below turns it off for the feed case.
+  setReading(false);
   document.querySelectorAll('#viewSwitch button').forEach(b =>
     b.classList.toggle('sel', b.dataset.v === v));
   const posts = v === 'posts', shelf = v === 'shelf';
@@ -145,6 +167,10 @@ async function refreshPosts() {
   if (nav !== pubNav) return; // somebody opened an article while we fetched
   document.getElementById('pubArticle').style.display = 'none';
   document.getElementById('pubFeed').style.display = '';
+  // AFTER the guard on purpose: that early return is the case where an
+  // article opened while this fetch was in flight, and leaving reading
+  // there would strip the chrome back on over a post somebody just opened.
+  setReading(false);
 }
 
 // ---- article view ----
@@ -371,6 +397,7 @@ function renderArticle(p, mode) {
 
   document.getElementById('pubFeed').style.display = 'none';
   box.style.display = '';
+  setReading(true);
   // Now that the article has layout, the atmosphere can measure its shell.
   if (preserved) {
     ATMO.reattach(box);

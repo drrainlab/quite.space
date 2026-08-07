@@ -653,6 +653,17 @@ function spaceName(sp) {
 
 async function refresh() {
   if (authDead) return;
+  // READING IS DERIVED, never remembered. Whatever navigation happens —
+  // another space, Discover, a shared post, Signals — the chrome comes back
+  // the moment an article is not the thing on screen. Deriving it here
+  // rather than clearing it at every exit is the difference between a rule
+  // and a list of places somebody has to remember to update.
+  if (typeof setReading === 'function') {
+    const art = document.getElementById('pubArticle');
+    const content = document.getElementById('content');
+    setReading(!!art && art.style.display !== 'none' &&
+      !!content && content.style.display !== 'none');
+  }
   try {
     status = await api('/api/status');
     // Somebody may be waiting at a door. Folded into the refresh that was
@@ -810,10 +821,15 @@ function renderPublicSurface(sp) {
   const readerBar = document.getElementById('readerBar');
   const joinBtn = document.getElementById('joinWriteBtn');
   const note = document.getElementById('readOnlyNote');
+  // The composer belongs to the CHAT view. This function runs on every tick
+  // and used to force it visible regardless, so the box for writing into the
+  // space sat under the post feed and under an open article — switchView had
+  // hidden it a moment earlier and the next refresh brought it back.
+  const chatting = typeof pubView === 'undefined' || pubView === 'chat';
   if (!sp || !sp.visibility) {
     badge.style.display = 'none';
     share.style.display = 'none';
-    composer.style.display = '';
+    composer.style.display = chatting ? '' : 'none';
     readerBar.style.display = 'none';
     return;
   }
@@ -842,19 +858,19 @@ function renderPublicSurface(sp) {
   if (sp.frozen) {
     // Frozen overrides everything below: read-only for all, honestly.
     composer.style.display = 'none';
-    readerBar.style.display = '';
+    readerBar.style.display = chatting ? '' : 'none';
     joinBtn.style.display = 'none';
     note.style.display = '';
     note.textContent = 'frozen by the owner — publication is paused';
     return;
   }
   if (sp.can_write) {
-    composer.style.display = '';
+    composer.style.display = chatting ? '' : 'none';
     readerBar.style.display = 'none';
     return;
   }
   composer.style.display = 'none';
-  readerBar.style.display = '';
+  readerBar.style.display = chatting ? '' : 'none';
   const joinable = sp.join === 'open' && sp.role === 'reader';
   joinBtn.style.display = joinable ? '' : 'none';
   note.style.display = joinable ? 'none' : '';

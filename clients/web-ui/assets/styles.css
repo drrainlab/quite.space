@@ -212,6 +212,25 @@
   main > * { min-height: 0; }
   body.fold-nav main { --col-nav: 0px; }
   body.fold-info main { --col-info: 0px; }
+  /* READING. An article gets the screen: both side columns shut, the space's
+     own bar goes, and what is left is the post and the way back out of it.
+     Ordered AFTER the fold rules so it wins while it lasts.
+
+     It is an OVERRIDE, never a state change: body.reading touches no stored
+     preference, so whatever somebody had folded or unfolded is exactly what
+     comes back when they leave. The panel toggle hides with the panels,
+     because a button that cannot do anything is worse than no button. */
+  body.reading main { --col-nav: 0px; --col-info: 0px; }
+  /* The panels are ZEROED, never display:none — the columns are positional,
+     so removing an item slides #content into the nav column and the article
+     wraps one letter per line. Verified by doing it. The padding goes too,
+     because a 0-wide panel still paints its own and it showed as a sliver
+     down each edge. */
+  body.reading #sidebar, body.reading #members { padding: 0; overflow: hidden; }
+  body.reading #convbar,
+  body.reading #persona,
+  body.reading #honesty,
+  body.reading .panel-toggle { display: none; }
   #sidebar {
     padding: var(--pad-panel);
     display: flex; flex-direction: column; gap: 8px;
@@ -1203,8 +1222,8 @@
     #sidebar { left: 0; }
     #members { right: 0; }
     #sidebar > *, #members > * { min-width: 0; }
-    body.fold-nav #sidebar { transform: translateX(-100%); }
-    body.fold-info #members { transform: translateX(100%); }
+    body.fold-nav #sidebar, body.reading #sidebar { transform: translateX(-100%); }
+    body.fold-info #members, body.reading #members { transform: translateX(100%); }
     #content { min-height: 0; }
     dialog { max-width: 100%; width: calc(100% - 16px); }
     #dlgPass, #dlgJoin { width: 100%; max-width: 100%; height: 100%;
