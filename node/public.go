@@ -688,6 +688,9 @@ type PolicyDelta struct {
 	// 0 = back to the built-in defence cap. The pointer is what keeps those
 	// two apart.
 	MaxFramesPerAuthor *int
+	// Kind declares what the space is for (CAT-0b). Nil = unchanged; ""
+	// takes the declaration back. Same pointer reason as the limit above.
+	Kind *string
 }
 
 // RevisePolicy re-signs the space manifest with the revised policy
@@ -734,6 +737,11 @@ func (r *Runtime) RevisePolicy(tid id.TerminalID, d PolicyDelta) error {
 		default:
 			return errors.New("node: unknown publish mode")
 		}
+		// next.Kind is deliberately NOT touched by either arm. The rate limit
+		// above is cleared because it belongs to one mode; a purpose belongs
+		// to the space. A directory that opens itself to contributors is
+		// still a directory, and the code right above teaches the opposite
+		// reflex to whoever edits this next.
 	}
 	if d.AddCurator != nil {
 		next.Writers = append(next.Writers, *d.AddCurator)
@@ -777,6 +785,15 @@ func (r *Runtime) RevisePolicy(tid id.TerminalID, d PolicyDelta) error {
 				terminals.MinFramesPerAuthor, terminals.MaxFramesPerAuthor)
 		}
 		next.MaxFramesPerAuthor = *d.MaxFramesPerAuthor
+	}
+	if d.Kind != nil {
+		// Checked here as well as in Validate so the error names the field
+		// rather than arriving as a policy refusal — the same courtesy the
+		// relay grammar and the rate range already get.
+		if k := *d.Kind; k != terminals.SpaceKindOrdinary && k != terminals.SpaceKindDirectory {
+			return fmt.Errorf("node: %q is not a purpose this build knows", k)
+		}
+		next.Kind = *d.Kind
 	}
 	if err := st.space.ReviseManifest(title, character, next); err != nil {
 		return err
@@ -833,6 +850,7 @@ func (a *APIServer) handleRevisePolicy(w http.ResponseWriter, r *http.Request) {
 		Frozen        *bool                               `json:"frozen"`
 		Relays        *[]string                           `json:"relays"`
 		RatePerCycle  *int                                `json:"rate_per_cycle"`
+		Kind          *string                             `json:"kind"`
 	}](r)
 	if err != nil {
 		httpErr(w, http.StatusBadRequest, err)
@@ -851,7 +869,7 @@ func (a *APIServer) handleRevisePolicy(w http.ResponseWriter, r *http.Request) {
 	}
 	delta := PolicyDelta{Visibility: body.Visibility, Publish: body.Publish,
 		Frozen: body.Frozen, Relays: body.Relays,
-		MaxFramesPerAuthor: body.RatePerCycle}
+		MaxFramesPerAuthor: body.RatePerCycle, Kind: body.Kind}
 	if body.AddCurator != nil {
 		b, err := parseBinding(body.AddCurator.Principal, body.AddCurator.Device)
 		if err != nil {

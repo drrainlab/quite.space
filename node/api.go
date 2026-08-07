@@ -442,6 +442,11 @@ type spaceResp struct {
 	// none. It comes from the manifest, so the control reflects what the
 	// space actually says rather than what was last typed at it.
 	RatePerCycle int `json:"rate_per_cycle,omitempty"`
+	// Kind is what the space DECLARES it is for (CAT-0b): "" ordinary, or
+	// "directory". Signed by the space, so this is the owner's statement
+	// rather than a word somebody typed into a tag — but it confers nothing
+	// and the client reads it only to draw the place as what it says it is.
+	Kind string `json:"kind,omitempty"`
 	// PH-3 availability roles this node has volunteered for. Neither confers
 	// any authority over the space.
 	Mirror bool `json:"mirror,omitempty"`
@@ -479,6 +484,7 @@ func (a *APIServer) handleSpaces(w http.ResponseWriter, r *http.Request) {
 				resp.Publish = pol.Publish
 				resp.Frozen = pol.Frozen
 				resp.RatePerCycle = pol.MaxFramesPerAuthor
+				resp.Kind = pol.Kind
 			}
 			resp.IgnoredByPolicy = st.space.PolicyStats.IgnoredTotal
 			meta := a.rt.ks.Spaces[s.ID]
@@ -514,6 +520,10 @@ func (a *APIServer) handleCreateSpace(w http.ResponseWriter, r *http.Request) {
 		Visibility string `json:"visibility"` // "" | "unlisted" | "public"
 		Join       string `json:"join"`       // "" | "open"
 		Publish    string `json:"publish"`    // "" (all) | "curated"
+		// What the space is FOR (CAT-0b): "" ordinary | "directory".
+		// Public spaces only; a private create carrying one is refused by
+		// the policy's own Validate rather than here.
+		Kind string `json:"kind"`
 	}](r)
 	// An empty title is a CHOICE, not a missing value: the space will be
 	// called after whoever is in it. Requiring a name here forced people to
@@ -547,6 +557,7 @@ func (a *APIServer) handleCreateSpace(w http.ResponseWriter, r *http.Request) {
 		Visibility: terminals.Visibility(body.Visibility),
 		Join:       body.Join,
 		Publish:    body.Publish,
+		Kind:       body.Kind,
 	}
 	// Beta simple mode (RR-5): a NEW public space signs its creator's
 	// relay as the space's relay set — the one moment the personal relay

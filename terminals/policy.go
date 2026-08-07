@@ -111,7 +111,32 @@ type SpacePolicy struct {
 	// attested writer bindings, and a rate limit there would be a second
 	// lock on a door that is already shut.
 	MaxFramesPerAuthor int
+	// Kind is what the space says it is FOR (CAT-0b). "" is an ordinary
+	// space; SpaceKindDirectory declares "I am meant to be a place through
+	// which other spaces are found".
+	//
+	// It CONFERS NOTHING. No admission decision, no rate, no relay choice,
+	// no sync or fetch behaviour reads it — refreshPolicy deliberately does
+	// not. That inertness is the whole point: it makes a directory a
+	// semantic layer over an ordinary public space rather than a second
+	// protocol with its own network.
+	//
+	// What it replaces is a `catalog` TAG on a publication, which said only
+	// that some author typed a word. This is the owner's own signature on a
+	// statement about their own space, and it travels, revises and
+	// anti-rolls-back exactly like the rest of the policy.
+	//
+	// Public spaces only: a directory nobody can read is not a directory.
+	Kind string
 }
+
+// The purposes a space may declare. Named SpaceKind* rather than Kind* on
+// purpose — this file already reaches for manifest.KindSpace, and two
+// taxonomies sharing one prefix a few lines apart is how they get confused.
+const (
+	SpaceKindOrdinary  = ""          // no declaration: an ordinary space
+	SpaceKindDirectory = "directory" // a place through which spaces are found
+)
 
 // validRelayRefSyntax is the SYNTACTIC half of the RelayRef grammar —
 // duplicated from node.ParseRelayRef on purpose (terminals must not
@@ -188,8 +213,8 @@ func (p SpacePolicy) Validate() error {
 	switch p.Effective() {
 	case VisibilityPrivate:
 		if p.Join != JoinNone || p.Publish != PublishAll || len(p.Writers) != 0 || p.Frozen ||
-			len(p.Relays) != 0 || p.MaxFramesPerAuthor != 0 {
-			return errors.New("terminals: private spaces carry no join/publish policy")
+			len(p.Relays) != 0 || p.MaxFramesPerAuthor != 0 || p.Kind != SpaceKindOrdinary {
+			return errors.New("terminals: private spaces carry no access or purpose policy")
 		}
 		return nil
 	case VisibilityUnlisted, VisibilityPublic:
@@ -214,6 +239,18 @@ func (p SpacePolicy) Validate() error {
 		(p.MaxFramesPerAuthor < MinFramesPerAuthor || p.MaxFramesPerAuthor > MaxFramesPerAuthor) {
 		return fmt.Errorf("terminals: contribution limit %d is outside %d..%d",
 			p.MaxFramesPerAuthor, MinFramesPerAuthor, MaxFramesPerAuthor)
+	}
+	// Strict on write, tolerant on read (see ParsePolicy's kind arm): garbage
+	// is never SIGNED, while garbage that arrives already signed by a build
+	// from the future is ignored rather than fatal.
+	//
+	// No constraint against the publish modes below on purpose. A directory
+	// works as a curated list and as an open board of links, unlisted and
+	// public alike; forbidding any of those would encode a curation opinion
+	// into a label whose whole claim is that a directory is an ORDINARY
+	// space with a stated purpose.
+	if p.Kind != SpaceKindOrdinary && p.Kind != SpaceKindDirectory {
+		return fmt.Errorf("terminals: unknown space kind %q", p.Kind)
 	}
 	switch p.Publish {
 	case PublishCurated: // broadcast
@@ -266,6 +303,12 @@ func (p SpacePolicy) Labels() []string {
 	if q.MaxFramesPerAuthor != 0 {
 		out = append(out, charPrefix+"rate="+strconv.Itoa(q.MaxFramesPerAuthor))
 	}
+	// The declared purpose (CAT-0b), conditional for the same reason: a space
+	// that never said what it is for emits nothing, and its manifest is
+	// unchanged from before this field existed.
+	if q.Kind != SpaceKindOrdinary {
+		out = append(out, charPrefix+"kind="+q.Kind)
+	}
 	for _, w := range q.Writers {
 		out = append(out, charPrefix+"writer="+
 			hex.EncodeToString(w.Principal[:])+":"+hex.EncodeToString(w.Device[:]))
@@ -295,7 +338,7 @@ func ParsePolicy(labels []string) SpacePolicy {
 			continue
 		}
 		switch kv[0] {
-		case "visibility", "join", "publish", "frozen", "rate":
+		case "visibility", "join", "publish", "frozen", "rate", "kind":
 			if seen[kv[0]] {
 				bad = true // conflicting duplicates: ambiguous, fail closed
 				continue
@@ -321,6 +364,24 @@ func ParsePolicy(labels []string) SpacePolicy {
 					continue
 				}
 				p.MaxFramesPerAuthor = n
+			case "kind":
+				// NOT like rate, and the difference is the whole point.
+				//
+				// A malformed rate fails the policy closed because a misread
+				// NUMBER changes who may write. A kind confers nothing, and
+				// `bad` collapses the policy to private — which makes the
+				// space UNREADABLE (MaterializePublicProjection refuses a
+				// non-public policy). Failing closed on an unrecognised
+				// purpose would mean that the day a later build publishes
+				// qp.kind=gallery, every space carrying it goes dark on this
+				// one. An unknown purpose is simply no purpose.
+				//
+				// A duplicated KEY is still ambiguous, handled above: that is
+				// consistency with every other scalar, and it is unforgeable
+				// without the space key since labels are signed.
+				if kv[1] == SpaceKindDirectory {
+					p.Kind = kv[1]
+				}
 			}
 		case "writer":
 			parts := strings.SplitN(kv[1], ":", 2)
