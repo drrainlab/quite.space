@@ -45,6 +45,23 @@ type NavGroup struct {
 	Collapsed bool
 }
 
+// NavSource is a directory this device's Discover reads from (CAT-0b).
+//
+// It holds a LINK, not a NavRef, and that is the whole point: a NavRef is a
+// terminal id, and a terminal id only exists once a replica does. Browsing
+// is supposed to create no replica, so a source a person added by pasting a
+// link must be storable before — and without ever — holding one.
+type NavSource struct {
+	// Link is the share link as it was given, relay-bound and irrevocable.
+	Link string
+	// Label is what to call it in the list, and what it was called when it
+	// was added. Unlike NavRef.Label this is always the displayed name:
+	// there is no terminal here to ask for a truer one.
+	Label string
+	// AddedAt is a wall-clock second, for ordering the person's own list.
+	AddedAt uint64
+}
+
 // NavState is the whole of a person's local arrangement.
 type NavState struct {
 	// Version increments on every write. It is what makes a lost update
@@ -59,6 +76,18 @@ type NavState struct {
 	Recent []NavRef
 	// Collapsed holds built-in section ids: pinned|groups|spaces|people|catalogs.
 	Collapsed []string
+	// Sources are the directories this device's Discover reads, in the order
+	// the person added them. They sit AFTER the official entries and are
+	// what "Add to Discover" visibly does.
+	Sources []NavSource
+	// OfficialOff switches off the compiled-in official directory.
+	//
+	// The polarity is deliberate. A compiled-in address is not the person's
+	// to delete — it returns with the next build — so what they get is a
+	// preference to switch it off, and the zero value has to mean ON: an
+	// older record, and a node that has never expressed a preference, must
+	// both come up with the official directory present.
+	OfficialOff bool
 }
 
 // navRefFields, navGroupFields and navStateFields are the CURRENT arities.
@@ -66,9 +95,10 @@ type NavState struct {
 // the tail it does not know (see the loops below), which is what keeps an
 // upgrade from being one-way.
 const (
-	navRefFields   = 2
-	navGroupFields = 4
-	navStateFields = 6
+	navRefFields    = 2
+	navGroupFields  = 4
+	navSourceFields = 3
+	navStateFields  = 8
 )
 
 func appendNavRefs(buf []byte, refs []NavRef) []byte {
@@ -111,6 +141,48 @@ func readNavRefs(d *codec.Decoder) ([]NavRef, error) {
 	return out, nil
 }
 
+func appendNavSources(buf []byte, src []NavSource) []byte {
+	buf = codec.AppendArray(buf, len(src))
+	for _, s := range src {
+		buf = codec.AppendArray(buf, navSourceFields)
+		buf = codec.AppendText(buf, s.Link)
+		buf = codec.AppendText(buf, s.Label)
+		buf = codec.AppendUint(buf, s.AddedAt)
+	}
+	return buf
+}
+
+func readNavSources(d *codec.Decoder) ([]NavSource, error) {
+	n, err := d.ReadArray()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]NavSource, 0, n)
+	for range n {
+		acount, er := d.ReadArray()
+		if er != nil {
+			return nil, er
+		}
+		var s NavSource
+		if s.Link, er = d.ReadText(); er != nil {
+			return nil, er
+		}
+		if s.Label, er = d.ReadText(); er != nil {
+			return nil, er
+		}
+		if s.AddedAt, er = d.ReadUint(); er != nil {
+			return nil, er
+		}
+		for i := navSourceFields; i < acount; i++ {
+			if e := d.SkipItem(); e != nil {
+				return nil, e
+			}
+		}
+		out = append(out, s)
+	}
+	return out, nil
+}
+
 // appendNavState writes the whole arrangement. Every field is an ordered
 // slice, so there is no map to sort and determinism is free.
 func appendNavState(buf []byte, s NavState) []byte {
@@ -131,6 +203,8 @@ func appendNavState(buf []byte, s NavState) []byte {
 	for _, c := range s.Collapsed {
 		buf = codec.AppendText(buf, c)
 	}
+	buf = appendNavSources(buf, s.Sources)
+	buf = codec.AppendBool(buf, s.OfficialOff)
 	return buf
 }
 
@@ -193,6 +267,21 @@ func readNavState(d *codec.Decoder) (NavState, error) {
 			return s, er
 		}
 		s.Collapsed = append(s.Collapsed, c)
+	}
+	// Fields 7 and 8 arrived with CAT-0b, so they are read only when the
+	// record actually carries them. The skip loop below handles the other
+	// direction — an older build reading a newer record — but it cannot
+	// help here: reading a field a shorter record does not have would walk
+	// straight into the next keystore item.
+	if acount >= 7 {
+		if s.Sources, err = readNavSources(d); err != nil {
+			return s, err
+		}
+	}
+	if acount >= 8 {
+		if s.OfficialOff, err = d.ReadBool(); err != nil {
+			return s, err
+		}
 	}
 	for i := navStateFields; i < acount; i++ {
 		if e := d.SkipItem(); e != nil {

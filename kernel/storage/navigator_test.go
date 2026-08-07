@@ -25,6 +25,11 @@ func navSample() NavState {
 		Catalogs:  []NavRef{{Terminal: c, Label: "Official"}},
 		Recent:    []NavRef{{Terminal: a}},
 		Collapsed: []string{"people", "catalogs"},
+		Sources: []NavSource{
+			{Link: "qs:AAAA", Label: "quite.space", AddedAt: 1700},
+			{Link: "qs:BBBB", Label: "community.radio", AddedAt: 1800},
+		},
+		OfficialOff: true,
 	}
 }
 
@@ -66,6 +71,13 @@ func TestKeystoreCarriesTheNavigator(t *testing.T) {
 	}
 	if len(n.Collapsed) != 2 || n.Collapsed[0] != "people" {
 		t.Fatalf("collapsed sections changed: %+v", n.Collapsed)
+	}
+	if len(n.Sources) != 2 || n.Sources[0].Link != "qs:AAAA" ||
+		n.Sources[1].Label != "community.radio" || n.Sources[0].AddedAt != 1700 {
+		t.Fatalf("the directories Discover reads changed: %+v", n.Sources)
+	}
+	if !n.OfficialOff {
+		t.Fatal("the official-directory preference did not survive")
 	}
 
 	// Encoding is deterministic — every field here is an ordered slice, so
@@ -148,5 +160,67 @@ func appendNavStateWide(buf []byte, s NavState) []byte {
 	for _, c := range s.Collapsed {
 		buf = codec.AppendText(buf, c)
 	}
+	buf = codec.AppendArray(buf, len(s.Sources))
+	for _, src := range s.Sources {
+		buf = codec.AppendArray(buf, navSourceFields+1)
+		buf = codec.AppendText(buf, src.Link)
+		buf = codec.AppendText(buf, src.Label)
+		buf = codec.AppendUint(buf, src.AddedAt)
+		buf = codec.AppendText(buf, "a field from the future")
+	}
+	buf = codec.AppendBool(buf, s.OfficialOff)
 	return codec.AppendText(buf, "a whole section from the future")
+}
+
+// THE OTHER DIRECTION, and the one the tail-skip loop cannot cover. A
+// record written before CAT-0b is SHORTER than this build expects, so
+// reading its fields 7 and 8 unconditionally would not fail loudly — it
+// would walk straight into whatever follows in the keystore and decode
+// somebody else's bytes as a directory list.
+func TestANavigatorRecordFromBeforeDirectoriesStillDecodes(t *testing.T) {
+	narrow := appendNavStateNarrow(nil, navSample())
+	// Something after it, so a decoder that reads too far is caught rather
+	// than merely running out of input.
+	narrow = codec.AppendText(narrow, "the next thing in the keystore")
+
+	d := codec.NewDecoder(narrow)
+	got, err := readNavState(d)
+	if err != nil {
+		t.Fatalf("an older record did not decode: %v", err)
+	}
+	if len(got.Pins) != 2 || got.Version != 7 || len(got.Collapsed) != 2 {
+		t.Fatalf("known fields were lost: %+v", got)
+	}
+	if len(got.Sources) != 0 || got.OfficialOff {
+		t.Fatalf("a record with no directories produced some: %+v", got.Sources)
+	}
+	// And the decoder stopped exactly where the record ended.
+	rest, err := d.ReadText()
+	if err != nil || rest != "the next thing in the keystore" {
+		t.Fatalf("the read overran the record: %q %v", rest, err)
+	}
+}
+
+// appendNavStateNarrow writes the SIX-field state this build's predecessor
+// wrote. Like the wide writer, it deliberately does not reuse production
+// code — the point is bytes this build no longer produces.
+func appendNavStateNarrow(buf []byte, s NavState) []byte {
+	buf = codec.AppendArray(buf, 6)
+	buf = codec.AppendUint(buf, s.Version)
+	buf = appendNavRefs(buf, s.Pins)
+	buf = codec.AppendArray(buf, len(s.Groups))
+	for _, g := range s.Groups {
+		buf = codec.AppendArray(buf, navGroupFields)
+		buf = codec.AppendText(buf, g.ID)
+		buf = codec.AppendText(buf, g.Title)
+		buf = codec.AppendBool(buf, g.Collapsed)
+		buf = appendNavRefs(buf, g.Children)
+	}
+	buf = appendNavRefs(buf, s.Catalogs)
+	buf = appendNavRefs(buf, s.Recent)
+	buf = codec.AppendArray(buf, len(s.Collapsed))
+	for _, c := range s.Collapsed {
+		buf = codec.AppendText(buf, c)
+	}
+	return buf
 }

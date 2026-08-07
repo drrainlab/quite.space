@@ -163,10 +163,28 @@
     <div class="sig-bar">
       <button class="btn-plain" onclick="CAT.back()">← back</button>
       <div id="catCrumbs" class="cat-crumbs"></div>
+      <span style="flex:1"></span>
+      <!-- The ONE door to the machinery, and the only place the word
+           "directory" is explained. The ordinary path never opens it. -->
+      <button class="icon-btn" onclick="CAT.openDirectories()"
+        title="Directories" aria-label="Directories">⋯</button>
     </div>
     <div id="catNote" class="nav-note" hidden></div>
     <div id="catList"></div>
   </div>
+  <!-- The Advanced surface behind Discover's ⋯ (CAT-0b). An enthusiast can
+       run entirely without the featured directory from here; the ordinary
+       path never needs it, and neither person gets a different edition. -->
+  <dialog id="dlgDirs" class="sheet">
+    <h3>Directories</h3>
+    <p class="hint">Discover shows the featured directory first, then the ones
+      you add. A directory is an ordinary public space that lists other places.</p>
+    <div id="dirList" class="list"></div>
+    <div class="row">
+      <button class="btn-tinted" onclick="CAT.addDirectory()">+ Add directory</button>
+      <button class="btn-plain" onclick="dlgDirs.close()">Done</button>
+    </div>
+  </dialog>
   <!-- QuietRank: a cross-space inbox, not a fourth tab inside one space. -->
   <div id="signalsScreen" style="display:none">
     <div class="sig-bar">

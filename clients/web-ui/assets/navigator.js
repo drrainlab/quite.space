@@ -53,12 +53,19 @@ const NAV = (() => {
 
   // ---- state plumbing ----
 
-  /** @param {any} s */
+  /**
+   * normalize is also the CLIENT half of the whole-document hazard. save()
+   * PUTs `state`, so a field this function drops is not merely unread — it
+   * is erased on the next pin toggle. Every field the node sends has to
+   * survive this function.
+   * @param {any} s
+   */
   function normalize(s) {
     return {
       version: s.version || 0,
       pins: s.pins || [], groups: (s.groups || []).map(g => ({ ...g, children: g.children || [] })),
       catalogs: s.catalogs || [], recent: s.recent || [], collapsed: s.collapsed || [],
+      sources: s.sources || [], official_off: !!s.official_off,
     };
   }
 
@@ -251,19 +258,24 @@ const NAV = (() => {
   }
 
   /**
-   * A saved catalog. It opens the WALKER rather than the space: a catalog
-   * is a place you look inside, and opening it as an ordinary room is the
-   * dead end this replaces.
-   * @param {NavRef} ref
+   * A directory this device holds. DERIVED, like the People and AI
+   * sections: any held space whose signed policy says it is one. Nothing
+   * is stored and nothing is tagged — a space that stops being a directory
+   * simply stops appearing here, which a stored list could never manage.
+   *
+   * It opens the WALKER rather than the room: a directory is a place you
+   * look inside, and opening it as an ordinary space is the dead end this
+   * replaces.
+   * @param {any} sp
    */
-  function catalogRow(v, ref) {
-    const base = refRow(v, ref, 'catalogs', '');
+  function catalogRow(v, sp) {
+    const base = spaceRow(v, sp, 'catalogs', '');
     return {
       key: base.key, sig: base.sig + '|cat', build: () => {
         const el = base.build();
         el.onclick = (e) => {
           if (/** @type {HTMLElement} */(e.target).closest('.nav-more')) return;
-          CAT.enter('', refName(ref), ref.terminal);
+          CAT.enterHeld(sp.id, spaceName(sp));
         };
         return el;
       },
@@ -372,6 +384,36 @@ const NAV = (() => {
    * this file — the catalog walker uses it, and so will the share picker.
    * @param {string} tid @param {string} label @param {'pins'|'catalogs'} list
    */
+  // ---- the directories Discover reads (CAT-0b) ----
+  //
+  // A source is a LINK, not a NavRef, because a NavRef is a terminal id and
+  // a terminal id only exists once a replica does — which is the thing this
+  // wave stopped browsing from creating. Adding a directory to Discover
+  // must not open it.
+
+  function sources() { return (state.sources || []).slice(); }
+
+  async function addSource(link, label) {
+    const l = String(link || '').trim();
+    if (!l) return;
+    if (!state.sources) state.sources = [];
+    if (state.sources.some(s => s.link === l)) return;
+    state.sources.push({ link: l, label: label || '', added_at: Math.floor(Date.now() / 1000) });
+    await save();
+  }
+
+  async function removeSource(link) {
+    state.sources = (state.sources || []).filter(s => s.link !== link);
+    await save();
+  }
+
+  function officialOff() { return !!state.official_off; }
+
+  async function setOfficialOff(off) {
+    state.official_off = !!off;
+    await save();
+  }
+
   async function addRef(tid, label, list) {
     const target = list === 'catalogs' ? state.catalogs : state.pins;
     if (target.some(r => r.terminal === tid)) return;
@@ -667,7 +709,7 @@ const NAV = (() => {
       spaces: { rows: sendable.filter(s => !s.dyad && !s.ai && matches(s, q)).map(s => spaceRow(v, s, 'spaces', '')) },
       people: { rows: sendable.filter(s => s.dyad && matches(s, q)).map(s => spaceRow(v, s, 'people', '')) },
       ai: { rows: ai.map(s => spaceRow(v, s, 'ai', '')) },
-      catalogs: { rows: state.catalogs.filter(r => refMatches(r, q)).map(r => catalogRow(v, r)) },
+      catalogs: { rows: spaces.filter(s => s.kind === 'directory' && matches(s, q)).map(s => catalogRow(v, s)) },
     };
 
     for (const id of v.sections) {
@@ -764,7 +806,7 @@ const NAV = (() => {
     note('pinned', state.pins.length ? '' : t('nav.pinned.empty'));
     note('groups', state.groups.length ? '' : t('nav.groups.empty'));
     note('people', spaces.some(s => s.dyad) ? '' : t('nav.people.empty'));
-    note('catalogs', state.catalogs.length ? '' : t('nav.catalogs.empty'));
+    note('catalogs', spaces.some(s => s.kind === 'directory') ? '' : t('nav.catalogs.empty'));
     note('spaces', spaces.length ? '' : t('spaces.empty.body'));
     note('recent', state.recent.length ? '' : t('share.recent.empty'));
     // No assistant yet is a different sentence from an empty list: it is
@@ -774,6 +816,7 @@ const NAV = (() => {
 
   return {
     mount, mountPicker, render, busy, addRef,
+    sources, addSource, removeSource, officialOff, setOfficialOff,
     /** @type {(id:string)=>void} */
     onOpen: () => {},
     noteRecent,

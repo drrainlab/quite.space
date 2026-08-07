@@ -31,6 +31,10 @@ const (
 	maxNavRecent   = 16
 	maxNavTitle    = 64 // runes, not bytes
 	maxNavLabel    = 96
+	// A source is a pasted share link, so it is bounded by what a link can
+	// be rather than by what a person can be expected to keep track of.
+	maxNavSources    = 32
+	maxNavSourceLink = 512
 )
 
 // ErrNavigatorStale says somebody else wrote first. It is a 409 rather than
@@ -78,6 +82,7 @@ func cloneNav(s storage.NavState) storage.NavState {
 	out.Catalogs = append([]storage.NavRef(nil), s.Catalogs...)
 	out.Recent = append([]storage.NavRef(nil), s.Recent...)
 	out.Collapsed = append([]string(nil), s.Collapsed...)
+	out.Sources = append([]storage.NavSource(nil), s.Sources...)
 	out.Groups = make([]storage.NavGroup, len(s.Groups))
 	for i, g := range s.Groups {
 		g.Children = append([]storage.NavRef(nil), s.Groups[i].Children...)
@@ -108,6 +113,9 @@ func validateNav(s *storage.NavState) error {
 	if err := validateRefs(s.Recent); err != nil {
 		return err
 	}
+	if err := normalizeSources(s); err != nil {
+		return err
+	}
 	seen := map[string]bool{}
 	for i := range s.Groups {
 		g := &s.Groups[i]
@@ -130,6 +138,41 @@ func validateNav(s *storage.NavState) error {
 			return err
 		}
 	}
+	return nil
+}
+
+// normalizeSources trims, drops the empty ones and keeps the FIRST of any
+// duplicate link.
+//
+// Normalising rather than refusing is the right shape here because the
+// client sends the whole document on every write: a person who adds a
+// directory they already have should see one row, not a 400 telling them
+// their whole arrangement is invalid. Two links to the same space through
+// different relays are NOT duplicates and are not treated as such — a link
+// is relay-bound, and the second one exists precisely so the place survives
+// the first relay going away.
+func normalizeSources(s *storage.NavState) error {
+	if len(s.Sources) > maxNavSources {
+		return errors.New("node: too many directories")
+	}
+	out := make([]storage.NavSource, 0, len(s.Sources))
+	seen := map[string]bool{}
+	for _, src := range s.Sources {
+		src.Link = strings.TrimSpace(src.Link)
+		src.Label = strings.TrimSpace(src.Label)
+		if src.Link == "" || seen[src.Link] {
+			continue
+		}
+		if len(src.Link) > maxNavSourceLink {
+			return errors.New("node: that directory link is too long")
+		}
+		if utf8.RuneCountInString(src.Label) > maxNavLabel {
+			return errors.New("node: that directory name is too long")
+		}
+		seen[src.Link] = true
+		out = append(out, src)
+	}
+	s.Sources = out
 	return nil
 }
 
@@ -160,6 +203,12 @@ type navGroupJSON struct {
 	Collapsed bool         `json:"collapsed,omitempty"`
 }
 
+type navSourceJSON struct {
+	Link    string `json:"link"`
+	Label   string `json:"label,omitempty"`
+	AddedAt uint64 `json:"added_at,omitempty"`
+}
+
 type navStateJSON struct {
 	Version   uint64         `json:"version"`
 	Pins      []navRefJSON   `json:"pins"`
@@ -167,6 +216,13 @@ type navStateJSON struct {
 	Catalogs  []navRefJSON   `json:"catalogs"`
 	Recent    []navRefJSON   `json:"recent"`
 	Collapsed []string       `json:"collapsed"`
+	// Sources and OfficialOff are what Discover reads from (CAT-0b). They
+	// travel on the SAME document as everything else, so a client that PUTs
+	// the whole state after a pin toggle must send them back — the round
+	// trip is the contract, and dropping them here would silently undo a
+	// person's Add to Discover on their next drag.
+	Sources     []navSourceJSON `json:"sources"`
+	OfficialOff bool            `json:"official_off,omitempty"`
 }
 
 func navRefsOut(refs []storage.NavRef) []navRefJSON {
@@ -190,10 +246,16 @@ func navOut(s storage.NavState) navStateJSON {
 	// write `(x || [])` five times will forget once.
 	collapsed := make([]string, 0, len(s.Collapsed))
 	collapsed = append(collapsed, s.Collapsed...)
+	sources := make([]navSourceJSON, 0, len(s.Sources))
+	for _, src := range s.Sources {
+		sources = append(sources, navSourceJSON{
+			Link: src.Link, Label: src.Label, AddedAt: src.AddedAt,
+		})
+	}
 	return navStateJSON{
 		Version: s.Version, Pins: navRefsOut(s.Pins), Groups: groups,
 		Catalogs: navRefsOut(s.Catalogs), Recent: navRefsOut(s.Recent),
-		Collapsed: collapsed,
+		Collapsed: collapsed, Sources: sources, OfficialOff: s.OfficialOff,
 	}
 }
 
@@ -243,6 +305,12 @@ func (a *APIServer) handleSetNavigator(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	next.Collapsed = body.Collapsed
+	for _, src := range body.Sources {
+		next.Sources = append(next.Sources, storage.NavSource{
+			Link: src.Link, Label: src.Label, AddedAt: src.AddedAt,
+		})
+	}
+	next.OfficialOff = body.OfficialOff
 
 	saved, err := a.rt.SetNavigator(next, body.Version)
 	if errors.Is(err, ErrNavigatorStale) {

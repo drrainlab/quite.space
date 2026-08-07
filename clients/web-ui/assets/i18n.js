@@ -197,7 +197,7 @@ const I18N = {
     'nav.sec.groups': 'Groups',
     'nav.sec.spaces': 'Spaces',
     'nav.sec.people': 'People',
-    'nav.sec.catalogs': 'Catalogs',
+    'nav.sec.catalogs': 'Directories',
     'nav.sec.recent': 'Recent',
     'nav.sec.ai': 'AI',
     'nav.more': 'more',
@@ -222,7 +222,7 @@ const I18N = {
     'nav.groups.empty': 'Make a group to gather what belongs together.',
     // Not "no people": say the rule, so the section is not a mystery.
     'nav.people.empty': 'Somebody appears here when you share a space with exactly one other person.',
-    'nav.catalogs.empty': 'Catalogs you open will be listed here.',
+    'nav.catalogs.empty': 'Places that list other places show up here once you keep one.',
     // The boundary, stated where somebody hits it rather than in docs.
     'nav.search.none': 'Nothing by that name. Navigator searches names, not what was said inside.',
 
@@ -240,27 +240,45 @@ const I18N = {
 
     // Catalogs (CAT-0a). A catalog is a public space of space-cards, and
     // every uncertainty about an entry is stated rather than guessed.
-    'cat.root': 'Catalog',
-    'cat.loading': 'Looking…',
+    // Discover, said in places rather than in mechanism (CAT-0b).
+    'cat.home': 'Discover',
+    'cat.loading': 'Looking\u2026',
+    'cat.looking': 'Looking\u2026',
     'cat.empty': 'Nothing here yet.',
     'cat.untitled': 'untitled',
-    'cat.look_inside': 'look inside',
-    'cat.open_space': 'open',
-    'cat.add': 'add to Navigator',
-    'cat.added': 'added',
-    'cat.claims_catalog': 'says: catalog',
-    // The whole rule in one tooltip: nothing but opening it can settle this.
-    'cat.claims_catalog_why':
-      'The author of this card says the target is a catalog. Nothing checked that — ' +
-      'looking inside is what settles it.',
+    // Never "relay unavailable", never "waiting", never "source failed" —
+    // those describe the machinery, and all a person can be told honestly
+    // is that nothing came back.
+    'cat.silent': 'Nothing came back from there.',
+    'cat.featured_silent': 'Couldn\u2019t reach the featured directory.',
+    'cat.try_again': 'Try again',
+    'cat.yours_still_here': 'The directories you added are still available under \u22ef',
+    'cat.home_empty': 'Nothing has been added here yet.',
+    'cat.add_directory': 'Add a directory',
+    'cat.not_a_directory': 'That link leads to an ordinary place, not to a list of places.',
+    // The act and its undo carry ONE name. A thing called "Add to Discover"
+    // on one screen and "remove source" on another is how a person learns
+    // the app has a second, truer name for things.
+    'cat.add_discover': 'Add to Discover',
+    'cat.added_discover': 'Added to Discover \u2713',
+    'cat.remove_discover': 'Remove from Discover',
+    'cat.official': 'Featured',
+    'cat.on': 'On',
+    'cat.off': 'Off',
+    'cat.copy_link': 'Copy link',
+    'cat.copied': 'Copied',
+    'cat.leaf.frozen': 'no longer publishing',
+    'cat.leaf.owner_posts': 'its owner posts here',
+    'cat.leaf.anyone_posts': 'anyone who comes in can write',
+    'cat.leaf.nothing': 'Nothing has been posted here yet.',
+    // Named for the RESULT, and it is the first moment anything is kept.
+    'cat.leaf.keep': 'Add to my spaces',
+    'cat.leaf.go': 'Go there',
     'cat.cycle': ({ title }) =>
-      `"${title}" is already on the path you walked to get here. Use the trail above to go back to it.`,
-    'cat.unreachable': ({ why }) => `Could not open that: ${why}`,
-    'cat.paste': 'Open a catalog\n\nA catalog is an ordinary public space whose posts are ' +
-      'space-cards — anyone can run one. Paste a catalog link:',
+      `You are already inside \u201c${title}\u201d \u2014 this way round leads back to where you are.`,
+    'cat.paste': 'Add a directory\n\nPaste the link somebody gave you. A directory is an ' +
+      'ordinary public place whose posts are other places.',
 
-    // The share picker (SHARE-0). It CHOOSES; carrying the message is a
-    // separate gate, and the words here promise nothing more.
     'share.search': 'Search people, spaces and AI',
     'share.sec.recent': 'Recent',
     'share.sec.ai': 'AI',

@@ -965,21 +965,12 @@ function saveCatalog() {
   document.getElementById('catalogMsg').textContent = v ? 'saved' : 'using the official catalog';
 }
 
+// Discover opens HOME, which is the featured directory's own top level with
+// whatever the person added listed after it (CAT-0b). There is no link to
+// ask for and no dead end to fall into: an empty home says so in one line
+// and offers the way to fill it.
 async function openDiscover() {
-  const link = catalogLink();
-  if (!link) {
-    // A dead end used to live here: an alert naming a settings field, with
-    // no way to act from where the person actually is. A catalog is just a
-    // public space, so asking for its link is the whole of it.
-    const pasted = prompt(t('cat.paste'));
-    if (!pasted || !pasted.trim()) return;
-    localStorage.setItem('qp.catalog', pasted.trim());
-    return openDiscover();
-  }
-  // Discover and the Catalogs section are ONE loader and ONE renderer: a
-  // catalog is a place you look inside, and opening it as an ordinary room
-  // is the dead end this replaces (CAT-0a).
-  await CAT.openRoot(link, t('cat.root'));
+  await CAT.openHome();
 }
 
 // spaceCardLink extracts a space-card's target: the first link block's URL.
