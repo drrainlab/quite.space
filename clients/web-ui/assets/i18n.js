@@ -276,6 +276,19 @@ const I18N = {
     'cat.leaf.go': 'Go there',
     'cat.cycle': ({ title }) =>
       `You are already inside \u201c${title}\u201d \u2014 this way round leads back to where you are.`,
+    // Adding an entry. Unreachable is NOT a refusal: a directory that can
+    // only list places which happen to be online is one that empties
+    // itself during an outage.
+    'cat.add.found_directory': ({ title }) =>
+      title ? `Found \u201c${title}\u201d \u2014 a place that lists other places.`
+            : 'Found a place that lists other places.',
+    'cat.add.found_space': ({ title }) =>
+      title ? `Found \u201c${title}\u201d.` : 'Found it.',
+    'cat.add.unreachable': 'Nothing came back from there just now. You can still ' +
+      'add it \u2014 it will show up properly once it is reachable.',
+    'cat.add.itself': 'That is this place. A list cannot contain itself.',
+    'cat.add.already': 'That one is already on this list.',
+    'cat.add.needs_name': 'Give it a name first \u2014 that is what people will see.',
     'cat.paste': 'Add a directory\n\nPaste the link somebody gave you. A directory is an ' +
       'ordinary public place whose posts are other places.',
 

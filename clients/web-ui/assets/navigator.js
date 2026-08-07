@@ -71,6 +71,38 @@ const NAV = (() => {
 
   async function load() {
     try { state = normalize(await api('/api/navigator')); } catch { /* first run */ }
+    await migrate();
+  }
+
+  /**
+   * Two one-shot migrations, so CAT-0b takes nothing away silently.
+   *
+   * A catalog somebody configured lived in localStorage, and the settings
+   * field that read it is gone — without this it would simply vanish. And
+   * `catalogs` held NavRefs to spaces a person had saved from a catalog;
+   * the section is derived now, so those references need somewhere real to
+   * live, and Pinned is what "I want to keep this" already means.
+   */
+  async function migrate() {
+    let moved = false;
+    try {
+      const old = (localStorage.getItem('qp.catalog') || '').trim();
+      if (old) {
+        if (!state.sources.some(s2 => s2.link === old)) {
+          state.sources.push({ link: old, label: '', added_at: Math.floor(Date.now() / 1000) });
+          moved = true;
+        }
+        localStorage.removeItem('qp.catalog');
+      }
+    } catch { /* a browser that refuses storage has nothing to migrate */ }
+    if (state.catalogs.length) {
+      for (const ref of state.catalogs) {
+        if (!state.pins.some(p => p.terminal === ref.terminal)) state.pins.push(ref);
+      }
+      state.catalogs = [];
+      moved = true;
+    }
+    if (moved) await save();
   }
 
   // save() is optimistic: the local mutation has already painted, and this
@@ -300,7 +332,6 @@ const NAV = (() => {
 
   function removeRef(tid, section, owner) {
     if (section === 'pinned') state.pins = state.pins.filter(p => p.terminal !== tid);
-    else if (section === 'catalogs') state.catalogs = state.catalogs.filter(p => p.terminal !== tid);
     else if (owner) {
       const g = state.groups.find(x => x.id === owner);
       if (g) g.children = g.children.filter(c => c.terminal !== tid);
@@ -382,7 +413,7 @@ const NAV = (() => {
   /**
    * Put a terminal into the panel. The one entry point for anything outside
    * this file — the catalog walker uses it, and so will the share picker.
-   * @param {string} tid @param {string} label @param {'pins'|'catalogs'} list
+   * @param {string} tid @param {string} label
    */
   // ---- the directories Discover reads (CAT-0b) ----
   //
@@ -414,10 +445,12 @@ const NAV = (() => {
     await save();
   }
 
-  async function addRef(tid, label, list) {
-    const target = list === 'catalogs' ? state.catalogs : state.pins;
-    if (target.some(r => r.terminal === tid)) return;
-    target.push({ terminal: tid, label: label || refName({ terminal: tid }) });
+  async function addRef(tid, label) {
+    // One list. The Directories section is derived from what a space
+    // DECLARES, so there is no second place to put a reference and no
+    // stored kind that could go stale.
+    if (state.pins.some(r => r.terminal === tid)) return;
+    state.pins.push({ terminal: tid, label: label || refName({ terminal: tid }) });
     paintAll();
     await save();
   }

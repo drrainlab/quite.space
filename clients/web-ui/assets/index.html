@@ -68,6 +68,10 @@
       <span id="visBadge" class="vis-badge" style="display:none"></span>
       <button id="shareLinkBtn" class="btn-plain" style="display:none" onclick="copyPublicLink()">Share link</button>
       <button id="newPostBtn" class="btn-tinted" onclick="openComposer(null,'')">✍ New post</button>
+      <!-- Shown only in a directory you can write to. Adding an entry is
+           what a directory is FOR, so it is one press, not "compose a
+           publication of kind space and paste a link into a block". -->
+      <button id="addSpaceBtn" class="btn-tinted" style="display:none" onclick="CAT.openAddSpace()">+ Add space</button>
       <button id="customizeBtn" class="icon-btn" style="display:none" onclick="openCustomize()" title="Customize" aria-label="Customize space">🎨</button>
       <button id="resPalBtn" class="icon-btn" style="display:none" onclick="openResPaletteEditor()" title="Reaction palette" aria-label="Reaction palette">✧</button>
       <button id="inviteBtn" class="btn-tinted" style="display:none" onclick="openPassCurrent()">invite</button>
@@ -148,8 +152,6 @@
       <button onclick="SHARE.closeReport()">Close</button>
     </div>
   </dialog>
-  <!-- A catalog is a place you look INSIDE, so it gets a screen with a
-       trail rather than opening as an ordinary room (CAT-0a). -->
   <!-- The transient post reader (PS-4): a shared card opened for a look.
        Nothing about this screen persists — see preview.js. -->
   <div id="previewScreen" style="display:none">
@@ -159,6 +161,8 @@
     <div id="prevBody" class="prev-body"></div>
     <div id="prevFoot" class="row prev-foot"></div>
   </div>
+  <!-- Discover (CAT-0b). Browsing is a trail through places, and a place
+       you merely look at is never opened as a room — see catalog.js. -->
   <div id="catalogScreen" style="display:none">
     <div class="sig-bar">
       <button class="btn-plain" onclick="CAT.back()">← back</button>
@@ -227,6 +231,28 @@
   <input id="linkDescr" placeholder="description (optional)">
   <div class="row"><button onclick="sendLink()">send</button>
   <button onclick="dlgLink.close()">cancel</button></div>
+</dialog>
+
+<!-- Adding an entry to a directory (CAT-0b). The lookup is an EXPLICIT
+     press, never debounced on paste: an automatic network act the moment
+     something lands in a field is the authoring-end version of what
+     CAT-0a's browsing did. -->
+<dialog id="dlgAddSpace">
+  <h3>Add a space</h3>
+  <p class="hint">Paste the link somebody gave you. It goes into this list
+    under whatever you call it here.</p>
+  <input id="addSpaceLink" placeholder="paste a link">
+  <div class="row">
+    <button class="btn-plain" id="addSpaceLookBtn" onclick="CAT.lookUpSpace()">Look up</button>
+  </div>
+  <div id="addSpaceFound" class="hint" style="display:none"></div>
+  <input id="addSpaceTitle" placeholder="name it" style="display:none">
+  <input id="addSpaceSummary" placeholder="a line about it (optional)" style="display:none">
+  <p class="hint" id="addSpaceMsg"></p>
+  <div class="row">
+    <button class="btn-tinted" id="addSpaceAdd" style="display:none" onclick="CAT.addSpaceToDirectory()">Add</button>
+    <button class="btn-plain" onclick="dlgAddSpace.close()">Cancel</button>
+  </div>
 </dialog>
 
 <dialog id="dlgSignal">
@@ -686,18 +712,6 @@
     </div>
     <p class="hint" id="relayInfo" style="margin-left:4px"></p>
     <p class="hint" style="margin-left:4px">Uses the address above. A full dead-drop (media included) for the current space, or a one-time collect for every space — handy before going offline. Auto-sync above already keeps text flowing.</p>
-  </div>
-  <div class="settings-sec">
-    <p class="hint">Discover · catalog</p>
-    <div class="list">
-      <div class="list-row">
-        <span class="lr-label">Catalog link</span>
-        <input type="text" id="catalogLink" placeholder="paste a catalog space link (blank = official)">
-      </div>
-    </div>
-    <div class="row"><button class="btn-plain" onclick="saveCatalog()">Save catalog</button></div>
-    <p class="hint" id="catalogMsg" style="margin-left:4px"></p>
-    <p class="hint" style="margin-left:4px">“Discover” opens this catalog — itself just a public broadcast space of space-cards. Point it anywhere: anyone can run their own catalog.</p>
   </div>
   </div>
   <!-- AR-1b.7b — what the phone's own notification surfaces may say.

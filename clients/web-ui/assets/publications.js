@@ -123,10 +123,14 @@ async function refreshPosts() {
         }
       }
       // PA-1 space-cards: categories render as chips on the card.
-      if (p.kind === 'space' && p.tags?.length) {
+      // Filter the legacy internal markers out of rendered topics: they
+      // were never subject matter, and a card written before CAT-0b would
+      // otherwise show "catalog" as though somebody had chosen it.
+      const topics = (p.tags || []).filter(tg => tg !== 'catalog' && tg !== 'directory');
+      if (p.kind === 'space' && topics.length) {
         const chips = document.createElement('div');
         chips.className = 'card-tags';
-        for (const tg of p.tags) {
+        for (const tg of topics) {
           const c = document.createElement('span');
           c.className = 'tag-chip'; c.textContent = tg;
           chips.appendChild(c);
@@ -646,9 +650,46 @@ function renderComposerChips() {
   }
 }
 
+// A share link, in the BEARER form a card's link block requires. The
+// validator refuses a bare base64 there, and http(s) is a different kind
+// of link entirely — so this normalises only what is neither.
+function qsLink(raw) {
+  const v = String(raw || '').trim();
+  if (!v || v.startsWith('qs:') || /^https?:/.test(v)) return v;
+  return 'qs:' + v;
+}
+
+/**
+ * ONE space-card factory, called by both authoring paths — the composer
+ * and "+ Add space" — so the two cannot drift about what a card is.
+ *
+ * kindHint is the AUTHOR'S OBSERVATION of the target, and absent means
+ * unknown: it is never defaulted, never authorization, and never a reason
+ * to dial. An inspection of the target always wins over it.
+ *
+ * @param {{title:string,summary?:string,link:string,kindHint?:string,topics?:string[]}} o
+ */
+function buildSpaceCard(o) {
+  const doc = {
+    document_id: randHex16(), kind: 'space',
+    title: (o.title || '').trim(), summary: (o.summary || '').trim(),
+    visibility_intent: 'space',
+    blocks: [{
+      id: 'b' + randHex16().slice(0, 8), type: 'link',
+      props: { text: qsLink(o.link), more: 'Open this space' },
+    }],
+  };
+  if (o.kindHint) doc.kind_hint = o.kindHint;
+  // Topics are subject matter and nothing else. No code branches on a tag
+  // value: structure lives in kind_hint and in the target's own signed
+  // policy, which is what ended the "says: catalog" era.
+  if (o.topics && o.topics.length) doc.tags = o.topics.slice(0, 12);
+  return doc;
+}
+
 // onKindChange: picking "space card" seeds the space-link template so the
-// author only has to paste the share link. A catalog is any public
-// broadcast space whose posts are these cards — no separate marker.
+// author only has to paste the share link. A directory DECLARES itself in
+// its signed policy; a card's own hint is only a note about where it points.
 function onKindChange() {
   const kind = document.getElementById('compKind').value;
   composerDoc.kind = kind;
@@ -986,11 +1027,7 @@ function collectComposerDoc() {
   // can round-trip it back to /api/public/open.
   if (composerDoc.kind === 'space') {
     for (const b of composerDoc.blocks || []) {
-      if (b.type === 'link' && b.props?.text) {
-        const raw = b.props.text.trim();
-        b.props.text = raw && !raw.startsWith('qs:') && !/^https?:/.test(raw)
-          ? 'qs:' + raw : raw;
-      }
+      if (b.type === 'link' && b.props?.text) b.props.text = qsLink(b.props.text);
     }
   }
   return composerDoc;

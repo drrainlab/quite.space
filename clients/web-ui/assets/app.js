@@ -264,8 +264,6 @@ async function openSettings() {
     relayMode = s.relay_mode || 'custom';
     syncRelayModeUI();
     renderRelayDiagnostics();
-    document.getElementById('catalogLink').value = localStorage.getItem('qp.catalog') || '';
-    document.getElementById('catalogMsg').textContent = '';
     renderRelayPublicPanel();
   } catch (e) { /* settings unavailable */ }
   showSettingsCat(settingsCat);
@@ -801,6 +799,13 @@ async function refreshAI() {
 function renderPublicSurface(sp) {
   const badge = document.getElementById('visBadge');
   const share = document.getElementById('shareLinkBtn');
+  // Adding an entry is what a directory is for, so the act sits where the
+  // person is — beside New post, and only where it can actually be done.
+  const addSpace = document.getElementById('addSpaceBtn');
+  if (addSpace) {
+    addSpace.style.display =
+      (sp && sp.kind === 'directory' && sp.can_write !== false) ? '' : 'none';
+  }
   const composer = document.getElementById('composer');
   const readerBar = document.getElementById('readerBar');
   const joinBtn = document.getElementById('joinWriteBtn');
@@ -891,15 +896,6 @@ async function joinCurrentPublic() {
 
 // ---- PA-1: Discover (federated catalog) ----
 
-// defaultCatalog is the official catalog's share link, baked into the
-// client. A catalog is just a public broadcast space whose posts are
-// space-cards; anyone can run their own and point the client at it.
-const defaultCatalog = ''; // set when the official catalog space exists
-
-function catalogLink() {
-  return (localStorage.getItem('qp.catalog') || defaultCatalog).trim();
-}
-
 // renderRelayPublicPanel shows per-public-space checkpoint/ingress health
 // (PA-1.3 monitoring): publisher seq + last-publish age, reader accepted
 // seq, frozen state, and how many frames policy has ignored.
@@ -956,13 +952,6 @@ async function renderRelayPublicPanel() {
       box.appendChild(row);
     }
   } catch (e) { /* relay status optional */ }
-}
-
-function saveCatalog() {
-  const v = document.getElementById('catalogLink').value.trim();
-  if (v) localStorage.setItem('qp.catalog', v);
-  else localStorage.removeItem('qp.catalog');
-  document.getElementById('catalogMsg').textContent = v ? 'saved' : 'using the official catalog';
 }
 
 // Discover opens HOME, which is the featured directory's own top level with

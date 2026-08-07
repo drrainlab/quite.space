@@ -627,6 +627,109 @@ const CAT = (() => {
     await render();
   }
 
+  // ---- adding an entry to a directory you can write to ----
+
+  /** @type {{link:string,kindHint:string}|null} What the last look found. */
+  let pending = null;
+
+  function openAddSpace() {
+    pending = null;
+    for (const id of ['addSpaceTitle', 'addSpaceSummary', 'addSpaceAdd', 'addSpaceFound']) {
+      const el = document.getElementById(id);
+      if (el) el.style.display = 'none';
+    }
+    /** @type {HTMLInputElement} */(document.getElementById('addSpaceLink')).value = '';
+    /** @type {HTMLInputElement} */(document.getElementById('addSpaceTitle')).value = '';
+    /** @type {HTMLInputElement} */(document.getElementById('addSpaceSummary')).value = '';
+    document.getElementById('addSpaceMsg').textContent = '';
+    /** @type {any} */(document.getElementById('dlgAddSpace')).showModal();
+  }
+
+  /**
+   * An EXPLICIT press, never debounced on paste. An automatic network act
+   * the moment something lands in a field is the authoring-end version of
+   * what CAT-0a's browsing did, and it would tell a relay what somebody is
+   * considering before they have decided anything.
+   */
+  async function lookUpSpace() {
+    const msg = document.getElementById('addSpaceMsg');
+    const link = /** @type {HTMLInputElement} */(
+      document.getElementById('addSpaceLink')).value.trim();
+    if (!link) return;
+    msg.textContent = t('cat.looking');
+    const r = await look(link, false);
+    const found = document.getElementById('addSpaceFound');
+    const title = /** @type {HTMLInputElement} */(document.getElementById('addSpaceTitle'));
+    const summary = /** @type {HTMLInputElement} */(document.getElementById('addSpaceSummary'));
+
+    // Refusals first, and only two of them stop the Add.
+    if (r.in && r.in.space_id === current) {
+      msg.textContent = t('cat.add.itself');
+      return;
+    }
+    // Already listed. Read the directory's OWN entries rather than the
+    // browse cache: adding happens from inside the space, where that cache
+    // is usually empty, so keying on it would let the same place be listed
+    // twice by anybody who had not just walked in through Discover.
+    const listed = await heldCards(current);
+    // The listing hands back the target directly; spaceCardLink is the
+    // fallback for a full document, which is what a card looks like when it
+    // arrives any other way.
+    if (listed.some(c => qsLink(c.link || spaceCardLink(c)) === qsLink(link))) {
+      msg.textContent = t('cat.add.already');
+      return;
+    }
+
+    if (r.kind === 'silent' || r.kind === 'refused') {
+      // UNREACHABLE IS NOT A REFUSAL. A directory that can only list places
+      // which happen to be online is a directory that empties itself during
+      // an outage — so it goes in with no hint at all, which is exactly
+      // what "unknown" means.
+      pending = { link, kindHint: '' };
+      found.textContent = t('cat.add.unreachable');
+      found.style.display = '';
+      msg.textContent = '';
+    } else {
+      pending = { link, kindHint: r.kind === 'level' ? 'directory' : 'space' };
+      found.textContent = r.kind === 'level'
+        ? t('cat.add.found_directory', { title: r.in.space_title || '' })
+        : t('cat.add.found_space', { title: r.in.space_title || '' });
+      found.style.display = '';
+      msg.textContent = '';
+      if (!title.value) title.value = r.in.space_title || '';
+      release(r.in.preview_id);
+    }
+    title.style.display = '';
+    summary.style.display = '';
+    document.getElementById('addSpaceAdd').style.display = '';
+  }
+
+  async function addSpaceToDirectory() {
+    const msg = document.getElementById('addSpaceMsg');
+    if (!pending) return;
+    const title = /** @type {HTMLInputElement} */(
+      document.getElementById('addSpaceTitle')).value.trim();
+    if (!title) { msg.textContent = t('cat.add.needs_name'); return; }
+    const summary = /** @type {HTMLInputElement} */(
+      document.getElementById('addSpaceSummary')).value.trim();
+    try {
+      await api(`/api/spaces/${current}/publications`, {
+        method: 'POST',
+        body: JSON.stringify({
+          document: buildSpaceCard({
+            title, summary, link: pending.link, kindHint: pending.kindHint,
+          }),
+        }),
+      });
+      /** @type {any} */(document.getElementById('dlgAddSpace')).close();
+      delete cache[current];
+      switchView('posts');
+      await refreshPosts();
+    } catch (err) {
+      msg.textContent = err.message;
+    }
+  }
+
   /** Discover, from the header. */
   async function openHome() {
     dropLeaf();
@@ -665,6 +768,7 @@ const CAT = (() => {
 
   return {
     openHome, follow, back, close, openDirectories, addDirectory, enterHeld,
+    openAddSpace, lookUpSpace, addSpaceToDirectory,
     refresh: () => render(),
     get path() { return path.slice(); },
   };
