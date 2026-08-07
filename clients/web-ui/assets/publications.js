@@ -217,8 +217,11 @@ function renderArticle(p, mode) {
     if (lang) box.setAttribute('lang', lang); else box.removeAttribute('lang');
   }
 
+  // Named rather than matched by position: it is the article's own bar, it
+  // sticks to the top while the post scrolls under it, and :first-child
+  // would quietly stop meaning that the day something is inserted above.
   const bar = document.createElement('div');
-  bar.className = 'row';
+  bar.className = 'row pub-bar';
   const back = document.createElement('button');
   back.className = 'btn-plain'; back.textContent = '← Posts';
   back.onclick = () => refreshPosts();

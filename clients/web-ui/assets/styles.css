@@ -205,7 +205,9 @@
        row is exactly this container and may be smaller than its contents,
        which is what gives the scrollers something to scroll in. */
     grid-template-rows: minmax(0, 1fr);
-    transition: grid-template-columns .2s ease;
+    /* Slow enough to read as the panels moving rather than the layout
+       jumping — this is the transition reading mode rides on. */
+    transition: grid-template-columns .38s cubic-bezier(.4, 0, .2, 1);
   }
   /* Same reason, one level down: a grid item that may not shrink cannot
      contain a scroller. */
@@ -227,10 +229,33 @@
      because a 0-wide panel still paints its own and it showed as a sliver
      down each edge. */
   body.reading #sidebar, body.reading #members { padding: 0; overflow: hidden; }
+
+  /* The bars COLLAPSE rather than vanish. display:none cannot be animated,
+     so the chrome used to blink out while the columns were still sliding —
+     two different speeds for one gesture. max-height is a cap, not a
+     height: the elements still size themselves, and only the closing is
+     driven. */
+  #convbar, #persona, #honesty {
+    max-height: 200px; overflow: hidden;
+    transition: max-height .38s cubic-bezier(.4, 0, .2, 1),
+                min-height .38s cubic-bezier(.4, 0, .2, 1),
+                opacity .22s ease, padding .38s cubic-bezier(.4, 0, .2, 1);
+  }
   body.reading #convbar,
   body.reading #persona,
-  body.reading #honesty,
-  body.reading .panel-toggle { display: none; }
+  body.reading #honesty {
+    max-height: 0; min-height: 0; opacity: 0;
+    padding-block: 0; border: 0;
+  }
+  /* The hamburger goes with the panels it folds. Width as well as opacity,
+     or the header keeps a hole where it used to be. */
+  .panel-toggle { transition: opacity .22s ease, max-width .38s ease, margin .38s ease; }
+  body.reading .panel-toggle {
+    opacity: 0; max-width: 0; margin: 0; padding: 0; border: 0;
+    pointer-events: none;
+  }
+  /* Padding animates too, or the panels snap thinner before they slide. */
+  #sidebar, #members { transition: padding .38s cubic-bezier(.4, 0, .2, 1); }
   #sidebar {
     padding: var(--pad-panel);
     display: flex; flex-direction: column; gap: 8px;
@@ -243,7 +268,12 @@
   .panel-toggle { font-size: 15px; line-height: 1; }
   body.fold-nav #tglNav { opacity: .5; }
   @media (prefers-reduced-motion: reduce) {
-    main { transition: none; }
+    /* Reading mode changes the layout in one gesture; somebody who asked
+       for no motion gets the same result, arrived at instantly. Listing
+       only `main` here would have left the bars easing while the columns
+       snapped — worse than either. */
+    main, #convbar, #persona, #honesty, .panel-toggle,
+    #sidebar, #members { transition: none; }
   }
   .space {
     padding: 9px 11px; border: 1px solid var(--line); border-radius: var(--radius-md);
@@ -1327,6 +1357,32 @@
     max-width: 680px; margin-inline: auto;
   }
   #pubArticle { overflow-wrap: break-word; padding-block: 12px; }
+  /* The way out of a post stays reachable however far down it goes.
+     z-index 3 clears the atmosphere layers (0) and the article's own
+     content (1).
+
+     NEARLY OPAQUE, not glass. The header's blur cannot work here: #posts
+     carries a mask-image, and a masked element composites its own layer —
+     there is no backdrop left to filter. Tried it and watched the article
+     scroll through the words in sharp focus. So the bar carries its own
+     surface, with a hairline to keep it from reading as a hole. SOLID,
+     not 96%: at four percent the article still showed through the words
+     clearly enough to read, which is worse than a plain bar. An
+     atmospheric post loses the scene behind this one strip and keeps it
+     everywhere else, which is the right way round. */
+  #pubArticle > .pub-bar {
+    position: sticky; top: 0; z-index: 3;
+    margin-top: 0; padding: 8px 12px; border-radius: var(--radius-md);
+    background: var(--panel);
+    border: 1px solid var(--line);
+    box-shadow: var(--shadow);
+  }
+  /* The feed's top fade would dissolve that bar exactly where it sits, so
+     while reading the scroller keeps only its bottom edge. */
+  body.reading #posts {
+    -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--edge-fade)), transparent 100%);
+    mask-image: linear-gradient(to bottom, #000 calc(100% - var(--edge-fade)), transparent 100%);
+  }
   /* The list keeps the same breathing room the scroller used to give it. */
   #posts > .pub-card:first-child { margin-top: 12px; }
   #posts > .pub-card:last-child { margin-bottom: 12px; }
