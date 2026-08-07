@@ -266,8 +266,13 @@
     <div class="row"><button onclick="wizStep(2)">back</button><button onclick="wizStep(4)">next</button></div>
   </div>
   <div class="wiz-step" id="wiz4">
-    <h3>4 · what should it remember?</h3>
+    <!-- The heading, the memory options and the visibility row are all
+         wrong for a directory: nobody LIVES in a list, and the preset has
+         already decided how it is read and who writes. paintWizFinal swaps
+         this step's face rather than adding a fifth step. -->
+    <h3 id="wiz4Title">4 · what should it remember?</h3>
     <div id="memOpts"></div>
+    <p class="hint" id="wDirNote" style="display:none"></p>
     <input id="wTitle" placeholder="name of the place">
     <div class="wiz-vis">
       <div class="segmented" id="wVisibility">
@@ -275,8 +280,8 @@
         <button data-v="public" onclick="pickWizVis('public')">Public by link</button>
       </div>
       <div class="segmented" id="wPublicMode" style="display:none">
-        <button data-v="community" class="sel" onclick="pickWizMode('community')">Community · anyone may join &amp; write</button>
-        <button data-v="broadcast" onclick="pickWizMode('broadcast')">Broadcast · only you post</button>
+        <button data-v="community" class="sel" onclick="pickWizMode('community')">Anyone who comes in can write</button>
+        <button data-v="broadcast" onclick="pickWizMode('broadcast')">Only you post; everyone else reads</button>
       </div>
       <p class="hint" id="wVisHint" style="display:none">Anyone who obtains the link can read this space. Access cannot currently be revoked.</p>
     </div>
@@ -301,15 +306,46 @@
           <button data-v="public" onclick="setAccessVis('public')">Public</button>
         </div>
       </div>
-      <div class="list-row">
-        <span class="lr-label">Mode</span>
+      <!-- Purpose sits ABOVE the write rule, because it changes which
+           question the write rule is asked as. An ordinary space is asked
+           who may write; a directory is asked who may add entries — one
+           policy value, two vocabularies, never two controls. -->
+      <div class="list-row lr-wide">
+        <span class="lr-label">Purpose
+          <span class="lr-sub">what this place is for</span>
+        </span>
+        <div class="segmented" id="accPurpose">
+          <button data-v="" onclick="setAccessPurpose('')">Ordinary space</button>
+          <button data-v="directory" onclick="setAccessPurpose('directory')">Directory</button>
+        </div>
+      </div>
+      <div class="list-row lr-wide">
+        <span class="lr-label" id="accModeLabel">Who can write</span>
         <div class="segmented" id="accMode">
-          <button data-v="all" onclick="setAccessMode('all')">Community</button>
-          <button data-v="curated" onclick="setAccessMode('curated')">Broadcast</button>
+          <button data-v="all" onclick="setAccessMode('all')">Anyone who comes in</button>
+          <button data-v="curated" onclick="setAccessMode('curated')">Only me and curators</button>
         </div>
       </div>
     </div>
-    <p class="hint">Community: anyone may join and write. Broadcast: only you and curators post. Existing posts always remain — policy never rewrites history.</p>
+    <p class="hint" id="accModeHint">Existing posts always remain — policy never rewrites history.</p>
+    <p class="hint" id="accPurposeHint" style="display:none"></p>
+    <!-- Turning a space into a directory asks about the intention, and the
+         answer completes right here — never "now go and find the other
+         half of your decision in another section". -->
+    <div id="accDirWho" style="display:none">
+      <p class="hint" id="accDirWhoQ">Who can add entries?</p>
+      <div class="list">
+        <div class="list-row">
+          <button class="btn-plain" onclick="pickDirectoryWho('me')">Only me</button>
+        </div>
+        <div class="list-row">
+          <button class="btn-plain" onclick="pickDirectoryWho('selected')">Selected people…</button>
+        </div>
+        <div class="list-row">
+          <button class="btn-plain" onclick="pickDirectoryWho('anyone')">Anyone who can post</button>
+        </div>
+      </div>
+    </div>
   </div>
   <div class="settings-sec">
     <p class="hint">Curators</p>

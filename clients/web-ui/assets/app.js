@@ -853,8 +853,12 @@ function renderPublicSurface(sp) {
   const joinable = sp.join === 'open' && sp.role === 'reader';
   joinBtn.style.display = joinable ? '' : 'none';
   note.style.display = joinable ? 'none' : '';
+  // Say the consequence, not the mode's name. A directory is the same
+  // policy wearing the vocabulary the person met when one was made.
   note.textContent = sp.publish === 'curated'
-    ? 'broadcast — read only (owner and curators post)'
+    ? (sp.kind === 'directory'
+      ? 'read only — its owner adds the entries'
+      : 'read only — its owner posts here')
     : 'read only';
 }
 
@@ -1063,6 +1067,21 @@ function openAccess(sp) {
   const mode = sp.publish === 'curated' ? 'curated' : 'all';
   document.querySelectorAll('#accMode button').forEach(b =>
     b.classList.toggle('sel', b.dataset.v === mode));
+  // Purpose changes the WORDING of the write rule, never a second control
+  // for the same policy value — two controls is how a person ends up
+  // disagreeing with themselves.
+  const dir = sp.kind === 'directory';
+  document.querySelectorAll('#accPurpose button').forEach(b =>
+    b.classList.toggle('sel', (b.dataset.v || '') === (dir ? 'directory' : '')));
+  document.getElementById('accModeLabel').textContent =
+    dir ? t('access.who_adds_label') : t('access.who_writes_label');
+  document.querySelector('#accMode button[data-v="all"]').textContent =
+    dir ? t('access.adds_anyone') : t('access.writes_anyone');
+  document.querySelector('#accMode button[data-v="curated"]').textContent =
+    dir ? t('access.adds_me') : t('access.writes_me');
+  const purposeHint = document.getElementById('accPurposeHint');
+  purposeHint.style.display = dir ? '' : 'none';
+  purposeHint.textContent = dir ? t('access.directory_hint') : '';
   // A contribution limit is an open-community control: a broadcast space
   // already admits only curators, so offering it there would be a second
   // lock on a shut door.
@@ -1147,9 +1166,48 @@ function toggleSeed() {
 
 function setAccessVis(v) { reviseAccess({ visibility: v }); }
 function setAccessMode(m) {
-  if (m === 'curated' && !confirm(
-    'Switch to broadcast? Only you and curators will be able to post. Existing posts remain.')) return;
+  if (m === 'curated' && !confirm(t('access.curated_confirm'))) return;
   reviseAccess({ publish: m });
+}
+
+// Purpose is asked as an intention, and answered as one act.
+//
+// A directory that a person turns on from here must not land in a shape
+// they did not picture: the wizard taught them "I add the entries, others
+// read", and a bare toggle on a community space would produce the opposite
+// silently. So turning it on asks the human question — who adds entries —
+// and sends ONE delta carrying both the purpose and the write rule.
+// RevisePolicy already performs the curated/community normalisations, so
+// there is no second code path here.
+function setAccessPurpose(kind) {
+  const sp = spacesCache.find(s => s.id === accessSpace);
+  const ask = document.getElementById('accDirWho');
+  if (kind !== 'directory') { ask.style.display = 'none'; reviseAccess({ kind: '' }); return; }
+  if (!(sp && sp.visibility)) {
+    document.getElementById('accMsg').textContent = t('access.directory_needs_public');
+    return;
+  }
+  if (sp.kind === 'directory') return; // already one; the row below is the control
+  ask.style.display = '';
+}
+
+// The question is asked, and answered, in the same place. A person must
+// never be left holding a chosen option and told the other half of their
+// decision lives in another section of the same sheet — so "Selected
+// people" lands directly on the list it means.
+function pickDirectoryWho(who) {
+  document.getElementById('accDirWho').style.display = 'none';
+  const delta = { kind: 'directory' };
+  // "Only me" and "Selected people" are the SAME policy — curated. The
+  // second is that policy plus the curator list, which is why it leads
+  // there instead of asking a second question.
+  delta.publish = who === 'anyone' ? 'all' : 'curated';
+  reviseAccess(delta).then(() => {
+    if (who !== 'selected') return;
+    const list = document.getElementById('accCurators');
+    if (list) list.scrollIntoView({ block: 'nearest' });
+    document.getElementById('accCurPrin')?.focus();
+  });
 }
 function addCurator() { reviseAccess({ add_curator: curatorFields() }); }
 // Named levels rather than a number: the limit is per drain round, and a
@@ -2211,6 +2269,14 @@ function openWizard() {
     `<div class="ad">studio preset for listening sessions — one click</div>`;
   tpl.onclick = () => applyReleaseTemplate();
   wg.appendChild(tpl);
+  // A directory (CAT-0b), described by what it is FOR. The word this
+  // preset exists to keep off the screen is "broadcast".
+  const dir = document.createElement('div');
+  dir.className = 'arch-card release-tpl';
+  dir.innerHTML = `<div class="an">${esc(t('wiz.tpl.directory'))}</div>` +
+    `<div class="ad">${esc(t('wiz.tpl.directory_desc'))}</div>`;
+  dir.onclick = () => applyDirectoryTemplate();
+  wg.appendChild(dir);
   for (const [label, arch] of WHO) {
     const d = document.createElement('div');
     d.className = 'arch-card';
@@ -2259,6 +2325,30 @@ function openWizard() {
   pickWizMode('community');
   wizStep(1);
   dlgWiz.showModal();
+}
+
+// A directory, made by somebody who has never heard the word "broadcast".
+//
+// The whole trick is that this presses the REAL buttons: pickWizVis and
+// pickWizMode, not the variables behind them. So wizPolicy() needs no case
+// of its own, the mode row repaints, and the person meets a preset called
+// Directory instead of a protocol word they would have to decode.
+function applyDirectoryTemplate() {
+  wizTemplate = 'directory';
+  // orbit is the one archetype that is not a place to live in — "a minimal
+  // scene for distributed teams". A directory is read, not inhabited.
+  selectArch('orbit');
+  document.getElementById('wMood').value = 'day';
+  document.getElementById('wMaterial').value = 'paper';
+  document.getElementById('wMotion').value = 'still';
+  // Rituals are how people LIVE somewhere (index.html says so). Nobody
+  // lives in a list.
+  document.querySelectorAll('#ritualList input').forEach(i => { i.checked = false; });
+  document.getElementById('wCentral').value = 'objects';
+  pickWizVis('public');
+  pickWizMode('broadcast');
+  updSeed();
+  wizStep(4);
 }
 
 function applyReleaseTemplate() {
@@ -2322,6 +2412,28 @@ function wizPolicy() {
 function wizStep(n) {
   for (let i = 1; i <= 4; i++)
     document.getElementById('wiz' + i).classList.toggle('on', i === n);
+  if (n === 4) paintWizFinal();
+}
+
+// The last step asks three things of an ordinary space that are all wrong
+// for a directory: what it should REMEMBER (nobody lives there), and which
+// visibility and mode it takes (the preset already decided, and offering
+// the choice again would contradict it).
+//
+// So the step wears a different face. Not a fifth step and not a second
+// wizard — the same fields, with the ones that do not apply out of the way
+// and one sentence saying the consequence the preset chose.
+function paintWizFinal() {
+  const dir = wizTemplate === 'directory';
+  document.getElementById('wiz4Title').textContent =
+    t(dir ? 'wiz.dir.title' : 'wiz.remember');
+  document.getElementById('memOpts').style.display = dir ? 'none' : '';
+  document.querySelector('#wiz4 .wiz-vis').style.display = dir ? 'none' : '';
+  const note = document.getElementById('wDirNote');
+  note.style.display = dir ? '' : 'none';
+  note.textContent = dir ? t('wiz.dir.note') : '';
+  document.getElementById('wTitle').placeholder =
+    t(dir ? 'wiz.dir.name_ph' : 'wiz.name_ph');
 }
 
 async function wizCreate() {
@@ -2342,6 +2454,10 @@ async function wizCreate() {
       central: document.getElementById('wCentral').value,
       memory, rituals, presence,
       ...wizPolicy(),
+      // The declared purpose is not a policy field, so it stays out of
+      // wizPolicy() — that function's three lines are readable precisely
+      // because they answer one question.
+      ...(wizTemplate === 'directory' ? { kind: 'directory' } : {}),
     })});
     current = r.id; dlgWiz.close(); refresh();
     if (wizTemplate === 'release') {

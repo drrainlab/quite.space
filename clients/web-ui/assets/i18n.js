@@ -34,6 +34,36 @@ const I18N = {
       `Waiting for a wider path — ${size}, and the radio carries ${fits}. ` +
       `It goes as soon as the internet or the local network is back. Nothing is lost.`,
 
+    // Creating a place, described by what it is FOR (CAT-0b). The words
+    // this preset exists to keep off the screen are "broadcast", "curated"
+    // and "kind" — a person creating a list of places should meet none of
+    // them.
+    'wiz.tpl.directory': '\u{1F4D6} Directory',
+    'wiz.tpl.directory_desc': 'a place that lists other places',
+    'wiz.remember': '4 \u00b7 what should it remember?',
+    'wiz.name_ph': 'name of the place',
+    'wiz.dir.title': 'Name your directory',
+    'wiz.dir.name_ph': 'name of the directory',
+    // Broadcast, said as its consequence rather than as its name.
+    'wiz.dir.note': 'Anyone with the link can read this directory, and only ' +
+      'you add entries to it. The link cannot be taken back.',
+
+    // The Access sheet. One policy value, two vocabularies: an ordinary
+    // space is asked who may WRITE, a directory who may ADD ENTRIES. The
+    // words "broadcast", "curated" and "kind" appear in neither.
+    'access.who_writes_label': 'Who can write',
+    'access.writes_anyone': 'Anyone who comes in',
+    'access.writes_me': 'Only me and curators',
+    'access.who_adds_label': 'Who can add entries',
+    'access.adds_anyone': 'Anyone who can post',
+    'access.adds_me': 'Only me and curators',
+    'access.curated_confirm': 'From now on only you and the curators can ' +
+      'post here. Everything already written stays exactly where it is.',
+    'access.directory_needs_public': 'A directory is a list other people ' +
+      'read, so this space has to be reachable by a link first.',
+    'access.directory_hint': 'People find this place by its link, and what ' +
+      'they see is the list of places you put in it.',
+
     // attaching a radio from the interface
     'radio.attach.ask': 'The phrase your segment shares.\n\nEvery radio on a segment derives the same key from these exact words, so it has to be identical everywhere — including on a node started with --mesh-seed. At least 16 characters.',
     'radio.detach': 'detach this radio',
