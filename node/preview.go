@@ -62,7 +62,12 @@ type previewSession struct {
 	// space, Follow read-only / Join and participate for a community.
 	publish string
 	join    string
-	assets  map[string]*schemas.AssetRef
+	// kind is the space's DECLARED purpose (CAT-0b), "" for an ordinary
+	// space; frozen is the signed freeze. Both come from the same policy
+	// parse as publish and join.
+	kind   string
+	frozen bool
+	assets map[string]*schemas.AssetRef
 	born    time.Time
 	// fetcher drives the swarm for this session (PM-2). Every death path
 	// of the session closes it — that is what makes "nothing survives"
@@ -111,6 +116,15 @@ func (ps *previewStore) get(pid string) *previewSession {
 		return nil
 	}
 	return s
+}
+
+// drop is the explicit close: a person left the screen, and the session
+// goes with them rather than waiting out its TTL. Idempotent, because
+// closing twice is not an error — and browsing closes a lot of these.
+func (ps *previewStore) drop(pid string) {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	ps.dropLocked(pid)
 }
 
 // put stores a session, evicting expired ones and, past the cap, the
@@ -206,50 +220,15 @@ func (r *Runtime) PreviewPublicPublication(reference string) (*PostPreview, erro
 		}
 	}
 	if sess == nil {
-		if err := r.relayGate(); err != nil {
-			return nil, err
-		}
-		client, err := r.dialRelay(relayAddr)
-		if err != nil {
-			return &PostPreview{Space: tid, Document: *doc, State: PreviewWaiting,
-				Reason: "nothing has arrived from this address yet"}, nil
-		}
-		env, _, err := bestProjectionFor(client, tid)
-		client.Close()
-		if err != nil {
-			if errors.Is(err, ErrNoProjection) {
-				return &PostPreview{Space: tid, Document: *doc, State: PreviewWaiting,
-					Reason: "nothing has arrived from this address yet"}, nil
-			}
-			return nil, err
-		}
-		state, m, err := terminals.MaterializePublicProjection(tid, env)
+		s, waiting, err := r.openPublicSession(relayAddr, tid)
 		if err != nil {
 			return nil, err
 		}
-		pid := make([]byte, 16)
-		if _, err := rand.Read(pid); err != nil {
-			return nil, err
+		if waiting != "" {
+			return &PostPreview{Space: tid, Document: *doc,
+				State: PreviewWaiting, Reason: waiting}, nil
 		}
-		title := ""
-		if len(m.DeclaredLabels) > 0 {
-			title = m.DeclaredLabels[0]
-		}
-		pol := terminals.ParsePolicy(m.DeclaredLabels)
-		sess = &previewSession{
-			id: hex.EncodeToString(pid), space: tid, state: state,
-			title: title, publish: string(pol.Publish), join: string(pol.Join),
-			assets: previewAssetRefs(tid, env.Frames), born: time.Now(),
-		}
-		// The fetcher (PM-2): the envelope's IngressHints and the link's
-		// relay are exactly what the session used to discard. Best-effort —
-		// a session without a fetcher still reads text and serves what the
-		// node already holds.
-		if f, err := newSessionFetcher(tid, relayAddr, env.IngressHints, r.root, r.dialRelay); err == nil {
-			sess.fetcher = f
-			go f.run(r.stop)
-		}
-		r.previews.put(sess)
+		sess = s
 	}
 
 	out := &PostPreview{PreviewID: sess.id, Space: tid, Document: *doc,
@@ -277,6 +256,70 @@ func (r *Runtime) PreviewPublicPublication(reference string) (*PostPreview, erro
 		sess.fetcher.extendGraph(pub.Document.LiveAssetIDs(), sess.assets)
 	}
 	return out, nil
+}
+
+// openPublicSession is the transient reading itself, with no opinion about
+// what is being read for.
+//
+// Everything here was inline in PreviewPublicPublication, which is why the
+// same machinery could only ever serve a POST. It verifies exactly as the
+// persistent install does — the shared half is verifyProjectionManifest and
+// verifiedProjectionFrame inside MaterializePublicProjection — and it
+// deliberately does none of what makes an install permanent: no
+// SetManifestFrame, no projSeen, no log ACK, no absorb, no keystore.
+//
+// The second return is a WAITING REASON, not an error. "Nothing has arrived
+// from this address yet" is the routine state of a public space whose
+// publisher is away (72fb396), and the caller renders it rather than
+// failing.
+func (r *Runtime) openPublicSession(relayAddr string, tid id.TerminalID) (*previewSession, string, error) {
+	const waiting = "nothing has arrived from this address yet"
+	if err := r.relayGate(); err != nil {
+		return nil, "", err
+	}
+	client, err := r.dialRelay(relayAddr)
+	if err != nil {
+		return nil, waiting, nil
+	}
+	env, _, err := bestProjectionFor(client, tid)
+	client.Close()
+	if err != nil {
+		if errors.Is(err, ErrNoProjection) {
+			return nil, waiting, nil
+		}
+		return nil, "", err
+	}
+	state, m, err := terminals.MaterializePublicProjection(tid, env)
+	if err != nil {
+		return nil, "", err
+	}
+	pid := make([]byte, 16)
+	if _, err := rand.Read(pid); err != nil {
+		return nil, "", err
+	}
+	title := ""
+	if len(m.DeclaredLabels) > 0 {
+		title = m.DeclaredLabels[0]
+	}
+	pol := terminals.ParsePolicy(m.DeclaredLabels)
+	sess := &previewSession{
+		id: hex.EncodeToString(pid), space: tid, state: state,
+		title: title, publish: string(pol.Publish), join: string(pol.Join),
+		// The declared purpose (CAT-0b) and the freeze were already parsed
+		// here and merely thrown away. A listing that looks live for a
+		// sealed space is a lie the policy could have prevented for free.
+		kind: pol.Kind, frozen: pol.Frozen,
+		assets: previewAssetRefs(tid, env.Frames), born: time.Now(),
+	}
+	// The fetcher (PM-2): the envelope's IngressHints and the link's relay
+	// are exactly what the session used to discard. Best-effort — a session
+	// without a fetcher still reads text and serves what the node holds.
+	if f, err := newSessionFetcher(tid, relayAddr, env.IngressHints, r.root, r.dialRelay); err == nil {
+		sess.fetcher = f
+		go f.run(r.stop)
+	}
+	r.previews.put(sess)
+	return sess, "", nil
 }
 
 // previewAssetRefs collects the asset refs a projection's block frames
