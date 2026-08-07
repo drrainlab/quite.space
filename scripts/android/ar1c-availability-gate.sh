@@ -228,6 +228,21 @@ print(n)
 '
 }
 
+# WHAT THE NODE RECEIVED, which is not the same as how many cards are in the
+# shade — and confusing the two cost three runs.
+#
+# One space is ONE notification: a second message UPDATES that card rather
+# than adding another, so a record count that was 1 stays 1 no matter how
+# many messages arrive. Every recovery check below asks "did the message get
+# through", and the honest place to ask that is the node's own log. The shade
+# still has its own checks — grouping, privacy, the summary — where counting
+# cards is exactly right.
+entries_count() { # entries_count <space id>
+  phone_api GET "/api/spaces/$1/entries" | python3 -c 'import json,sys
+try: print(len(json.load(sys.stdin)))
+except Exception: print(-1)' 2>/dev/null
+}
+
 ensure_node() {
   local state; state=$(core_field "$(rig status)" state)
   if [ "$state" != "alive" ]; then
@@ -351,15 +366,22 @@ for m in "${MINUTES[@]}"; do
   # The wait is from the START of the run of checks, so 3/10/30 are the
   # points a person would recognise rather than cumulative sleeps.
   sleep $((m * 60 - (sent * 0)))
-  before=$(shade_records)
+  before=$(entries_count "$SPACE")
+  cards_before=$(shade_records)
   say "$SPACE" "dark ${m}m $(date +%H%M%S)" || { record "dark.${m}m" fail "the peer would not send"; continue; }
   ok=no
   for _ in $(seq 1 45); do
     sleep 2
-    [ "$(shade_records)" -gt "$before" ] && { ok=yes; break; }
+    [ "$(entries_count "$SPACE")" -gt "$before" ] && { ok=yes; break; }
   done
+  # The first dark message is also the one that must SHOW: after it, the
+  # space has a card and later messages only update it.
+  [ "$ok" = yes ] && [ "$cards_before" -eq 0 ] && sleep 4 && \
+    [ "$(shade_records)" -eq 0 ] && ok=shown-nothing
   if [ "$ok" = yes ]; then
     record "dark.${m}m" pass "a message arrived on a dark phone"
+  elif [ "$ok" = shown-nothing ]; then
+    record "dark.${m}m" fail "the message arrived and nothing was shown"
   else
     record "dark.${m}m" fail "nothing arrived within 90s" \
       "{\"entries\":$(phone_api GET "/api/spaces/$SPACE/entries" | python3 -c 'import json,sys
@@ -400,12 +422,12 @@ log "killing the relay under the connection"
 kill_relay
 sleep 10
 start_relay
-before=$(shade_records)
+before=$(entries_count "$SPACE")
 if say "$SPACE" "after the socket died $(date +%H%M%S)"; then
   ok=no
   for _ in $(seq 1 60); do
     sleep 2
-    [ "$(shade_records)" -gt "$before" ] && { ok=yes; break; }
+    [ "$(entries_count "$SPACE")" -gt "$before" ] && { ok=yes; break; }
   done
   if [ "$ok" = yes ]; then
     record "socket.stale-replaced" pass "the connection was rebuilt without help"
@@ -426,11 +448,11 @@ sleep 10
 "${ADB[@]}" shell svc wifi enable >/dev/null 2>&1
 "${ADB[@]}" shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1
 rig status >/dev/null
-before=$(shade_records)
+before=$(entries_count "$SPACE")
 ok=no
 for _ in $(seq 1 90); do
   sleep 2
-  [ "$(shade_records)" -gt "$before" ] && { ok=yes; break; }
+  [ "$(entries_count "$SPACE")" -gt "$before" ] && { ok=yes; break; }
 done
 if [ "$ok" = yes ]; then
   record "network.recovers" pass "what was written offline arrived after the network returned"
@@ -445,7 +467,7 @@ fi
 # mode delivers what it promises; a FAIL here is not a defect in the plane —
 # it is the size of what AR-1d is for, measured rather than assumed.
 "${ADB[@]}" shell input keyevent KEYCODE_SLEEP >/dev/null; sleep 5
-before=$(shade_records)
+before=$(entries_count "$SPACE")
 if say "$SPACE" "dark after a network change $(date +%H%M%S)"; then
   # TEN MINUTES, AND THE NUMBER IS REPORTED. A dozing phone runs its
   # deferred work in maintenance windows that arrive every several minutes,
@@ -456,7 +478,7 @@ if say "$SPACE" "dark after a network change $(date +%H%M%S)"; then
   ok=no; started=$(date +%s)
   for _ in $(seq 1 300); do
     sleep 2
-    [ "$(shade_records)" -gt "$before" ] && { ok=yes; break; }
+    [ "$(entries_count "$SPACE")" -gt "$before" ] && { ok=yes; break; }
   done
   took=$(( $(date +%s) - started ))
   if [ "$ok" = yes ]; then

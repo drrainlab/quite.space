@@ -23,3 +23,8 @@ tmp/
 # Local build output
 /terminal
 /quiet-bridge
+
+# The release signing key and where it lives (AR-1e). Never in the repo.
+android/host/keystore.properties
+*.jks
+*.keystore

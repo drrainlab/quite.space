@@ -94,7 +94,11 @@
   body {
     background: var(--bg); color: var(--fg);
     font: calc(15px * var(--font-scale))/1.5 var(--font-sans);
-    height: 100vh; display: flex; flex-direction: column;
+    /* dvh, WITH A FALLBACK ABOVE IT. On a phone the visual viewport shrinks
+       when the keyboard opens and grows when the URL bar hides; 100vh is the
+       LARGEST of those, so a composer pinned to the bottom of 100vh sits
+       under the keyboard exactly when somebody is typing into it. */
+    height: 100vh; height: 100dvh; display: flex; flex-direction: column;
     transition: background .4s ease, color .4s ease;
   }
   body::before {
@@ -2420,3 +2424,47 @@ header .nav-act { padding: 5px 11px 5px 10px; min-height: 30px; }
 .space-danger .btn-plain.danger { color: var(--warn, #e0a); padding-left: 0; }
 .space-danger .btn-plain.danger:hover { text-decoration: underline; }
 #dlgDeleteSpace .btn-filled.danger { background: var(--warn, #e0a); color: #fff; }
+
+
+/* ── A FINGER IS NOT A MOUSE (AR-1e polish) ──────────────────────────────────
+   Measured rather than guessed: at 360 dp, twenty interactive controls were
+   under 40 px on their short side — the navigator's section buttons at 40×30,
+   the protocol toggle at 94×18, the "add" affordances at 23×16. Every one of
+   them is fine under a cursor, which is why they survived: a pointer lands
+   where it is aimed and a fingertip lands within about a centimetre of it.
+
+   `pointer: coarse` is the honest test — not a width breakpoint. A phone in
+   landscape is wide and still has fingers; a touchscreen laptop is wide and
+   has both, and `coarse` follows the device that is actually being used.
+
+   The rule raises the SHARED variable rather than restyling each control, so
+   anything built later inherits it, and adds explicit floors only for the few
+   controls that set their own geometry. */
+@media (pointer: coarse) {
+  :root { --tap: 44px; }
+
+  /* These set their own size and never asked --tap for it. */
+  .nav-act, .nav-more, .nav-sec-add, #tglNav, #protoToggle,
+  .settings-tabs button, .segmented button {
+    min-height: 44px; min-width: 44px;
+  }
+  /* Padding rather than height where the control is a text row: growing the
+     box would push the layout around; growing the reachable area does not. */
+  .nav-sec-add, .nav-more { padding: 12px; }
+  #protoToggle { padding: 12px 10px; }
+
+  /* THE COMPOSER STAYS ABOVE THE KEYBOARD. With dvh on the body this follows
+     the visual viewport, and the extra inset keeps it clear of a home
+     indicator on a phone that has one. */
+  #composer, .composer, #replyBar {
+    padding-bottom: max(8px, env(safe-area-inset-bottom));
+  }
+}
+
+/* Safe areas, for the cases the Android host does not pad for us — a browser
+   on a notched phone, and any future PWA install. The host applies window
+   insets itself, and these are max()'d so they are simply zero there. */
+@supports (padding: env(safe-area-inset-left)) {
+  header.glass { padding-left: max(12px, env(safe-area-inset-left));
+                 padding-right: max(12px, env(safe-area-inset-right)); }
+}

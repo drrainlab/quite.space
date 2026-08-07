@@ -1,3 +1,6 @@
+import java.io.File
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -37,12 +40,75 @@ android {
         }
     }
 
+    // THE SIGNING KEY IS NOT IN THIS REPOSITORY, and it never will be. It
+    // lives wherever its owner keeps it, and Gradle is told where by a
+    // git-ignored properties file or by the environment — so a clone of this
+    // project builds, tests and runs without one, and only a RELEASE build
+    // asks:
+    //
+    //   android/host/keystore.properties
+    //     storeFile=/absolute/path/quiet-release.jks
+    //     storePassword=…
+    //     keyAlias=quiet
+    //     keyPassword=…
+    //
+    //   or QUIET_KEYSTORE / QUIET_KEYSTORE_PASSWORD / QUIET_KEY_ALIAS /
+    //   QUIET_KEY_PASSWORD, for a machine that has no business holding a file.
+    //
+    // Make the key yourself; nothing here will do it for you:
+    //   keytool -genkeypair -v -keystore quiet-release.jks -alias quiet \
+    //     -keyalg RSA -keysize 4096 -validity 10000
+    //
+    // AN APK SIGNED BY A DIFFERENT KEY IS A DIFFERENT APP to Android: it
+    // cannot update an existing install, and the data directory of the old
+    // one is unreachable — every tester would reinstall from scratch and lose
+    // their node. That is why this is a documented seam rather than a
+    // generated convenience.
+    signingConfigs {
+        create("release") {
+            val props = Properties()
+            val file = rootProject.file("keystore.properties")
+            if (file.exists()) {
+                file.inputStream().use { props.load(it) }
+            }
+            fun value(key: String, env: String): String? =
+                props.getProperty(key) ?: System.getenv(env)
+
+            val store = value("storeFile", "QUIET_KEYSTORE")
+            if (!store.isNullOrEmpty()) {
+                storeFile = File(store)
+                storePassword = value("storePassword", "QUIET_KEYSTORE_PASSWORD")
+                keyAlias = value("keyAlias", "QUIET_KEY_ALIAS")
+                keyPassword = value("keyPassword", "QUIET_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         // DEBUG ONLY, and that is load-bearing rather than lazy: `run-as` needs
         // a debuggable package, and `run-as` is how the harness reads filesDir
         // without root — which is what keeps this working on the Play Store
         // system image and on a stock retail phone alike.
         getByName("debug") {
+            isMinifyEnabled = false
+        }
+
+        // THE BETA BUILD. No rig and no contender: src/debug is not compiled
+        // into it, so the measurement surfaces are absent by construction
+        // rather than by a flag somebody could flip.
+        getByName("release") {
+            // Signed only when a key was actually found. Without one the build
+            // still succeeds and produces an UNSIGNED apk, which cannot be
+            // installed and says so — better than quietly shipping something
+            // signed by a debug key that no update can ever follow.
+            val key = signingConfigs.getByName("release")
+            signingConfig = if (key.storeFile != null) key else null
+
+            // MINIFICATION OFF for the first beta, deliberately. The core is
+            // reached through a gomobile binding whose Java stubs are called
+            // by name; shrinking that surface is its own piece of work with
+            // its own way of failing — silently, at runtime, on somebody
+            // else's phone — and it buys a few megabytes.
             isMinifyEnabled = false
         }
     }
