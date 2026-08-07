@@ -6,13 +6,13 @@
 package terminals_test
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/drrainlab/quiet_places/protocol/codec"
 	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/protocol/projection"
 	"github.com/drrainlab/quiet_places/terminals"
@@ -316,21 +316,37 @@ func TestIngressHintsAreSignedAndDigested(t *testing.T) {
 
 // A v1 envelope must be refused as a VERSION problem, not as a broken
 // signature — the difference between "upgrade me" and "you are under attack".
+//
+// BUILT, NOT HUNTED FOR. The first version of this test searched the encoded
+// envelope for the byte pair {0x03, 0x02} — "key 3, value 2" — and rewrote
+// the 2 to a 1. Those two bytes also occur, by chance, inside a signature or
+// a digest, and when the search found one of those instead it corrupted a
+// random field: the decoder then said "map keys not strictly ascending" and
+// the test reported a version skew "reported as something else". A real
+// failure, in the test, roughly once in a hundred runs — invisible for
+// months and impossible to reproduce on demand.
+//
+// So the old envelope is encoded deliberately, with the same codec a v1
+// publisher would have used: the ONE field this test is about is set to 1,
+// and nothing else is left to chance.
 func TestOldFormatIsRefusedAsAVersionNotASignature(t *testing.T) {
-	s, owner := buildPublicSpace(t, 2)
-	wire, _, err := s.BuildPublicProjection(1, owner.Device.ID,
-		uint64(time.Now().Unix()), terminals.DefaultProjectionLimits())
-	if err != nil {
-		t.Fatal(err)
+	var spaceID id.TerminalID
+	for i := range spaceID {
+		spaceID[i] = byte(i)
 	}
-	// Rewrite the format field to 1 the way an older publisher would have.
-	i := bytes.Index(wire, []byte{0x03, 0x02}) // keyFormat=3, value=2
-	if i < 0 {
-		t.Skip("format field not found in this encoding")
-	}
-	old := append([]byte(nil), wire...)
-	old[i+1] = 0x01
-	_, err = projection.Decode(old)
+	// magic + a map holding what Decode needs to reach the version check: the
+	// space, the format, and a signature (so an unsigned envelope is not what
+	// gets refused instead).
+	buf := []byte("QPP1")
+	buf = codec.AppendMap(buf, 3)
+	buf = codec.AppendUint(buf, 1) // keySpace
+	buf = codec.AppendBytes(buf, spaceID[:])
+	buf = codec.AppendUint(buf, 3)  // keyFormat
+	buf = codec.AppendUint(buf, 1)  // …and 1 is the old one
+	buf = codec.AppendUint(buf, 12) // keySig
+	buf = codec.AppendBytes(buf, make([]byte, 64))
+
+	_, err := projection.Decode(buf)
 	if err == nil {
 		t.Fatal("a v1 envelope decoded under v2")
 	}

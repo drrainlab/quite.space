@@ -169,6 +169,33 @@ rig() {
   return 1
 }
 
+# BOTH SIDES' OWN ACCOUNT, captured at the moment of a failure.
+#
+# "Nothing arrived" has at least four causes that look identical from here:
+# the sender never handed it over, the relay never got it, the phone is
+# waiting out a rate limit on purpose, or its connection is dead and nothing
+# noticed. Each has a different fix and only the nodes can tell them apart.
+why_quiet() { # why_quiet → one json object
+  local phone peer
+  phone=$(phone_api GET /api/relay/diagnostics | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    print("{}"); raise SystemExit
+print(json.dumps({k: d.get(k) for k in
+    ("primary_health", "trust", "sync_active", "last_error", "throttled_for_ms")}))' 2>/dev/null)
+  peer=$(peer_api GET /api/relay/diagnostics | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    print("{}"); raise SystemExit
+print(json.dumps({k: d.get(k) for k in
+    ("primary_health", "trust", "sync_active", "last_error")}))' 2>/dev/null)
+  printf '{"phone":%s,"peer":%s}' "${phone:-null}" "${peer:-null}"
+}
+
 core_field() { printf '%s' "$1" | python3 -c "
 import json,sys
 print(json.load(sys.stdin).get('core',{}).get('$2',''))" 2>/dev/null; }
@@ -351,21 +378,24 @@ else
   record "identity.unchanged" fail "the core was reopened underneath the mode"
 fi
 
-# ---- 6. a stale socket, WITH THE SCREEN ON -------------------------------
+# ---- 6. a stale socket, WITH THE APP IN FRONT ---------------------------
 #
-# Deliberately not in the dark. Two questions were being asked at once and
-# answered as one: "does the node notice a dead connection" and "does a dark
-# phone get to run at all". The first is the product's, the second is
-# Android's, and the first has an answer already — two desktop nodes find a
-# relay that came back in thirteen seconds. So this half is measured awake,
-# and what it proves is that the mode itself recovers; what a DARK phone can
-# recover is the next line down, and its own finding.
-"${ADB[@]}" shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1; sleep 3
+# NOT MERELY AWAKE — IN THE FOREGROUND, and the distinction is what three
+# runs were spent learning. Two questions were being asked at once and
+# answered as one: "does the node rebuild a connection whose relay died" and
+# "is a backgrounded app allowed to run at all". Waking the SCREEN does not
+# answer the second: the app is still in a standby bucket and Doze still
+# defers its network to a maintenance window, so a two-minute budget measured
+# Android's scheduler and reported it as a defect in ours.
 #
-# The relay is killed and brought back on the same port: every connection the
-# phone holds is now dead, and nothing tells it so. A node that notices and
-# redials keeps working; one that trusts a socket forever goes quiet with a
-# green light — which is the failure this reproduces on purpose.
+# In front, the same phone rebuilds the connection in about three seconds —
+# measured by hand against a relay killed and restarted with its identity
+# kept. So this half is measured in front, where it is the product's own
+# question, and the dark version below is its own line with its own budget.
+"${ADB[@]}" shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1
+rig status >/dev/null   # brings the app to the front, as a person would
+sleep 3
+
 log "killing the relay under the connection"
 kill_relay
 sleep 10
@@ -377,29 +407,37 @@ if say "$SPACE" "after the socket died $(date +%H%M%S)"; then
     sleep 2
     [ "$(shade_records)" -gt "$before" ] && { ok=yes; break; }
   done
-  [ "$ok" = yes ] \
-    && record "socket.stale-replaced" pass "the connection was rebuilt without help" \
-    || record "socket.stale-replaced" fail "nothing arrived after the relay came back"
+  if [ "$ok" = yes ]; then
+    record "socket.stale-replaced" pass "the connection was rebuilt without help"
+  else
+    record "socket.stale-replaced" fail "nothing arrived after the relay came back" \
+      "$(why_quiet)"
+  fi
 else
   record "socket.stale-replaced" fail "the peer would not send"
 fi
 
-# ---- 7. the network goes and comes back, also awake ---------------------
+# ---- 7. the network goes and comes back, also with the app in front ------
 log "dropping wi-fi"
 "${ADB[@]}" shell svc wifi disable >/dev/null 2>&1
 sleep 20
 say "$SPACE" "written while offline $(date +%H%M%S)" >/dev/null
 sleep 10
 "${ADB[@]}" shell svc wifi enable >/dev/null 2>&1
+"${ADB[@]}" shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1
+rig status >/dev/null
 before=$(shade_records)
 ok=no
 for _ in $(seq 1 90); do
   sleep 2
   [ "$(shade_records)" -gt "$before" ] && { ok=yes; break; }
 done
-[ "$ok" = yes ] \
-  && record "network.recovers" pass "what was written offline arrived after the network returned" \
-  || record "network.recovers" fail "nothing arrived within three minutes of the network returning"
+if [ "$ok" = yes ]; then
+  record "network.recovers" pass "what was written offline arrived after the network returned"
+else
+  record "network.recovers" fail "nothing arrived within three minutes of the network returning" \
+    "$(why_quiet)"
+fi
 
 # ---- 7b. and once more in the dark, which is the honest question --------
 #
@@ -409,14 +447,25 @@ done
 "${ADB[@]}" shell input keyevent KEYCODE_SLEEP >/dev/null; sleep 5
 before=$(shade_records)
 if say "$SPACE" "dark after a network change $(date +%H%M%S)"; then
-  ok=no
-  for _ in $(seq 1 90); do
+  # TEN MINUTES, AND THE NUMBER IS REPORTED. A dozing phone runs its
+  # deferred work in maintenance windows that arrive every several minutes,
+  # so a three-minute stopwatch measures the window and not the recovery.
+  # What matters for the promise is that it happens without help — and how
+  # long it takes is a fact worth writing down rather than a threshold worth
+  # inventing.
+  ok=no; started=$(date +%s)
+  for _ in $(seq 1 300); do
     sleep 2
     [ "$(shade_records)" -gt "$before" ] && { ok=yes; break; }
   done
-  [ "$ok" = yes ] \
-    && record "dark.after-network-change" pass "a dark phone recovered on its own" \
-    || record "dark.after-network-change" fail "a dark phone did not recover within three minutes"
+  took=$(( $(date +%s) - started ))
+  if [ "$ok" = yes ]; then
+    record "dark.after-network-change" pass "a dark phone recovered on its own in ${took}s" \
+      "{\"seconds\":$took}"
+  else
+    record "dark.after-network-change" fail "a dark phone did not recover within ten minutes" \
+      "$(why_quiet)"
+  fi
 else
   record "dark.after-network-change" fail "the peer would not send"
 fi

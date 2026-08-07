@@ -1,8 +1,17 @@
 package node
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	crand "crypto/rand"
+	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"math/big"
+	"net"
 	"os"
 	"strconv"
 	"testing"
@@ -548,4 +557,157 @@ func TestSoakARelayThatComesBackIsFoundAgain(t *testing.T) {
 		t.Errorf("it took %v to notice a dead connection; a person calls that "+
 			"silence, not recovery", d)
 	}
+}
+
+// The same relay, back from the dead, over a PINNED connection.
+//
+// WHY A SECOND VERSION OF THE SAME TEST. The first one dialled 127.0.0.1,
+// and loopback skips pinning entirely (see dialRelay): it proved that a
+// dead socket is noticed, and said nothing about the path a phone actually
+// uses, which is a LAN address with a confirmed TOFU pin. On a phone that
+// path did not recover in three minutes while this one recovered in
+// thirteen seconds — and the difference between the two was the whole
+// question.
+//
+// The relay keeps its KEY across the restart and mints a fresh certificate,
+// exactly as `terminal-relay --data` does. That is the honest reproduction:
+// clients pin the key, so this is the same relay coming back, not a new one
+// wearing its name.
+func TestSoakAPinnedRelayThatComesBackIsFoundAgain(t *testing.T) {
+	if os.Getenv("QUIET_RELAY_SOAK") != "1" {
+		t.Skip("set QUIET_RELAY_SOAK=1 (this one restarts a relay mid-test)")
+	}
+	host := nonLoopbackAddr(t)
+	const port = 37421
+	addr := fmt.Sprintf("%s:%d", host, port)
+
+	cert, pin := fixedRelayIdentity(t)
+	srv, _, err := relay.StartServerWithIdentity(fmt.Sprintf("0.0.0.0:%d", port),
+		relay.DefaultLimits(), cert)
+	if err != nil {
+		t.Skipf("cannot bind %d: %v", port, err)
+	}
+
+	sender := openRuntime(t, t.TempDir(), "alice")
+	defer sender.Close()
+	phone := openRuntime(t, t.TempDir(), "bob")
+	defer phone.Close()
+
+	tid, err := sender.CreateSpace("a room")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rt := range []*Runtime{sender, phone} {
+		if err := rt.TrustRelay(addr, pin); err != nil {
+			t.Fatalf("pinning the relay: %v", err)
+		}
+		if err := rt.SetSettings(Settings{Relay: addr}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	info, err := sender.MintPass(tid, 1, 24, addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reqID, err := phone.JoinByPass(info.Link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitJoin(t, phone, reqID, JoinReady)
+
+	arrival := func(text string, limit time.Duration) time.Duration {
+		start := time.Now()
+		if _, err := sender.Say(tid, text, SayOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		for time.Since(start) < limit {
+			if sp, ok := phone.spaceForTest(tid); ok {
+				found := false
+				_ = sp.Log.Replay(func(a eventlog.Applied) error {
+					if e, ok := sp.State.EntryByID(a.ID); ok &&
+						e.Content.Text != nil && e.Content.Text.Text == text {
+						found = true
+					}
+					return nil
+				})
+				if found {
+					return time.Since(start)
+				}
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+		return -1
+	}
+
+	if d := arrival("before", 90*time.Second); d < 0 {
+		srv.Close()
+		t.Fatal("nothing arrived over the pinned connection at all")
+	} else {
+		t.Logf("before: %v", d)
+	}
+
+	srv.Close()
+	time.Sleep(3 * time.Second)
+	again, _, err := relay.StartServerWithIdentity(fmt.Sprintf("0.0.0.0:%d", port),
+		relay.DefaultLimits(), cert)
+	if err != nil {
+		t.Fatalf("the relay could not come back: %v", err)
+	}
+	defer again.Close()
+
+	d := arrival("after the relay came back", 3*time.Minute)
+	if d < 0 {
+		t.Fatal("a message sent after the SAME relay came back never arrived — " +
+			"a pinned connection that dies is never rebuilt, and from outside " +
+			"the conversation simply goes quiet")
+	}
+	t.Logf("after: %v", d)
+	if d > 30*time.Second {
+		t.Errorf("it took %v to rebuild a pinned connection; a person calls "+
+			"that silence, not recovery", d)
+	}
+}
+
+// nonLoopbackAddr finds this machine's LAN address, because loopback is
+// exactly the case that skips the code under test.
+func nonLoopbackAddr(t *testing.T) string {
+	t.Helper()
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		t.Skipf("no interfaces: %v", err)
+	}
+	for _, a := range addrs {
+		ipn, ok := a.(*net.IPNet)
+		if !ok || ipn.IP.IsLoopback() || ipn.IP.To4() == nil {
+			continue
+		}
+		return ipn.IP.String()
+	}
+	t.Skip("no non-loopback IPv4 address on this machine")
+	return ""
+}
+
+// fixedRelayIdentity mints one key and keeps it, the way `--data` does.
+func fixedRelayIdentity(t *testing.T) (*tls.Certificate, string) {
+	t.Helper()
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), crand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+	}
+	der, err := x509.CreateCertificate(crand.Reader, tmpl, tmpl, &priv.PublicKey, priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(parsed.RawSubjectPublicKeyInfo)
+	return &tls.Certificate{Certificate: [][]byte{der}, PrivateKey: priv},
+		base64.StdEncoding.EncodeToString(sum[:])
 }
