@@ -662,7 +662,12 @@ async function refresh() {
     if (typeof refreshDoor === 'function') refreshDoor();
     refreshAI();
     document.body.classList.toggle('protocol', PROTOCOL);
-    document.getElementById('protoToggle').textContent = PROTOCOL ? t('protocol.on') : t('protocol.toggle');
+    // MARK + LABEL, the same shape the header's actions use: on a phone the
+    // word goes and the mark stays, which is the only way this row fits on
+    // one line. The meaning lives in the title attribute either way.
+    document.getElementById('protoToggle').innerHTML =
+      '<span class="proto-mark" aria-hidden="true">&lt;/&gt;</span>' +
+      '<span class="proto-label">' + esc(PROTOCOL ? t('protocol.on') : t('protocol.toggle')) + '</span>';
 
     // Connection chip: human by default, raw string only in Protocol view.
     //
@@ -1458,6 +1463,39 @@ async function refreshSpace() {
     mbox.appendChild(d);
   }
   hereMembers = nextHere;
+
+  // ON A PHONE, THIS PANEL IS WHERE A SPACE'S OWN CONTROLS LIVE.
+  //
+  // The conversation bar has room for the title, the thing somebody came to
+  // do, and the way into these details — and that is all it has room for at
+  // 360 dp. Invite, appearance and the reaction palette are OWNER-ONLY and
+  // OCCASIONAL: they belong where a person goes to look at the space rather
+  // than in the row above every message.
+  //
+  // Drawn here rather than moved here, because this panel is rebuilt on every
+  // poll: a relocated button would be destroyed a second later. The originals
+  // stay in the bar for wider screens and are hidden by CSS at this width, so
+  // there is one definition of each action and one place it is wired.
+  if (window.matchMedia('(max-width: 600px)').matches) {
+    const acts = [];
+    if (sp?.owned && !sp?.visibility) acts.push(['invite', () => openPassCurrent()]);
+    if (sp?.owned) {
+      acts.push([t('space.customize') || 'Appearance', () => openCustomize()]);
+      acts.push([t('space.palette') || 'Reaction palette', () => openResPaletteEditor()]);
+    }
+    if (acts.length) {
+      const box = document.createElement('div');
+      box.className = 'space-acts';
+      for (const [label, fn] of acts) {
+        const b = document.createElement('button');
+        b.className = 'btn-plain';
+        b.textContent = label;
+        b.onclick = fn;
+        box.appendChild(b);
+      }
+      mbox.insertBefore(box, mbox.firstChild);
+    }
+  }
 
   // SD-0 — leaving a place tidy.
   //

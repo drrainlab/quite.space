@@ -2482,3 +2482,86 @@ header .nav-act { padding: 5px 11px 5px 10px; min-height: 30px; }
   header.glass { padding-left: max(12px, env(safe-area-inset-left));
                  padding-right: max(12px, env(safe-area-inset-right)); }
 }
+
+
+/* ── THE CONVERSATION BAR ON A PHONE ─────────────────────────────────────────
+   Seven controls and a title in one row need 402 px; a phone has 360. Left to
+   wrap on its own the segmented control broke into a vertical stack of three
+   — "Chat" over "Posts" over "Shelf" — and the bar took a fifth of the screen
+   before a single message.
+
+   So the rows are chosen rather than discovered:
+
+     1. the space, what it is, and the way into its details
+     2. Chat · Posts · Shelf, full width, as one control
+     3. the character line (persona), which was always its own row
+
+   The primary action stays on row one because it is the reason somebody
+   opened the space; the occasional ones — invite, appearance, palette — keep
+   their marks and lose their words. */
+@media (max-width: 600px) {
+  #convbar { flex-wrap: wrap; row-gap: 6px; padding: 8px 10px; }
+
+  /* Row one. The title takes what is left and truncates rather than pushing
+     the buttons off the edge — a long space name is common and must not cost
+     somebody the way into the space. */
+  #convTitle { order: 0; flex: 1 1 auto; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #newPostBtn { order: 1; }
+  #convbar > .icon-btn:last-child { order: 2; }   /* ⓘ, the way to details */
+
+  /* A greedy spacer strands everything after it on its own line. On a phone
+     it stops pushing — the same fix the header needed. */
+  #convbar > span[style*="flex:1"] { flex: 0 0 0; }
+
+  /* Row two: one control, the full width, three equal parts. */
+  #viewSwitch { order: 3; flex: 1 0 100%; width: 100%; }
+  #viewSwitch button { flex: 1; }
+
+  /* Occasional and owner-only: they move to the space panel, where somebody
+     goes to look at the space rather than to read it. Drawn there by
+     refreshSpace — see the note beside .space-acts. */
+  #inviteBtn, #customizeBtn, #resPalBtn { display: none !important; }
+  #shareLinkBtn { order: 4; }
+  #visBadge { order: 5; }
+}
+
+/* The protocol toggle is a word on a desktop and a mark on a phone — the same
+   trade the header's actions already make, and the reason each of them has a
+   title attribute. */
+.proto-mark { display: none; }
+@media (max-width: 600px) {
+  header #protoToggle .proto-label { display: none; }
+  header #protoToggle .proto-mark { display: inline; letter-spacing: -1px; }
+}
+
+
+/* The space's own controls, in the panel that is about the space. Full-width
+   rows rather than a strip of buttons: a phone panel is a list, and a list is
+   read down. */
+.space-acts { display: flex; flex-direction: column; gap: 2px; margin: 0 0 14px; }
+.space-acts .btn-plain { justify-content: flex-start; text-align: left;
+  padding: 10px 4px; min-height: 44px; }
+
+
+/* ── THE COMPOSER, WHERE THE TEXT GOES ───────────────────────────────────────
+   At 360 dp the placeholder was cut mid-word — "write into th" — because four
+   controls and a presence selector were taking the width from the one thing
+   the row exists for. The input now wins the argument: everything beside it
+   is either a mark or a word that can be read from its dot.
+
+   The presence selector keeps its dot and loses its word entirely at this
+   width; it opens a menu that says the same thing in full, and the state is
+   already visible as colour. */
+@media (max-width: 480px) {
+  #composer #text { min-width: 0; flex: 1 1 auto; }
+  /* NARROWED, NOT HIDDEN. Hiding it entirely gave the input its width back
+     and took away the one place a person can see what they are showing —
+     a chevron alone says a menu exists, not what is currently true. Sixty
+     pixels holds a chosen state; the placeholder truncates, which is the
+     right way round, because a placeholder is the case where there is
+     nothing to lose. */
+  #presenceLabel { max-width: 60px; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; }
+  #composer .picker-btn { padding: 0 10px; gap: 4px; min-width: 44px; }
+}

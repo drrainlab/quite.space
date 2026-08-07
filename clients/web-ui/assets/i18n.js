@@ -267,6 +267,9 @@ const I18N = {
     // with a route CHOSEN, which is a queue — say that and nothing more.
     'share.state.queued': ({ route }) => `queued for ${route}`,
 
+    'space.customize': 'Appearance',
+    'space.palette': 'Reaction palette',
+
     // what a phone's notifications may say (AR-1b.7b). Each line describes
     // what the level PUBLISHES — to a lock screen and to every notification
     // listener on the device — rather than how friendly it is, because that
