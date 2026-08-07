@@ -158,10 +158,12 @@ func (r *Runtime) shareRef(source id.TerminalID, ref quoteRef,
 func (r *Runtime) quotationOf(source id.TerminalID, ref quoteRef,
 	o ShareOptions) (*schemas.ShareOrigin, string, *schemas.SharedPublication, error) {
 
-	// The global relay is read BEFORE the lock: GetSettings takes r.mu, and
-	// composing a reference inside the locked builder was this gate's
-	// ready-made deadlock.
-	globalRelay := r.GetSettings().Relay
+	// Read BEFORE the lock: the resolver takes r.mu (as GetSettings did),
+	// and composing a reference inside the locked builder was this gate's
+	// ready-made deadlock. It is the resolver rather than the raw setting
+	// because in automatic mode that setting is empty by design, and a card
+	// would have gone out with no way back on a perfectly connected node.
+	globalRelay := r.ResolvePersonalRelay()
 
 	r.mu.Lock()
 	defer r.mu.Unlock()

@@ -262,7 +262,14 @@ func (r *Runtime) MintQuickLink(space id.TerminalID, note string) (QuickLinkInfo
 
 func (r *Runtime) mintLink(space id.TerminalID, o QuickLinkOptions) (QuickLinkInfo, error) {
 	note := o.Note
-	relayAddr := r.GetSettings().Relay
+	// WHERE THIS NODE'S INBOX IS, which in automatic mode is a measured
+	// selection rather than a configured string. Settings.Relay is empty by
+	// design there (RR-3 keeps the probe result out of Settings so a stale
+	// measurement never looks like an explicit choice), so reading it
+	// directly refused every quick link on a node whose relay was healthy
+	// and actively syncing — and told the person to go and set the relay
+	// they had already set.
+	relayAddr := r.ResolvePersonalRelay()
 	if relayAddr == "" {
 		// A link needs SOMEWHERE to be reachable — not necessarily a relay.
 		//

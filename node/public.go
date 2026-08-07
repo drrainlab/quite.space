@@ -259,7 +259,6 @@ func ParsePublicLink(link string) (relayAddr string, tid id.TerminalID, doc *[16
 func (r *Runtime) ComposePublicLink(tid id.TerminalID, doc *[16]byte) (string, error) {
 	r.mu.Lock()
 	st, ok := r.spaces[tid]
-	sourceRelay := r.ks.Spaces[tid].SourceRelay
 	r.mu.Unlock()
 	if !ok {
 		return "", errors.New("node: unknown space")
@@ -267,12 +266,17 @@ func (r *Runtime) ComposePublicLink(tid id.TerminalID, doc *[16]byte) (string, e
 	if !st.space.Policy().IsPublic() {
 		return "", errors.New("node: not a public space")
 	}
-	relayAddr := sourceRelay
+	// The space's own read ladder: its signed relay set, then the address a
+	// projection actually arrived from, then this node's own. It used to
+	// read the observed address and fall back to Settings.Relay, which
+	// refused to compose ANY share link on a node in automatic mode — where
+	// that field is empty by design. The resolver covers both, in order,
+	// and takes r.mu itself, so it is called after the read above.
+	relayAddr := r.ResolvePublicReadRelay(tid)
 	if relayAddr == "" {
-		relayAddr = r.GetSettings().Relay
-	}
-	if relayAddr == "" {
-		return "", errors.New("node: set a relay in Settings first — the link carries it")
+		return "", errors.New(
+			"node: this space has no reachable relay yet — the link carries one, " +
+				"so there is nothing to put in it")
 	}
 	envelope := publicLinkPrefix + tid.Hex()
 	if doc != nil {

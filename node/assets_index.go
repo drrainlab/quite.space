@@ -326,7 +326,7 @@ func (r *Runtime) RequestAsset(space id.TerminalID, asset string) error {
 // chunks; peers tried sequentially (plan §5: no fan-out duplication).
 func (r *Runtime) fetchLoop(key AssetKey, ref *schemas.AssetRef, st *spaceState) FetchReason {
 	deadline := time.Now().Add(2 * time.Minute)
-	relayAddr := r.GetSettings().Relay
+	relayAddr := r.ResolvePersonalRelay()
 	// Track hashes we asked for over the relay so we can stop asking on exit.
 	registered := map[id.Hash]struct{}{}
 	// Progress is what separates a stall from a silence: if a single byte

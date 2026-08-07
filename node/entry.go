@@ -189,7 +189,7 @@ func (r *Runtime) DecideEntry(reqIDShort string, admit bool, reason string) erro
 	// to the configured relay would seal this decision somewhere the guest has
 	// never looked, and then report success.
 	if addr == "" && relayShaped(addr) {
-		addr = r.GetSettings().Relay
+		addr = r.ResolvePersonalRelay()
 	}
 	if addr == "" {
 		return errors.New("node: deciding needs the relay the link was made on")
@@ -383,7 +383,7 @@ func (r *Runtime) declinePendingForPass(passIDShort, reason string) {
 		return
 	}
 	if addr == "" && relayShaped(addr) {
-		addr = r.GetSettings().Relay // legacy records minted before RR-0
+		addr = r.ResolvePersonalRelay() // legacy records minted before RR-0
 	}
 	if addr == "" || !relayShaped(addr) {
 		return
