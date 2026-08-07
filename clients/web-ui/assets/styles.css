@@ -1361,31 +1361,28 @@
      z-index 3 clears the atmosphere layers (0) and the article's own
      content (1).
 
-     NEARLY OPAQUE, not glass. The header's blur cannot work here: #posts
-     carries a mask-image, and a masked element composites its own layer —
-     there is no backdrop left to filter. Tried it and watched the article
-     scroll through the words in sharp focus. So the bar carries its own
-     surface, with a hairline to keep it from reading as a hole. SOLID,
-     not 96%: at four percent the article still showed through the words
-     clearly enough to read, which is worse than a plain bar. An
-     atmospheric post loses the scene behind this one strip and keeps it
-     everywhere else, which is the right way round. */
+     GLASS, and it took a measurement to get there. backdrop-filter was
+     declared and computed (blur(24px), confirmed) while the article still
+     scrolled through the words in perfect focus — because #posts carries a
+     mask-image, and a masked element composites its own layer, so there is
+     no backdrop left to filter. Proven by removing the mask and watching
+     the blur appear with nothing else changed. So reading mode drops the
+     mask (below) and the bar can be what the header is. */
   #pubArticle > .pub-bar {
     position: sticky; top: 0; z-index: 3;
     margin-top: 0; padding: 8px 12px; border-radius: var(--radius-md);
-    background: var(--panel);
-    border: 1px solid var(--line);
-    box-shadow: var(--shadow);
+    background: var(--glass);
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
+    border: 1px solid var(--glass-border);
   }
-  /* The feed's top fade would dissolve that bar exactly where it sits, so
-     while reading the scroller keeps only its bottom edge. */
+  /* The price of that blur, paid deliberately: the scroller's edge fades
+     go while an article is open. The top one dissolved the bar exactly
+     where it sits, and the bottom one cannot stay on its own — the mask is
+     one property, and any mask at all is what stops the blur. */
   body.reading #posts {
-    -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--edge-fade)), transparent 100%);
-    mask-image: linear-gradient(to bottom, #000 calc(100% - var(--edge-fade)), transparent 100%);
+    -webkit-mask-image: none; mask-image: none;
   }
-  /* The list keeps the same breathing room the scroller used to give it. */
-  #posts > .pub-card:first-child { margin-top: 12px; }
-  #posts > .pub-card:last-child { margin-bottom: 12px; }
   #pubArticle .pub-h1, #pubArticle .pub-summary,
   #pubArticle .md, #pubArticle .pub-block blockquote,
   #pubArticle .pub-comment {
