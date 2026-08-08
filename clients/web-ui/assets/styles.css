@@ -2535,7 +2535,7 @@ header .nav-act { padding: 5px 11px 5px 10px; min-height: 30px; }
      `.nav-act` — so the floor has to be stated at the same specificity or it
      silently loses and the button stays 30 px tall. Found by measuring after
      the first attempt rather than by reading. */
-  .nav-act, .nav-more, .nav-sec-add, #tglNav, #protoToggle,
+  .nav-act, .nav-more, .nav-sec-add, #tglNav,
   header .nav-act, header .conn-chip,
   .settings-tabs button, .segmented button {
     min-height: 44px;
@@ -2552,7 +2552,6 @@ header .nav-act { padding: 5px 11px 5px 10px; min-height: 30px; }
   /* Padding rather than height where the control is a text row: growing the
      box would push the layout around; growing the reachable area does not. */
   .nav-sec-add, .nav-more { padding: 12px; }
-  #protoToggle { padding: 12px 10px; }
 
   /* THE COMPOSER STAYS ABOVE THE KEYBOARD. With dvh on the body this follows
      the visual viewport, and the extra inset keeps it clear of a home
@@ -2612,16 +2611,6 @@ header .nav-act { padding: 5px 11px 5px 10px; min-height: 30px; }
   #shareLinkBtn { order: 4; }
   #visBadge { order: 5; }
 }
-
-/* The protocol toggle is a word on a desktop and a mark on a phone — the same
-   trade the header's actions already make, and the reason each of them has a
-   title attribute. */
-.proto-mark { display: none; }
-@media (max-width: 600px) {
-  header #protoToggle .proto-label { display: none; }
-  header #protoToggle .proto-mark { display: inline; letter-spacing: -1px; }
-}
-
 
 /* The space's own controls, in the panel that is about the space. Full-width
    rows rather than a strip of buttons: a phone panel is a list, and a list is
@@ -2784,18 +2773,18 @@ header .nav-act { padding: 5px 11px 5px 10px; min-height: 30px; }
      rows there, with their labels back — there is room for words in a pane
      and never was in a header. */
   #navExtras { display: flex; flex-direction: column; gap: 8px;
-    padding: 12px 12px 14px; border-bottom: 1px solid var(--line); }
+    padding: 12px 12px 12px; border-bottom: 1px solid var(--line); }
   #navExtras .nav-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   #navExtras .nav-act { width: 100%; justify-content: flex-start;
     min-height: 46px; padding: 0 14px; border-radius: 13px; }
   #navExtras .nav-label { display: inline; }        /* the word comes back */
   #navExtras .nav-mark { width: 17px; height: 17px; }
-  #navExtras #protoToggle, #navExtras #settingsBtn, #navExtras #mesh {
-    align-self: flex-start; min-height: 44px; display: inline-flex;
-    align-items: center; gap: 8px;
-  }
-  #navExtras #protoToggle .proto-label { display: inline; }   /* and here too */
-  #navExtras #protoToggle .proto-mark { display: none; }
+  /* The radio line, WHEN THERE IS A RADIO. Empty it still claimed 44 px of
+     the pane and left a hole between the buttons and the search field big
+     enough to look like a mistake. (The gear stays in the header.) */
+  #navExtras #mesh:not(:empty) { align-self: flex-start; min-height: 44px;
+    display: inline-flex; align-items: center; gap: 8px; }
+  #navExtras #mesh:empty { display: none; }
 
   /* The header keeps what says WHERE YOU ARE and how you are reachable. */
   header { padding: 6px 12px; gap: 8px; }

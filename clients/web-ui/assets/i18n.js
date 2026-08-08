@@ -405,11 +405,6 @@ const I18N = {
     'device.security': 'Security',
     'device.technical': 'Technical details',
 
-    // protocol view
-    'protocol.toggle': 'Protocol view',
-    'protocol.on': 'Protocol view is on',
-    'protocol.off': 'Protocol view is off',
-
     // space pass (UI-2)
     'pass.title': 'Space Pass',
     'pass.invite_from': ({ who }) => `an invitation from ${who}`,

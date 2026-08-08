@@ -169,10 +169,19 @@ function drawRelic(canvas, spaceId, relic, events, acc) {
 // Protocol view (§18): human by default; the technical layer is opt-in and
 // remembered. It only changes how things RENDER — same data underneath.
 let PROTOCOL = localStorage.getItem('qp.protocol') === '1';
-function toggleProtocol() {
-  PROTOCOL = !PROTOCOL;
+/**
+ * The technical layer — ids, capabilities, the raw connection string.
+ *
+ * IT LEFT THE HEADER. It was a word sitting above every conversation for a
+ * mode almost nobody turns on: whoever needs to read a capability set knows
+ * to look for it, and everybody else was paying for the reminder. It lives
+ * in Settings now, described by what it shows rather than by its name.
+ */
+function setProtocolView(on) {
+  PROTOCOL = !!on;
   localStorage.setItem('qp.protocol', PROTOCOL ? '1' : '0');
   document.body.classList.toggle('protocol', PROTOCOL);
+  pickSeg('setProtocol', PROTOCOL ? 'on' : 'off');
   refresh();
 }
 
@@ -266,6 +275,7 @@ async function openSettings() {
     renderRelayDiagnostics();
     renderRelayPublicPanel();
   } catch (e) { /* settings unavailable */ }
+  pickSeg('setProtocol', PROTOCOL ? 'on' : 'off');
   showSettingsCat(settingsCat);
   dlgSettings.showModal();
 }
@@ -688,12 +698,6 @@ async function refresh() {
     if (typeof refreshDoor === 'function') refreshDoor();
     refreshAI();
     document.body.classList.toggle('protocol', PROTOCOL);
-    // MARK + LABEL, the same shape the header's actions use: on a phone the
-    // word goes and the mark stays, which is the only way this row fits on
-    // one line. The meaning lives in the title attribute either way.
-    document.getElementById('protoToggle').innerHTML =
-      '<span class="proto-mark" aria-hidden="true">&lt;/&gt;</span>' +
-      '<span class="proto-label">' + esc(PROTOCOL ? t('protocol.on') : t('protocol.toggle')) + '</span>';
 
     // Connection chip: human by default, raw string only in Protocol view.
     //
@@ -1336,10 +1340,10 @@ function closePane() {
 /**
  * ON A PHONE THE APP'S NAVIGATION IS NOT THE CONVERSATION'S HEADER.
  *
- * Four coloured buttons, a protocol toggle and a gear sat above every
- * message: a hundred pixels of "where else could I be" on top of a screen
- * somebody opened to read one place. They are the app's navigation, and a
- * person who is inside a conversation has already navigated.
+ * Four coloured buttons sat above every message: a hundred pixels of "where
+ * else could I be" on top of a screen somebody opened to read one place.
+ * They are the app's navigation, and a person who is inside a conversation
+ * has already navigated.
  *
  * So on a narrow screen they MOVE into the pane the hamburger opens — the
  * same elements, not copies, because two sets of the same four buttons is
@@ -1350,7 +1354,10 @@ function placeNavExtras() {
   const extras = document.getElementById('navExtras');
   const header = document.querySelector('header.glass');
   if (!extras || !header) return;
-  const movable = ['.nav-row', '#protoToggle', '#mesh', '#settingsBtn'];
+  // The gear is NOT in this list. It fits in the header at 360 dp beside
+  // "me", and in the pane it was a lone 44 px row between the four buttons
+  // and the search field — a hole with one icon in it.
+  const movable = ['.nav-row', '#mesh'];
   if (compactScreen()) {
     for (const sel of movable) {
       const el = document.querySelector(sel);

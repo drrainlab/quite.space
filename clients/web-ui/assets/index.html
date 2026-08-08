@@ -43,8 +43,6 @@
   </div>
   <span class="hspace"></span>
   <span id="mesh" class="dim mono" onclick="openGateway()" style="cursor:pointer" title="Radio" tabindex="0"></span>
-  <span id="protoToggle" class="dim mono" onclick="toggleProtocol()" style="cursor:pointer" tabindex="0" role="button"
-    title="Protocol view — the technical layer"></span>
   <button id="settingsBtn" class="icon-btn" onclick="openSettings()" title="Settings" aria-label="Settings">⚙</button>
   <button class="nav-act" data-act="me" aria-label="Your identity and this device" title="Your identity and this device" onclick="showIdentity()">
     <svg class="nav-mark" viewBox="0 0 16 16" aria-hidden="true">
@@ -659,6 +657,17 @@
           <button data-v="ask" onclick="setAtmosphereSound('ask')">Ask</button>
           <button data-v="remember" onclick="setAtmosphereSound('remember')">Remember</button>
           <button data-v="never" onclick="setAtmosphereSound('never')">Never</button>
+        </div>
+      </div>
+      <!-- The technical layer. It used to be a word above every conversation
+           for a mode almost nobody turns on; whoever needs to read a
+           capability set knows to come looking, and everybody else was
+           paying for the reminder. Described by what it SHOWS. -->
+      <div class="list-row">
+        <span class="lr-label">Protocol view<span class="lr-sub"> · ids, capabilities, raw state</span></span>
+        <div class="segmented" id="setProtocol">
+          <button data-v="off" onclick="setProtocolView(false)">Off</button>
+          <button data-v="on" onclick="setProtocolView(true)">On</button>
         </div>
       </div>
       <div class="list-row">
