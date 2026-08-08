@@ -582,12 +582,27 @@ if (window.matchMedia) {
 function connectionSummary(status) {
   const lan = status.lan, radio = status.radio || {};
   const peers = (lan.peers || 0) + (radio.connected ? 1 : 0);
-  let state = t('conn.off'), cls = 'off';
-  if (radio.connected && peers > 0) { state = t('conn.radio'); cls = 'mesh'; }
-  else if (lan.peers > 0) { state = t('conn.direct'); cls = ''; }
-  else if (lan.listening) { state = t('conn.lan'); cls = ''; }
-  return { text: peers > 0 ? t('conn.summary', { state, count: peers }) : state, cls };
+  let state = t('conn.off'), cls = 'off', kind = 'off';
+  if (radio.connected && peers > 0) { state = t('conn.radio'); cls = 'mesh'; kind = 'radio'; }
+  else if (lan.peers > 0) { state = t('conn.direct'); cls = ''; kind = 'direct'; }
+  else if (lan.listening) { state = t('conn.lan'); cls = ''; kind = 'lan'; }
+  // KIND, beside the words. On a phone the chip is a mark and a light, and
+  // the mark has to say WHICH WAY the device is reachable — direct, over a
+  // relay, over radio, or not at all. A colour alone cannot: green means
+  // "working", and working over a relay is a different fact from working
+  // across the room.
+  return { text: peers > 0 ? t('conn.summary', { state, count: peers }) : state, cls, kind };
 }
+
+/* One glyph per transport. Text rather than SVG, for the same reason ⚙ and ⓘ
+   are text here: it inherits colour and size and needs no second file. */
+const CONN_MARKS = {
+  direct: '⇄',   // two devices, straight at each other
+  lan:    '⌂',   // listening at home, nobody across from us yet
+  relay:  '☁',   // carried by somebody else's machine, store-and-forward
+  radio:  '((·))',
+  off:    '⦸',
+};
 
 let authDead = false; // wrong/missing token → stop polling, keep the console quiet
 // spaceName renders what a space asks to be called. A name somebody chose
@@ -686,14 +701,16 @@ async function refresh() {
     // settling on "relay", the text length changed, and the whole header
     // twitched in rhythm with the poll. A chip that reports a steady state
     // must not itself be unsteady.
-    let chipText, chipCls, pulseMs = 0, chipWhy = '';
+    let chipText, chipCls, pulseMs = 0, chipWhy = '', chipKind = 'off';
     if (PROTOCOL) {
       const lan = status.lan;
       chipText = lan.listening ? `LAN :${lan.port} · ${lan.peers} peers` : 'LAN off';
       chipCls = 'conn-chip' + (lan.peers ? ' up' : ' off');
+      chipKind = lan.peers ? 'direct' : (lan.listening ? 'lan' : 'off');
     } else {
       const s = connectionSummary(status);
       chipText = s.text;
+      chipKind = s.kind;
       chipCls = 'conn-chip ' + s.cls + (s.cls === 'off' ? '' : ' up');
       // Relay auto-sync: when there's no direct peer, show that the relay
       // is carrying us (honest — store-and-forward, not live).
@@ -704,6 +721,7 @@ async function refresh() {
           if (rs.active && !rs.last_error) {
             chipText = 'relay';
             chipCls = 'conn-chip up';
+            chipKind = 'relay';
             // The light breathes in the sync's own rhythm — the pulse IS the
             // cadence, not decoration. Clamped so a 2s cycle does not strobe
             // and a 5min one does not look dead.
@@ -711,6 +729,7 @@ async function refresh() {
           } else if (rs.active) {
             chipText = 'relay · issue';
             chipCls = 'conn-chip off';
+            chipKind = 'relay';
             // "issue" on its own is the kind of sentence this app keeps
             // removing: it reports that something is wrong and gives no
             // way to learn what. The relay already knows — carry it.
@@ -724,9 +743,11 @@ async function refresh() {
     // One write, and only when something actually changed: a chip repainted
     // with identical content still restarts its CSS animation, which reads
     // as a stutter in the breathing.
-    if (connChipSig !== chipText + '|' + chipCls + '|' + pulseMs + '|' + chipWhy) {
-      connChipSig = chipText + '|' + chipCls + '|' + pulseMs + '|' + chipWhy;
+    if (connChipSig !== chipText + '|' + chipCls + '|' + pulseMs + '|' + chipWhy + '|' + chipKind) {
+      connChipSig = chipText + '|' + chipCls + '|' + pulseMs + '|' + chipWhy + '|' + chipKind;
       cText.textContent = chipText;
+      const cMark = document.getElementById('connMark');
+      if (cMark) cMark.textContent = CONN_MARKS[chipKind] || CONN_MARKS.off;
       conn.className = chipCls;
       if (chipWhy) conn.title = chipWhy;
       else conn.removeAttribute('title');
@@ -1311,6 +1332,17 @@ function closePane() {
 }
 
 if (typeof window !== 'undefined') {
+  // A PLACEHOLDER THAT IS CUT MID-WORD IS WORSE THAN A SHORT ONE. At 360 dp
+  // the composer's field is 129 px and "write into the space…" ends at
+  // "write into the s". The hint gives ground, because it is a hint.
+  const shortenHint = () => {
+    const el = document.getElementById('text');
+    if (!el) return;
+    el.placeholder = compactScreen() ? t('conv.write_short') : t('conv.write');
+  };
+  document.addEventListener('DOMContentLoaded', shortenHint);
+  window.matchMedia(COMPACT).addEventListener('change', shortenHint);
+
   window.addEventListener('popstate', () => { compactPane = null; applyPanels(); });
   // The scrim is drawn by #content itself, so the tap arrives here. Capture,
   // because the conversation underneath must not also act on it: the first

@@ -17,7 +17,7 @@
     aria-controls="sidebar" aria-expanded="true">☰</button>
   <b class="brand"><img src="brand-lockup.png" alt="quite.space" class="brand-lockup"></b>
   <span id="conn" class="conn-chip off" onclick="dlgLan.showModal()" tabindex="0"
-    role="button" aria-label="Connection details"><span class="dot"></span><span id="connText">Not connected</span></span>
+    role="button" aria-label="Connection details"><span id="connMark" class="conn-mark" aria-hidden="true">⦸</span><span id="connText">Not connected</span><span class="dot"></span></span>
   <!-- The four ways in live in the header: they belong to the app, not to
        whichever space happens to be open. "me" sits past the settings
        gear with the other things that are about you rather than about
@@ -66,8 +66,10 @@
       </div>
       <span style="flex:1"></span>
       <span id="visBadge" class="vis-badge" style="display:none"></span>
-      <button id="shareLinkBtn" class="btn-plain" style="display:none" onclick="copyPublicLink()">Share link</button>
-      <button id="newPostBtn" class="btn-tinted" onclick="openComposer(null,'')">✍ New post</button>
+      <button id="shareLinkBtn" class="btn-plain" style="display:none" onclick="copyPublicLink()"
+              title="Share link" aria-label="Share link">Share link</button>
+      <button id="newPostBtn" class="btn-tinted" onclick="openComposer(null,'')"
+              title="New post" aria-label="New post">✍ New post</button>
       <!-- Shown only in a directory you can write to. Adding an entry is
            what a directory is FOR, so it is one press, not "compose a
            publication of kind space and paste a link into a block". -->

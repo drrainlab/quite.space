@@ -366,6 +366,7 @@ const I18N = {
     'conv.member': 'member',
     'conv.you': 'You',
     'conv.write': 'write into the space…',
+    'conv.write_short': 'write…',
     'conv.send': 'send',
     'conv.save_card': 'Save as card',
     'conv.reply': 'reply',

@@ -1967,33 +1967,27 @@ body.hidden-tab .sky { animation-play-state: paused; }
    height and a little air without losing the target size. */
 header .nav-act { padding: 5px 11px 5px 10px; min-height: 30px; }
 
+/* THE FOUR WAYS IN, AND "ME": ONE PILL, ONE COLOUR, ONE MARK.
+   They used to carry a grain gradient and a lit rail down the left edge —
+   three visual devices for a button that has one job. Simplified to a
+   rounded pill with a flat dark fill: the mark and the colour still say
+   which action it is, and the row stops competing with the conversation
+   underneath it. */
 .nav-act {
   --n: 265 45% 66%;                       /* fallback hue: the app's lilac */
-  position: relative; overflow: hidden;
+  position: relative;
   display: inline-flex; align-items: center; gap: 7px;
-  padding-left: 11px;
+  padding: 0 13px;
+  border-radius: 999px;
   color: hsl(var(--n));
-  border-color: hsl(var(--n) / .28);
-  background:
-    /* the grain — 2px lines, almost subliminal */
-    repeating-linear-gradient(180deg,
-      hsl(var(--n) / .05) 0 1px, transparent 1px 3px),
-    linear-gradient(180deg, hsl(var(--n) / .10), hsl(var(--n) / .03));
-  transition: border-color .18s ease, box-shadow .18s ease, color .18s ease;
-}
-/* The rail: a lit edge down the left side, like a key that knows what it does. */
-.nav-act::before {
-  content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px;
-  background: hsl(var(--n)); opacity: .5;
-  transition: opacity .18s ease, box-shadow .18s ease;
+  border: 1px solid hsl(var(--n) / .30);
+  background: hsl(var(--n) / .09);
+  transition: border-color .18s ease, background .18s ease, color .18s ease;
 }
 .nav-act:hover, .nav-act:focus-visible {
   color: hsl(var(--n) / 1);
-  border-color: hsl(var(--n) / .6);
-  box-shadow: 0 0 0 1px hsl(var(--n) / .18), 0 4px 18px hsl(var(--n) / .16);
-}
-.nav-act:hover::before, .nav-act:focus-visible::before {
-  opacity: 1; box-shadow: 0 0 8px hsl(var(--n) / .8);
+  border-color: hsl(var(--n) / .58);
+  background: hsl(var(--n) / .16);
 }
 .nav-act:active { transform: translateY(1px); }
 
@@ -2691,3 +2685,70 @@ header .nav-act { padding: 5px 11px 5px 10px; min-height: 30px; }
   border-bottom: 1px solid var(--line); }
 .pane-title { flex: 1; min-width: 0; font-weight: 600;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+
+/* ── THE CONNECTION CHIP: A MARK, AND A LIGHT ON THE RIGHT ───────────────────
+   The light goes last because that is where a status light belongs — it is
+   the thing that changes, and a changing thing at the start of a row drags
+   the eye every time it breathes. The MARK goes first and says which way the
+   device is reachable: across the room, through a relay, over radio, or not
+   at all. A colour cannot say that — green means "working", and working over
+   a relay is a different fact from working across the room.
+
+   No ring around the dot. A circle drawn around a status light makes it a
+   button, and it already had one: the whole chip opens the details. */
+.conn-mark { font-size: 13px; line-height: 1; opacity: .85; }
+.conn-chip .dot { order: 3; }
+
+@media (max-width: 600px) {
+  /* The words go; the mark and the light stay, in that order, with a tap
+     area around them and no ring drawn on top. */
+  header .conn-chip { padding: 0 10px; min-height: 44px; border-radius: 999px;
+    justify-content: center; gap: 7px; }
+  header .conn-chip #connText { display: none; }
+  header .conn-chip .conn-mark { font-size: 15px; }
+  header .conn-chip .dot { width: 8px; height: 8px; }
+}
+
+/* ── THE SPACE'S OWN ACTIONS, AS MARKS ───────────────────────────────────────
+   "Share link" and "✍ New post" are 130 px of words on a 360 px screen for
+   two things a person does by recognising them. The mark keeps the colour it
+   had — the tinted one is still the primary — and the word survives in the
+   title and the aria-label, which is where a screen reader was reading it
+   from anyway. */
+@media (max-width: 600px) {
+  /* The same rounded square as the four ways in — one shape language for
+     "a thing you press", rather than circles here and squares there. */
+  #newPostBtn, #shareLinkBtn {
+    font-size: 0; min-width: 44px; padding: 0 12px; border-radius: 13px;
+  }
+  #newPostBtn::before  { content: "✍"; font-size: 17px; }
+  #shareLinkBtn::before { content: "🔗"; font-size: 15px; }
+}
+
+
+/* ── THE FOUR WAYS IN, ON A PHONE ────────────────────────────────────────────
+   Icon-only, because four labels do not fit — but a ROUNDED SQUARE rather
+   than a circle. Perfect circles read as four unrelated bubbles; a soft
+   rectangle keeps them a row of related actions, which is what they are.
+   The pill shape returns with the labels on a wider screen. */
+@media (max-width: 600px) {
+  /* 44 TALL, AND AS WIDE AS THE MARK NEEDS — about 39.
+     Forcing 44 on both axes was tried and measured: the row went to three
+     lines and the header to 160 px, a fifth of the screen, to buy five
+     pixels of width. The guideline exists to prevent mis-taps, and a 39×44
+     target with clear gaps between neighbours does that; a third header row
+     costs every screen something a person actually notices. */
+  /* The protocol mark is NOT given the same box: padding it out to a button
+     width pushed "me" onto a third row, which cost 50 px of every screen to
+     make one mark look like the others. It is a word turned into a glyph,
+     and it can sit in the gaps. */
+  header .nav-act {
+    border-radius: 13px; padding: 0 11px; justify-content: center;
+  }
+
+  /* The connection is a mark and a light, NOT a button in a ring. The chip
+     still opens the details on tap; a border drawn around a status light
+     makes it look like a second control beside the four real ones. */
+  header .conn-chip { border-color: transparent; background: transparent; }
+}
