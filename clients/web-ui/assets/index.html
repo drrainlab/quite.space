@@ -45,7 +45,7 @@
   <span id="mesh" class="dim mono" onclick="openGateway()" style="cursor:pointer" title="Radio" tabindex="0"></span>
   <span id="protoToggle" class="dim mono" onclick="toggleProtocol()" style="cursor:pointer" tabindex="0" role="button"
     title="Protocol view — the technical layer"></span>
-  <button class="icon-btn" onclick="openSettings()" title="Settings" aria-label="Settings">⚙</button>
+  <button id="settingsBtn" class="icon-btn" onclick="openSettings()" title="Settings" aria-label="Settings">⚙</button>
   <button class="nav-act" data-act="me" aria-label="Your identity and this device" title="Your identity and this device" onclick="showIdentity()">
     <svg class="nav-mark" viewBox="0 0 16 16" aria-hidden="true">
       <circle cx="8" cy="6" r="2.6"/><path d="M3.2 13.5a4.8 4.8 0 0 1 9.6 0" opacity=".55"/>
@@ -54,6 +54,10 @@
 </header>
 <main>
   <div id="sidebar">
+    <!-- Where the app's four ways in live on a phone. Empty on a wide screen:
+         the header keeps them, and moving one set of buttons between two
+         homes beats maintaining two sets. -->
+    <div id="navExtras"></div>
     <div id="nav"></div>
   </div>
   <div id="content">

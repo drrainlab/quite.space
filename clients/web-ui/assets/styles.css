@@ -2772,3 +2772,106 @@ header .nav-act { padding: 5px 11px 5px 10px; min-height: 30px; }
   #viewSwitch { padding: 2px; }
   #viewSwitch button { min-height: 36px; padding: 0 6px; }
 }
+
+
+/* ── LESS CHROME, MORE CONVERSATION (mobile) ─────────────────────────────────
+   Four levels stood between opening the app and the first message: the app
+   header, the app's navigation, the space's own bar, and the view switch.
+   Two of those are about the app, and a person inside a conversation has
+   already chosen the app. */
+@media (max-width: 600px) {
+  /* The navigation, now living in the pane the hamburger opens. Full-width
+     rows there, with their labels back — there is room for words in a pane
+     and never was in a header. */
+  #navExtras { display: flex; flex-direction: column; gap: 8px;
+    padding: 12px 12px 14px; border-bottom: 1px solid var(--line); }
+  #navExtras .nav-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  #navExtras .nav-act { width: 100%; justify-content: flex-start;
+    min-height: 46px; padding: 0 14px; border-radius: 13px; }
+  #navExtras .nav-label { display: inline; }        /* the word comes back */
+  #navExtras .nav-mark { width: 17px; height: 17px; }
+  #navExtras #protoToggle, #navExtras #settingsBtn, #navExtras #mesh {
+    align-self: flex-start; min-height: 44px; display: inline-flex;
+    align-items: center; gap: 8px;
+  }
+  #navExtras #protoToggle .proto-label { display: inline; }   /* and here too */
+  #navExtras #protoToggle .proto-mark { display: none; }
+
+  /* The header keeps what says WHERE YOU ARE and how you are reachable. */
+  header { padding: 6px 12px; gap: 8px; }
+
+  /* THE VIEW SWITCH STAYS PUT while the conversation moves under it — on a
+     long thread the way to Posts should not be a scroll away. */
+  #convbar { position: sticky; top: 0; z-index: 5;
+    background: var(--bg); }
+}
+
+/* ── THE COMPOSER GETS ITS LINE BACK ─────────────────────────────────────────
+   Five controls in one row left the field 129 px wide on a 360 px screen —
+   the one thing the row exists for was the smallest thing in it. Two storeys:
+   the text on its own line, the tools underneath.
+
+   Presence sits with the tools because it is a MODE, not part of writing this
+   particular message; it was taking a third of the row to say something that
+   changes a few times a day. */
+@media (max-width: 600px) {
+  #composer { flex-wrap: wrap; padding: 6px 8px 8px; gap: 4px; align-items: center; }
+  #composer #text {
+    order: -1; flex: 1 0 100%; width: 100%;
+    padding: 10px 12px; border-radius: 12px;
+    background: color-mix(in srgb, var(--fg) 5%, transparent);
+  }
+  #composer #attachWrap, #composer #voiceBtn { order: 1; }
+  #composer .picker { order: 2; margin-left: auto; }
+  #composer button[type="submit"] { order: 3; }
+
+  /* Presence can afford its word again down here. */
+  #presenceLabel { max-width: none; }
+
+  /* Send is a mark: the word cost 59 px of a row that had none to give, and
+     an arrow pointing away is the one gesture nobody needs taught. */
+  #composer button[type="submit"] {
+    font-size: 0; min-width: 44px; min-height: 44px; padding: 0 12px;
+    border-radius: 12px;
+  }
+  #composer button[type="submit"]::before { content: "➤"; font-size: 17px; }
+}
+
+/* ── THE LAST MESSAGE IS NOT THE COMPOSER'S PROBLEM ──────────────────────────
+   The log ends where the composer begins, so a bubble that reaches the edge
+   is cut by it — and the cut is invisible, because the composer looks like
+   the bottom of the screen. A person can miss the end of what somebody said.
+   Room at the bottom, and the scroll anchors past it. */
+#log { padding-bottom: 20px; scroll-padding-block-end: 20px; }
+
+
+/* ── PER-MESSAGE ACTIONS ARRIVE WHEN ASKED (mobile) ──────────────────────────
+   Every message carried three affordances all the time: a resonate mark, and
+   a row reading "→ forward · Save as card · ✦ keep". For one line of text
+   that is 36 px of controls around 19 px of what somebody said, on every
+   message, forever — and it is the real reason the conversation felt airy in
+   the wrong way.
+
+   They are not removed. They appear on the message a person TOUCHES, which
+   is the gesture a phone already teaches, and disappear again when the touch
+   moves on. Reactions that EXIST are never hidden: those are what other
+   people said, not controls. */
+@media (max-width: 600px) {
+  .msg .mk { display: none; }
+  .msg .res-row .res-add { display: none; }
+  .msg.acting .mk { display: flex; }
+  .msg.acting .res-row .res-add { display: inline; }
+  /* An empty row leaves no trace when its only content was the affordance. */
+  .msg:not(.acting) .res-row:not(:has(.res-chip)) { display: none; }
+
+  /* The author sits ON the bubble it belongs to. */
+  .msg .who { margin-bottom: 2px; }
+}
+
+/* The space's primary action is a mark, not a monument: it was a 56 px filled
+   square beside the name and read as more important than the space itself. */
+@media (max-width: 600px) {
+  #newPostBtn { min-height: 44px; min-width: 44px; padding: 0 10px;
+    background: color-mix(in srgb, var(--acc) 12%, transparent); }
+  #newPostBtn::before { font-size: 19px; }
+}

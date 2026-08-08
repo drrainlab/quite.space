@@ -1333,7 +1333,75 @@ function closePane() {
   applyPanels();
 }
 
+/**
+ * ON A PHONE THE APP'S NAVIGATION IS NOT THE CONVERSATION'S HEADER.
+ *
+ * Four coloured buttons, a protocol toggle and a gear sat above every
+ * message: a hundred pixels of "where else could I be" on top of a screen
+ * somebody opened to read one place. They are the app's navigation, and a
+ * person who is inside a conversation has already navigated.
+ *
+ * So on a narrow screen they MOVE into the pane the hamburger opens — the
+ * same elements, not copies, because two sets of the same four buttons is
+ * two things to keep in step. They keep their colours and their marks; they
+ * simply stop charging rent on every screen.
+ */
+function placeNavExtras() {
+  const extras = document.getElementById('navExtras');
+  const header = document.querySelector('header.glass');
+  if (!extras || !header) return;
+  const movable = ['.nav-row', '#protoToggle', '#mesh', '#settingsBtn'];
+  if (compactScreen()) {
+    for (const sel of movable) {
+      const el = document.querySelector(sel);
+      if (el && el.parentElement !== extras) extras.appendChild(el);
+    }
+  } else if (extras.children.length) {
+    // Back to the header, in the order the markup declares — the anchor is
+    // the settings button's old neighbour, so the row rebuilds itself
+    // rather than being reassembled from a remembered list.
+    const anchor = header.querySelector('.nav-act[data-act="me"]');
+    for (const sel of movable) {
+      const el = extras.querySelector(sel);
+      if (el) header.insertBefore(el, anchor);
+    }
+  }
+}
+
 if (typeof window !== 'undefined') {
+  document.addEventListener('DOMContentLoaded', placeNavExtras);
+
+  // THE TOUCHED MESSAGE SHOWS ITS ACTIONS. One at a time: a phone screen with
+  // three sets of controls open is the clutter this removes.
+  document.addEventListener('DOMContentLoaded', () => {
+    const log = document.getElementById('log');
+    if (!log) return;
+    log.addEventListener('click', (e) => {
+      if (!compactScreen()) return;
+      const msg = e.target.closest('.msg');
+      // A tap on an action does the action; a tap on the message reveals them.
+      if (e.target.closest('.mk, .res-row, a, button')) return;
+      for (const other of log.querySelectorAll('.msg.acting')) {
+        if (other !== msg) other.classList.remove('acting');
+      }
+      if (msg) msg.classList.toggle('acting');
+    });
+  });
+
+  // THE KEYBOARD MOVES THE FLOOR. When it opens, the visual viewport shrinks
+  // and whatever was at the bottom of the log is now behind it — so if the
+  // conversation was at the bottom, it goes back to the bottom. Without this
+  // a person taps to reply and the message they are replying to disappears.
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', () => {
+      const log = document.getElementById('log');
+      if (!log) return;
+      const nearBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 120;
+      if (nearBottom) requestAnimationFrame(() => { log.scrollTop = log.scrollHeight; });
+    });
+  }
+  window.matchMedia(COMPACT).addEventListener('change', placeNavExtras);
+
   // A PLACEHOLDER THAT IS CUT MID-WORD IS WORSE THAN A SHORT ONE. At 360 dp
   // the composer's field is 129 px and "write into the space…" ends at
   // "write into the s". The hint gives ground, because it is a hint.
