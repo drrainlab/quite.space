@@ -1235,14 +1235,51 @@ const PANEL_KEYS = { nav: 'qp.fold.nav', info: 'qp.fold.info' };
 // has used since UI-3, named once here rather than guessed at again.
 const COMPACT = '(max-width: 600px)';
 
+function compactScreen() { return window.matchMedia(COMPACT).matches; }
+
+/**
+ * ON A PHONE THERE IS ONE VIEW AT A TIME, and which one is a MOMENT rather
+ * than a preference.
+ *
+ * Two things were wrong and they had the same root. A choice made on a wide
+ * screen — "keep the space list open" — is stored, and a phone then read it
+ * as an instruction: the navigator and the space panel both opened, on top of
+ * each other and on top of the conversation, with the ⓘ that would close one
+ * of them hidden underneath. Nothing was mutually exclusive because nothing
+ * had to be when both fit side by side.
+ *
+ * So on a narrow screen the open pane lives HERE, in memory: at most one, and
+ * gone when the app is opened again. The stored preference stays exactly what
+ * it was — a desktop layout decision — and stops leaking into a screen it was
+ * never made for.
+ */
+let compactPane = null;   // 'nav' | 'info' | null — null is the conversation
+
 function isPanelFolded(which) {
+  if (compactScreen()) return compactPane !== which;
   const saved = localStorage.getItem(PANEL_KEYS[which]);
   if (saved === '1') return true;
   if (saved === '0') return false;
-  return window.matchMedia(COMPACT).matches;   // no choice yet: ask the screen
+  return false;
 }
 
 function setPanel(which, folded) {
+  if (compactScreen()) {
+    const next = folded ? null : which;
+    if (next === compactPane) return;
+    compactPane = next;
+    // A BACK PRESS CLOSES IT. Opening a pane pushes a history entry, so the
+    // phone's own back gesture does what a person expects and does not leave
+    // the app from behind a panel they cannot see past.
+    if (next) {
+      history.pushState({ pane: next }, '');
+    } else if (history.state && history.state.pane) {
+      history.back();
+      return;   // popstate applies it
+    }
+    applyPanels();
+    return;
+  }
   localStorage.setItem(PANEL_KEYS[which], folded ? '1' : '0');
   applyPanels();
 }
@@ -1257,9 +1294,45 @@ function applyPanels() {
   document.body.classList.toggle('fold-info', infoFolded);
   const m = document.getElementById('members');
   if (m) m.classList.toggle('hidden', infoFolded);
+
+  // The way out that is always in reach: anywhere on the conversation behind
+  // an open pane. A phone panel with no dismissable surround is a trap, and
+  // this one covered its own toggle.
+  document.body.classList.toggle('pane-open', compactScreen() && !!compactPane);
 }
 
 function togglePanel(which) { setPanel(which, !isPanelFolded(which)); }
+
+/** Back gesture, and the scrim, and anything else that just wants it gone. */
+function closePane() {
+  if (!compactPane) return;
+  compactPane = null;
+  applyPanels();
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('popstate', () => { compactPane = null; applyPanels(); });
+  // The scrim is drawn by #content itself, so the tap arrives here. Capture,
+  // because the conversation underneath must not also act on it: the first
+  // tap dismisses, the second one does whatever it was for.
+  document.addEventListener('DOMContentLoaded', () => {
+    const content = document.getElementById('content');
+    if (!content) return;
+    content.addEventListener('click', (e) => {
+      if (!document.body.classList.contains('pane-open')) return;
+      e.stopPropagation();
+      e.preventDefault();
+      setPanel(compactPane, true);
+    }, true);
+  });
+  // Crossing the boundary — a rotation, a folding phone, a resized window —
+  // re-decides which model applies rather than leaving a phone in a desktop
+  // state or the reverse.
+  window.matchMedia(COMPACT).addEventListener('change', () => {
+    compactPane = null;
+    applyPanels();
+  });
+}
 
 /** The space-info panel's own button, which predates the pair. */
 function toggleMembers() { togglePanel('info'); }
@@ -1549,6 +1622,28 @@ async function refreshSpace() {
       }
       mbox.insertBefore(box, mbox.firstChild);
     }
+  }
+
+  // A DOOR YOU CAN SEE — and inserted LAST, because both of these go to the
+  // front of the panel and the last one there wins. The scrim behind it
+  // closes it and so does the back gesture, but neither is visible, and a pane that covers the control which
+  // opened it has to say how to leave. The space's name doubles as the answer
+  // to "what am I looking at" — the conversation behind is now mostly hidden.
+  if (window.matchMedia('(max-width: 600px)').matches) {
+    const head = document.createElement('div');
+    head.className = 'pane-head';
+    const title = document.createElement('span');
+    title.className = 'pane-title';
+    title.textContent = sp ? spaceName(sp) : '';
+    const close = document.createElement('button');
+    close.className = 'icon-btn';
+    close.setAttribute('aria-label', t('pane.close') || 'Close');
+    close.title = t('pane.close') || 'Close';
+    close.textContent = '✕';
+    close.onclick = () => setPanel('info', true);
+    head.appendChild(title);
+    head.appendChild(close);
+    mbox.insertBefore(head, mbox.firstChild);
   }
 
   // SD-0 — leaving a place tidy.
@@ -3883,7 +3978,14 @@ applyPanels();
 // otherwise — the media query is consulted, not obeyed.
 window.matchMedia(COMPACT).addEventListener('change', applyPanels);
 NAV.mount(document.getElementById('nav'));
-NAV.onOpen = (id) => { current = id; refresh(); };
+NAV.onOpen = (id) => {
+  current = id;
+  // On a phone the navigator IS the screen, and picking a space is the whole
+  // reason it was open — staying would make somebody close it by hand every
+  // single time.
+  if (compactScreen()) closePane();
+  refresh();
+};
 checkOnboarding();
 checkPassDeepLink();
 refresh();

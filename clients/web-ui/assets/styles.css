@@ -2654,3 +2654,40 @@ header .nav-act { padding: 5px 11px 5px 10px; min-height: 30px; }
     text-overflow: ellipsis; white-space: nowrap; }
   #composer .picker-btn { padding: 0 10px; gap: 4px; min-width: 44px; }
 }
+
+
+/* ── ONE VIEW AT A TIME, AND A WAY BACK TO IT ────────────────────────────────
+   The panes are absolutely positioned over the conversation at this width, so
+   an open one hides the control that opened it. Without a surround to tap, a
+   phone panel is a room with the door behind the furniture — which is exactly
+   what the space panel was: opened with ⓘ, and ⓘ was underneath it.
+
+   The scrim is that surround. It sits above the conversation and below the
+   panes, so the conversation is visibly still there — this is a pane over a
+   room, not a different screen — and any tap on it comes back. */
+@media (max-width: 600px) {
+  body.pane-open #content { position: relative; }
+  body.pane-open #content::after {
+    content: ""; position: absolute; inset: 0; z-index: 25;
+    background: color-mix(in srgb, var(--canvas-deep) 62%, transparent);
+    -webkit-backdrop-filter: blur(1.5px); backdrop-filter: blur(1.5px);
+  }
+  /* The panes keep their own layer above it. */
+  #sidebar, #members { z-index: 30; }
+
+  /* The connection is a DOT, not a sentence. "Direct · 2 here" is 165 px of a
+     360 px header for something whose meaning is carried by a colour; the
+     words are one tap away, in the panel this chip has always opened. */
+  header .conn-chip #connText { display: none; }
+  header .conn-chip { padding: 0; min-width: 44px; min-height: 44px;
+    justify-content: center; border-radius: 50%; }
+  header .conn-chip .dot { width: 10px; height: 10px; }
+}
+
+
+/* The pane's own header on a phone: what this is, and the way out. */
+.pane-head { display: flex; align-items: center; gap: 8px;
+  margin: 0 0 12px; padding-bottom: 10px;
+  border-bottom: 1px solid var(--line); }
+.pane-title { flex: 1; min-width: 0; font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

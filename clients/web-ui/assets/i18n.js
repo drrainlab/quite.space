@@ -328,6 +328,7 @@ const I18N = {
     // with a route CHOSEN, which is a queue — say that and nothing more.
     'share.state.queued': ({ route }) => `queued for ${route}`,
 
+    'pane.close': 'Close',
     'space.customize': 'Appearance',
     'space.palette': 'Reaction palette',
 
