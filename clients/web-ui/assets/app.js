@@ -604,6 +604,8 @@ const CONN_MARKS = {
   off:    '⦸',
 };
 
+/** The space's character, built in refreshSpace and painted in the panel. */
+let personaHTML = '';
 let authDead = false; // wrong/missing token → stop polling, keep the console quiet
 // spaceName renders what a space asks to be called. A name somebody chose
 // is shown verbatim; a projection is built HERE, from a key and the people,
@@ -1388,16 +1390,26 @@ async function refreshSpace() {
   renderPublicSurface(sp);
 
   // persona line: the declared character, plus its exact meaning.
-  const persona = document.getElementById('persona');
-  if (char) {
+  // THE CHARACTER MOVED TO THE SPACE PANEL.
+  //
+  // It describes what this place IS — its archetype, its light, what it does
+  // with what happens in it. That is worth reading once, when somebody
+  // arrives or wonders; it is not worth four lines above every message
+  // forever. On a phone those four lines were a quarter of the screen before
+  // the first word anybody said.
+  //
+  // Built here, where the character is already in hand, and painted by
+  // renderSpacePanel into the panel that answers "what is this space".
+  personaHTML = char ? (() => {
     const mem = MEMORY_OPTS.find(m => m.v === char.memory) || MEMORY_OPTS[0];
-    persona.innerHTML =
-      `<span class="arch">${esc(ARCHETYPES[char.archetype]?.name || char.archetype)}</span>` +
+    return `<span class="arch">${esc(ARCHETYPES[char.archetype]?.name || char.archetype)}</span>` +
       `<span>${esc(char.mood)} · ${esc(char.material)} · ${esc(char.motion)}</span>` +
       `<span>geometry: ${esc(char.geometry)}</span>` +
       (char.rituals?.length ? `<span>rituals: ${esc(char.rituals.join(', '))}</span>` : '') +
       `<span title="${esc(mem.tech)}">“${esc(mem.poetic)}”</span>`;
-  } else { persona.innerHTML = ''; }
+  })() : '';
+  const persona = document.getElementById('persona');
+  if (persona) persona.innerHTML = '';
 
   // presence selector fed by the space's declared vocabulary.
   presenceSetStates([...new Set(char?.presence || [])]);
@@ -1654,6 +1666,14 @@ async function refreshSpace() {
       }
       mbox.insertBefore(box, mbox.firstChild);
     }
+  }
+
+  // What this place is, in the panel that is about the place.
+  if (personaHTML) {
+    const p = document.createElement('div');
+    p.className = 'pane-persona';
+    p.innerHTML = personaHTML;
+    mbox.insertBefore(p, mbox.firstChild);
   }
 
   // A DOOR YOU CAN SEE — and inserted LAST, because both of these go to the
