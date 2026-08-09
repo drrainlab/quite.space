@@ -2908,10 +2908,6 @@ function renderEntry(log, e, fresh, grouped) {
     fw.onclick = () => forwardEntry(e);
     acts.appendChild(fw);
   }
-  const mk = document.createElement('span');
-  mk.textContent = t('conv.save_card');
-  mk.onclick = () => makeCardFrom(e);
-  acts.appendChild(mk);
   // Keep in space (LR-1): kept state comes from the API, never guessed.
   // "QuietRank should have caught this" — the recall side of feedback.
   // Without it the layer could only ever learn to go quiet.
@@ -3609,12 +3605,6 @@ function renderWave(b64) {
     w.appendChild(bar);
   }
   return w;
-}
-
-async function makeCardFrom(e) {
-  await api(`/api/spaces/${current}/cards`,
-    { method: 'POST', body: JSON.stringify({ title: (e.fallback || e.text || 'card').slice(0, 120), origin: e.id }) });
-  refreshSpace();
 }
 
 const fmtBytes = (b) => b >= 1<<20 ? (b/(1<<20)).toFixed(1)+' MB'

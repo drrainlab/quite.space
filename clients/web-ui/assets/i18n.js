@@ -368,7 +368,6 @@ const I18N = {
     'conv.write': 'write into the space…',
     'conv.write_short': 'write…',
     'conv.send': 'send',
-    'conv.save_card': 'Save as card',
     'conv.reply': 'reply',
     'conv.reply_hint': 'answer this message and address its author',
     'conv.replying_to': ({ name }) => `replying to ${name}`,

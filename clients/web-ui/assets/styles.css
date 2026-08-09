@@ -1455,11 +1455,24 @@
      size. Cards and covers are untouched: those ARE meant to fill.
      Not applied on a narrow screen, where half a column is a thumbnail. */
   @media (min-width: 721px) {
-    #pubArticle .pub-block img, .pub-body .pub-block img { max-width: 50%; }
+    #pubArticle .pub-block img, .pub-body .pub-block img,
+    #pubArticle .pub-block video, .pub-body .pub-block video {
+      max-width: 50%;
+      /* Centred, because a half-width picture pinned to the left edge reads
+         as a float the text was supposed to wrap around — and it does not
+         wrap, so the right half is a hole. In the middle it is a plate in a
+         book: the column continues above and below it. */
+      margin-inline: auto;
+    }
     /* A gallery is already a grid of small things; halving it twice would
        leave stamps. */
-    #pubArticle .pub-gallery img, .pub-body .pub-gallery img { max-width: 100%; }
+    #pubArticle .pub-gallery img, .pub-body .pub-gallery img {
+      max-width: 100%; margin-inline: 0; }
   }
+  /* Video needs the block treatment its images already had, or margin-inline
+     has nothing to centre. */
+  #pubArticle video, .pub-block video { display: block; height: auto;
+    border-radius: var(--radius-md); max-width: 100%; }
   /* Markdown in a post's text block. Modest on purpose: the article already
      has a typographic scale, and a body heading must never grow into
      something that competes with the title above it. */
