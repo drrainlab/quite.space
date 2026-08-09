@@ -172,12 +172,14 @@ const CAT = (() => {
   }
 
   function close() {
+    showScreen('conversation');
+  }
+
+  // Called when another screen takes the column: drop what was being shown,
+  // touch no display. Whoever is arriving owns that.
+  function leaving() {
     dropLeaf();
     path = [];
-    const s = screen();
-    if (s) s.style.display = 'none';
-    const c = document.getElementById('content');
-    if (c) c.style.display = '';
   }
 
   function dropLeaf() {
@@ -270,9 +272,7 @@ const CAT = (() => {
   async function render() {
     const s = screen();
     if (!s) return;
-    const c = document.getElementById('content');
-    if (c) c.style.display = 'none';
-    s.style.display = '';
+    showScreen('catalog');
     note('');
     paintCrumbs();
 
@@ -767,7 +767,7 @@ const CAT = (() => {
   }
 
   return {
-    openHome, follow, back, close, openDirectories, addDirectory, enterHeld,
+    openHome, follow, back, close, leaving, openDirectories, addDirectory, enterHeld,
     openAddSpace, lookUpSpace, addSpaceToDirectory,
     refresh: () => render(),
     get path() { return path.slice(); },

@@ -66,8 +66,7 @@ function qrPaintBadge() {
 // vanish while the person is still looking at it.
 async function openSignals() {
   QR.open = true;
-  document.getElementById('signalsScreen').style.display = '';
-  document.getElementById('content').style.display = 'none';
+  showScreen('signals');
   await qrRefreshBadge();
   qrRenderInbox();
   if (QR.unseen > 0) {
@@ -81,10 +80,11 @@ async function openSignals() {
 }
 
 function closeSignals() {
-  QR.open = false;
-  document.getElementById('signalsScreen').style.display = 'none';
-  document.getElementById('content').style.display = '';
+  showScreen('conversation');
 }
+
+/** Called when something else takes the column. State only, no display. */
+function qrLeaving() { QR.open = false; }
 
 function qrSetFilter(f) {
   QR.filter = f;

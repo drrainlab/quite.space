@@ -626,6 +626,31 @@ function relayVerdict(base, rs) {
   return { text: null, why: rs.last_error || '' };
 }
 
+/**
+ * THE MIDDLE COLUMN HOLDS EXACTLY ONE THING.
+ *
+ * Three screens live in it — the conversation, Discover, Signals — and each
+ * of them used to open itself the same way: show me, hide the conversation.
+ * None of them hid the OTHERS. Press Discover and then Signals and both are
+ * on screen, which is not merely two things at once: `main` is a grid of
+ * three tracks, so a fourth visible child wraps, and the space panel lands
+ * on a second row underneath the navigator. The whole page goes crooked from
+ * two ordinary presses.
+ *
+ * So the column has an owner. Each screen keeps its own state and is told
+ * when it is being left, rather than every opener having to know about every
+ * other one — which is the arrangement that produced this.
+ */
+function showScreen(which) {
+  if (which !== 'catalog' && typeof CAT !== 'undefined' && CAT.leaving) CAT.leaving();
+  if (which !== 'signals' && typeof qrLeaving === 'function') qrLeaving();
+  const screens = { conversation: 'content', catalog: 'catalogScreen', signals: 'signalsScreen' };
+  for (const [name, id] of Object.entries(screens)) {
+    const el = document.getElementById(id);
+    if (el) el.style.display = name === which ? '' : 'none';
+  }
+}
+
 function connectionSummary(status) {
   const lan = status.lan, radio = status.radio || {};
   // A MODEM IS NOT A PERSON. `connected` says a radio is plugged into this
