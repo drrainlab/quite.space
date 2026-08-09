@@ -233,21 +233,55 @@ func (r *Runtime) pushToRelay(addr string, tid id.TerminalID, policy AssetPolicy
 	// — discovers the owner and can push back. Union of both, minus self.
 	devSet := map[id.DeviceID]struct{}{}
 	now := uint64(time.Now().Unix())
+	// Custody filter (ADR-015): expired frames never spend relay storage or
+	// later airtime; NoCustody frames refuse store-and-forward by author
+	// declaration. The relay itself stays structure-blind — the PUSHER
+	// excludes them.
+	//
+	// BUT A LINK IS NOT A PAYLOAD, and this filter used to sever
+	// conversations. Presence is emitted as an ordinary event in the
+	// per-device hash chain — it takes a Sequence, and everything the device
+	// says afterwards carries its id as Previous — and it is ALSO declared
+	// NoCustody with an expiry, because nobody wants a relay holding stale
+	// presence. Skipping it therefore withheld the one frame the receiver
+	// needs to advance: its log parked seq 7, 8, 9… in the reorder buffer
+	// waiting for a seq 6 that every future push filtered out again. One
+	// presence update and that device could never be heard through a relay
+	// again — silently, with the sender's diagnostics reporting healthy.
+	// Seen between a phone and a laptop on 2026-08-09.
+	//
+	// So the declaration is honoured for what it is about — not storing
+	// stale STATE — and ignored where the frame has become structure: a
+	// skippable frame is withheld only while nothing later in its own
+	// device chain is going out. Presence at the tip is still never
+	// relayed, which is the case the ADR was written for.
+	type candidate struct {
+		frame     []byte
+		id        id.EventID
+		dev       id.DeviceID
+		seq       uint64
+		skippable bool
+	}
+	var cands []candidate
+	needed := map[id.DeviceID]uint64{} // highest seq that must be reachable
 	if err := st.space.Log.Replay(func(a eventlog.Applied) error {
 		devSet[a.Env.Device] = struct{}{} // author is a member, custody aside
-		// Custody filter (ADR-015): expired frames never spend relay
-		// storage or later airtime; NoCustody frames refuse
-		// store-and-forward by author declaration. The relay itself
-		// stays structure-blind — the PUSHER excludes them.
-		if a.Env.Expired(now) || a.Env.ForwardingScope() == signal.NoCustody {
-			return nil
+		skip := a.Env.Expired(now) || a.Env.ForwardingScope() == signal.NoCustody
+		if !skip && a.Env.Sequence > needed[a.Env.Device] {
+			needed[a.Env.Device] = a.Env.Sequence
 		}
-		frames = append(frames, a.Frame)
-		eventIDs = append(eventIDs, a.ID)
+		cands = append(cands, candidate{a.Frame, a.ID, a.Env.Device, a.Env.Sequence, skip})
 		return nil
 	}); err != nil {
 		r.mu.Unlock()
 		return 0, 0, 0, err
+	}
+	for _, c := range cands {
+		if c.skippable && c.seq >= needed[c.dev] {
+			continue // nothing depends on it: the ADR's case, still skipped
+		}
+		frames = append(frames, c.frame)
+		eventIDs = append(eventIDs, c.id)
 	}
 	for dev := range st.space.Members() {
 		devSet[dev] = struct{}{}
