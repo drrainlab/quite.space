@@ -3807,6 +3807,41 @@ async function postBlock(meta, preview, file) {
 // ---- composer: voice ----
 
 let mediaRecorder = null, voiceChunks = [], voiceBlob = null, voiceMIME = '', voiceStart = 0, voiceWaveData = [];
+let voiceTick = null, voiceAbandoned = false;
+
+/**
+ * THE RECORDING SAYS THAT IT IS RECORDING. The mic button turning red was
+ * the only sign, and on a phone that button is under the thumb that pressed
+ * it — there was no way to tell whether it had started, how long you had been
+ * talking, or whether the microphone was picking anything up at all.
+ */
+function showRecBar(on) {
+  const bar = document.getElementById('recBar');
+  if (!bar) return;
+  bar.hidden = !on;
+  // The composer goes away rather than sitting there inert: while a take is
+  // running there is nothing to type into it. A CLASS, NOT AN INLINE STYLE —
+  // the poll rewrites `composer.style.display` every couple of seconds from
+  // whether this space can be written in, and an inline hide was erased
+  // within one tick, leaving the recorder's bar stacked under a live
+  // composer.
+  document.body.classList.toggle('recording', on);
+  clearInterval(voiceTick);
+  voiceTick = null;
+  if (!on) return;
+  const time = document.getElementById('recTime');
+  const level = document.querySelector('#recLevel i');
+  const paint = () => {
+    const s = Math.floor((Date.now() - voiceStart) / 1000);
+    time.textContent = Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+    // The last few samples, so a syllable gap does not read as a dead mic.
+    const recent = voiceWaveData.slice(-4);
+    const peak = recent.length ? Math.max(...recent) : 0;
+    level.style.width = Math.min(100, Math.round((peak / 200) * 100)) + '%';
+  };
+  paint();
+  voiceTick = setInterval(paint, 200);
+}
 
 function pickVoiceMIME() {
   for (const m of ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/mp4', 'audio/webm']) {
@@ -3815,16 +3850,35 @@ function pickVoiceMIME() {
   return '';
 }
 
+/** Stop the take and throw it away — no review, nothing sent. */
+function cancelVoice() {
+  if (!mediaRecorder || mediaRecorder.state !== 'recording') return;
+  voiceAbandoned = true;
+  mediaRecorder.stop();
+  document.getElementById('voiceBtn').classList.remove('rec');
+  showRecBar(false);
+}
+
 async function toggleVoice() {
   const btn = document.getElementById('voiceBtn');
   if (mediaRecorder && mediaRecorder.state === 'recording') {
     mediaRecorder.stop();
     btn.classList.remove('rec');
+    showRecBar(false);
     return;
   }
   let stream;
   try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
-  catch { alert('microphone unavailable'); return; }
+  catch (e) {
+    // "unavailable" was the old word for every case, including the common
+    // one: nobody had granted the microphone yet. A refusal and a missing
+    // device are different things and lead to different next steps.
+    const denied = e && (e.name === 'NotAllowedError' || e.name === 'SecurityError');
+    alert(denied
+      ? 'The microphone was not allowed. Grant it for this app and press record again.'
+      : 'No microphone is available on this device.');
+    return;
+  }
   voiceMIME = pickVoiceMIME();
   if (!voiceMIME) { alert('this browser cannot record audio'); return; }
   voiceChunks = []; voiceWaveData = []; voiceStart = Date.now();
@@ -3843,7 +3897,11 @@ async function toggleVoice() {
   };
   mediaRecorder.ondataavailable = (ev) => voiceChunks.push(ev.data);
   mediaRecorder.onstop = () => {
+    // The microphone is released on EVERY path out, cancelled or kept — a
+    // live track is the recording indicator the OS shows, and leaving one
+    // running says the app is still listening when it is not.
     stream.getTracks().forEach(t => t.stop());
+    if (voiceAbandoned) { voiceAbandoned = false; voiceChunks = []; return; }
     voiceBlob = new Blob(voiceChunks, { type: voiceMIME });
     // Review the take with the house player — the recorded waveform is its
     // scrubber, same as it will look in the feed.
@@ -3855,6 +3913,7 @@ async function toggleVoice() {
   };
   mediaRecorder.start(); sample();
   btn.classList.add('rec');
+  showRecBar(true);
 }
 
 function compactWave() {

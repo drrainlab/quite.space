@@ -1,7 +1,9 @@
 package space.quiet.arprobe
 
 import android.Manifest
+import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Color
 import android.net.Uri
 import android.os.Build
@@ -11,6 +13,8 @@ import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.webkit.PermissionRequest
+import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
@@ -22,6 +26,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import org.json.JSONObject
@@ -89,6 +94,49 @@ class QuietActivity : ComponentActivity() {
 
     private val controller by lazy { RuntimeController.get(this) }
 
+    /**
+     * THE TWO THINGS A WEBVIEW CANNOT DO BY ITSELF, and both were silently
+     * broken on the phone while working on a desktop browser.
+     *
+     * A file input's click reaches [WebChromeClient.onShowFileChooser] and
+     * NOWHERE ELSE. The default implementation returns false, which means
+     * "no chooser" — so `attachPick()` opened nothing at all, no error, no
+     * log line: the paperclip menu simply did not respond. There is no way
+     * to fix that in the page; the Activity has to open the picker.
+     *
+     * A getUserMedia call reaches [WebChromeClient.onPermissionRequest], and
+     * the default DENIES it. The recorder's own catch then said "microphone
+     * unavailable", which is true and unhelpful — the microphone was fine
+     * and nobody had ever been asked for it.
+     */
+    private var pendingFiles: ValueCallback<Array<Uri>>? = null
+
+    private val pickFiles =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            // ALWAYS ANSWERED, including a cancel: a callback left hanging
+            // wedges that input element for the life of the page — the next
+            // press of the same button does nothing, forever.
+            val cb = pendingFiles
+            pendingFiles = null
+            cb?.onReceiveValue(
+                WebChromeClient.FileChooserParams.parseResult(result.resultCode, result.data),
+            )
+        }
+
+    private var pendingMic: PermissionRequest? = null
+
+    private val requestMic =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            val req = pendingMic
+            pendingMic = null
+            if (req == null) return@registerForActivityResult
+            if (granted) {
+                req.grant(arrayOf(PermissionRequest.RESOURCE_AUDIO_CAPTURE))
+            } else {
+                req.deny()
+            }
+        }
+
     private val requestNotifications =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { _ ->
             // The RESULT is not read: the gate re-reads the system's own
@@ -115,7 +163,57 @@ class QuietActivity : ComponentActivity() {
             // another app's content provider.
             settings.allowFileAccess = false
             settings.allowContentAccess = false
-            webChromeClient = WebChromeClient()
+            webChromeClient = object : WebChromeClient() {
+                override fun onShowFileChooser(
+                    view: WebView?,
+                    callback: ValueCallback<Array<Uri>>?,
+                    params: FileChooserParams?,
+                ): Boolean {
+                    // A second request supersedes the first, and the first is
+                    // told so rather than dropped.
+                    pendingFiles?.onReceiveValue(null)
+                    pendingFiles = callback
+                    val intent = params?.createIntent()
+                    if (intent == null) {
+                        pendingFiles = null
+                        return false
+                    }
+                    return try {
+                        pickFiles.launch(intent)
+                        true
+                    } catch (e: ActivityNotFoundException) {
+                        // A phone with no picker for this MIME type. Say no
+                        // properly so the input can be used again.
+                        Log.w(TAG, "no activity can pick ${params.acceptTypes?.joinToString()}", e)
+                        pendingFiles = null
+                        callback?.onReceiveValue(null)
+                        false
+                    }
+                }
+
+                override fun onPermissionRequest(request: PermissionRequest) {
+                    runOnUiThread {
+                        // ONLY THE MICROPHONE. The page has no reason to ask
+                        // for a camera or the screen, and a blanket grant is
+                        // how a WebView becomes a hole: anything else is
+                        // denied without being forwarded to the person.
+                        if (!request.resources.contains(PermissionRequest.RESOURCE_AUDIO_CAPTURE)) {
+                            request.deny()
+                            return@runOnUiThread
+                        }
+                        val have = ContextCompat.checkSelfPermission(
+                            this@QuietActivity, Manifest.permission.RECORD_AUDIO,
+                        ) == PackageManager.PERMISSION_GRANTED
+                        if (have) {
+                            request.grant(arrayOf(PermissionRequest.RESOURCE_AUDIO_CAPTURE))
+                        } else {
+                            pendingMic?.deny()
+                            pendingMic = request
+                            requestMic.launch(Manifest.permission.RECORD_AUDIO)
+                        }
+                    }
+                }
+            }
             webViewClient = LocalOnlyClient()
             // AR-1b.8 — the interface's way back. Registered once, on the one
             // WebView this app has, and every method on it demands the node's

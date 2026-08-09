@@ -9,6 +9,20 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Voice messages. Asked for at the moment the record button is pressed,
+         not at launch, and never held: the WebView's getUserMedia is denied
+         until this is granted (see QuietActivity.onPermissionRequest). -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- AND THIS ONE, WHICH IS NOT OPTIONAL AND IS NOT ABOUT SETTINGS.
+         Chromium's Android audio manager refuses to enumerate ANY input
+         device unless the app holds both: "Requires MODIFY_AUDIO_SETTINGS
+         and RECORD_AUDIO. No audio device will be available for recording."
+         With RECORD_AUDIO alone and granted, getUserMedia still failed —
+         NotReadableError, which reads as broken hardware and sent the whole
+         investigation at the permission the person had already given. It is
+         an install-time permission: nobody is asked anything. -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
 
     <!-- AR-1c: the "stay connected" MODE. remoteMessaging rather than
          dataSync, deliberately — Android 15 caps background dataSync at six

@@ -445,9 +445,11 @@
   #qrBox img { width: 220px; height: 220px; image-rendering: pixelated;
     background: #fff; padding: 8px; border-radius: 4px; margin-top: 8px; }
   .ic { border: 0; border-right: 1px solid var(--line); border-radius: 0;
-    padding: 0 10px; font-size: 15px; color: var(--dim); }
+    padding: 0 10px; font-size: 15px; color: var(--dim);
+    display: inline-grid; place-items: center; }
   .ic:hover { color: var(--acc); }
   .ic.rec { color: #e06464; }
+  .ic .act-mark { width: 17px; height: 17px; }
   .entry img.thumb { max-width: 320px; max-height: 240px; border-radius: 4px;
     cursor: pointer; display: block; margin-top: 4px; }
   .entry .asset-note { font-size: 11px; color: var(--dim); cursor: pointer; }
@@ -1501,6 +1503,35 @@
   .app-block input { width: 100%; background: var(--bg); color: var(--fg);
     border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px;
     margin: 4px 0; font: inherit; }
+  /* ---- A RECORDING IN PROGRESS, SHOWN ----------------------------------
+     The mic button going red was the whole indication, and on a phone it is
+     under the thumb that pressed it. This bar takes the composer's place
+     while the recorder runs: what is happening, for how long, whether the
+     microphone is hearing anything, and both ways out. */
+  .rec-bar { display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px; border-top: 1px solid var(--line);
+    background: var(--surface-raised); }
+  .rec-bar[hidden] { display: none; }
+  /* Beats `#composer { display: flex }` on specificity without !important. */
+  body.recording #composer { display: none; }
+  .rec-dot { width: 9px; height: 9px; border-radius: 50%; background: #e06464;
+    flex: none; animation: rec-breathe 1.4s ease-in-out infinite; }
+  .rec-word { color: #e06464; font-size: 13px; }
+  .rec-time { font-variant-numeric: tabular-nums; color: var(--fg);
+    font-size: 13px; min-width: 3.2em; }
+  /* The level is the honest part: it moves because the microphone is
+     hearing something, so a dead input is visible as a flat bar rather than
+     discovered on playback. */
+  .rec-level { flex: 0 1 120px; height: 4px; border-radius: 999px;
+    background: var(--line); overflow: hidden; }
+  .rec-level i { display: block; height: 100%; width: 0;
+    background: #e06464; border-radius: 999px; transition: width .12s linear; }
+  @keyframes rec-breathe { 0%, 100% { opacity: 1 } 50% { opacity: .35 } }
+  @media (prefers-reduced-motion: reduce) {
+    .rec-dot { animation: none; }
+    .rec-level i { transition: none; }
+  }
+
   /* ---- Telegram-style composer: attach menu + video cards ---- */
   #attachWrap { position: relative; display: flex; }
   .attach-menu { position: absolute; bottom: calc(100% + 8px); left: 6px;
@@ -1508,9 +1539,12 @@
     border-radius: var(--radius-md); box-shadow: 0 8px 28px rgba(0,0,0,.35);
     padding: 4px; min-width: 170px; z-index: 30;
     animation: qs-dialog-in 180ms ease-out 1; }
-  .attach-menu button { display: block; width: 100%; text-align: left;
+  .attach-menu button { display: flex; align-items: center; gap: 10px;
+    width: 100%; text-align: left;
     background: transparent; border: 0; border-radius: 8px; padding: 9px 12px;
     color: var(--fg); font-size: 14px; }
+  .attach-menu .act-mark { width: 16px; height: 16px; color: var(--dim); }
+  .attach-menu button:hover .act-mark { color: var(--acc); }
   .attach-menu button:hover { background: var(--surface-raised); }
   .video-holder { position: relative; display: inline-block; cursor: pointer;
     margin-top: 4px; }
