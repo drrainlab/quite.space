@@ -153,6 +153,11 @@ func Start(dir, passphrase, name string, withLAN bool) error {
 		return err
 	}
 
+	// A host registered before the node opened must not be forgotten: the
+	// Activity installs it at creation and Start happens later, behind a
+	// passphrase somebody has to type.
+	applyUsbHost(r)
+
 	if withLAN {
 		if err := r.StartLAN(":0", lan.MulticastAddr); err != nil {
 			// Not fatal, and not silent: a phone that cannot multicast is an

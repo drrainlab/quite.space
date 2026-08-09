@@ -47,26 +47,52 @@ func (r *Runtime) AttachRNode(device, phrase string) error {
 	if device == "" {
 		return errors.New("a serial device is required — scan for radios first")
 	}
-	var seed []byte
-	if phrase == "" {
-		r.mu.Lock()
-		seed = append([]byte(nil), r.ks.Radio.Seed...)
-		r.mu.Unlock()
-		if len(seed) == 0 {
-			return errors.New("this device knows no radio segment yet, so it " +
-				"needs the phrase yours shares. A segment arrives on its own " +
-				"with an invitation from somebody who already has a radio")
-		}
-	} else if s, err := radiotransfer.SeedFromPhrase(phrase); err != nil {
-		return fmt.Errorf("segment phrase: %w", err)
-	} else {
-		seed = s
+	seed, err := r.segmentSeed(phrase)
+	if err != nil {
+		return err
 	}
 	// StartRNodeTransfer remembers the attachment itself, and only after the
 	// radio actually came up: storing the intent first would leave a node
 	// trying to attach a device that never worked, every start, with the
 	// failure a little further from its cause each time.
 	return r.StartRNodeTransfer(device, seed)
+}
+
+// AttachRNodeOverLink is AttachRNode for a modem the caller already holds
+// open — a phone, where the USB device belongs to the host and there is no
+// path to name. The phrase rule is identical, deliberately: whichever way the
+// hardware was reached, a radio joins a segment by its words or not at all.
+func (r *Runtime) AttachRNodeOverLink(link rnode.Link, label string, phrase string) error {
+	if link == nil {
+		return errors.New("a usb link is required")
+	}
+	seed, err := r.segmentSeed(phrase)
+	if err != nil {
+		return err
+	}
+	return r.StartRNodeTransferOverLink(link, label, seed)
+}
+
+// segmentSeed resolves the phrase a person typed, or the one this device was
+// told earlier. Shared by both attach paths so the sentence somebody reads
+// when they have neither is written once.
+func (r *Runtime) segmentSeed(phrase string) ([]byte, error) {
+	if phrase != "" {
+		s, err := radiotransfer.SeedFromPhrase(phrase)
+		if err != nil {
+			return nil, fmt.Errorf("segment phrase: %w", err)
+		}
+		return s, nil
+	}
+	r.mu.Lock()
+	seed := append([]byte(nil), r.ks.Radio.Seed...)
+	r.mu.Unlock()
+	if len(seed) == 0 {
+		return nil, errors.New("this device knows no radio segment yet, so it " +
+			"needs the phrase yours shares. A segment arrives on its own " +
+			"with an invitation from somebody who already has a radio")
+	}
+	return seed, nil
 }
 
 // DetachRadio puts the radio down and forgets it.
@@ -115,6 +141,14 @@ func (r *Runtime) restoreRadio() {
 	rec := r.ks.Radio
 	r.mu.Unlock()
 	if !rec.Attached() || rec.Carrier != carrierRNode {
+		return
+	}
+	// A radio the HOST holds cannot be reopened from here: there is no path,
+	// the USB permission belongs to the app, and the cable may not even be
+	// in. Re-attaching is the host's move; what the record is worth on this
+	// side is the SEED, so nobody retypes their segment phrase. Trying and
+	// failing would have put a permanent error on the screen of every phone.
+	if strings.HasPrefix(rec.Device, hostAttachedPrefix) {
 		return
 	}
 	if err := r.StartRNodeTransfer(rec.Device, rec.Seed); err != nil {
@@ -238,7 +272,15 @@ func (a *APIServer) handleRadioAttach(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusBadRequest, errors.New("port and phrase required"))
 		return
 	}
-	if err := a.rt.AttachRNode(strings.TrimSpace(body.Port), body.Phrase); err != nil {
+	port := strings.TrimSpace(body.Port)
+	// The prefix the scan put there is the whole routing decision: a device
+	// the host holds cannot be opened by path, and a path is not something
+	// the host can claim.
+	attach := a.rt.AttachRNode
+	if strings.HasPrefix(port, HostDevicePrefix) {
+		attach = a.rt.AttachHostRadio
+	}
+	if err := attach(port, body.Phrase); err != nil {
 		httpErr(w, http.StatusBadGateway, err)
 		return
 	}

@@ -439,6 +439,29 @@ func (a *APIServer) handleScanRadios(w http.ResponseWriter, r *http.Request) {
 		resp.Ports = append(resp.Ports, sp)
 	}
 
+	// A HOST THAT CAN SEE HARDWARE THE NODE CANNOT. On Android there are no
+	// serial ports to probe — the loop above finds nothing and always will —
+	// so the devices come from the app's own USB service instead. They are
+	// appended rather than substituted: a build could have both, and the
+	// interface should not have to know which platform it is on.
+	hostRadios, hostErr := a.rt.HostRadios()
+	for _, hr := range hostRadios {
+		sp := scanPort{Port: HostDevicePrefix + hr.Name, Detail: hr.Why}
+		if hr.Supported {
+			sp.Kind = "rnode"
+			modems++
+			candidates++
+		} else {
+			sp.Kind = "foreign"
+			foreign++
+			candidates++
+		}
+		if hr.Label != "" {
+			sp.Detail = hr.Label + " — " + hr.Why
+		}
+		resp.Ports = append(resp.Ports, sp)
+	}
+
 	switch {
 	case attachedDev != "":
 		resp.Attached = attachedDev
@@ -450,6 +473,15 @@ func (a *APIServer) handleScanRadios(w http.ResponseWriter, r *http.Request) {
 			"build speaks; an RNode modem is the one it drives directly."
 	case resp.Found > 1:
 		resp.Note = "Found more than one Meshtastic node. Pick the one you mean."
+	case hostErr != nil:
+		resp.Note = "The system would not list USB devices: " + hostErr.Error()
+	case len(resp.Ports) == 0 && a.rt.HasRadioHost():
+		// The honest sentence for a phone. There is no such thing as a serial
+		// port here, so offering to look for one again is advice that cannot
+		// come true.
+		resp.Note = "Nothing is plugged in. Connect an RNode modem with a " +
+			"USB-OTG cable — this device reaches radios through USB, not " +
+			"through serial ports, and it will ask before using one."
 	case len(resp.Ports) == 0:
 		resp.Note = "No serial ports at all. Plug a radio in over USB — an " +
 			"RNode modem is what this build drives directly."

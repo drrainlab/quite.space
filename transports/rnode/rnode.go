@@ -204,9 +204,20 @@ const MinFrame = 176
 // openSettle is how long to wait after opening the port before configuring.
 const openSettle = 2 * time.Second
 
+// Link is the connection to a modem, which is LESS than a serial port: the
+// driver reads, writes and closes, and nothing else. Naming that shortfall
+// is what lets a phone attach one — Android has no serial device nodes at
+// all, so its USB host layer supplies the same three verbs from Kotlin
+// instead of a /dev path (see OpenStream).
+type Link interface {
+	Read(p []byte) (int, error)
+	Write(p []byte) (int, error)
+	Close() error
+}
+
 // Radio is one RNode, presented as a radiotransfer.RadioDatagram.
 type Radio struct {
-	port serial.Port
+	port Link
 	set  Settings
 	mtu  int
 
@@ -274,8 +285,26 @@ func Open(device string, s Settings) (*Radio, error) {
 		p.Close()
 		return nil, err
 	}
+	return OpenStream(p, s)
+}
+
+// OpenStream is Open with the connection already made: same modem, same
+// protocol, same settle — a caller that reached the hardware some other way
+// hands the stream over and gets the same Radio back.
+//
+// IT EXISTS FOR THE PHONE. Android creates no device node for a USB
+// peripheral, so there is no path to pass to Open and never will be; the
+// host claims the device through UsbManager and speaks bulk transfers. That
+// is a different way to ACQUIRE the connection and not a different modem, so
+// it belongs here rather than in a second driver.
+//
+// The caller owns the reset. Opening a serial port on a desktop toggles DTR
+// and the board reboots, which is why the settle below exists; a host that
+// arrives another way must assert DTR itself, or configure() will talk to a
+// board in whatever state it was left in.
+func OpenStream(link Link, s Settings) (*Radio, error) {
 	// The modem's limit, NOT MTUFor: capping by airtime was measured worse.
-	r := &Radio{port: p, set: s, mtu: MaxFrame, inbox: make(chan []byte, 64),
+	r := &Radio{port: link, set: s, mtu: MaxFrame, inbox: make(chan []byte, 64),
 		stop: make(chan struct{}), rxFrames: map[byte]int{}}
 
 	r.wg.Add(1)

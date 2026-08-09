@@ -101,6 +101,8 @@ type Runtime struct {
 	// Kept so the status can SAY it: an unplugged board and a board that was
 	// never configured look identical without this.
 	radioRestoreErr error
+	// radioHost is set only where the node cannot open hardware itself.
+	radioHost RadioHost
 	// meshNetworkID scopes which segment's gateway beacons this node listens
 	// to; gateways is what it has heard (RB-2). Presence is advisory — it is
 	// what a person is SHOWN, never a gate on the queue.
@@ -331,7 +333,7 @@ func Open(dataDir string, passphrase []byte, displayName string) (rt *Runtime, e
 	}
 	r := &Runtime{root: root, lock: lock, dataDir: dataDir, spaces: map[id.TerminalID]*spaceState{},
 		notifyLedger: newNotifyLedger(dataDir),
-		assetIdx: newAssetIndex(), passes: newPassRegistry(),
+		assetIdx:     newAssetIndex(), passes: newPassRegistry(),
 		joins: map[string]*joinAttempt{}, stop: make(chan struct{}),
 		relayWants: map[id.TerminalID]map[id.Hash]struct{}{},
 		// Radios ask for retransmission unless told otherwise. See

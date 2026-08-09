@@ -34,6 +34,48 @@ func (r *Runtime) StartRNodeTransfer(device string, seed []byte) error {
 	return r.startRNodeOn(device, seed, rnode.ProfileLongFastRU)
 }
 
+// StartRNodeTransferOverLink is StartRNodeTransfer for a modem the caller has
+// already reached — a phone, where there is no serial path to name because
+// Android creates no device node for USB peripherals and the host speaks to
+// the board through UsbManager.
+//
+// label is what to remember it by and what to say in diagnostics; it is not
+// a path and nothing tries to reopen it. That is the honest difference: a
+// desktop can bring its radio back on the next start from the record alone,
+// and a phone cannot — the USB permission belongs to the host and the device
+// may not even be plugged in. So this attaches, and re-attaching after a
+// restart is the host's move to make.
+func (r *Runtime) StartRNodeTransferOverLink(link rnode.Link, label string, seed []byte) error {
+	phy, ok := rnode.SettingsForProfile(rnode.ProfileLongFastRU)
+	if !ok {
+		return errors.New("this build does not know its own default radio profile")
+	}
+	if err := r.claimRadioSlot(); err != nil {
+		return err
+	}
+	radio, err := rnode.OpenStream(link, phy)
+	if err != nil {
+		return err
+	}
+	return r.adoptRNode(radio, hostAttachedPrefix+label, seed)
+}
+
+// hostAttachedPrefix marks a radio only the HOST can reach: there is no path
+// to reopen, so restoreRadio must not try. The seed behind it is still worth
+// keeping — that is what saves somebody typing their segment phrase again.
+const hostAttachedPrefix = "host:"
+
+// claimRadioSlot enforces the one-radio-per-node rule before anything is
+// opened, so a refused second attach costs no hardware.
+func (r *Runtime) claimRadioSlot() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.meshSupervised {
+		return errors.New("node: a radio is already connected")
+	}
+	return nil
+}
+
 // startRNodeOn is the same thing with the PHY named rather than assumed, so a
 // segment that arrived in an invitation can say which air it lives on and a
 // build that does not know that air can refuse instead of guessing.
@@ -45,17 +87,8 @@ func (r *Runtime) startRNodeOn(device string, seed []byte, profile string) error
 			"the segment up is running a version this one does not match",
 			profile)
 	}
-	r.mu.Lock()
-	if r.meshSupervised {
-		r.mu.Unlock()
-		return errors.New("node: a radio is already connected")
-	}
-	r.mu.Unlock()
-
-	key, err := radiotransfer.DeriveTransferKey(seed, radiotransfer.KDFVersion)
-	if err != nil {
-		return fmt.Errorf("radio transfer needs a segment seed every radio "+
-			"shares: %w", err)
+	if err := r.claimRadioSlot(); err != nil {
+		return err
 	}
 
 	// The PHY is the regulatory RU profile the whole project transmits on.
@@ -66,6 +99,20 @@ func (r *Runtime) startRNodeOn(device string, seed []byte, profile string) error
 	radio, err := rnode.Open(device, phy)
 	if err != nil {
 		return err
+	}
+	return r.adoptRNode(radio, device, seed)
+}
+
+// adoptRNode is everything after a modem answers: the transfer layer, the
+// link, the pump and the record. Shared by both ways in — a serial path on a
+// desktop and a stream the host already holds on a phone — because past the
+// point where the radio is up, nothing above cares how it was reached.
+func (r *Runtime) adoptRNode(radio *rnode.Radio, label string, seed []byte) error {
+	key, err := radiotransfer.DeriveTransferKey(seed, radiotransfer.KDFVersion)
+	if err != nil {
+		radio.Close()
+		return fmt.Errorf("radio transfer needs a segment seed every radio "+
+			"shares: %w", err)
 	}
 
 	// Per-carrier limits, which is what Limits being per-endpoint exists for.
@@ -121,7 +168,7 @@ func (r *Runtime) startRNodeOn(device string, seed []byte, profile string) error
 	// --rnode carried no segment in its invitations at all, because the
 	// keystore record was written by the interface path and by nothing else.
 	// One radio coming up is one place, whoever asked for it.
-	r.rememberRadio(device, seed)
+	r.rememberRadio(label, seed)
 
 	lk := rnodeLink{Endpoint: ep, radio: radio, transfer: ep}
 	r.mu.Lock()

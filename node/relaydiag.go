@@ -30,8 +30,8 @@ type RelayDiagnostics struct {
 	// free to ask.
 	ThrottledForMs int    `json:"throttled_for_ms,omitempty"`
 	SyncActive     bool   `json:"sync_active"`
-	IntervalMs  int    `json:"interval_ms,omitempty"`
-	LastError   string `json:"last_error,omitempty"`
+	IntervalMs     int    `json:"interval_ms,omitempty"`
+	LastError      string `json:"last_error,omitempty"`
 	// Public spaces and where their traffic goes ("" = the personal relay).
 	Spaces []PublicSpaceStatus `json:"spaces,omitempty"`
 }

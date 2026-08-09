@@ -23,6 +23,10 @@
          an install-time permission: nobody is asked anything. -->
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
+    <!-- The radio arrives on a USB-OTG cable. NOT required: a phone with no
+         host mode is an ordinary phone that reaches people over the internet
+         and the local network, and it must still be able to install this. -->
+    <uses-feature android:name="android.hardware.usb.host" android:required="false" />
 
     <!-- AR-1c: the "stay connected" MODE. remoteMessaging rather than
          dataSync, deliberately — Android 15 caps background dataSync at six

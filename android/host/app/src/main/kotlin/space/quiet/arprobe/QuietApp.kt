@@ -1,6 +1,7 @@
 package space.quiet.arprobe
 
 import android.app.Application
+import space.quiet.quietcore.Quietcore
 
 /**
  * Where the runtime's owner lives.
@@ -31,5 +32,12 @@ class QuietApp : Application() {
         // missed. See NotificationChannels for why the ids are effectively
         // frozen the moment they first exist.
         NotificationChannels.ensure(this)
+
+        // The USB service, handed to the core once. Registered at APPLICATION
+        // scope on purpose: the core may ask for the device list from a
+        // goroutine at any time, including while no Activity exists, and a
+        // host tied to a screen would disappear on a rotation. The permission
+        // dialog it raises belongs to the system and works from here.
+        Quietcore.setUsbHost(UsbRadio.Host(this))
     }
 }
