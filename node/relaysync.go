@@ -40,6 +40,19 @@ type relaySyncState struct {
 	// space last showed activity. Quiet spaces sync on a slow cadence.
 	tick       uint64
 	lastChange map[id.TerminalID]time.Time
+	// A CYCLE THAT FAILED IS NOT EVIDENCE THAT NOTHING IS HAPPENING, and the
+	// quiet tier treats it as if it were: a space with no local change syncs
+	// once every quietEvery ticks, so after the network came back the relay
+	// went on looking broken for the rest of that window. Measured at about
+	// a minute on a phone, which is a long time to watch a screen say the
+	// wrong thing.
+	//
+	// So a failed cycle schedules its own retry, starting at one tick and
+	// doubling to the quiet cadence. A short outage recovers in seconds; a
+	// long one settles to exactly what it does today, without hammering a
+	// relay that is not there.
+	failStreak int
+	nextRetry  time.Time
 	// held records, per space, why this cycle handed nothing over. Every
 	// reason below is a deliberate `continue` — the loop is right to hold
 	// rather than guess an address or mark unsent frames as handed off —
@@ -71,6 +84,9 @@ const (
 const (
 	quietAfter = 60 * time.Second
 	quietEvery = 15
+	// retryCeiling bounds the wait after a failed cycle. See the backoff
+	// below for why it is stated in seconds rather than in ticks.
+	retryCeiling = 5 * time.Second
 )
 
 func quietStagger(tid id.TerminalID) uint64 { return uint64(tid[0]) % quietEvery }
@@ -238,6 +254,13 @@ func (r *Runtime) relaySyncOnce(addr string) {
 		quiet := now0.Sub(rs.lastChange[sp.tid]) > quietAfter
 		hot[sp.tid] = !quiet || tick%quietEvery == quietStagger(sp.tid)
 	}
+	// Recovering from a failure: ask again, everywhere, on the schedule the
+	// failure earned rather than the one silence earned.
+	if rs.failStreak > 0 && !now0.Before(rs.nextRetry) {
+		for _, sp := range spaces {
+			hot[sp.tid] = true
+		}
+	}
 	rs.mu.Unlock()
 	active := spaces[:0]
 	for _, sp := range spaces {
@@ -403,6 +426,37 @@ func (r *Runtime) relaySyncOnce(addr string) {
 
 	rs.mu.Lock()
 	rs.lastErr = lastErr
+	// The retry schedule, kept here because this is the one place that knows
+	// whether the cycle worked.
+	if lastErr != "" {
+		if rs.failStreak < 30 {
+			rs.failStreak++
+		}
+		every := rs.interval
+		if every <= 0 {
+			every = 2 * time.Second
+		}
+		back := time.Duration(1<<min(rs.failStreak-1, 4)) * every
+		// THE CEILING IS WALL TIME, NOT TICKS. Capping at the quiet cadence
+		// was the obvious thing and it was worthless: after an outage longer
+		// than a few seconds the backoff saturates, and saturating at the
+		// quiet cadence means the retry costs exactly what waiting for the
+		// quiet slot cost — which is the minute somebody watched.
+		//
+		// A retry is one connect attempt on a loop that is already awake
+		// every tick, so a few seconds is cheap; what it buys is that the
+		// screen stops lying within a few seconds of the network returning.
+		if back > retryCeiling {
+			back = retryCeiling
+		}
+		if back > quietEvery*every {
+			back = quietEvery * every
+		}
+		rs.nextRetry = time.Now().Add(back)
+	} else {
+		rs.failStreak = 0
+		rs.nextRetry = time.Time{}
+	}
 	rs.held = held
 	if pushed > 0 {
 		rs.lastPush = time.Now()

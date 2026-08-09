@@ -197,7 +197,7 @@ object UsbRadio {
         }
         if (usb.hasPermission(device)) {
             Log.i(TAG, "already permitted: ${'$'}{describe(device)}")
-            finishOpen(usb, device, onResult)
+            finishOpen(usb, device, context, onResult)
             return
         }
         Log.i(TAG, "asking for ${'$'}{describe(device)}")
@@ -213,7 +213,7 @@ object UsbRadio {
                     return
                 }
                 Log.i(TAG, "permission granted for ${'$'}{describe(device)}")
-                finishOpen(usb, device, onResult)
+                finishOpen(usb, device, context, onResult)
             }
         }
         if (Build.VERSION.SDK_INT >= 33) {
@@ -235,10 +235,11 @@ object UsbRadio {
     private fun finishOpen(
         usb: UsbManager,
         device: UsbDevice,
+        context: Context,
         onResult: (Link?, String?) -> Unit,
     ) {
         try {
-            onResult(Link(usb, device), null)
+            onResult(Link(usb, device, context), null)
         } catch (e: Exception) {
             Log.w(TAG, "opening ${device.deviceName}", e)
             onResult(null, e.message ?: "the modem would not open")
@@ -253,7 +254,11 @@ object UsbRadio {
      * Go goroutine, so nothing here touches the main thread and nothing here
      * calls back into the core.
      */
-    class Link(usb: UsbManager, device: UsbDevice) : UsbSerial {
+    class Link(
+        private val usb: UsbManager,
+        private val device: UsbDevice,
+        private val context: Context? = null,
+    ) : UsbSerial {
 
         private val connection: UsbDeviceConnection
         private val iface: UsbInterface
@@ -262,6 +267,39 @@ object UsbRadio {
 
         @Volatile
         private var closed = false
+
+        /**
+         * THE CABLE CAME OUT. Nothing else can tell us.
+         *
+         * A bulk transfer returns -1 for a read that timed out and -1 for a
+         * device that is gone, and silence on a radio link is the ordinary
+         * case — so treating every -1 as death would kill a working radio,
+         * and treating none of them as death is what shipped: a phone went
+         * on reporting a modem that had been in somebody's hand for a minute
+         * because the reader never failed and the driver never learned.
+         *
+         * The system knows the moment it happens, so it is asked. The count
+         * below is the backstop for a broadcast that never arrives.
+         */
+        @Volatile
+        private var gone = false
+        private var quietReads = 0
+
+        private val detachWatch = object : BroadcastReceiver() {
+            override fun onReceive(c: Context, intent: Intent) {
+                if (intent.action != UsbManager.ACTION_USB_DEVICE_DETACHED) return
+                val d: UsbDevice? = if (Build.VERSION.SDK_INT >= 33) {
+                    intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
+                }
+                if (d?.deviceName == device.deviceName) {
+                    Log.i(TAG, "detached: ${'$'}{device.deviceName}")
+                    gone = true
+                }
+            }
+        }
 
         init {
             iface = device.getInterface(0)
@@ -285,6 +323,15 @@ object UsbRadio {
             }
             bulkIn = inEp
             bulkOut = outEp
+            context?.let {
+                val f = IntentFilter(UsbManager.ACTION_USB_DEVICE_DETACHED)
+                if (Build.VERSION.SDK_INT >= 33) {
+                    it.registerReceiver(detachWatch, f, Context.RECEIVER_NOT_EXPORTED)
+                } else {
+                    @Suppress("UnspecifiedRegisterReceiverFlag")
+                    it.registerReceiver(detachWatch, f)
+                }
+            }
             Log.i(TAG, "claimed iface ${'$'}{iface.id}, in=${'$'}{bulkIn.address} " +
                 "out=${'$'}{bulkOut.address} maxPacket=${'$'}{bulkIn.maxPacketSize}")
 
@@ -335,19 +382,32 @@ object UsbRadio {
          */
         override fun readChunk(): ByteArray {
             if (closed) return ByteArray(0)
+            if (gone) throw IllegalStateException("the modem was unplugged")
             val n = connection.bulkTransfer(bulkIn, rx, rx.size, READ_TIMEOUT_MS)
             if (n < 0) {
-                // A timeout and a dead device are the same return value here,
-                // so this cannot throw on n < 0 alone: closed is the signal
-                // that the device is really gone.
-                if (closed) throw IllegalStateException("the modem was detached")
+                // -1 is a read that timed out AND a device that is gone, and
+                // the two need opposite answers. The broadcast above settles
+                // it instantly in the normal case; this is what happens when
+                // it does not arrive. Asking the system for its device list
+                // is not free, so it is asked after a run of silence rather
+                // than on every quiet read.
+                if (++quietReads >= QUIET_READS_BEFORE_CHECK) {
+                    quietReads = 0
+                    if (!usb.deviceList.containsKey(device.deviceName)) {
+                        gone = true
+                        Log.i(TAG, "gone: ${'$'}{device.deviceName} left the device list")
+                        throw IllegalStateException("the modem was unplugged")
+                    }
+                }
                 return ByteArray(0)
             }
+            quietReads = 0
             return rx.copyOf(n)
         }
 
         override fun writeChunk(b: ByteArray) {
             if (closed) throw IllegalStateException("the modem is closed")
+            if (gone) throw IllegalStateException("the modem was unplugged")
             var off = 0
             while (off < b.size) {
                 val slice = if (off == 0 && b.size <= bulkOut.maxPacketSize) b
@@ -361,6 +421,7 @@ object UsbRadio {
         override fun closeLink() {
             if (closed) return
             closed = true
+            context?.let { runCatching { it.unregisterReceiver(detachWatch) } }
             try {
                 // Drop DTR and RTS on the way out, so the board is not left
                 // held in whatever state we put it in.
@@ -378,6 +439,11 @@ object UsbRadio {
             // the loop is not a spin.
             const val READ_TIMEOUT_MS = 200
             const val WRITE_TIMEOUT_MS = 2000
+
+            // Five quiet reads is one second — fast enough that a missed
+            // broadcast costs a second rather than a minute, rare enough
+            // that a silent radio is not polling the USB service.
+            const val QUIET_READS_BEFORE_CHECK = 5
         }
     }
 }

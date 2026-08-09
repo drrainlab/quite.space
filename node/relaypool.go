@@ -25,6 +25,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/drrainlab/quiet_places/transports/lan"
@@ -35,6 +36,10 @@ const (
 	poolUnhealthyAfter = 3                // consecutive failures
 	poolCooldown       = 30 * time.Second // unhealthy hold before a retry
 	poolIdleClose      = 5 * time.Minute
+	// localOutageRetry is the wait after a dial that never left the machine.
+	// Short, because such a dial costs nothing and the only thing standing
+	// between the person and a working relay is asking again.
+	localOutageRetry = 2 * time.Second
 )
 
 // poolBackoff is the full-jitter reconnect schedule: the nth consecutive
@@ -59,6 +64,11 @@ type relayLane struct {
 
 // relayPeer is one relay's pool entry.
 type relayPeer struct {
+	// localOutage: the last dial never left this machine. Kept apart from
+	// `failures` because it says something about US, and the difference
+	// decides both how soon to try again and what the diagnostics call it.
+	localOutage bool
+
 	addr    string
 	control relayLane
 	bulk    relayLane
@@ -153,6 +163,11 @@ func (p *relayPool) health(addr string) string {
 	switch {
 	case pe.untrusted:
 		return "untrusted"
+	case pe.localOutage:
+		// NOT "offline". The relay may be perfectly well; this device could
+		// not send a packet. Saying the wrong one sends somebody to check a
+		// server when the answer is their own Wi-Fi.
+		return "no network here"
 	case time.Now().Before(pe.backoffUntil):
 		return "offline"
 	case pe.failures > 0:
@@ -194,6 +209,7 @@ func (p *relayPool) acquire(pe *relayPeer, lane *relayLane) (*relay.Client, func
 		switch {
 		case err == nil:
 			pe.mu.Lock()
+			pe.localOutage = false
 			pe.successStreak++
 			// Recovery needs TWO consecutive successes (RR-6) — one lucky
 			// round trip after a failure run proves nothing.
@@ -228,6 +244,24 @@ func (p *relayPool) Bulk(addr string) (*relay.Client, func(error), error) {
 	return p.acquire(pe, &pe.bulk)
 }
 
+// ourNetworkIsDown says the dial never left this machine: the OS refused to
+// send. ENETUNREACH and friends are what a phone with Wi-Fi off produces, and
+// they are a fact about US, not about the relay.
+func ourNetworkIsDown(err error) bool {
+	if errors.Is(err, syscall.ENETUNREACH) || errors.Is(err, syscall.ENETDOWN) ||
+		errors.Is(err, syscall.EHOSTUNREACH) {
+		return true
+	}
+	// Not every platform surfaces the errno through the error chain, and the
+	// cost of being wrong here is small in one direction only: a retry that
+	// fails instantly costs nothing, while a missed classification costs the
+	// minute this exists to remove.
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, "network is unreachable") ||
+		strings.Contains(s, "no route to host") ||
+		strings.Contains(s, "network is down")
+}
+
 func (p *relayPool) noteFailure(pe *relayPeer, err error) {
 	var untrusted ErrRelayUntrusted
 	pe.mu.Lock()
@@ -237,6 +271,24 @@ func (p *relayPool) noteFailure(pe *relayPeer, err error) {
 		pe.untrusted = true // cleared only by an explicit re-trust
 		return
 	}
+	// A LOCAL OUTAGE IS NOT THE RELAY'S HEALTH. The breaker below exists to
+	// stop a node hammering a relay that is struggling, and to stop it
+	// spending a battery on round trips that will not land. Neither applies
+	// when the operating system refuses to send at all: the dial fails
+	// instantly, locally, without a packet.
+	//
+	// Charging those to the relay is what turned "Wi-Fi was off for a
+	// minute" into "the relay is unreachable for another two": three quick
+	// failures bought a thirty-second hold, and the ladder after it runs to
+	// two minutes. Measured on a phone, watching a screen say the wrong
+	// thing long after the network came back.
+	if ourNetworkIsDown(err) {
+		pe.localOutage = true
+		pe.backoffUntil = maxTime(pe.backoffUntil,
+			time.Now().Add(localOutageRetry))
+		return
+	}
+	pe.localOutage = false
 	pe.failures++
 	if pe.failures >= poolUnhealthyAfter {
 		pe.backoffUntil = time.Now().Add(poolCooldown)
