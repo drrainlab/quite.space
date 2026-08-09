@@ -7,7 +7,9 @@
 package node
 
 import (
+	"errors"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -94,4 +96,91 @@ func TestALanPeerIsCountedOnce(t *testing.T) {
 	}
 	t.Fatalf("a single local link counted as alice=%d bob=%d",
 		a.LAN().Peers, b.LAN().Peers)
+}
+
+// dyingLink is a modem whose cable comes out: it works, then every read
+// fails, which is exactly what the USB layer and a serial port both report.
+type dyingLink struct {
+	mu   sync.Mutex
+	dead bool
+}
+
+func (l *dyingLink) kill() { l.mu.Lock(); l.dead = true; l.mu.Unlock() }
+func (l *dyingLink) Read(p []byte) (int, error) {
+	l.mu.Lock()
+	dead := l.dead
+	l.mu.Unlock()
+	if dead {
+		return 0, errors.New("the modem was detached")
+	}
+	time.Sleep(5 * time.Millisecond)
+	return 0, nil
+}
+func (l *dyingLink) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.dead {
+		return 0, errors.New("the modem was detached")
+	}
+	return len(p), nil
+}
+func (l *dyingLink) Close() error { l.kill(); return nil }
+
+// A radio that was UNPLUGGED must be attachable again. It was not: nothing
+// released the one-radio-per-node slot except the explicit Detach switch, so
+// pulling a cable and putting it back was answered with "a radio is already
+// connected" — for the rest of the session.
+func TestAnUnpluggedRadioCanBeAttachedAgain(t *testing.T) {
+	rt := openRuntime(t, t.TempDir(), "somebody in a field")
+	defer rt.Close()
+	if _, err := rt.CreateSpace("the line"); err != nil {
+		t.Fatal(err)
+	}
+
+	var current *dyingLink
+	host := &fakeHost{
+		list: []HostRadio{{Name: "usb1", Supported: true}},
+		linkFn: func() rnode.Link {
+			current = &dyingLink{}
+			return current
+		},
+	}
+	rt.SetRadioHost(host)
+
+	if err := rt.AttachHostRadio("usb1", "correct horse battery staple"); err != nil {
+		t.Fatalf("first attach: %v", err)
+	}
+	if !rt.RadioState().Connected {
+		t.Fatal("the radio did not come up")
+	}
+
+	// The cable comes out.
+	current.kill()
+
+	// The node has to NOTICE, on its own, without anybody pressing detach.
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) && rt.RadioState().Connected {
+		time.Sleep(200 * time.Millisecond)
+	}
+	if rt.RadioState().Connected {
+		t.Fatal("the node still believes a radio it cannot reach is connected")
+	}
+
+	// And it must be plugged back in. This is the whole test.
+	deadline = time.Now().Add(15 * time.Second)
+	var err error
+	for time.Now().Before(deadline) {
+		if err = rt.AttachHostRadio("usb1", ""); err == nil {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatalf("plugging the same board back in was refused: %v", err)
+	}
+	if !rt.RadioState().Connected {
+		t.Fatal("the second attach reported success without a radio")
+	}
+	// And it did not have to ask for the segment phrase again: an unplug is
+	// not a detach, and the empty phrase above is the assertion.
 }

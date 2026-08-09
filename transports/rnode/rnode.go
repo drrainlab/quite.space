@@ -483,10 +483,22 @@ func (r *Radio) Credit() transports.Credit {
 // Closed reports whether this radio is finished, and with what error — the
 // liveness a link adopter needs, in the same shape the supervised Meshtastic
 // link answers it.
+// Closed reports whether this radio is finished, and why.
+//
+// A READER THAT DIED IS A CLOSED RADIO. The flag alone is set by Close() and
+// by nothing else, so a modem whose cable came out answered "not closed,
+// here is an error" — and every caller that asks the question the obvious
+// way, `if closed, _ := ...`, went on believing it had a radio. The link
+// stayed in the pump's registry, the slot stayed taken, and re-attaching the
+// same board after plugging it back in was refused with "a radio is already
+// connected". Found by unplugging one.
+//
+// The error is still returned, because "switched off" and "the cable came
+// out" are different sentences and somebody has to be able to tell them.
 func (r *Radio) Closed() (bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.closed, r.err
+	return r.closed || r.err != nil, r.err
 }
 
 // Refused reports frames the modem would not queue.

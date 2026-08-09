@@ -526,8 +526,25 @@ func (r *Runtime) adoptLinkFiltered(c link, pump, summaryEvery time.Duration,
 }
 
 func (r *Runtime) dropConn(c link) {
+	var deadEP interface{ Close() error }
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	// A LINK THAT DIES TAKES ITS SLOT WITH IT. The radio is one-per-node, and
+	// the flag saying so was only ever cleared by DetachRadio — the explicit
+	// switch. So a modem that was simply unplugged left the slot held by
+	// nothing, and plugging it back in was refused. Reaping the link is
+	// exactly the moment the node learns the radio is gone, so it is where
+	// the slot is given back.
+	//
+	// The SEED and the remembered record stay. Unplugging is not detaching:
+	// somebody who pulls a cable still means to have that radio, and asking
+	// them for their segment phrase again would be punishing them for it.
+	if r.rnodeLink != nil && r.rnodeLink == c {
+		if r.rnodeEP != nil {
+			deadEP = r.rnodeEP
+		}
+		r.rnodeRadio, r.rnodeEP, r.rnodeLink = nil, nil, nil
+		r.meshSupervised = false
+	}
 	for _, st := range r.spaces {
 		kept := st.conns[:0]
 		for _, x := range st.conns {
@@ -546,6 +563,12 @@ func (r *Runtime) dropConn(c link) {
 		}
 	}
 	r.links = keptLinks
+	r.mu.Unlock()
+	// Outside the lock: closing an endpoint can reach back into the runtime,
+	// and a deadlock here would freeze every space at once.
+	if deadEP != nil {
+		_ = deadEP.Close()
+	}
 }
 
 // LAN reports transport diagnostics.
