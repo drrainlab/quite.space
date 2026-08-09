@@ -542,6 +542,9 @@ const CAT = (() => {
     add.textContent = t('cat.add_directory');
     add.onclick = () => addDirectory();
     d.appendChild(add);
+    // The build's own suggestion, if it has one, filled in after the screen
+    // is up: an empty room should not wait on a request to say it is empty.
+    suggestionCard().then(html => { if (html) d.insertAdjacentHTML('beforeend', html); });
     return d;
   }
 
@@ -731,6 +734,36 @@ const CAT = (() => {
   }
 
   /** Discover, from the header. */
+  /**
+   * What this build arrives knowing, offered rather than opened.
+   *
+   * A fresh node knows nobody, which is the premise and also an empty room.
+   * A build may ship one address; NOTHING happens with it until somebody
+   * presses. Opening a space unasked would tell the relay this device is
+   * alive and the space that somebody arrived, before the person had agreed
+   * to anything — so the card says what it is and waits.
+   */
+  async function suggestionCard() {
+    let s;
+    try { s = await api('/api/suggested-directory'); } catch { return ''; }
+    if (!s || !s.link || s.held) return '';
+    pendingSuggestion = s.link;
+    return `<div class="cat-suggest">
+      <div class="cs-title">${esc(s.title || 'A directory this build knows of')}</div>
+      ${s.note ? `<div class="cs-note">${esc(s.note)}</div>` : ''}
+      <div class="cs-note dim">Nothing has been fetched. Opening it asks the
+        relay for its contents, and tells that relay you are here.</div>
+      <button class="btn-tinted" onclick="CAT.openSuggested()">Open it</button>
+    </div>`;
+  }
+
+  let pendingSuggestion = '';
+
+  async function openSuggested() {
+    if (!pendingSuggestion) return;
+    await follow(pendingSuggestion);
+  }
+
   async function openHome() {
     dropLeaf();
     path = [];
@@ -768,6 +801,7 @@ const CAT = (() => {
 
   return {
     openHome, follow, back, close, leaving, openDirectories, addDirectory, enterHeld,
+    openSuggested,
     openAddSpace, lookUpSpace, addSpaceToDirectory,
     refresh: () => render(),
     get path() { return path.slice(); },

@@ -204,6 +204,7 @@ func (a *APIServer) Handler() http.Handler {
 	mux.HandleFunc("POST /api/mesh/connect", a.auth(a.handleMeshConnect))
 	mux.HandleFunc("POST /api/relay/push", a.auth(a.handleRelayPush))
 	mux.HandleFunc("POST /api/relay/pull", a.auth(a.handleRelayPull))
+	mux.HandleFunc("GET /api/suggested-directory", a.auth(a.handleSuggestedDirectory))
 	mux.HandleFunc("GET /api/relay/status", a.auth(a.handleRelayStatus))
 	mux.HandleFunc("GET /api/relay/diagnostics", a.auth(a.handleRelayDiagnostics))
 	mux.HandleFunc("POST /api/relay/identity", a.auth(a.handleRelayIdentity))
