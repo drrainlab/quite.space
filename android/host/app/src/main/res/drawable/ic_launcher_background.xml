@@ -1,0 +1,31 @@
+<!--
+  The plate behind the glyph. NOT a flat black square: a launcher crops this
+  to its own shape and lays it on somebody's wallpaper, and a dead black
+  rectangle disappears into a dark one and glares on a light one. A soft
+  radial lift from the app's own raised surface toward its deepest canvas
+  gives the mark something to sit in: the same "quiet orbit" the interface is.
+
+  It is drawn oversized (120% of the 108dp canvas) on purpose: adaptive
+  backgrounds are cropped, and a gradient that stops at the edge shows its
+  seam the moment a launcher uses a squircle.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path android:pathData="M-10,-10h128v128h-128z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="radial"
+                android:centerX="54"
+                android:centerY="47"
+                android:gradientRadius="78">
+                <item android:offset="0.0" android:color="#FF1B1426" />
+                <item android:offset="0.62" android:color="#FF120D18" />
+                <item android:offset="1.0" android:color="#FF09070B" />
+            </gradient>
+        </aapt:attr>
+    </path>
+</vector>

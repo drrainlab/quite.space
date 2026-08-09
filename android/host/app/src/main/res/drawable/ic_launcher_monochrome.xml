@@ -1,0 +1,31 @@
+<!--
+  Android 13's themed icon: the system throws away every colour and fills
+  this shape with one of its own. A silhouette of the real glyph is useless
+  here — the mark is a thin ring around a starfield, and filling it gives a
+  featureless blob. So this is the mark's SKELETON, stroked: the orbit, the
+  tail that crosses it, and the small satellite.
+
+  Same 108dp canvas as the other two layers, same 66dp safe zone.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- the orbit -->
+    <path
+        android:pathData="M54,29m-22,0a22,22 0 1,0 44,0a22,22 0 1,0 -44,0"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="4.6"
+        android:strokeLineCap="round" />
+    <!-- the tail: through the ring and out past it -->
+    <path
+        android:pathData="M40,63 L72,33"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="4.6"
+        android:strokeLineCap="round" />
+    <!-- and the satellite -->
+    <path
+        android:pathData="M75,14m-4.6,0a4.6,4.6 0 1,0 9.2,0a4.6,4.6 0 1,0 -9.2,0"
+        android:fillColor="#FFFFFFFF" />
+</vector>
