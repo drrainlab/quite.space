@@ -251,16 +251,26 @@ func (r *Runtime) pushToRelay(addr string, tid id.TerminalID, policy AssetPolicy
 	// Seen between a phone and a laptop on 2026-08-09.
 	//
 	// So the declaration is honoured for what it is about — not storing
-	// stale STATE — and ignored where the frame has become structure: a
-	// skippable frame is withheld only while nothing later in its own
-	// device chain is going out. Presence at the tip is still never
-	// relayed, which is the case the ADR was written for.
+	// stale STATE — and ignored where the frame has become structure.
+	//
+	// AND A FRESH ONE IS NOT STALE. Holding trailing presence back entirely
+	// meant a status only ever reached anybody if its author happened to say
+	// something afterwards, which is when it stopped being trailing. Two
+	// people on a relay could sit there with each other's presence stuck on
+	// the sending side. What the declaration is against is a relay HOLDING a
+	// status past its life, so that is what is arranged: those frames travel
+	// in their own bundle whose mailbox TTL is the frame's own expiry, and
+	// the relay drops them by itself the moment they go stale. They are kept
+	// out of the durable bundle because one Put carries one deadline, and
+	// putting messages on a five-minute clock to carry a status would be the
+	// worse trade by far.
 	type candidate struct {
 		frame     []byte
 		id        id.EventID
 		dev       id.DeviceID
 		seq       uint64
 		skippable bool
+		expires   uint64
 	}
 	var cands []candidate
 	needed := map[id.DeviceID]uint64{} // highest seq that must be reachable
@@ -270,15 +280,25 @@ func (r *Runtime) pushToRelay(addr string, tid id.TerminalID, policy AssetPolicy
 		if !skip && a.Env.Sequence > needed[a.Env.Device] {
 			needed[a.Env.Device] = a.Env.Sequence
 		}
-		cands = append(cands, candidate{a.Frame, a.ID, a.Env.Device, a.Env.Sequence, skip})
+		cands = append(cands, candidate{a.Frame, a.ID, a.Env.Device,
+			a.Env.Sequence, skip, a.Env.ExpiresAt})
 		return nil
 	}); err != nil {
 		r.mu.Unlock()
 		return 0, 0, 0, err
 	}
+	var fleeting [][]byte    // frames that carry their own deadline
+	var fleetingUntil uint64 // the earliest of those deadlines
 	for _, c := range cands {
 		if c.skippable && c.seq >= needed[c.dev] {
-			continue // nothing depends on it: the ADR's case, still skipped
+			// Nothing depends on it yet. It still goes — on its own clock.
+			if c.expires > now {
+				fleeting = append(fleeting, c.frame)
+				if fleetingUntil == 0 || c.expires < fleetingUntil {
+					fleetingUntil = c.expires
+				}
+			}
+			continue
 		}
 		frames = append(frames, c.frame)
 		eventIDs = append(eventIDs, c.id)
@@ -296,6 +316,12 @@ func (r *Runtime) pushToRelay(addr string, tid id.TerminalID, policy AssetPolicy
 		wanter = self[:]
 	}
 	bodies, oversize := splitBundles(tid, frames, blobs, wants, wanter)
+	// The fleeting frames get a bundle of their own, so their short deadline
+	// cannot land on anybody's messages.
+	var fleetingBodies [][]byte
+	if len(fleeting) > 0 {
+		fleetingBodies, _ = splitBundles(tid, fleeting, nil, nil, nil)
+	}
 	// Per-recipient dead-drop: hand a copy to every OTHER member's own relay
 	// inbox. The shared per-terminal mailbox is single-reader (destructive
 	// Collect), so with many members polling one relay the first poller drains
@@ -345,6 +371,13 @@ func (r *Runtime) pushToRelay(addr string, tid id.TerminalID, policy AssetPolicy
 					return err
 				}
 				deadline = d
+			}
+			// A status, on its own clock. The relay forgets it when it goes
+			// stale, which is the whole of what "no custody" was protecting.
+			for _, b := range fleetingBodies {
+				if _, err := client.Put(hint, fleetingUntil, b); err != nil {
+					return err
+				}
 			}
 		}
 		return nil
