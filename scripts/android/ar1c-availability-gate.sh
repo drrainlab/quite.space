@@ -24,7 +24,7 @@
 set -uo pipefail
 
 SER=${SER:-}
-PKG=${PKG:-space.quiet.arprobe}
+PKG=${PKG:-quite.space}
 PASS=${PASS:-ar1b-gate-passphrase}
 RELAY_PORT=${RELAY_PORT:-7431}
 PEER_PORT=${PEER_PORT:-8822}

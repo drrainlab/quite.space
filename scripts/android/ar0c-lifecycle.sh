@@ -31,7 +31,7 @@
 # the hard way (node/listening.go, node/relaypool.go, node/attention.go).
 set -uo pipefail
 
-PKG=${PKG:-space.quiet.arprobe}
+PKG=${PKG:-quite.space}
 SER=${SER:-}
 MAC_API=${MAC_API:-http://127.0.0.1:18900}
 MAC_TOKEN=${MAC_TOKEN:-ar0ctoken}

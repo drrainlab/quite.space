@@ -11,14 +11,28 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "space.quiet.arprobe"
+        // THE NAME EVERY PHONE WILL REMEMBER IT BY. Changed from the AR probe's
+        // own id before the first build left this machine: an applicationId is
+        // the identity Android keys the install, the data directory and every
+        // future update on, so changing it after somebody has the app gives
+        // them a SECOND app and abandons the node inside the first.
+        //
+        // The Kotlin namespace below is deliberately NOT renamed with it. That
+        // is where the classes live, it is invisible to anybody holding the
+        // phone, and moving several thousand lines between packages to make
+        // two strings match is churn with a real chance of breaking the
+        // binding's javapkg seam.
+        applicationId = "quite.space"
         minSdk = 24
         // API 30+ is what ApplicationExitInfo needs, and the exit reason is the
         // whole point of the low-memory lane. 24 stays the floor only because
         // the binding was built for it; every device AR-0 measures is 30+.
         targetSdk = 35
+        // BUMP versionCode FOR EVERY BUILD THAT LEAVES THIS MACHINE. Android
+        // refuses to install an apk whose code is not higher than the one on
+        // the phone, and the failure reads as a corrupt download.
         versionCode = 1
-        versionName = "ar0"
+        versionName = "0.1.0-beta.1"
         ndk { abiFilters += "arm64-v8a" }
 
         // AR-1b.6b.5. The structural notification tests are INSTRUMENTED
