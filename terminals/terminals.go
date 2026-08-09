@@ -344,6 +344,24 @@ func (p *Participant) Emit(s *Space, schema string, payload []byte,
 		p.chains[s.ID] = c
 	}
 	c.seq++
+	// LAMPORT'S RULE, DERIVED RATHER THAN REMEMBERED: the clock of a new
+	// event is one past the highest this replica has absorbed, not one past
+	// the last thing we happened to say.
+	//
+	// It used to be ObserveClock's job, and ObserveClock is called on
+	// ResumeChain — a restart — and nowhere on the live sync path. So a
+	// running node learned nothing from what it received: a phone that had
+	// absorbed clocks 36, 37, 38 was still stamping its own messages 11 and
+	// 12, every one of them "before" everything the other side had already
+	// said. Nothing is lost by that, but ordering is decided by
+	// (created_at, logical_clock, id) and the tie-break stops meaning
+	// anything — two devices racing an edit resolve by a dead number.
+	//
+	// Taking the maximum HERE, at the one place a clock is spent, makes the
+	// invariant impossible to break by forgetting a call site.
+	if s.maxClock > p.clk {
+		p.clk = s.maxClock
+	}
 	p.clk++
 	src := p.TerminalID
 	env := &signal.Envelope{
