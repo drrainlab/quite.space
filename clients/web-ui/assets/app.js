@@ -606,12 +606,42 @@ function connectionSummary(status) {
 
 /* One glyph per transport. Text rather than SVG, for the same reason ⚙ and ⓘ
    are text here: it inherits colour and size and needs no second file. */
+// HOW THE MESSAGE IS TRAVELLING, DRAWN. These were typographic glyphs — ⇄ ⌂
+// ☁ ((·)) — and a glyph asks the reader to decode a metaphor before they know
+// anything: a cloud is somebody's server to us and Apple's photo library to
+// everybody else. So each transport is now the THING: a globe for the open
+// internet, an ethernet plug for the local network, a set with an antenna for
+// radio. Same 16 px box and 1.4 stroke as every other mark in the app.
 const CONN_MARKS = {
-  direct: '⇄',   // two devices, straight at each other
-  lan:    '⌂',   // listening at home, nobody across from us yet
-  relay:  '☁',   // carried by somebody else's machine, store-and-forward
-  radio:  '((·))',
-  off:    '⦸',
+  // Two devices straight at each other — traffic both ways, nothing between.
+  direct: '<svg viewBox="0 0 16 16" aria-hidden="true">'
+    + '<path d="M2.8 6.2h8.4M8.8 3.8 11.2 6.2 8.8 8.6"/>'
+    + '<path d="M13.2 10.8H4.8M7.2 8.4 4.8 10.8 7.2 13.2" opacity=".6"/></svg>',
+  // Two machines with a wire between them. An RJ45 was drawn first and is
+  // the more literal answer, but it needs a latch, a body and four contacts,
+  // and 14 px cannot hold six strokes — it arrived as a smudge. A plug with
+  // two pins survives the size and says POWER. This survives the size and
+  // says network, which is the thing being reported.
+  lan: '<svg viewBox="0 0 16 16" aria-hidden="true">'
+    + '<path d="M1.6 3.4h5v3.6h-5z"/><path d="M9.4 9h5v3.6h-5z"/>'
+    + '<path d="M4.1 7v2.2h7.8V7" opacity=".55"/></svg>',
+  // A globe: out over the open internet, by way of somebody's machine.
+  relay: '<svg viewBox="0 0 16 16" aria-hidden="true">'
+    + '<circle cx="8" cy="8" r="5.9"/>'
+    + '<path d="M2.1 8h11.8" opacity=".55"/>'
+    + '<ellipse cx="8" cy="8" rx="2.7" ry="5.9" opacity=".55"/></svg>',
+  // A set with an antenna, and what leaves it. The waves are centred ON THE
+  // ANTENNA TIP and open straight up: the first attempt angled the antenna
+  // and hung the arcs off its side, which at any size read as a mushroom.
+  radio: '<svg viewBox="0 0 16 16" aria-hidden="true">'
+    + '<path d="M2.5 9.6h7v3.9h-7z"/>'
+    + '<path d="M10.4 9.6V5.4"/>'
+    + '<path d="M8.4 5.2a2.4 2.4 0 0 1 4 0" opacity=".55"/>'
+    + '<path d="M7 3.4a3.9 3.9 0 0 1 6.8 0" opacity=".35"/></svg>',
+  // Nothing carrying anything.
+  off: '<svg viewBox="0 0 16 16" aria-hidden="true">'
+    + '<circle cx="8" cy="8" r="5.6" opacity=".75"/>'
+    + '<path d="M4 12 12 4" opacity=".75"/></svg>',
 };
 
 /** The space's character, built in refreshSpace and painted in the panel. */
@@ -753,7 +783,9 @@ async function refresh() {
       connChipSig = chipText + '|' + chipCls + '|' + pulseMs + '|' + chipWhy + '|' + chipKind;
       cText.textContent = chipText;
       const cMark = document.getElementById('connMark');
-      if (cMark) cMark.textContent = CONN_MARKS[chipKind] || CONN_MARKS.off;
+      // innerHTML, and only ever from the constant table above — the mark is
+      // a drawing now, and none of it comes from the network.
+      if (cMark) cMark.innerHTML = CONN_MARKS[chipKind] || CONN_MARKS.off;
       conn.className = chipCls;
       if (chipWhy) conn.title = chipWhy;
       else conn.removeAttribute('title');

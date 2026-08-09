@@ -17,7 +17,7 @@
     aria-controls="sidebar" aria-expanded="true">☰</button>
   <b class="brand"><img src="brand-lockup.png" alt="quite.space" class="brand-lockup"></b>
   <span id="conn" class="conn-chip off" onclick="dlgLan.showModal()" tabindex="0"
-    role="button" aria-label="Connection details"><span id="connMark" class="conn-mark" aria-hidden="true">⦸</span><span id="connText">Not connected</span><span class="dot"></span></span>
+    role="button" aria-label="Connection details"><span id="connMark" class="conn-mark" aria-hidden="true"></span><span id="connText">Not connected</span><span class="dot"></span></span>
   <!-- The four ways in live in the header: they belong to the app, not to
        whichever space happens to be open. "me" sits past the settings
        gear with the other things that are about you rather than about
@@ -68,15 +68,36 @@
       </div>
       <span style="flex:1"></span>
       <span id="visBadge" class="vis-badge" style="display:none"></span>
+      <!-- MARKS, NOT EMOJI. A colour emoji next to the thin ⓘ read as a
+           sticker stuck on the bar: its own palette, its own weight, its own
+           idea of a baseline. These are drawn in the header's language —
+           16 px box, currentColor, 1.4 stroke — so they take the button's
+           hue and dim with it. The word stays for a wide screen and for a
+           screen reader. -->
       <button id="shareLinkBtn" class="btn-plain" style="display:none" onclick="copyPublicLink()"
-              title="Share link" aria-label="Share link">Share link</button>
+              title="Share link" aria-label="Share link">
+        <svg class="act-mark" viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M6.7 9.3a2.7 2.7 0 0 0 3.8 0l2-2a2.7 2.7 0 0 0-3.8-3.8l-.9.9"/>
+          <path d="M9.3 6.7a2.7 2.7 0 0 0-3.8 0l-2 2a2.7 2.7 0 0 0 3.8 3.8l.9-.9" opacity=".55"/>
+        </svg><span class="act-label">Share link</span></button>
       <button id="newPostBtn" class="btn-tinted" onclick="openComposer(null,'')"
-              title="New post" aria-label="New post">✍ New post</button>
+              title="New post" aria-label="New post">
+        <svg class="act-mark" viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M3.1 12.9 3.9 10.2 10.1 4a1.65 1.65 0 0 1 2.3 2.3l-6.2 6.2z"/>
+          <path d="M9.4 4.7 11.7 7" opacity=".5"/>
+          <path d="M2.6 14.4h10.8" opacity=".38"/>
+        </svg><span class="act-label">New post</span></button>
       <!-- Shown only in a directory you can write to. Adding an entry is
            what a directory is FOR, so it is one press, not "compose a
            publication of kind space and paste a link into a block". -->
       <button id="addSpaceBtn" class="btn-tinted" style="display:none" onclick="CAT.openAddSpace()">+ Add space</button>
-      <button id="customizeBtn" class="icon-btn" style="display:none" onclick="openCustomize()" title="Customize" aria-label="Customize space">🎨</button>
+      <button id="customizeBtn" class="icon-btn" style="display:none" onclick="openCustomize()" title="Customize" aria-label="Customize space">
+        <svg class="act-mark" viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M8 1.9a6.1 6.1 0 1 0 0 12.2c.85 0 1.35-.55 1.35-1.25 0-.75-.65-1.15-.65-1.85 0-.6.5-1 1.1-1h1.25A3.05 3.05 0 0 0 14.1 6.95C14.1 4.15 11.4 1.9 8 1.9Z"/>
+          <circle cx="5.2" cy="6.5" r=".85" fill="currentColor" stroke="none" opacity=".55"/>
+          <circle cx="8" cy="4.9" r=".85" fill="currentColor" stroke="none" opacity=".55"/>
+          <circle cx="10.8" cy="6.5" r=".85" fill="currentColor" stroke="none" opacity=".55"/>
+        </svg></button>
       <button id="resPalBtn" class="icon-btn" style="display:none" onclick="openResPaletteEditor()" title="Reaction palette" aria-label="Reaction palette">✧</button>
       <button id="inviteBtn" class="btn-tinted" style="display:none" onclick="openPassCurrent()">invite</button>
       <button class="icon-btn" onclick="toggleMembers()" title="Space info" aria-label="Space info">ⓘ</button>

@@ -1238,6 +1238,29 @@
     dialog.sheet { position: fixed; bottom: 0; left: 0; margin: 0; width: 100%;
       max-width: 100%; border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
     .segmented { flex-wrap: wrap; }
+
+    /* A SETTINGS ROW THAT CANNOT FIT PUTS ITS CONTROL ON THE NEXT LINE.
+       It used to slide it on top of the words: "Presets" read as "Pre",
+       "Effects · how reactions touch objects" ran under four buttons. The
+       cause is a label that shrinks to nothing (flex: 1, min-width: 0)
+       against a control that refuses to (buttons are nowrap), so the label
+       overflowed its own box and the control was painted over it.
+
+       Wrapping fixes it without a width guess: a short label and a narrow
+       control still share one line, and only the pair that genuinely does
+       not fit breaks — with the control full width, which is easier to hit
+       than a squeezed one anyway.
+
+       The basis is 9em rather than auto BECAUSE FLEX BREAKS LINES ON THE
+       HYPOTHETICAL SIZE, not on the shrunk one: with `auto` the label's
+       max-content width decides, and a row like "Protocol view · ids,
+       capabilities, raw state" would push its two-button control onto a
+       second line it had ample room to share. 9em is the width below which
+       a label stops being readable; above it the label grows into whatever
+       the control leaves. */
+    .list-row { flex-wrap: wrap; row-gap: 8px; }
+    .list-row .lr-label { flex: 1 1 9em; min-width: 0; }
+    .list-row .segmented { flex: 1 1 auto; }
   }
   /* mobile (§20): list ↔ space as screens; composer bottom; pass full-screen */
   @media (max-width: 600px) {
@@ -2003,6 +2026,18 @@ header .nav-act { padding: 5px 11px 5px 10px; min-height: 30px; }
 }
 .nav-act:hover .nav-mark, .nav-act:focus-visible .nav-mark { opacity: 1; }
 
+/* THE SPACE'S OWN ACTIONS WEAR THE SAME MARK. Same box, same stroke, same
+   currentColor as .nav-mark — the difference is only that these buttons keep
+   their word on a wide screen, so the mark sits in a flex row beside it. */
+.act-mark {
+  width: 15px; height: 15px; flex: none;
+  fill: none; stroke: currentColor; stroke-width: 1.4;
+  stroke-linecap: round; stroke-linejoin: round;
+  opacity: .9;
+}
+#newPostBtn, #shareLinkBtn { display: inline-flex; align-items: center; gap: 7px; }
+button:hover > .act-mark, button:focus-visible > .act-mark { opacity: 1; }
+
 /* The hues carry meaning, not decoration: making is warm, arriving is green,
    looking outward is cyan, something wanting attention is amber, and you are
    the app's own lilac. */
@@ -2690,7 +2725,14 @@ header .nav-act { padding: 5px 11px 5px 10px; min-height: 30px; }
 
    No ring around the dot. A circle drawn around a status light makes it a
    button, and it already had one: the whole chip opens the details. */
-.conn-mark { font-size: 13px; line-height: 1; opacity: .85; }
+/* The transport is drawn, not spelled. Same box and stroke as .nav-mark, so
+   the header reads as one set of marks rather than a row of found glyphs. */
+.conn-mark { display: inline-flex; line-height: 0; opacity: .85; }
+.conn-mark svg {
+  width: 14px; height: 14px;
+  fill: none; stroke: currentColor; stroke-width: 1.4;
+  stroke-linecap: round; stroke-linejoin: round;
+}
 .conn-chip .dot { order: 3; }
 
 @media (max-width: 600px) {
@@ -2699,7 +2741,7 @@ header .nav-act { padding: 5px 11px 5px 10px; min-height: 30px; }
   header .conn-chip { padding: 0 10px; min-height: 44px; border-radius: 999px;
     justify-content: center; gap: 7px; }
   header .conn-chip #connText { display: none; }
-  header .conn-chip .conn-mark { font-size: 15px; }
+  header .conn-chip .conn-mark svg { width: 16px; height: 16px; }
   header .conn-chip .dot { width: 8px; height: 8px; }
 }
 
@@ -2713,10 +2755,10 @@ header .nav-act { padding: 5px 11px 5px 10px; min-height: 30px; }
   /* The same rounded square as the four ways in — one shape language for
      "a thing you press", rather than circles here and squares there. */
   #newPostBtn, #shareLinkBtn {
-    font-size: 0; min-width: 44px; padding: 0 12px; border-radius: 13px;
+    min-width: 44px; padding: 0 12px; border-radius: 13px; justify-content: center;
   }
-  #newPostBtn::before  { content: "✍"; font-size: 17px; }
-  #shareLinkBtn::before { content: "🔗"; font-size: 15px; }
+  #newPostBtn .act-label, #shareLinkBtn .act-label { display: none; }
+  #newPostBtn .act-mark, #shareLinkBtn .act-mark { width: 17px; height: 17px; }
 }
 
 
@@ -2862,5 +2904,5 @@ header .nav-act { padding: 5px 11px 5px 10px; min-height: 30px; }
 @media (max-width: 600px) {
   #newPostBtn { min-height: 44px; min-width: 44px; padding: 0 10px;
     background: color-mix(in srgb, var(--acc) 12%, transparent); }
-  #newPostBtn::before { font-size: 19px; }
+  #newPostBtn .act-mark { width: 18px; height: 18px; }
 }
