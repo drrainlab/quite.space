@@ -102,6 +102,12 @@ object UsbRadio {
                 },
             )
         }.sortedByDescending { it.supported }
+            .also { list ->
+                // Logged because the interesting run happens with the cable
+                // out: by the time anybody can read this, the moment is over.
+                Log.i(TAG, "usb devices: " + if (list.isEmpty()) "none" else
+                    list.joinToString { "${'$'}{it.label} supported=${'$'}{it.supported}" })
+            }
     }
 
     private fun describe(d: UsbDevice): String {
@@ -190,9 +196,11 @@ object UsbRadio {
             return
         }
         if (usb.hasPermission(device)) {
+            Log.i(TAG, "already permitted: ${'$'}{describe(device)}")
             finishOpen(usb, device, onResult)
             return
         }
+        Log.i(TAG, "asking for ${'$'}{describe(device)}")
 
         val filter = IntentFilter(ACTION_PERMISSION)
         val receiver = object : BroadcastReceiver() {
@@ -200,9 +208,11 @@ object UsbRadio {
                 if (intent.action != ACTION_PERMISSION) return
                 context.unregisterReceiver(this)
                 if (!intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)) {
+                    Log.i(TAG, "permission refused for ${'$'}{describe(device)}")
                     onResult(null, "the modem was not allowed")
                     return
                 }
+                Log.i(TAG, "permission granted for ${'$'}{describe(device)}")
                 finishOpen(usb, device, onResult)
             }
         }
@@ -275,6 +285,8 @@ object UsbRadio {
             }
             bulkIn = inEp
             bulkOut = outEp
+            Log.i(TAG, "claimed iface ${'$'}{iface.id}, in=${'$'}{bulkIn.address} " +
+                "out=${'$'}{bulkOut.address} maxPacket=${'$'}{bulkIn.maxPacketSize}")
 
             try {
                 control(REQ_IFC_ENABLE, UART_ENABLE)
@@ -289,7 +301,9 @@ object UsbRadio {
                 controlWithData(REQ_SET_BAUDRATE, 0, baud)
                 control(REQ_SET_LINE_CTL, LINE_CTL_8N1)
                 control(REQ_SET_MHS, MHS_DTR_RTS_ON)
+                Log.i(TAG, "line up: 115200 8N1, DTR+RTS asserted (the board resets now)")
             } catch (e: Exception) {
+                Log.w(TAG, "bridge setup failed", e)
                 connection.releaseInterface(iface)
                 connection.close()
                 throw e

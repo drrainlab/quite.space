@@ -591,11 +591,28 @@ if (window.matchMedia) {
 // conversation over an RNode reported itself as not connected at all.
 function connectionSummary(status) {
   const lan = status.lan, radio = status.radio || {};
-  const peers = (lan.peers || 0) + (radio.connected ? 1 : 0);
-  let state = t('conn.off'), cls = 'off', kind = 'off';
-  if (radio.connected && peers > 0) { state = t('conn.radio'); cls = 'mesh'; kind = 'radio'; }
-  else if (lan.peers > 0) { state = t('conn.direct'); cls = ''; kind = 'direct'; }
-  else if (lan.listening) { state = t('conn.lan'); cls = ''; kind = 'lan'; }
+  // A MODEM IS NOT A PERSON. `connected` says a radio is plugged into this
+  // device; peer_links says how many peers it can actually reach. Treating
+  // the first as a peer count made a modem with an empty segment announce
+  // "Radio · 1" — one peer, which was the modem itself.
+  const onAir = radio.connected ? (radio.peer_links || 0) : 0;
+  let state = t('conn.off'), cls = 'off', kind = 'off', peers = 0;
+  // ORDER IS THE CLAIM. This names how a message travels NOW, and a live
+  // local link is what carries whenever there is one — so it is asked
+  // first. The radio used to win merely by being attached, which meant that
+  // when Wi-Fi came back the messages visibly went the fast way while the
+  // chip went on saying radio. Seen on a phone with both up at once.
+  if (lan.peers > 0) {
+    state = t('conn.direct'); cls = ''; kind = 'direct'; peers = lan.peers;
+  } else if (onAir > 0) {
+    state = t('conn.radio'); cls = 'mesh'; kind = 'radio'; peers = onAir;
+  } else if (lan.listening) {
+    state = t('conn.lan'); cls = ''; kind = 'lan';
+  }
+  // The count belongs to the path being NAMED, not to every path at once.
+  // Summing them double-counts the ordinary case this was found in: one
+  // other device, reachable across the room and over the air at the same
+  // time, is one person and not two.
   // KIND, beside the words. On a phone the chip is a mark and a light, and
   // the mark has to say WHICH WAY the device is reachable — direct, over a
   // relay, over radio, or not at all. A colour alone cannot: green means
@@ -750,8 +767,15 @@ async function refresh() {
       chipCls = 'conn-chip ' + s.cls + (s.cls === 'off' ? '' : ' up');
       // Relay auto-sync: when there's no direct peer, show that the relay
       // is carrying us (honest — store-and-forward, not live).
-      const peers = (status.lan.peers || 0) + ((status.radio || {}).connected ? 1 : 0);
-      if (peers === 0) {
+      // The relay's turn comes when nothing live can be reached — and an
+      // attached modem with nobody on its segment is not something reached.
+      // Counting it as one suppressed the relay label on any device with a
+      // radio plugged in, including while the relay was the only thing
+      // actually working.
+      const r = status.radio || {};
+      const reachable = (status.lan.peers || 0) +
+        (r.connected ? (r.peer_links || 0) : 0);
+      if (reachable === 0) {
         try {
           const rs = await api('/api/relay/status');
           if (rs.active && !rs.last_error) {

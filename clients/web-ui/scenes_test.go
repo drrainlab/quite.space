@@ -223,3 +223,27 @@ func TestMediaAvailabilityWording(t *testing.T) {
 	}
 	t.Logf("%s", out)
 }
+
+// TestTheConnectionChipSaysWhatIsCarrying runs the chip's own decision against
+// the states a device is really in — including the two it used to get wrong: a
+// modem attached to an empty segment counted itself as a peer, and a radio
+// that was merely plugged in outranked a live local link, so when Wi-Fi came
+// back the messages went the fast way while the mark went on saying radio.
+//
+// The harness reads app.js and evaluates the real function; a copy of the
+// logic here would pass forever while the app drifted.
+func TestTheConnectionChipSaysWhatIsCarrying(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not available")
+	}
+	script := filepath.Join("..", "..", "scripts", "webui", "connchip.cjs")
+	if _, err := os.Stat(script); err != nil {
+		t.Fatalf("the chip harness is missing: %v", err)
+	}
+	out, err := exec.Command(node, script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("the chip claims something untrue: %v\n%s", err, out)
+	}
+	t.Logf("%s", out)
+}
