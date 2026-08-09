@@ -33,8 +33,9 @@ const connectionSummary = new Function('t', body + '; return connectionSummary;'
 let failures = 0;
 function check(what, status, want) {
   const got = connectionSummary(status);
-  const ok = got.kind === want.kind && (want.count === undefined ||
-    got.text.endsWith('|' + want.count));
+  const ok = got.kind === want.kind && (want.count === undefined
+    ? !got.text.includes('|')          // no count shown at all
+    : got.text.endsWith('|' + want.count));
   if (!ok) {
     failures++;
     console.log(`FAIL ${what}\n  want kind=${want.kind}` +
@@ -55,12 +56,12 @@ check('listening, nobody here',
 check('somebody across the room',
   { lan: { peers: 2, listening: true }, radio: {} }, { kind: 'direct', count: 2 });
 
-// THE ONE THAT WAS WRONG. A modem plugged in with nobody on the segment is
-// not a connection to anybody, and it certainly is not one person: the chip
-// counted the modem itself as a peer and announced "Radio · 1".
+// A modem plugged in with nobody on the segment is still a radio — that is
+// how this device is reachable — but it is not a connection to ONE PERSON.
+// The chip counted the modem itself as a peer and announced "Radio · 1".
 check('a modem attached, empty segment',
   { lan: { peers: 0, listening: true }, radio: { connected: true, peer_links: 0 } },
-  { kind: 'lan' });
+  { kind: 'radio', count: undefined });
 
 check('a modem attached, one neighbour on the air',
   { lan: { peers: 0, listening: true }, radio: { connected: true, peer_links: 1 } },
@@ -72,6 +73,15 @@ check('a modem attached, one neighbour on the air',
 check('wifi returns while the radio stays attached',
   { lan: { peers: 1, listening: true }, radio: { connected: true, peer_links: 1 } },
   { kind: 'direct', count: 1 });
+
+// AND THE ONE THAT SENT ME BACK HERE. lan.peers used to count every live
+// link, so a radio arrived as a LAN peer and two people talking over LoRa in
+// a field were told they were on the same network. That is fixed in the node
+// — this pins the interface's half: a count that says nothing about which
+// transport it belongs to can only be read one way.
+check('nobody on the network, one peer met over the air',
+  { lan: { peers: 0, listening: false }, radio: { connected: true, peer_links: 1 } },
+  { kind: 'radio', count: 1 });
 
 if (failures) {
   console.log(`\n${failures} claim(s) the chip makes are not true`);

@@ -549,18 +549,31 @@ func (r *Runtime) dropConn(c link) {
 }
 
 // LAN reports transport diagnostics.
+//
+// PEERS MEANS PEERS ON THE LOCAL NETWORK, which it did not use to. The count
+// was every live link in the registry, so a radio — one link, to the air —
+// arrived here as a LAN peer. Nothing noticed while the chip preferred radio
+// whenever a modem was attached; the moment it started preferring a live
+// local link, two devices talking over LoRa in a field with no Wi-Fi at all
+// announced themselves as "Direct · 1".
+//
+// A field named lan.peers is read as a fact by everything downstream. It is
+// counted from the link registry's own labels now, which is where the
+// transport of a link has been recorded all along.
 func (r *Runtime) LAN() LANStatus {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	peers := map[link]bool{}
-	for _, st := range r.spaces {
-		for _, c := range st.conns {
-			if closed, _ := c.Closed(); !closed {
-				peers[c] = true
-			}
+	peers := 0
+	for _, l := range r.links {
+		if transportOfLink(l.label) != TransportLAN {
+			continue
 		}
+		if closed, _ := l.c.Closed(); closed {
+			continue
+		}
+		peers++
 	}
-	return LANStatus{Listening: r.lanNode != nil, Port: r.lanPort, Peers: len(peers)}
+	return LANStatus{Listening: r.lanNode != nil, Port: r.lanPort, Peers: peers}
 }
 
 // ConnectPeer dials a peer directly (manual connection, also used in tests).

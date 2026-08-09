@@ -604,7 +604,12 @@ function connectionSummary(status) {
   // chip went on saying radio. Seen on a phone with both up at once.
   if (lan.peers > 0) {
     state = t('conn.direct'); cls = ''; kind = 'direct'; peers = lan.peers;
-  } else if (onAir > 0) {
+  } else if (radio.connected) {
+    // A radio that is attached IS how this device is reachable, whether or
+    // not anybody has answered yet — so the mark says radio and the COUNT
+    // says whether anyone is confirmed. Falling through to "listening" here
+    // would tell somebody alone in a field with a modem in their hand that
+    // they have no radio at all.
     state = t('conn.radio'); cls = 'mesh'; kind = 'radio'; peers = onAir;
   } else if (lan.listening) {
     state = t('conn.lan'); cls = ''; kind = 'lan';

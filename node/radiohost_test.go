@@ -22,6 +22,9 @@ type fakeHost struct {
 	opened  []string
 	openErr error
 	link    *deadLink
+	// linkFn overrides what OpenRadio hands back, for tests that need a
+	// modem which behaves rather than one that dies.
+	linkFn func() rnode.Link
 }
 
 func (h *fakeHost) ListRadios() ([]HostRadio, error) {
@@ -36,6 +39,9 @@ func (h *fakeHost) OpenRadio(name string) (rnode.Link, error) {
 	h.opened = append(h.opened, name)
 	if h.openErr != nil {
 		return nil, h.openErr
+	}
+	if h.linkFn != nil {
+		return h.linkFn(), nil
 	}
 	h.link = &deadLink{}
 	return h.link, nil
