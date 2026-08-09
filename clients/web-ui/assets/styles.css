@@ -91,6 +91,16 @@
   }
 
   * { box-sizing: border-box; margin: 0; }
+  /* THE hidden ATTRIBUTE HAS TO WIN. The browser's own rule for it is
+     `display: none` at the weakest possible specificity, so ANY class that
+     sets a display beats it — and then an element the code believes it has
+     hidden is on the screen. That is not hypothetical: the door strip, which
+     announces somebody waiting to be let in, sits above the composer as a
+     small empty pill on every screen that has nobody at the door, because
+     `.door-strip { display: flex }` outranked it. Seven elements in this
+     interface are toggled by that attribute; stating the rule once is the
+     difference between fixing one of them and fixing the rule. */
+  [hidden] { display: none !important; }
   body {
     background: var(--bg); color: var(--fg);
     font: calc(15px * var(--font-scale))/1.5 var(--font-sans);
@@ -1511,7 +1521,6 @@
   .rec-bar { display: flex; align-items: center; gap: 10px;
     padding: 10px 12px; border-top: 1px solid var(--line);
     background: var(--surface-raised); }
-  .rec-bar[hidden] { display: none; }
   /* Beats `#composer { display: flex }` on specificity without !important. */
   body.recording #composer { display: none; }
   .rec-dot { width: 9px; height: 9px; border-radius: 50%; background: #e06464;
