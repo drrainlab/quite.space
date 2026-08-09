@@ -780,6 +780,8 @@ function renderCompCover() {
   box.innerHTML = '';
   const zone = document.createElement('div');
   zone.className = 'comp-cover' + (composerDoc.cover ? ' has' : '');
+  // Mine. See dropBelongsElsewhere in app.js.
+  zone.dataset.drop = 'cover';
   const hint = document.createElement('span');
   hint.className = 'comp-drop-hint';
   if (composerDoc.cover) {
@@ -843,6 +845,7 @@ function mediaAccept(type) {
 function mediaDropZone(b) {
   const zone = document.createElement('div');
   zone.className = 'comp-drop';
+  zone.dataset.drop = 'media';
   const preview = document.createElement('div');
   preview.className = 'comp-drop-preview';
   const hint = document.createElement('div');

@@ -3622,6 +3622,26 @@ function attachPick(mode) {
 function dragHasFiles(e) {
   return e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files');
 }
+
+/**
+ * SOMEBODY ELSE'S DROP.
+ *
+ * The window-level zone is a convenience: a file dropped anywhere goes into
+ * the space you are reading. But the post editor has a cover strip and its
+ * own media blocks, each with its own drop handler — and an inner handler
+ * that calls preventDefault does NOT stop the event reaching the window. So
+ * dragging a photo onto a cover offered to send it to the chat instead, with
+ * the "drop to send into this space" banner over the editor to match.
+ *
+ * The rule is stated once here rather than as a stopPropagation remembered
+ * in every zone, because the next zone somebody adds will not remember it. A
+ * dialog is a surface that has taken over the screen and owns what lands on
+ * it; anything marked data-drop has its own answer.
+ */
+function dropBelongsElsewhere(e) {
+  const t = e.target instanceof Element ? e.target : null;
+  return !!(t && t.closest('dialog[open], [data-drop]'));
+}
 function initDropZone() {
   if (window._dropInit) return;
   window._dropInit = true;
@@ -3632,18 +3652,22 @@ function initDropZone() {
   let depth = 0;
   const show = (on) => ov.classList.toggle('on', on);
   window.addEventListener('dragenter', (e) => {
+    if (dropBelongsElsewhere(e)) return;
     if (!dragHasFiles(e) || !current) return;
     e.preventDefault(); depth++; show(true);
   });
   window.addEventListener('dragover', (e) => {
+    if (dropBelongsElsewhere(e)) return;
     if (!dragHasFiles(e) || !current) return;
     e.preventDefault(); e.dataTransfer.dropEffect = 'copy';
   });
   window.addEventListener('dragleave', (e) => {
+    if (dropBelongsElsewhere(e)) return;
     if (!dragHasFiles(e)) return;
     depth = Math.max(0, depth - 1); if (!depth) show(false);
   });
   window.addEventListener('drop', (e) => {
+    if (dropBelongsElsewhere(e)) return;
     if (!dragHasFiles(e)) return;
     e.preventDefault(); depth = 0; show(false);
     const file = e.dataTransfer.files && e.dataTransfer.files[0];
