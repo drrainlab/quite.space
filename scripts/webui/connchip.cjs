@@ -30,6 +30,18 @@ const body = src.slice(start, end);
 const t = (key, vars) => (vars && vars.state ? `${vars.state}|${vars.count}` : key);
 const connectionSummary = new Function('t', body + '; return connectionSummary;')(t);
 
+function cut(name) {
+  const s = src.indexOf('function ' + name + '(');
+  if (s < 0) throw new Error(name + ' is gone — this harness is stale');
+  let d = 0, e = -1;
+  for (let j = src.indexOf('{', s); j < src.length; j++) {
+    if (src[j] === '{') d++;
+    else if (src[j] === '}') { d--; if (d === 0) { e = j + 1; break; } }
+  }
+  return src.slice(s, e);
+}
+const relayVerdict = new Function(cut('relayVerdict') + '; return relayVerdict;')();
+
 let failures = 0;
 function check(what, status, want) {
   const got = connectionSummary(status);
@@ -82,6 +94,48 @@ check('wifi returns while the radio stays attached',
 check('nobody on the network, one peer met over the air',
   { lan: { peers: 0, listening: false }, radio: { connected: true, peer_links: 1 } },
   { kind: 'radio', count: 1 });
+
+// ---- where the relay stands against everything else -----------------------
+//
+// The chip is one claim, so when several things work something has to lose.
+// A relay that is FAILING is not a way to reach anybody, and it used to take
+// the mark anyway: a phone with Wi-Fi off and a radio attached and working
+// announced "relay · issue" — true about the relay, false about the device.
+function verdict(what, base, rs, want) {
+  const d = relayVerdict(base, rs);
+  const kind = d && d.text ? d.kind : base;      // null text = keep the base
+  if (kind !== want) {
+    failures++;
+    console.log(`FAIL ${what}\n  want ${want}\n  got  ${kind}`);
+  } else {
+    console.log(`ok   ${what} — ${kind}`);
+  }
+  return d;
+}
+
+const healthy = { active: true, interval_ms: 4000 };
+const unwell = { active: true, last_error: 'dial tcp: no route to host' };
+const none = { active: false };
+
+verdict('a healthy relay and nothing else', 'off', healthy, 'relay');
+verdict('a healthy relay reaches everyone, a segment does not',
+  'radio', healthy, 'relay');
+verdict('nobody at all, and the relay is unwell — its complaint is the news',
+  'off', unwell, 'relay');
+
+// THE ONE ON THE SCREENSHOT. Wi-Fi off, radio attached and working, relay
+// unreachable because there is no internet. The device is not "relay · issue".
+verdict('wifi off, radio working, relay unreachable', 'radio', unwell, 'radio');
+
+const kept = relayVerdict('radio', unwell);
+if (!kept || kept.text !== null || !kept.why) {
+  failures++;
+  console.log('FAIL the relay\'s reason must survive even when it loses the mark');
+} else {
+  console.log('ok   the relay still explains itself in the tooltip');
+}
+
+verdict('no relay configured at all', 'radio', none, 'radio');
 
 if (failures) {
   console.log(`\n${failures} claim(s) the chip makes are not true`);

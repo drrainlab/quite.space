@@ -589,6 +589,43 @@ if (window.matchMedia) {
 // It reads status.radio, NEVER status.mesh. The mesh object is a Meshtastic
 // diagnostic and is empty for every other carrier, so a node carrying a
 // conversation over an RNode reported itself as not connected at all.
+/**
+ * Where the relay stands against whatever else is working.
+ *
+ * IT IS A PREFERENCE ORDER OVER TRANSPORTS THAT WORK, and the second half of
+ * that is the part this got wrong twice. A relay that is configured but
+ * failing is not a way to reach anybody, and it used to say so on the chip
+ * anyway — a phone with Wi-Fi off and a radio attached and working announced
+ * "relay · issue", which was true about the relay and false about the device.
+ *
+ *   direct   somebody in the same room, unbeatable, so we never get here
+ *   relay    healthy: it reaches EVERYONE, which a segment cannot
+ *   radio    attached: reaches the segment, and that is not nothing
+ *   lan/off  nothing at all — the only place a broken relay gets to speak,
+ *            because then its complaint is the most useful thing on screen
+ *
+ * `base` is what connectionSummary already decided. Returns null to leave it
+ * alone.
+ */
+function relayVerdict(base, rs) {
+  if (!rs || !rs.active) return null;
+  if (!rs.last_error) {
+    // The light breathes in the sync's own rhythm — the pulse IS the
+    // cadence, not decoration. Clamped so a 2s cycle does not strobe and a
+    // 5min one does not look dead.
+    return { text: 'relay', cls: 'conn-chip up', kind: 'relay',
+      pulseMs: Math.min(12000, Math.max(2400, rs.interval_ms || 4000)) };
+  }
+  // Unwell. Its complaint is carried either way — "issue" on its own is the
+  // kind of sentence this app keeps removing — but it only takes the mark
+  // when there is nothing else to name.
+  if (base === 'lan' || base === 'off') {
+    return { text: 'relay · issue', cls: 'conn-chip off', kind: 'relay',
+      why: rs.last_error || '' };
+  }
+  return { text: null, why: rs.last_error || '' };
+}
+
 function connectionSummary(status) {
   const lan = status.lan, radio = status.radio || {};
   // A MODEM IS NOT A PERSON. `connected` says a radio is plugged into this
@@ -770,35 +807,20 @@ async function refresh() {
       chipText = s.text;
       chipKind = s.kind;
       chipCls = 'conn-chip ' + s.cls + (s.cls === 'off' ? '' : ' up');
-      // Relay auto-sync: when there's no direct peer, show that the relay
-      // is carrying us (honest — store-and-forward, not live).
-      // The relay's turn comes when nothing live can be reached — and an
-      // attached modem with nobody on its segment is not something reached.
-      // Counting it as one suppressed the relay label on any device with a
-      // radio plugged in, including while the relay was the only thing
-      // actually working.
-      const r = status.radio || {};
-      const reachable = (status.lan.peers || 0) +
-        (r.connected ? (r.peer_links || 0) : 0);
-      if (reachable === 0) {
+      // A live local link is the end of the question: nothing outranks
+      // somebody in the same room, so the relay is not even asked.
+      if (chipKind !== 'direct') {
         try {
           const rs = await api('/api/relay/status');
-          if (rs.active && !rs.last_error) {
-            chipText = 'relay';
-            chipCls = 'conn-chip up';
-            chipKind = 'relay';
-            // The light breathes in the sync's own rhythm — the pulse IS the
-            // cadence, not decoration. Clamped so a 2s cycle does not strobe
-            // and a 5min one does not look dead.
-            pulseMs = Math.min(12000, Math.max(2400, rs.interval_ms || 4000));
-          } else if (rs.active) {
-            chipText = 'relay · issue';
-            chipCls = 'conn-chip off';
-            chipKind = 'relay';
-            // "issue" on its own is the kind of sentence this app keeps
-            // removing: it reports that something is wrong and gives no
-            // way to learn what. The relay already knows — carry it.
-            chipWhy = rs.last_error || '';
+          const d = relayVerdict(chipKind, rs);
+          if (d) {
+            // text: null means "keep what you had, but carry my reason" —
+            // the relay is unwell and something better is already named.
+            if (d.text) {
+              chipText = d.text; chipCls = d.cls; chipKind = d.kind;
+              pulseMs = d.pulseMs || pulseMs;
+            }
+            chipWhy = d.why || chipWhy;
           }
         } catch (e) { /* relay status optional */ }
       }
