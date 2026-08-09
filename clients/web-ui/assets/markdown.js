@@ -37,6 +37,17 @@ const MD = (() => {
   const BOLD = /\*\*([^\n]+?)\*\*|__([^\n]+?)__/;
   const ITAL = /(?<![*\w])\*([^*\n]+?)\*(?!\*)|(?<![_\w])_([^_\n]+?)_(?!_)/;
   const LINK = /\[([^\]\n]*)\]\(([^)\s]+)\)/;
+  /**
+   * A URL somebody just typed.
+   *
+   * People paste addresses; they do not write link syntax in a chat message,
+   * and rarely in a post. Recognised AFTER the bracket form so a proper link
+   * still wins, and only for http(s) — a bare `javascript:` or `data:` in
+   * running text is not an address anybody meant to follow.
+   */
+  const BARE = /https?:\/\/[^\s<>"'`]+/;
+  /** Trailing punctuation belongs to the sentence, not to the address. */
+  const TAIL = /[.,;:!?»)\]}'"]+$/;
   const IMG = /!\[([^\]\n]*)\]\(([^)\s]+)\)/;
 
   function el(tag, text) {
@@ -96,9 +107,53 @@ const MD = (() => {
       a.setAttribute('rel', 'noopener noreferrer nofollow');
       return a;
     });
+    take(BARE, (m) => linkTo(m[0]));
     take(BOLD, (m) => { const b = el('strong'); b.append(...inline(m[1] ?? m[2])); return b; });
     take(ITAL, (m) => { const i = el('em'); i.append(...inline(m[1] ?? m[2])); return i; });
     return best;
+  }
+
+  /**
+   * One anchor, made the same way everywhere.
+   *
+   * noopener is the load-bearing part: without it the page we open keeps a
+   * handle on this one through window.opener and can navigate it somewhere
+   * else. noreferrer keeps the address of the space out of somebody else's
+   * logs, which for this project is not a nicety.
+   */
+  function linkTo(url) {
+    const tail = (TAIL.exec(url) || [''])[0];
+    const href = tail ? url.slice(0, -tail.length) : url;
+    if (!SAFE_SCHEME.test(href)) return document.createTextNode(url);
+    const a = el('a', href);
+    a.setAttribute('href', href);
+    a.setAttribute('target', '_blank');
+    a.setAttribute('rel', 'noopener noreferrer nofollow');
+    if (!tail) return a;
+    // The full stop after a link is not part of it.
+    const frag = document.createDocumentFragment();
+    frag.appendChild(a);
+    frag.appendChild(document.createTextNode(tail));
+    return frag;
+  }
+
+  /**
+   * Turn the addresses in PLAIN text into links, in place.
+   *
+   * For everything that is not markdown — a chat message above all. Text
+   * nodes and elements, never a string of HTML: the message came from
+   * somebody else's device and the difference between appending a text node
+   * and assigning innerHTML is the difference between a chat and a hole.
+   */
+  function linkifyInto(parent, text) {
+    let rest = String(text == null ? '' : text);
+    while (rest) {
+      const m = BARE.exec(rest);
+      if (!m) { parent.appendChild(document.createTextNode(rest)); return; }
+      if (m.index > 0) parent.appendChild(document.createTextNode(rest.slice(0, m.index)));
+      parent.appendChild(linkTo(m[0]));
+      rest = rest.slice(m.index + m[0].length);
+    }
   }
 
   /** Is this line a fence? */
@@ -247,7 +302,7 @@ const MD = (() => {
     return host;
   }
 
-  return { render, into, scriptOf };
+  return { render, into, scriptOf, linkifyInto };
 })();
 
 if (typeof window !== 'undefined') window.MD = MD;

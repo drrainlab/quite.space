@@ -1448,6 +1448,18 @@
   #pubArticle img, .pub-block img, .pub-card img {
     max-width: 100%; height: auto; border-radius: var(--radius-md);
     cursor: zoom-in; display: block; }
+  /* A PHOTO IN AN ARTICLE IS NOT A BANNER. At full column width every image
+     became the page for as long as it was on screen — a paragraph, then a
+     wall, then a paragraph. Half the column keeps it part of the reading
+     rather than an interruption of it, and it is still one click from full
+     size. Cards and covers are untouched: those ARE meant to fill.
+     Not applied on a narrow screen, where half a column is a thumbnail. */
+  @media (min-width: 721px) {
+    #pubArticle .pub-block img, .pub-body .pub-block img { max-width: 50%; }
+    /* A gallery is already a grid of small things; halving it twice would
+       leave stamps. */
+    #pubArticle .pub-gallery img, .pub-body .pub-gallery img { max-width: 100%; }
+  }
   /* Markdown in a post's text block. Modest on purpose: the article already
      has a typographic scale, and a body heading must never grow into
      something that competes with the title above it. */
@@ -1513,6 +1525,16 @@
   .app-block input { width: 100%; background: var(--bg); color: var(--fg);
     border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px;
     margin: 4px 0; font: inherit; }
+  /* On a narrow screen the rail goes under the body and folds away, because
+     172px of tools beside a 360px column leaves nothing to write in. */
+  @media (max-width: 720px) {
+    .comp-work { grid-template-columns: minmax(0, 1fr); }
+    .comp-rail { position: static; width: auto; border-top: 1px solid var(--line);
+      padding-top: 10px; }
+    .comp-rail-toggle { display: block; }
+    .comp-rail .comp-chips { flex-direction: row; flex-wrap: wrap; }
+  }
+
   /* ---- A RECORDING IN PROGRESS, SHOWN ----------------------------------
      The mic button going red was the whole indication, and on a phone it is
      under the thumb that pressed it. This bar takes the composer's place
@@ -1664,9 +1686,54 @@
   .comp-drop-preview img { max-width: 100%; max-height: 220px;
     border-radius: var(--radius-sm); }
   .comp-drop-preview audio { width: 100%; }
+  /* The body and its tools, side by side. Below the fold the tools were a
+     scroll away from the hand that needed them: add a block to a long post
+     and you travelled to the bottom, pressed, and travelled back to find
+     where it had landed. */
+  .comp-work { display: grid; grid-template-columns: minmax(0, 1fr) auto;
+    gap: 14px; align-items: start; }
+  .comp-body { min-width: 0; }
+  .comp-rail { position: sticky; top: 4px; width: 172px; }
+  .comp-rail-toggle { display: none; width: 100%; background: var(--surface-raised);
+    border: 1px solid var(--line); color: var(--dim); border-radius: 10px;
+    padding: 7px 10px; font-size: 12.5px; margin-bottom: 8px; }
+  .comp-rail.folded .comp-chips { display: none; }
+  /* A FOLDED RAIL ALWAYS SHOWS ITS HANDLE. The toggle was hidden above the
+     narrow breakpoint, so a rail that arrived folded on a wide screen — which
+     it did, from a preference set on a phone — took every block tool with it
+     and left nothing to press. Whatever the width: if it is folded, the way
+     back is on screen. */
+  .comp-rail.folded .comp-rail-toggle { display: block; }
+
   /* chips */
   .comp-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 0 2px;
     border-top: 1px solid var(--line); margin-top: 8px; }
+  .comp-rail .comp-chips { flex-direction: column; align-items: stretch;
+    border-top: 0; margin-top: 0; padding: 0; }
+  .comp-rail .comp-chip { border-radius: 10px; text-align: left; }
+
+  /* The selected block: where the next one will land. A left edge rather
+     than a fill — the row is full of fields, and a wash over them reads as
+     "disabled" to about half the people who see it. */
+  .comp-block.sel { border-left: 2px solid var(--acc);
+    background: color-mix(in srgb, var(--acc) 5%, transparent); }
+
+  /* An address in a message. The browser's own blue is the one colour on
+     the screen that belongs to no theme here, and a link inside a bubble
+     should read as part of the sentence rather than as a button. */
+  .txt a, .pub-body a { color: var(--acc); text-decoration: underline;
+    text-underline-offset: 2px; text-decoration-thickness: 1px;
+    text-decoration-color: color-mix(in srgb, var(--acc) 45%, transparent);
+    overflow-wrap: anywhere; }
+  .txt a:hover, .pub-body a:hover { text-decoration-color: var(--acc); }
+
+  /* Room, while it is being authored. A thing deliberately invisible still
+     has to be grabbable, so in the editor it says its own name. */
+  .comp-spacing { height: 34px; border: 1px dashed var(--line); border-radius: 8px;
+    display: grid; place-items: center; color: var(--dim); font-size: 11px;
+    letter-spacing: .08em; text-transform: uppercase; opacity: .7; }
+  /* And in the post itself it is nothing at all, which is the point. */
+  .pub-spacing { height: 28px; }
   .comp-chip { background: var(--surface-raised); border: 0; color: var(--dim);
     border-radius: 999px; padding: 5px 12px; font-size: 12px; min-height: 30px; }
   .comp-chip:hover { color: var(--acc);

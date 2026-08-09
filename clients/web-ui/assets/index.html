@@ -971,9 +971,22 @@
   <div id="compCover"></div>
   <input id="compTitle" class="comp-title" placeholder="Title" maxlength="200">
   <input id="compSummary" class="comp-summary" placeholder="A short summary (optional)" maxlength="1000">
-  <div id="composerBlocks"></div>
-  <div id="compAtmosphere"></div>
-  <div class="comp-chips" id="compChips"></div>
+  <!-- The body and the tools, side by side. The tools used to sit BELOW
+       everything, which meant that adding a block to a long post was a
+       scroll to the bottom, a press, and a scroll back to where the block
+       had landed. A rail stays where the hand is. -->
+  <div class="comp-work">
+    <div class="comp-body">
+      <div id="composerBlocks"></div>
+      <div id="compAtmosphere"></div>
+    </div>
+    <aside class="comp-rail" id="compRail">
+      <button type="button" class="comp-rail-toggle" id="compRailToggle"
+              onclick="toggleComposerRail()" aria-expanded="true"
+              aria-controls="compChips">Blocks</button>
+      <div class="comp-chips" id="compChips"></div>
+    </aside>
+  </div>
   <div class="row comp-ai">
     <input id="compAIPrompt" placeholder="✨ describe the post — AI drafts, you publish" style="flex:1">
     <button class="btn-plain" onclick="aiDraftPost()">Draft</button>

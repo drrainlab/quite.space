@@ -532,6 +532,13 @@ function renderPubBlock(b) {
     case 'separator': {
       el.appendChild(document.createElement('hr')); break;
     }
+    case 'spacing': {
+      // Nothing to draw. The block IS the gap, and the class carries it so a
+      // theme can say how much of a breath this is.
+      const gap = document.createElement('div');
+      gap.className = 'pub-spacing';
+      el.appendChild(gap); break;
+    }
     case 'credits': {
       const table = document.createElement('div');
       table.className = 'pub-credits-table';
@@ -636,6 +643,37 @@ function pubAssetNode(kind, p) {
 // with live previews (upload → block.attached.v1 carrier → asset id), text
 // areas auto-grow, up/down/remove per block.
 
+/**
+ * WHERE A NEW BLOCK LANDS.
+ *
+ * Everything used to be appended. On a post of any length that means adding
+ * a paragraph in the middle is: press, scroll to the bottom, move the block
+ * up eight times. So a block can be SELECTED — click its row — and the next
+ * thing added goes in after it. With nothing selected the old behaviour is
+ * exactly what happens, which is right for the common case of writing
+ * downwards.
+ *
+ * Held by id rather than by index: the list is spliced by the move and
+ * remove controls, and an index would quietly start pointing at a neighbour.
+ */
+let composerSel = '';
+
+function selectComposerBlock(id) {
+  composerSel = composerSel === id ? '' : id;
+  renderComposerBlocks();
+}
+
+// insertComposerBlock puts one in after the selection, or at the end, and
+// leaves it selected so a run of additions reads downwards like typing.
+function insertComposerBlock(block) {
+  composerDoc.blocks = composerDoc.blocks || [];
+  const at = composerDoc.blocks.findIndex(b => b.id === composerSel);
+  if (at < 0) composerDoc.blocks.push(block);
+  else composerDoc.blocks.splice(at + 1, 0, block);
+  composerSel = block.id;
+  renderComposerBlocks();
+}
+
 const COMPOSER_CHIPS = [
   { t: 'text', label: 'Text' }, { t: 'heading', label: 'Heading' },
   { t: 'image', label: '🖼 Image' }, { t: 'audio', label: '♫ Audio' },
@@ -643,7 +681,7 @@ const COMPOSER_CHIPS = [
   { t: 'file', label: '📄 File' }, { t: 'quote', label: '❝ Quote' },
   { t: 'callout', label: 'Callout' }, { t: 'code', label: 'Code' },
   { t: 'link', label: 'Link' }, { t: 'credits', label: 'Credits' },
-  { t: 'separator', label: '—' },
+  { t: 'separator', label: '—' }, { t: 'spacing', label: 'Spacing' },
   { t: 'poll', label: '📊 Poll', app: true }, { t: 'form', label: '📝 Form', app: true },
   { t: 'listening', label: '🎧 Listening room', app: true },
   // Not a block on the wire — a stage of the post's atmosphere, edited here
@@ -668,7 +706,7 @@ function renderComposerChips() {
         if (msg) msg.textContent = why;
         return;
       }
-      composerDoc.blocks.push({ id: 'b' + randHex16().slice(0, 8), type: c.t, props: {} });
+      insertComposerBlock({ id: 'b' + randHex16().slice(0, 8), type: c.t, props: {} });
       renderComposerBlocks();
       // Focus the freshly added block's first field.
       setTimeout(() => {
@@ -753,6 +791,8 @@ function openComposer(doc, baseRevision) {
   renderComposerChips();
   renderComposerBlocks();
   renderComposerAtmosphere();
+  composerSel = '';
+  if (typeof applyComposerRail === 'function') applyComposerRail();
   dlgComposer.showModal();
 }
 
@@ -937,7 +977,7 @@ function renderComposerBlocks() {
   if (!(composerDoc.blocks || []).length) {
     const empty = document.createElement('div');
     empty.className = 'comp-empty';
-    empty.textContent = 'Add blocks below — text, media, a poll…';
+    empty.textContent = 'Add blocks from the panel — text, media, a poll…';
     box.appendChild(empty);
   }
   (composerDoc.blocks || []).forEach((b, i) => {
@@ -948,9 +988,15 @@ function renderComposerBlocks() {
     if (stage) box.appendChild(ATMO_EDIT.stageRow(composerDoc, stage, refreshComposerBody));
 
     const row = document.createElement('div');
-    row.className = 'comp-block';
+    row.className = 'comp-block' + (b.id === composerSel ? ' sel' : '');
     row.dataset.index = i;
     b.props = b.props || {};
+    // Click the row — not its fields — to say "put the next one after this".
+    // Guarded so selecting text or using a control never moves the mark.
+    row.addEventListener('click', (e) => {
+      if (e.target.closest('input, textarea, button, select, a, .comp-drop, .comp-grip')) return;
+      selectComposerBlock(b.id);
+    });
 
     // Drag-to-reorder: the ⠿ handle arms draggability so text selection in
     // the editors keeps working; rows re-render on drop.
@@ -1003,6 +1049,13 @@ function renderComposerBlocks() {
 
     if (b.type === 'separator') {
       row.appendChild(document.createElement('hr'));
+    } else if (b.type === 'spacing') {
+      // Room. Shown as a marked gap while editing, because an author has to
+      // be able to see and grab a thing that is deliberately invisible.
+      const gap = document.createElement('div');
+      gap.className = 'comp-spacing';
+      gap.textContent = 'space';
+      row.appendChild(gap);
     } else if (b.type === 'credits') {
       const inp = document.createElement('input');
       inp.placeholder = 'role, name, role, name…';

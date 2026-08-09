@@ -201,7 +201,11 @@ function mentionText(e) {
   const el = document.createElement('div');
   el.className = 'txt' + (e.mentions_me ? ' addressed' : '');
   const names = (e.mention_names || []).filter(Boolean);
-  if (!names.length) { el.textContent = e.text; return el; }
+  const plain = (s) => {
+    if (typeof MD !== 'undefined' && MD.linkifyInto) MD.linkifyInto(el, s);
+    else el.appendChild(document.createTextNode(s));
+  };
+  if (!names.length) { plain(e.text); return el; }
   // Longest first so "@ann" inside "@anna" cannot win.
   const sorted = [...names].sort((a, b) => b.length - a.length);
   let rest = e.text;
@@ -211,8 +215,8 @@ function mentionText(e) {
       const i = rest.indexOf('@' + n);
       if (i >= 0 && (best < 0 || i < best)) { best = i; bestName = n; }
     }
-    if (best < 0) { el.appendChild(document.createTextNode(rest)); break; }
-    if (best > 0) el.appendChild(document.createTextNode(rest.slice(0, best)));
+    if (best < 0) { plain(rest); break; }
+    if (best > 0) plain(rest.slice(0, best));
     const tag = document.createElement('span');
     tag.className = 'mention';
     tag.textContent = '@' + bestName;

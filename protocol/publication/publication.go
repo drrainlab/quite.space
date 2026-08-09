@@ -56,6 +56,14 @@ var contentTypes = map[string]bool{
 	"gallery": true, "audio": true, "video-link": true, "file": true,
 	"link": true, "code": true, "callout": true, "separator": true,
 	"credits": true,
+	// spacing is a separator that draws NOTHING: room between two things,
+	// for an author who wants a breath rather than a line. Its own type
+	// rather than a prop on separator, because separator's props shape is
+	// "none" and a build that predates this must be able to keep reading
+	// the post — an unknown TYPE stays opaque and renders a fallback, while
+	// an unexpected PROP fails validation and would take the whole document
+	// down with it.
+	"spacing": true,
 	// video carries an UPLOADED file (PM follow-up): asset props exactly
 	// like image/audio — text is the alt, caption the caption. video-link
 	// stays the external-URL form. Older builds keep the block opaque and

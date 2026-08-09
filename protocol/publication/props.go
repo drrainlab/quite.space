@@ -190,7 +190,7 @@ func propsShape(blockType string) string {
 		return "asset"
 	case "gallery", "credits":
 		return "list"
-	case "separator", "stack", "columns", "hero", "section":
+	case "separator", "spacing", "stack", "columns", "hero", "section":
 		return "none"
 	default:
 		return "opaque"

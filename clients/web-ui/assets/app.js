@@ -641,6 +641,32 @@ function relayVerdict(base, rs) {
  * when it is being left, rather than every opener having to know about every
  * other one — which is the arrangement that produced this.
  */
+/**
+ * The composer's tool rail, folded away when the screen is narrow.
+ *
+ * Remembered per device: somebody who writes on a phone and folds it once
+ * should not have to fold it again every time they open the editor.
+ */
+function toggleComposerRail() {
+  const rail = document.getElementById('compRail');
+  if (!rail) return;
+  const folded = rail.classList.toggle('folded');
+  localStorage.setItem('qp.railFolded', folded ? '1' : '0');
+  const btn = document.getElementById('compRailToggle');
+  if (btn) btn.setAttribute('aria-expanded', folded ? 'false' : 'true');
+}
+
+function applyComposerRail() {
+  const rail = document.getElementById('compRail');
+  if (!rail) return;
+  // Folded by default where there is no room for it, open where there is.
+  const stored = localStorage.getItem('qp.railFolded');
+  const folded = stored === null ? compactScreen() : stored === '1';
+  rail.classList.toggle('folded', folded);
+  const btn = document.getElementById('compRailToggle');
+  if (btn) btn.setAttribute('aria-expanded', folded ? 'false' : 'true');
+}
+
 function showScreen(which) {
   if (which !== 'catalog' && typeof CAT !== 'undefined' && CAT.leaving) CAT.leaving();
   if (which !== 'signals' && typeof qrLeaving === 'function') qrLeaving();
@@ -2929,7 +2955,11 @@ function renderEntry(log, e, fresh, grouped) {
 
 function textNode(cls, s) {
   const el = document.createElement('div');
-  el.className = cls; el.textContent = s;
+  el.className = cls;
+  // An address somebody pasted is a thing to follow, not a string to squint
+  // at and retype. Built as nodes, never as HTML — see MD.linkifyInto.
+  if (typeof MD !== 'undefined' && MD.linkifyInto) MD.linkifyInto(el, s);
+  else el.textContent = s;
   return el;
 }
 
@@ -4271,16 +4301,27 @@ function backdropMayDismiss(d) {
           opened.splice(i, 1);
           // Consume our own entry, unless Back is what closed it (popstate
           // has already unwound one, and a second back() would leave the app).
-          if (!closingFromBack) history.back();
+          //
+          // AND SAY THAT IT WAS US. history.back() is asynchronous: the
+          // popstate it causes arrives later and is indistinguishable from a
+          // person pressing Back, so the handler below closed the next
+          // dialog down. Closing an inner dialog from code therefore took
+          // its parent with it — press Add in "listening room" and the whole
+          // composer vanished, with the block silently added to a post
+          // nobody could see any more.
+          if (!closingFromBack) { selfPops++; history.back(); }
         }
       }
     }
   });
   let closingFromBack = false;
+  // How many popstates are our own bookkeeping rather than a person's Back.
+  let selfPops = 0;
   for (const d of document.querySelectorAll('dialog')) {
     obs.observe(d, { attributes: true, attributeFilter: ['open'] });
   }
   window.addEventListener('popstate', () => {
+    if (selfPops > 0) { selfPops--; return; }   // ours; nothing to close
     const top = opened[opened.length - 1];
     if (!top) return;
     closingFromBack = true;
