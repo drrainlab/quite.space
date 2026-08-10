@@ -1462,7 +1462,23 @@ function applyPanels() {
   document.body.classList.toggle('pane-open', compactScreen() && !!compactPane);
 }
 
-function togglePanel(which) { setPanel(which, !isPanelFolded(which)); }
+/**
+ * The toggle acts on WHAT IS ON THE SCREEN.
+ *
+ * It used to ask isPanelFolded(), which recomputes from the preference — and
+ * the two can disagree. A window that arrived at a desktop width while the
+ * body still carried the phone model showed both panels folded with no
+ * preference stored, so the first press wrote "fold" to something that
+ * already looked folded and appeared to do nothing at all. A person presses
+ * once, sees no change, and concludes the button is broken.
+ *
+ * A control must move the thing the person is looking at. The class on the
+ * body IS that thing.
+ */
+function togglePanel(which) {
+  const shown = !document.body.classList.contains('fold-' + which);
+  setPanel(which, shown);
+}
 
 /** Back gesture, and the scrim, and anything else that just wants it gone. */
 function closePane() {
@@ -1575,6 +1591,16 @@ if (typeof window !== 'undefined') {
     compactPane = null;
     applyPanels();
   });
+  // AND ON ANY RESIZE, not only on the transition between models.
+  //
+  // The change event fires when the query flips, which is the common case and
+  // not the only one: a window restored at a different size, a WebView laid
+  // out after its scripts ran, a pane that was zero-wide while the page
+  // loaded. Miss it once and the body keeps the phone model at a desktop
+  // width — both panels folded, no preference stored, and nothing that will
+  // ever re-decide. applyPanels is idempotent and costs two class toggles, so
+  // asking it again is cheaper than being wrong.
+  window.addEventListener('resize', applyPanels);
 }
 
 /** The space-info panel's own button, which predates the pair. */
