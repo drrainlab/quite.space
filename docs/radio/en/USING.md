@@ -25,6 +25,33 @@ before being called quiet. You never look up or memorise a device path —
 that is the whole point of scanning, because the path changes by itself
 after a reset.
 
+### On a phone it works differently underneath
+
+Android creates no device node for a USB peripheral: there are no serial
+ports there and there never will be. The board is reachable only through the
+system's USB service, so the steps are the same and the machinery under them
+is not — three differences you can see:
+
+- **You need an OTG cable.** The phone has to become the host, or the board
+  does not exist as far as it is concerned.
+- **The system asks permission** for that specific device, once. It is its
+  dialog, not ours; a refusal is an ordinary answer and the app simply says
+  the modem was not allowed.
+- **The list holds USB devices rather than ports**, including the ones this
+  build cannot drive, each with the reason. A list that quietly omits the
+  modem in your hand leaves you unable to tell "not plugged in" from "plugged
+  in and not supported", and those have different next steps.
+
+One more difference is invisible but explains the behaviour: **the radio does
+not come back by itself after the app restarts.** The device permission
+belongs to the app, the cable may already be out, and re-attaching is a
+person's move. Your segment phrase is not asked for again — the node
+remembers it, and pulling a cable is not the same as detaching a radio.
+
+Which boards work: this build drives **Silicon Labs CP210x** bridges, the
+most common one on RNode boards. If your board is listed as unsupported, the
+same row says which bridge it has.
+
 The list will hold more than your board. Every port is named, including
 the ones the node deliberately did not open:
 
