@@ -36,9 +36,31 @@
  * cannot delete them: an act that silently undoes itself with the next
  * build is worse than no act.
  *
- * @type {string[]}
+ * WHERE THEY COME FROM. Not from this file: the node serves them, because
+ * "what this build ships knowing" is a property of the build and the CLI has
+ * the same question. Asked once per session and remembered — the answer is a
+ * compiled-in constant on the other side, and re-asking it on every Discover
+ * would be a request that can only ever return the same string.
+ *
+ * @type {Promise<string[]>|null}
  */
-const OFFICIAL_SOURCES = []; // set when the official directory space exists
+let officialSourcesOnce = null;
+
+function officialSources() {
+  if (!officialSourcesOnce) {
+    officialSourcesOnce = (async () => {
+      try {
+        const s = await api('/api/suggested-directory');
+        return s && s.link ? [s.link] : [];
+      } catch {
+        // A build that cannot say is a build with no official home. Discover
+        // still shows whatever the person added.
+        return [];
+      }
+    })();
+  }
+  return officialSourcesOnce;
+}
 
 /** @typedef {{space:string,title:string,link:string}} Level */
 
@@ -244,9 +266,10 @@ const CAT = (() => {
   async function homeRows(refresh) {
     const rows = [];
     let officialSilent = false;
-    if (!NAV.officialOff() && OFFICIAL_SOURCES.length) {
+    const sources = NAV.officialOff() ? [] : await officialSources();
+    if (sources.length) {
       let answered = false;
-      for (const link of OFFICIAL_SOURCES) {
+      for (const link of sources) {
         const r = await look(link, refresh);
         if (r.kind === 'level') {
           for (const c of entriesOf(r.in)) rows.push(cardRow(c));
@@ -542,9 +565,6 @@ const CAT = (() => {
     add.textContent = t('cat.add_directory');
     add.onclick = () => addDirectory();
     d.appendChild(add);
-    // The build's own suggestion, if it has one, filled in after the screen
-    // is up: an empty room should not wait on a request to say it is empty.
-    suggestionCard().then(html => { if (html) d.insertAdjacentHTML('beforeend', html); });
     return d;
   }
 
@@ -734,36 +754,6 @@ const CAT = (() => {
   }
 
   /** Discover, from the header. */
-  /**
-   * What this build arrives knowing, offered rather than opened.
-   *
-   * A fresh node knows nobody, which is the premise and also an empty room.
-   * A build may ship one address; NOTHING happens with it until somebody
-   * presses. Opening a space unasked would tell the relay this device is
-   * alive and the space that somebody arrived, before the person had agreed
-   * to anything — so the card says what it is and waits.
-   */
-  async function suggestionCard() {
-    let s;
-    try { s = await api('/api/suggested-directory'); } catch { return ''; }
-    if (!s || !s.link || s.held) return '';
-    pendingSuggestion = s.link;
-    return `<div class="cat-suggest">
-      <div class="cs-title">${esc(s.title || 'A directory this build knows of')}</div>
-      ${s.note ? `<div class="cs-note">${esc(s.note)}</div>` : ''}
-      <div class="cs-note dim">Nothing has been fetched. Opening it asks the
-        relay for its contents, and tells that relay you are here.</div>
-      <button class="btn-tinted" onclick="CAT.openSuggested()">Open it</button>
-    </div>`;
-  }
-
-  let pendingSuggestion = '';
-
-  async function openSuggested() {
-    if (!pendingSuggestion) return;
-    await follow(pendingSuggestion);
-  }
-
   async function openHome() {
     dropLeaf();
     path = [];
@@ -801,7 +791,6 @@ const CAT = (() => {
 
   return {
     openHome, follow, back, close, leaving, openDirectories, addDirectory, enterHeld,
-    openSuggested,
     openAddSpace, lookUpSpace, addSpaceToDirectory,
     refresh: () => render(),
     get path() { return path.slice(); },

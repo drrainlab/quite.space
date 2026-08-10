@@ -18,21 +18,29 @@
 //
 //	go build -ldflags "-X github.com/drrainlab/quiet_places/node.DefaultDirectoryLink=<link>"
 //
-// Empty is the honest default and the one every unbranded build keeps: no
-// link, no offer, nothing on the screen.
+// Empty is still meaningful and still supported: a build with no link has no
+// official home, and Discover shows only what its owner added.
 package node
 
 import "net/http"
 
 var (
-	// DefaultDirectoryLink is a share link to a public directory. Empty means
-	// this build suggests nothing.
-	DefaultDirectoryLink = ""
+	// DefaultDirectoryLink is a share link to the official directory: the one
+	// Discover opens on, before anybody has added anything of their own.
+	//
+	// A VALUE HERE IS A PRODUCT DECISION, not a convenience. This address is
+	// what a person's first press of Discover reaches, so it belongs in the
+	// source where it can be read and reviewed, and it is overridable with
+	// -ldflags for a build that should point somewhere else — or nowhere.
+	//
+	// Today it is the demo catalog, kept reachable by the mirror on the
+	// project's own relay.
+	DefaultDirectoryLink = "OTEuMjAxLjExNC43MTo3NDExCnNwYWNlOmIzMDIwNjhlNDU5OWQwODJjMjM5ODJhYjE0MTA4Y2FkYWZlN2EyZDI0MGE2MzdiZjE2MTcyYzM0NjgxZmVmMGU"
 	// DefaultDirectoryTitle names it for a person, before they open it.
-	DefaultDirectoryTitle = ""
+	DefaultDirectoryTitle = "Demo spaces"
 	// DefaultDirectoryNote says in one sentence what is behind the link, so
 	// the choice to press is made with something in hand.
-	DefaultDirectoryNote = ""
+	DefaultDirectoryNote = "a few places to look at while this is new"
 )
 
 // SuggestedDirectory is what this build would like to offer, and whether it

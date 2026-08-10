@@ -22,10 +22,33 @@ func shareLinkTo(tid id.TerminalID, relay string) string {
 }
 
 func TestAnUnbrandedBuildSuggestsNothing(t *testing.T) {
+	// A build may ship with no official home at all — a fork, a private
+	// deployment, somebody's own relay — and that has to stay a supported
+	// shape rather than a broken one.
+	old := DefaultDirectoryLink
+	t.Cleanup(func() { DefaultDirectoryLink = old })
+	DefaultDirectoryLink = ""
+
 	rt := openRuntime(t, t.TempDir(), "alice")
 	defer rt.Close()
 	if got := rt.SuggestedDirectoryFor(); got.Link != "" {
 		t.Fatalf("a build with no default offered %+v", got)
+	}
+}
+
+// And the shipped one is real: a link this build cannot parse would mean
+// every first press of Discover reaches nothing, which is the kind of
+// packaging mistake nobody notices until a tester says the app is empty.
+func TestTheShippedOfficialLinkIsWellFormed(t *testing.T) {
+	if DefaultDirectoryLink == "" {
+		t.Skip("this build ships no official directory")
+	}
+	relay, tid, _, err := ParsePublicLink(DefaultDirectoryLink)
+	if err != nil {
+		t.Fatalf("the official directory link does not parse: %v", err)
+	}
+	if relay == "" || tid == (id.TerminalID{}) {
+		t.Fatalf("the official link carries no relay or no space: %q %v", relay, tid)
 	}
 }
 

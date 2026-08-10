@@ -1576,18 +1576,6 @@
     .rec-level i { transition: none; }
   }
 
-  /* What a build arrives knowing, offered rather than opened. Quiet on
-     purpose: it is a suggestion sitting in an empty room, not an
-     advertisement, and the line about what pressing it costs is part of the
-     offer rather than small print. */
-  .cat-suggest { margin-top: 18px; padding: 14px 16px; text-align: left;
-    border: 1px solid var(--line); border-radius: var(--radius-md);
-    background: var(--surface-raised); }
-  .cat-suggest .cs-title { color: var(--fg); font-size: 14px; margin-bottom: 4px; }
-  .cat-suggest .cs-note { color: var(--dim); font-size: 12.5px; margin-bottom: 8px; }
-  .cat-suggest .cs-note.dim { opacity: .75; }
-  .cat-suggest button { margin-top: 4px; }
-
   /* ---- Telegram-style composer: attach menu + video cards ---- */
   #attachWrap { position: relative; display: flex; }
   .attach-menu { position: absolute; bottom: calc(100% + 8px); left: 6px;
