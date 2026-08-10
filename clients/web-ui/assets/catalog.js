@@ -27,7 +27,7 @@
 // behind the ⋯ , for somebody running their own.
 
 /**
- * OFFICIAL_SOURCES holds alternate BOOTSTRAP ADDRESSES of ONE official
+ * officialSources() holds alternate BOOTSTRAP ADDRESSES of ONE official
  * home, tried in order — the first that answers is the home.
  *
  * They are never merged. A share link is relay-bound and irrevocable, so a
@@ -570,18 +570,38 @@ const CAT = (() => {
 
   // ---- the ⋯ sheet: the one place a person may meet the word ----
 
-  function openDirectories() {
+  async function openDirectories() {
     const dlg = /** @type {any} */(document.getElementById('dlgDirs'));
     if (!dlg) return;
-    paintDirectories();
+    // A CONTROL THAT FAILS MUST SAY SO. Painting this list threw once — a
+    // name that had moved — and the dialog simply never opened: the ⋯ was
+    // inert, and with it the only way to add a directory by link. A silent
+    // dead button is the hardest kind of fault to report, because there is
+    // nothing to report except "nothing happens".
+    try {
+      await paintDirectories();
+    } catch (e) {
+      const list = document.getElementById('dirList');
+      if (list) {
+        list.innerHTML = '';
+        const p = document.createElement('p');
+        p.className = 'hint warn';
+        p.textContent = 'This list could not be built: ' + (e && e.message ? e.message : e);
+        list.appendChild(p);
+      }
+    }
     dlg.showModal();
   }
 
-  function paintDirectories() {
+  async function paintDirectories() {
     const list = document.getElementById('dirList');
     if (!list) return;
     list.innerHTML = '';
-    if (OFFICIAL_SOURCES.length) {
+    // Awaited rather than read from a constant: the official address comes
+    // from the node now. Getting this wrong took the whole dialog down —
+    // and with it "+ Add directory", which lives nowhere else.
+    const official = await officialSources();
+    if (official.length) {
       const row = document.createElement('div');
       row.className = 'list-row';
       const label = document.createElement('span');
