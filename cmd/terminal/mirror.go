@@ -19,6 +19,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/drrainlab/quiet_places/node"
@@ -53,7 +54,16 @@ func runMirror(args []string) error {
 	}
 	pass := flags["passphrase"]
 	if pass == "" {
-		return errors.New("mirror: --passphrase is required (this changes node state)")
+		// THE SAME WAY THE NODE TAKES IT, and for a sharper reason here: this
+		// is the command an operator runs on a server, and an argv is world
+		// readable. Anybody with a shell on the box can read /proc and see a
+		// passphrase for as long as the process lives — and systemd prints
+		// the command line of a service to anyone who asks its status.
+		pass = os.Getenv("QP_PASSPHRASE")
+	}
+	if pass == "" {
+		return errors.New("mirror: pass --passphrase or set QP_PASSPHRASE " +
+			"(this changes node state)")
 	}
 
 	rt, err := node.Open(dataDir, []byte(pass), "")
