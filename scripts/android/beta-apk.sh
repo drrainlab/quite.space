@@ -42,6 +42,45 @@ if [ "${SKIP_AAR:-0}" != "1" ]; then
       -o ../host/app/libs/quietcore.aar . ) || die "the binding would not build"
 fi
 
+# THE BUILD MUST NOT DEPEND ON WHOSE SHELL RAN IT.
+#
+# Gradle 9 needs a JVM 17 or newer, and it takes JAVA_HOME when that is set —
+# so a profile pointing at an older JDK turns this script into an error
+# message, on the same machine where it had just worked for somebody whose
+# JAVA_HOME happened to be empty. That difference is not the operator's to
+# debug at the moment they are trying to cut a release.
+#
+# So a suitable JDK is FOUND rather than assumed, and if there is none the
+# script says which ones it looked for.
+pick_jdk() {
+  # An explicit choice, if it is new enough, wins: somebody who set this meant it.
+  if [ -n "${JAVA_HOME:-}" ] && [ -x "$JAVA_HOME/bin/javac" ]; then
+    v=$("$JAVA_HOME/bin/javac" -version 2>&1 | sed -E 's/javac ([0-9]+).*/\1/')
+    case "$v" in ''|*[!0-9]*) ;; *) [ "$v" -ge 17 ] && return 0 ;; esac
+  fi
+  for cand in \
+    "$(/usr/libexec/java_home -v 17+ 2>/dev/null)" \
+    /opt/homebrew/opt/openjdk/libexec/openjdk.jdk/Contents/Home \
+    /usr/local/opt/openjdk/libexec/openjdk.jdk/Contents/Home \
+    "/Applications/Android Studio.app/Contents/jbr/Contents/Home" \
+    "$HOME/.sdkman/candidates/java/current"
+  do
+    [ -n "$cand" ] && [ -x "$cand/bin/javac" ] || continue
+    v=$("$cand/bin/javac" -version 2>&1 | sed -E 's/javac ([0-9]+).*/\1/')
+    case "$v" in ''|*[!0-9]*) continue ;; esac
+    [ "$v" -ge 17 ] || continue
+    export JAVA_HOME="$cand"
+    say "using JDK $v at $JAVA_HOME"
+    return 0
+  done
+  return 1
+}
+if ! pick_jdk; then
+  die "no JDK 17 or newer found. Gradle needs one. Looked at JAVA_HOME, \
+/usr/libexec/java_home -v 17+, Homebrew's openjdk, and Android Studio's \
+bundled runtime. Install one (brew install openjdk) or point JAVA_HOME at it."
+fi
+
 say "building the release apk…"
 ANDROID_HOME="$SDK" gradle -p "$HOST" :app:assembleRelease -q || die "the build failed"
 
