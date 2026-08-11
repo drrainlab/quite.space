@@ -1489,10 +1489,56 @@
     mask-image: linear-gradient(to bottom, transparent 0,
       #000 var(--edge-fade), #000 calc(100% - var(--edge-fade)), transparent 100%);
   }
+  /* The posts feed is a grid of tiles, not a column of rows: a post is
+     mostly a picture, and a picture the width of the whole column shows
+     three posts where nine would fit.
+
+     THREE ACROSS, AND NO MEDIA QUERY — deliberately. The feed's width does
+     not follow the viewport's: folding either side panel changes it by
+     hundreds of pixels at the same window size (measured — 706px with both
+     panels open at a 1280px viewport, about 1450px with them folded). A
+     viewport breakpoint would therefore be correct only for whichever panel
+     state it happened to be written against, and wrong the moment somebody
+     folded something.
+
+     So the track size answers the question about the container itself. A
+     track is never narrower than a third of the row, which is what caps it
+     at three; and never narrower than 200px, so a genuinely cramped column
+     drops to two and then to one on its own. No JS, no observer, and it is
+     already right on the first paint. */
+  #pubFeed {
+    --pub-gap: 14px;
+    display: grid; gap: var(--pub-gap);
+    grid-template-columns: repeat(auto-fill,
+      minmax(max(200px, calc((100% - 2 * var(--pub-gap)) / 3)), 1fr));
+  }
+  /* "No posts yet" is a sentence, not a tile. */
+  #pubFeed > .empty-spaces { grid-column: 1 / -1; }
   .pub-card { border: 1px solid var(--line); border-radius: var(--radius-md);
-    background: var(--panel); padding: 12px 14px; margin-bottom: 10px;
-    cursor: pointer; box-shadow: var(--shadow); }
+    background: var(--panel); padding: 12px 14px;
+    cursor: pointer; box-shadow: var(--shadow);
+    /* A column so the meta line can sink to the bottom (margin-top:auto,
+       below): tiles in a row are the same height whatever their summaries
+       do, and the type does not float in the middle of the taller ones. */
+    display: flex; flex-direction: column; }
   .pub-card:hover { border-color: var(--acc); }
+  /* The cover bleeds to the card's edges rather than sitting inside the
+     padding — the tile IS the picture, and an inset image with a second
+     rounded rectangle inside the first reads as a thumbnail glued to a
+     box. The card already clips (overflow:hidden, for the atmosphere
+     layer), so its own radius rounds the top corners for free. */
+  #pubFeed .pub-card-cover {
+    height: auto; aspect-ratio: 4 / 3;
+    margin: -12px -14px 10px; border-radius: 0;
+  }
+  #pubFeed .pub-title { font-size: calc(16px * var(--font-scale)); line-height: 1.3; }
+  /* Two lines of summary, then an ellipsis: the tile promises a glance, and
+     a fourth paragraph in a card nobody has opened yet is not a glance. */
+  #pubFeed .pub-summary {
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    overflow: hidden; margin-top: 4px;
+  }
+  #pubFeed .pub-meta { margin-top: auto; padding-top: 8px; }
   .pub-title { font-weight: 600; font-size: calc(15px * var(--font-scale)); }
   .pub-summary { color: var(--dim); font-size: 13px; margin-top: 2px; }
   .pub-meta { color: var(--muted); font-size: 11px; margin-top: 4px;
@@ -1520,9 +1566,14 @@
      is barely wider than the article and this changes nothing; fold them and
      the reading column stays where the eye already is instead of clinging to
      the left edge of a suddenly very wide window.
-     The list is centred with it, so folding a panel does not make the cards
-     and the article they open disagree about where the middle is. */
-  #pubArticle, #posts > .pub-card {
+
+     ONLY the article. The second half of this rule used to name
+     `#posts > .pub-card` and claim the list was centred with it — but the
+     cards live in #pubFeed, so that selector matched nothing and never had:
+     the list has always run the full width. The claim is dropped rather
+     than made true, because the list is a grid of tiles now and a tile grid
+     wants the whole column. */
+  #pubArticle {
     max-width: 680px; margin-inline: auto;
   }
   #pubArticle { overflow-wrap: break-word; padding-block: 12px; }
