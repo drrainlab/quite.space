@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	webui "github.com/drrainlab/quiet_places/clients/web-ui"
+	"github.com/drrainlab/quiet_places/kernel/passcode"
 	"github.com/drrainlab/quiet_places/node"
 	"github.com/drrainlab/quiet_places/transports/lan"
 	"github.com/drrainlab/quiet_places/transports/meshtastic"
@@ -29,8 +30,45 @@ func runUI(args []string, withUI bool) error {
 	if pass == "" {
 		pass = os.Getenv("QP_PASSPHRASE")
 	}
+
+	// THE LOCK GATE. With no passphrase to hand and a passcode bound on this
+	// device, the port is taken by a screen that asks for four digits, and
+	// the node opens with whatever that unwraps. Nothing below this block
+	// knows it happened: node.Open still receives a passphrase, exactly as
+	// it always has.
+	//
+	// Backwards compatible in both directions — a passphrase on the command
+	// line skips the gate entirely, and a device with no passcode bound
+	// reaches the same error it always did.
+	gateToken, gatePort := flags["token"], -1
 	if pass == "" {
-		return fmt.Errorf("pass --passphrase or set QP_PASSPHRASE (encrypts the local keystore)")
+		if st, err := passcode.Info(dataDir); err == nil && st.Bound {
+			l, gateAddr, p, err := bindPort(parsePort(flags["port"]))
+			if err != nil {
+				return err
+			}
+			gatePort = p
+			if gateToken == "" {
+				if gateToken, err = newToken(); err != nil {
+					return err
+				}
+			}
+			url := "http://" + gateAddr
+			fmt.Printf("locked · %d-digit code · open %s\n", st.Digits, url)
+			if withUI && flags["no-browser"] == "" {
+				openBrowser(url)
+			}
+			unwrapped, err := lockGate(l, dataDir, gateToken)
+			if err != nil {
+				return err
+			}
+			pass = string(unwrapped)
+		}
+	}
+
+	if pass == "" {
+		return fmt.Errorf("pass --passphrase or set QP_PASSPHRASE (encrypts the local " +
+			"keystore) — or bind a code to it with `terminal passcode set`")
 	}
 	name := flags["name"]
 	if name == "" {
@@ -176,13 +214,14 @@ func runUI(args []string, withUI bool) error {
 	if err != nil {
 		return err
 	}
-	port := 0
-	if p := flags["port"]; p != "" {
-		if _, err := fmt.Sscanf(p, "%d", &port); err != nil {
-			return fmt.Errorf("bad --port %q", p)
-		}
+	// The gate already holds a port — take that same one, or a browser sent
+	// to the lock screen on an auto-assigned port would find nothing there
+	// after unlocking.
+	port := parsePort(flags["port"])
+	if gatePort >= 0 {
+		port = gatePort
 	}
-	api.SetToken(flags["token"])
+	api.SetToken(gateToken)
 	addr, l, err := api.Serve(port)
 	if err != nil {
 		return err

@@ -41,6 +41,8 @@ func main() {
 		err = runBackup(os.Args[2:])
 	case "restore":
 		err = runRestore(os.Args[2:])
+	case "passcode":
+		err = runPasscode(os.Args[2:])
 	default:
 		usage()
 		os.Exit(2)
