@@ -91,6 +91,19 @@ class QuietActivity : ComponentActivity() {
     /** Where a remembered passphrase lives, and the only thing that reads it. */
     private val vault by lazy { PassphraseVault(applicationContext) }
 
+    /** The four digits, wrapped in hardware. See PasscodeVault. */
+    private val passcode by lazy { PasscodeVault(applicationContext) }
+
+    /**
+     * Per Activity instance, like [recoveryOffered]: a code is offered once
+     * after an unlock and never nagged. Somebody who does not want one has
+     * said so by walking past it.
+     */
+    private var passcodeOffered = false
+
+    /** Digits typed into the keypad so far, for the dots. */
+    private var codeEntry = ""
+
     /**
      * The passphrase currently being tried, held until the core says whether
      * it worked. Nothing is written down before that: a stored typo would
@@ -324,9 +337,22 @@ class QuietActivity : ComponentActivity() {
         // not a blank field that vanishes half a second later — a flash of the
         // unlock panel on every launch is the same complaint in a shorter
         // form.
-        vault.load()?.let { stored ->
-            autoAttempt = stored
-            controller.ensureStarted(stored, null, true)
+        // A BOUND CODE OUTRANKS THE REMEMBERED PASSPHRASE, and finding that
+        // out took a real handset: with the auto-open left in front, the node
+        // was already alive by the time the keypad could have been drawn, so
+        // the code never got asked and was pure decoration.
+        //
+        // Both vaults want to own the launch and they want opposite things —
+        // one opens with no question, the other exists in order to ask one.
+        // Whichever a person set LAST is the one they meant, and setting a
+        // code is the later, more deliberate act, so it wins. Nothing is
+        // forgotten by this: the remembered passphrase is still there behind
+        // the code, and forgetting the code hands the launch straight back.
+        if (!passcode.has()) {
+            vault.load()?.let { stored ->
+                autoAttempt = stored
+                controller.ensureStarted(stored, null, true)
+            }
         }
 
         controller.addListener(runtimeListener)   // also renders the current state
@@ -406,11 +432,37 @@ class QuietActivity : ComponentActivity() {
                 // IT WORKED, SO NOW IT MAY BE WRITTEN DOWN. This is the only
                 // place that stores one, and it is reached only by a value the
                 // core has already opened with.
+                // THE ONE MOMENT A CODE CAN BE BOUND: we are holding a
+                // passphrase the core has just opened with, so nothing
+                // unverified can ever be sealed. Offered once per instance
+                // and never nagged — the politeness recoveryOffered keeps.
+                var offeringCode = false
                 pendingPassphrase?.let { pass ->
                     pendingPassphrase = null
                     autoAttempt = null
                     if (!vault.has()) vault.save(pass)
+                    if (!passcode.has() && !passcodeOffered) {
+                        passcodeOffered = true
+                        offeringCode = true
+                        unlockMessage = null
+                        showKeypad(
+                            title = "Choose a code",
+                            note = "Four digits instead of your passphrase next time. " +
+                                "The passphrase still works, and still opens your backup.",
+                            digits = 4,
+                            onComplete = { code ->
+                                passcode.bind(code, pass)
+                                showInterface()
+                                applyAvailabilityMode()
+                            },
+                            onEscape = "Not now" to {
+                                showInterface()
+                                applyAvailabilityMode()
+                            },
+                        )
+                    }
                 }
+                if (offeringCode) return
                 unlockMessage = null
                 showInterface()
                 // The core is open, so "staying connected" is now a claim
@@ -489,7 +541,153 @@ class QuietActivity : ComponentActivity() {
         applyPermissionState()
     }
 
+    /**
+     * The keypad. One builder, two jobs: ENTERING a bound code, and CHOOSING
+     * one right after an unlock. They differ only in what four digits mean at
+     * the end, so they share a screen rather than drifting into two.
+     *
+     * Programmatic, like everything else on this Activity — the host has no
+     * layout XML, and a keypad is a grid of twelve identical things.
+     */
+    private fun showKeypad(
+        title: String,
+        note: String,
+        digits: Int,
+        onComplete: (String) -> Unit,
+        onEscape: Pair<String, () -> Unit>?,
+    ) {
+        web.visibility = View.GONE
+        statusPanel?.let { root.removeView(it) }
+        codeEntry = ""
+
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(48, 64, 48, 64)
+        }
+        panel.addView(TextView(this).apply {
+            setText(title); gravity = Gravity.CENTER; textSize = 18f
+        })
+        val dots = TextView(this).apply {
+            gravity = Gravity.CENTER; textSize = 30f
+            setPadding(0, 28, 0, 28)
+        }
+        panel.addView(dots)
+        val noteView = TextView(this).apply {
+            setText(note); gravity = Gravity.CENTER
+        }
+        panel.addView(noteView)
+
+        fun paint() {
+            // Filled and empty circles rather than a password field: the
+            // count is the only thing worth showing, and a keyboard would
+            // put the OS's own suggestions over a secret.
+            dots.setText("●".repeat(codeEntry.length) + "○".repeat(digits - codeEntry.length))
+        }
+        paint()
+
+        fun push(k: String) {
+            when (k) {
+                "<" -> if (codeEntry.isNotEmpty()) codeEntry = codeEntry.dropLast(1)
+                "C" -> codeEntry = ""
+                else -> if (codeEntry.length < digits) codeEntry += k
+            }
+            paint()
+            if (codeEntry.length == digits) {
+                val code = codeEntry
+                codeEntry = ""
+                paint()
+                onComplete(code)
+            }
+        }
+
+        for (row in listOf(listOf("1", "2", "3"), listOf("4", "5", "6"),
+                listOf("7", "8", "9"), listOf("C", "0", "<"))) {
+            panel.addView(LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER
+                row.forEach { k ->
+                    addView(Button(this@QuietActivity).apply {
+                        setText(k); textSize = 20f
+                        minimumWidth = 200
+                        setOnClickListener { push(k) }
+                    })
+                }
+            })
+        }
+
+        onEscape?.let { (label, action) ->
+            panel.addView(Button(this).apply {
+                setText(label)
+                setOnClickListener { action() }
+            })
+        }
+
+        root.addView(panel)
+        statusPanel = panel
+    }
+
     private fun showStatus(text: String, unlockable: Boolean) {
+        // A BOUND CODE REPLACES THE PASSPHRASE FIELD. Not adds to it: two
+        // ways in on one screen is a person deciding which secret is being
+        // asked for, every time. The passphrase is one button away, which is
+        // where somebody who has forgotten their code will look for it.
+        if (unlockable && passcode.has()) {
+            val left = passcode.attemptsLeft()
+            showKeypad(
+                title = "quite.space",
+                note = unlockMessage ?: if (left <= 3) {
+                    "$left of 10 tries left"
+                } else {
+                    "Four digits keep out somebody who picked up this phone."
+                },
+                digits = passcode.digits(),
+                onComplete = { code -> tryPasscode(code) },
+                onEscape = "Use the passphrase instead" to {
+                    // One press, and the code is out of the way for this
+                    // attempt only — nothing is forgotten by asking.
+                    unlockMessage = null
+                    showPassphraseStatus("Quiet is not running on this device yet.", unlockable = true)
+                },
+            )
+            return
+        }
+        showPassphraseStatus(text, unlockable)
+    }
+
+    /** The passcode attempt, and the four answers it can have. */
+    private fun tryPasscode(code: String) {
+        when (val r = passcode.tryCode(code)) {
+            is PasscodeVault.Attempt.Open -> {
+                // Straight into the ordinary open path — the controller owns
+                // the directory and the lock, exactly as with a typed
+                // passphrase. Nothing about the node knows a code was used.
+                pendingPassphrase = r.passphrase
+                controller.ensureStarted(r.passphrase, null, true)
+            }
+            is PasscodeVault.Attempt.Wrong -> {
+                unlockMessage = "Not that one — ${r.attemptsLeft} of 10 tries left"
+                showStatus("", unlockable = true)
+            }
+            PasscodeVault.Attempt.LockedOut -> {
+                unlockMessage = "Too many tries. The code is gone — " +
+                    "your passphrase still opens everything."
+                showPassphraseStatus("Quiet is not running on this device yet.", unlockable = true)
+            }
+            PasscodeVault.Attempt.Malformed -> {
+                unlockMessage = "That is not a code."
+                showStatus("", unlockable = true)
+            }
+            PasscodeVault.Attempt.Unavailable -> {
+                // The hardware key would not answer — on a locked phone that
+                // is the ordinary reply, not a wrong code. Nothing was spent.
+                unlockMessage = "Unlock the phone first, then try again."
+                showPassphraseStatus("Quiet is not running on this device yet.", unlockable = true)
+            }
+        }
+    }
+
+    private fun showPassphraseStatus(text: String, unlockable: Boolean) {
         web.visibility = View.GONE
         statusPanel?.let { root.removeView(it) }
 
