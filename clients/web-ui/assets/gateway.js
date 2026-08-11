@@ -56,6 +56,7 @@ async function refreshGateway() {
       the problem — nothing above was read from it.</p>`;
     throw err; // still surfaces in the console, where the stack is
   }
+  gwBindActions(box);
   if (GW_PREPARED) renderPrepared();
 }
 
@@ -170,9 +171,19 @@ function gwPresenceBlock(g) {
     // The pin button carries the FINGERPRINT, not a key: the node pins only
     // what it has actually heard, so this cannot be used to trust something
     // that never announced itself.
+    //
+    // The value rides in a data- attribute and the click is caught by one
+    // delegated listener (gwBindActions). It used to be interpolated into
+    // an onclick="…('…')", where esc() — an HTML escaper — could not
+    // defend a JavaScript string: the attribute is HTML-decoded before the
+    // handler is compiled, so an escaped quote became a real one. Here the
+    // same esc() is correct, because an attribute value IS the HTML
+    // context it escapes for, and nothing about it is ever parsed as code.
+    // These strings come off the mesh — a gateway announcement is whatever
+    // a neighbour transmitted.
     const action = gw.trusted
-      ? `<button class="btn-plain" onclick="gwUnpin('${esc(gw.link)}')">unpin</button>`
-      : `<button class="btn-tinted" onclick="gwPin('${esc(gw.fingerprint)}')">pin this gateway</button>`;
+      ? `<button class="btn-plain" data-gw-act="unpin" data-gw-link="${esc(gw.link)}">unpin</button>`
+      : `<button class="btn-tinted" data-gw-act="pin" data-gw-fp="${esc(gw.fingerprint)}">pin this gateway</button>`;
     return `<div class="gw-row"><div><b>${esc(name)}</b>
       <span class="dim mono">${esc(gw.fingerprint)}</span><br>
       <span class="hint">${bits.join(' · ')}</span></div>${action}</div>`;
@@ -203,6 +214,27 @@ function gwPinsBlock(g) {
       'nothing can confirm anyone took them on.</p>');
   }
   return section('trusted gateways', warn + rows.join(''));
+}
+
+/** One delegated listener for the mesh-supplied buttons above.
+ *
+ * Bound to the BOX, which survives every repaint, rather than to the
+ * buttons, which do not — so a row redrawn mid-poll cannot end up with no
+ * handler. Bound exactly once: refreshGateway runs on a poll, and adding
+ * a listener per repaint would fire the action once per elapsed tick.
+ *
+ * Only the two actions named here are reachable. A data-gw-act this
+ * function does not know does nothing, and that closed set is what makes
+ * reading an action back out of the DOM safe at all. */
+function gwBindActions(box) {
+  if (box.dataset.gwBound) return;
+  box.dataset.gwBound = '1';
+  box.addEventListener('click', ev => {
+    const el = ev.target instanceof Element ? ev.target.closest('[data-gw-act]') : null;
+    if (!el || !box.contains(el)) return;
+    if (el.dataset.gwAct === 'unpin') gwUnpin(el.dataset.gwLink || '');
+    else if (el.dataset.gwAct === 'pin') gwPin(el.dataset.gwFp || '');
+  });
 }
 
 async function gwPin(fingerprint) {
@@ -440,10 +472,18 @@ function gwScanResults(knownSegment) {
     if (p.primaryKey) bits.push('primary key ' + p.primaryKey);
     // An RNode is attached with a SEGMENT PHRASE, a Meshtastic node without
     // one — two carriers, two different questions, one row shape.
+    // The port comes off a LOCAL serial scan, so unlike the gateway rows
+    // above nobody remote chooses it — but it is the same construction
+    // (esc() standing inside a JavaScript string, where the attribute's
+    // own HTML decode undoes it), and a shape that is only safe because
+    // of where today's data happens to come from is a shape that breaks
+    // the day somebody reuses it. The value stays in the attribute.
     const action = (p.kind === 'radio')
-      ? `<button class="btn-tinted" onclick="gwAttach('${esc(p.port)}')">attach</button>`
+      ? `<button class="btn-tinted" data-port="${esc(p.port)}"
+          onclick="gwAttach(this.dataset.port)">attach</button>`
       : (p.kind === 'rnode')
-        ? `<button class="btn-tinted" onclick="gwAttachRNode('${esc(p.port)}', ${
+        ? `<button class="btn-tinted" data-port="${esc(p.port)}"
+            onclick="gwAttachRNode(this.dataset.port, ${
             knownSegment ? 'true' : 'false'})">attach</button>`
         : '';
     return `<div class="gw-row"><div>

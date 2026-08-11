@@ -525,8 +525,20 @@ function renderPubBlock(b) {
         b.onclick = () => openSpaceCard(p.text);
         el.appendChild(b); break;
       }
+      // The address is the block author's, and a synced revision is never
+      // re-validated on arrival — so the scheme is checked HERE, through
+      // the same predicate markdown links go through. A refused address
+      // renders as text, exactly as a refused markdown link does: the
+      // reader still sees what was written, and nothing is clickable.
+      const href = MD.safeHref(p.text);
+      if (!href) {
+        const plain = document.createElement('span');
+        plain.className = 'dim';
+        plain.textContent = p.more || p.text || 'link';
+        el.appendChild(plain); break;
+      }
       const a = document.createElement('a');
-      a.href = p.text || '#'; a.target = '_blank'; a.rel = 'noopener noreferrer';
+      a.href = href; a.target = '_blank'; a.rel = 'noopener noreferrer';
       a.textContent = p.more || p.text || 'link'; el.appendChild(a); break;
     }
     case 'separator': {
@@ -569,8 +581,17 @@ function renderPubBlock(b) {
       el.appendChild(grid); break;
     }
     case 'video-link': {
+      // Same rule as the link block: a video-link's address is remote text
+      // until a scheme check says otherwise.
+      const href = MD.safeHref(p.asset);
+      if (!href) {
+        const plain = document.createElement('span');
+        plain.className = 'dim';
+        plain.textContent = '▶ ' + (p.text || 'video');
+        el.appendChild(plain); break;
+      }
       const a = document.createElement('a');
-      a.href = p.asset || '#'; a.target = '_blank'; a.rel = 'noopener noreferrer';
+      a.href = href; a.target = '_blank'; a.rel = 'noopener noreferrer';
       a.textContent = '▶ ' + (p.text || 'video'); el.appendChild(a); break;
     }
     case 'section': case 'stack': case 'columns': case 'hero': {

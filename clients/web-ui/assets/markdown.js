@@ -302,7 +302,34 @@ const MD = (() => {
     return host;
   }
 
-  return { render, into, scriptOf, linkifyInto };
+  /**
+   * The scheme allowlist, for every renderer that builds an anchor itself.
+   *
+   * It lives here because this is where it was already correct, and it is
+   * EXPORTED because being correct in one file was the whole problem: the
+   * link and video-link block renderers assigned p.text straight to .href,
+   * so a published post could carry `javascript:…` and get a click. A
+   * signature proves who wrote a block, never that its URL is a URL — and
+   * the author-side check (checkURL, protocol/publication/validate.go)
+   * runs only when publishing, not when a synced revision arrives.
+   *
+   * Returns a href safe to assign, or '' — the caller then renders plain
+   * text rather than a dead link, which is what markdown already does with
+   * a refused address.
+   *
+   * @param {string|undefined|null} url
+   * @returns {string}
+   */
+  function safeHref(url) {
+    const s = String(url ?? '').trim();
+    // Control characters and whitespace are stripped by the URL parser in
+    // some engines, so "java\nscript:alert(1)" can survive a naive regex.
+    // Test the cleaned string, return the original only when it passes.
+    const cleaned = s.replace(/[\u0000-\u0020\u00a0\u2028\u2029]/g, '');
+    return SAFE_SCHEME.test(cleaned) ? s : '';
+  }
+
+  return { render, into, scriptOf, linkifyInto, safeHref };
 })();
 
 if (typeof window !== 'undefined') window.MD = MD;

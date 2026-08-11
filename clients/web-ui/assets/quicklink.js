@@ -111,7 +111,13 @@ async function qlLoadIssued() {
         return `<div class="ql-row">` +
           `<span class="ql-state ${state}">${state}</span>` +
           `<span class="ql-note">${esc(q.note || 'no note')}</span>` +
-          (live ? `<button class="btn-plain" onclick="qlWithdraw('${esc(q.hint)}')">withdraw</button>` : '') +
+          // The hint is locally minted, so this one was never reachable —
+          // but it is the same shape as the injectable ones (esc() is an
+          // HTML escaper standing in a JavaScript string, which the
+          // attribute's own HTML decode undoes), and leaving it would
+          // leave a template for the next person who copies a row.
+          (live ? `<button class="btn-plain" data-hint="${esc(q.hint)}"
+            onclick="qlWithdraw(this.dataset.hint)">withdraw</button>` : '') +
           `</div>`;
       }).join('');
   } catch { /* the list is a courtesy; its absence is not an error worth shouting */ }

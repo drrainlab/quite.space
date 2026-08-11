@@ -268,14 +268,40 @@ func (a *APIServer) handleGetAsset(w http.ResponseWriter, r *http.Request) {
 // space route and the preview route (PS-3) serve identically because they
 // serve HERE.
 func serveAssetBytes(w http.ResponseWriter, r *http.Request, ref *schemas.AssetRef, aid string, data []byte) {
-	ct := ref.MediaType
-	if _, _, err := mime.ParseMediaType(ct); err != nil {
+	// The declared type is parsed rather than trusted whole: parameters
+	// ("image/png; charset=…") must not smuggle a second opinion past the
+	// allowlist below, so the BASE type is what both the header and the
+	// disposition decision are taken from.
+	ct, _, err := mime.ParseMediaType(ref.MediaType)
+	if err != nil {
 		ct = "application/octet-stream"
 	}
 	w.Header().Set("Content-Type", ct)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+	// Asset bytes are somebody else's data, and the UI opens them as
+	// top-level documents (image zoom is a window.open on this URL, with
+	// the session token in the query string). A document opened here must
+	// therefore be inert: `sandbox` without allow-scripts blocks script
+	// execution outright, which is what stops an asset declared
+	// image/svg+xml — an SVG is an active document, unlike every other
+	// image format — from running script in this origin and reading that
+	// token out of location.search. allow-downloads keeps file attachments
+	// working; nothing else is granted, so the document has no origin, no
+	// storage and no scripting. nosniff alone never covered this: it stops
+	// type GUESSING, and the type here was declared, not guessed.
+	//
+	// Defence in depth, not the fix: schemas.AllowedInlineMIME below is what
+	// keeps the declaration honest in the first place. This header is what
+	// holds if that allowlist is ever widened by somebody who has not read
+	// this comment.
+	w.Header().Set("Content-Security-Policy",
+		"sandbox allow-downloads; default-src 'none'; script-src 'none'; object-src 'none'")
+	// Rendering in place is EARNED by an allowlist, never granted by a
+	// prefix. "image/" used to be enough, and image/svg+xml matches it —
+	// which handed an active document the inline disposition. Anything not
+	// on the list is still served in full, as a download.
 	disp := "attachment"
-	if strings.HasPrefix(ct, "image/") || strings.HasPrefix(ct, "audio/") || strings.HasPrefix(ct, "video/") {
+	if schemas.AllowedInlineMIME(ct) {
 		disp = "inline"
 	}
 	w.Header().Set("Content-Disposition",

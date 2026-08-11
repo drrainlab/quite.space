@@ -212,9 +212,68 @@ func (a *APIServer) Handler() http.Handler {
 	mux.HandleFunc("POST /api/relay/trust", a.auth(a.handleRelayTrust))
 	mux.HandleFunc("POST /api/relay/remeasure", a.auth(a.handleRelayRemeasure))
 	if a.ui != nil {
-		mux.Handle("GET /", http.FileServerFS(a.ui))
+		mux.Handle("GET /", uiSecurityHeaders(http.FileServerFS(a.ui)))
 	}
 	return mux
+}
+
+// uiPolicy is the interface document's Content-Security-Policy.
+//
+// This origin holds the session token and can drive every route above, so
+// script execution here is the whole game: the policy's job is to make an
+// injection worth as little as possible.
+//
+// connect-src is the load-bearing directive. It is what stops injected
+// script from POSTing the log, the token or a space key to somebody else's
+// server — the silent channels (fetch, XHR, WebSocket, beacon) are closed,
+// and img-src/form-action/base-uri close the quiet ones behind them.
+// Top-level navigation remains possible and is deliberately not claimed to
+// be covered: navigate-to left the spec, so `location = "https://…"` still
+// works — noisily, in front of the person.
+//
+// script-src carries 'unsafe-inline' TODAY and should not. index.html
+// declares ~215 inline on* handlers; every one is ours, written into the
+// file with literal arguments, and none is reachable by remote content —
+// so they are not the defect, but they are what a strict script-src would
+// break. Removing them (addEventListener against real function references)
+// is what earns `script-src 'self'`, and it is the one change that would
+// make an injected <script> or javascript: URI inert on its own. Recorded
+// in docs/SECURITY_AUDIT_2026-08.md rather than left as a silent
+// compromise. 'unsafe-eval' is NOT present and must not be added: nothing
+// in the tree needs it, and ADR-013 rests on that.
+//
+// style-src keeps 'unsafe-inline' for the same shape of reason (inline
+// style attributes plus the renderers' own el.style writes). CSS injection
+// is a far smaller prize than script, and the palette/tint values that
+// reach a style are hex-validated at renderers.js:115.
+const uiPolicy = "default-src 'self'; " +
+	"script-src 'self' 'unsafe-inline'; " +
+	"style-src 'self' 'unsafe-inline'; " +
+	"img-src 'self' data: blob:; " +
+	"media-src 'self' blob:; " +
+	"font-src 'self'; " +
+	"connect-src 'self'; " +
+	"object-src 'none'; " +
+	"frame-src 'none'; " +
+	"worker-src 'none'; " +
+	"base-uri 'self'; " +
+	"form-action 'self'; " +
+	"frame-ancestors 'none'"
+
+// uiSecurityHeaders serves the interface under uiPolicy. The headers ride
+// on the document rather than a <meta> tag so that frame-ancestors and
+// X-Frame-Options apply at all — a meta CSP silently ignores both.
+func uiSecurityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("Content-Security-Policy", uiPolicy)
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "DENY")
+		// The token rides in query strings on media URLs (an <img> cannot
+		// send a header). Keep it out of the Referer of anything we link to.
+		h.Set("Referrer-Policy", "no-referrer")
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (a *APIServer) auth(next http.HandlerFunc) http.HandlerFunc {

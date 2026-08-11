@@ -500,6 +500,9 @@ function relayIntervalField() {
   return Math.min(n, 3600);
 }
 function syncSettingsUI() {
+  const lang = (typeof localeName === 'function') ? localeName() : 'en';
+  document.querySelectorAll('#setLang button').forEach(b =>
+    b.classList.toggle('sel', b.dataset.v === lang));
   const theme = localStorage.getItem('qp.theme') || 'dark';
   const preset = localStorage.getItem('qp.preset') || 'quiet-glass';
   document.querySelectorAll('#setTheme button').forEach(b =>
@@ -2237,13 +2240,39 @@ let presenceLive = '';   // the state the node reports for us, echoed on the but
 let presenceUntil = 0;   // epoch seconds, derived from the signed claim's expiry
 let presenceTimer = null;
 
-/** Rebuild the menu for the space's declared vocabulary. */
+/** Rebuild the menu for the space's declared vocabulary.
+ *
+ * The vocabulary belongs to the SPACE, so these strings arrive from
+ * whoever owns it — through the manifest's declared labels, which bound
+ * how many labels there are and nothing about what is in them. They are
+ * therefore built as nodes with textContent and bound with a real
+ * listener, never composed into markup.
+ *
+ * The bug this replaces is worth naming, because esc() looks like it was
+ * doing the job: the old line put esc(s) inside onclick="setPresence('…')",
+ * and esc() escapes for HTML. The attribute is parsed as HTML FIRST, so
+ * &#39; became a plain quote again before the handler was ever compiled as
+ * JavaScript — closing the string and running whatever followed. An
+ * HTML escaper cannot protect a JavaScript context; the fix is to stop
+ * having a JavaScript context in the markup at all. */
 function presenceSetStates(states) {
   presenceStates = states;
   const menu = document.getElementById('presenceMenu');
-  menu.innerHTML = states.map(s =>
-    `<button type="button" role="menuitem" onclick="setPresence('${esc(s)}')">${esc(s)}</button>`
-  ).join('') || '<div class="picker-empty">this space declares no presence states</div>';
+  menu.replaceChildren();
+  if (!states.length) {
+    const empty = document.createElement('div');
+    empty.className = 'picker-empty';
+    empty.textContent = 'this space declares no presence states';
+    menu.appendChild(empty);
+  }
+  for (const s of states) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.setAttribute('role', 'menuitem');
+    b.textContent = s;
+    b.addEventListener('click', () => setPresence(s));
+    menu.appendChild(b);
+  }
   document.getElementById('presencePicker').classList.toggle('none', !states.length);
 }
 
@@ -3848,8 +3877,16 @@ function renderFile(e) {
 function renderLink(e) {
   const card = document.createElement('div');
   card.className = 'linkcard';
-  const a = document.createElement('a');
-  a.href = e.url; a.target = '_blank'; a.rel = 'noopener noreferrer';
+  // e.url is whoever posted the entry's string. Through the same scheme
+  // check as every other link the client draws — a refused address stays
+  // readable and stops being clickable, rather than disappearing.
+  const href = MD.safeHref(e.url);
+  const a = document.createElement(href ? 'a' : 'span');
+  if (href) {
+    a.setAttribute('href', href);
+    a.setAttribute('target', '_blank');
+    a.setAttribute('rel', 'noopener noreferrer');
+  }
   a.textContent = e.title || e.url;
   card.appendChild(a);
   if (e.description) card.appendChild(textNode('meta', e.description));

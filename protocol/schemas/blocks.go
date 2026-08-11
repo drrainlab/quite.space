@@ -483,6 +483,41 @@ func AllowedPreviewMIME(mime string) bool {
 	return false
 }
 
+// AllowedInlineMIME says whether a stored asset may be RENDERED IN PLACE,
+// carrying AllowedPreviewMIME's doctrine — a picture is pixels, never an
+// active document — from previews to every asset the node serves.
+//
+// This deliberately does NOT restrict what may be uploaded or shared. A
+// person may still send any file of any type; what an unlisted type loses
+// is only the right to be handed to the browser as something to display,
+// and it is served as a download instead. Getting that the wrong way round
+// — an allowlist on upload — would have made the app refuse ordinary files
+// to fix a rendering problem.
+//
+// SVG's absence is the point of the function. Every other image format is
+// a bitmap the browser decodes; an SVG is a DOCUMENT that may carry script
+// and, opened at its own URL in this origin, would run it. The type was
+// attacker-declared (media_type travels with the asset), so nosniff never
+// helped: it prevents guessing, and nothing here was guessed.
+//
+// Unknown-but-harmless types (a new codec, an exotic container) degrade to
+// a download rather than an error. That is the honest failure direction:
+// a file the person can still open by hand, instead of a rendering surface
+// nobody reviewed.
+func AllowedInlineMIME(mime string) bool {
+	switch mime {
+	case "image/jpeg", "image/png", "image/webp", "image/gif", "image/avif",
+		"image/bmp", "image/x-icon", "image/heic", "image/heif":
+		return true
+	case "audio/mpeg", "audio/mp4", "audio/aac", "audio/ogg", "audio/opus",
+		"audio/wav", "audio/x-wav", "audio/webm", "audio/flac", "audio/x-flac":
+		return true
+	case "video/mp4", "video/webm", "video/ogg", "video/quicktime":
+		return true
+	}
+	return false
+}
+
 func validatePreview(mime string, data []byte) error {
 	if len(data) == 0 {
 		return nil

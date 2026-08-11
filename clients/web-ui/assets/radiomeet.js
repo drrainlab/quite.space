@@ -15,6 +15,22 @@
 
 let rmTimer = null;
 
+/** Read a button's own data- value instead of baking it into the handler.
+ *
+ * Everything on this screen — device ids, space ids, the name a peer calls
+ * itself — arrived over the air and is attacker-shaped by definition. An
+ * attribute value is escaped HTML and stays data; a handler body is code
+ * the browser HTML-decodes before compiling, which is exactly how an
+ * escaped quote turns back into a real one. So the values live in the
+ * attribute and the handler reads them out.
+ *
+ * @param {Element} el
+ * @param {string} name
+ * @returns {string} */
+function rmArg(el, name) {
+  return (el instanceof HTMLElement && el.dataset[name]) || '';
+}
+
 function openRadioMeet() {
   const dlg = /** @type {HTMLDialogElement} */ (document.getElementById('dlgRadioMeet'));
   if (!dlg) return;
@@ -132,11 +148,19 @@ function rmArrivedBlock(held) {
     }
   }
   if (!arrived.length) return '';
+  // Ids and names here came off the air — a radio offer is whatever a
+  // neighbour transmitted. They ride in data- attributes and are read back
+  // with rmArg(this), never interpolated into the handler: esc() escapes
+  // for HTML, and an onclick body is HTML-decoded BEFORE it is compiled as
+  // JavaScript, so an escaped quote would have become a real one there.
+  // The data-dev/startLineOverRadio(this) rows below already worked this
+  // way; these three did not.
   return arrived.map(a => `<div class="gw-section"><h4>${
     esc(t('radio.meet.arrived_title'))}</h4>
     <p class="hint">${esc(t('radio.meet.arrived', { who: a.who }))}</p>
-    <div class="row"><button class="btn-tinted" onclick="rmOpenSpace('${
-      esc(a.space)}')">${esc(t('radio.meet.open_line'))}</button></div></div>`).join('');
+    <div class="row"><button class="btn-tinted" data-space="${esc(a.space)}"
+      onclick="rmOpenSpace(rmArg(this,'space'))">${
+      esc(t('radio.meet.open_line'))}</button></div></div>`).join('');
 }
 
 // Invitations come FIRST, because an invitation is somebody waiting for an
@@ -146,8 +170,10 @@ function rmOffersBlock(offers) {
   const rows = offers.map(o => `
     <div class="gw-row">
       <span>${esc(t('radio.meet.offer', { from: o.from || '?', space: o.title || o.space.slice(0, 8) }))}</span>
-      <button class="btn-tinted" onclick="acceptRadioOffer('${esc(o.id)}','${
-        esc(o.space || '')}','${esc(o.from || '')}')">${esc(t('radio.meet.accept'))}</button>
+      <button class="btn-tinted" data-oid="${esc(o.id)}" data-space="${
+        esc(o.space || '')}" data-from="${esc(o.from || '')}"
+        onclick="acceptRadioOffer(rmArg(this,'oid'),rmArg(this,'space'),rmArg(this,'from'))">${
+        esc(t('radio.meet.accept'))}</button>
     </div>`).join('');
   return `<div class="gw-section"><h4>${esc(t('radio.meet.offers'))}</h4>
     <p class="hint">${esc(t('radio.meet.offers_hint'))}</p>${rows}</div>`;
@@ -231,7 +257,8 @@ function rmNeighboursBlock(list, held) {
     // way into it, not another button that would offer it again.
     const done = inv && inv.state === 'accepted' && held.has(inv.space);
     const button = done
-      ? `<button class="btn-tinted" onclick="rmOpenSpace('${esc(inv.space)}')">${
+      ? `<button class="btn-tinted" data-space="${esc(inv.space)}"
+          onclick="rmOpenSpace(rmArg(this,'space'))">${
           esc(t('radio.meet.open_line'))}</button>`
       : act
         ? `<button class="btn-tinted" data-dev="${esc(n.device)}" ${act.disabled ? 'disabled' : ''}
