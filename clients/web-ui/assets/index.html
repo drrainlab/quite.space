@@ -290,6 +290,21 @@
   <button onclick="dlgVoiceReview.close()">discard</button></div>
 </dialog>
 
+<!-- The media viewer.
+     It used to be window.open() on the asset URL, which hands the file to the
+     browser's own viewer: on a phone that is the picture at its natural size,
+     scrolled, with no way back into the app and nothing to save it with. A
+     dialog costs almost nothing here and gets the back gesture for free —
+     armBackClosesDialogs watches every <dialog> in this document, which is
+     also why this one is DECLARED rather than built in script. -->
+<dialog id="dlgViewer" class="viewer">
+  <div class="viewer-bar">
+    <button class="viewer-btn" onclick="dlgViewer.close()" aria-label="Close">✕</button>
+    <span class="viewer-name" id="viewerName"></span>
+    <a class="viewer-btn" id="viewerSave" download>Save</a>
+  </div>
+  <div class="viewer-stage" id="viewerStage"></div>
+</dialog>
 <dialog id="dlgLink">
   <h3>share a link</h3>
   <input id="linkURL" placeholder="https://…">
@@ -648,7 +663,7 @@
     <!-- Shown only where a host is listening: on a desktop browser there are
          no system notifications to have a policy about. -->
     <button data-cat="notifications" id="setTabNotifications" style="display:none"
-            onclick="showSettingsCat('notifications'); notifSyncUI()">Notifications</button>
+            onclick="showSettingsCat('notifications'); notifSyncUI(); unlockSyncUI()">This device</button>
   </div>
   <!-- The Radio tab IS the radio screen. It used to be a paragraph and a
        button that closed Settings and opened a second dialog holding the
@@ -754,11 +769,36 @@
   </div>
   </div>
   <div class="settings-cat" data-cat="relay">
+  <!-- The transport policy governs the relay, the local network AND the
+       radio, so it sits above all of them rather than inside any one tab's
+       subject. It applies the moment it is pressed: a switch that says
+       "nothing leaves this device" and then waits for a Save button would be
+       telling the truth only after a second press. -->
+  <div class="settings-sec">
+    <p class="hint">Ways out of this device</p>
+    <!-- SEGMENTED, not a plain row: `.sel` is only styled inside .segmented,
+         so a row of btn-plain shows no sign of which one is chosen — which is
+         unusable for a switch whose whole job is to say what is in force. -->
+    <div class="segmented" id="connModeRow">
+      <button data-v="auto" onclick="setConnMode('auto')">Auto</button>
+      <!-- "Internet" and "Radio", not "Internet only": under a header that
+           already says these are the WAYS OUT, the word "only" is what makes
+           the row wrap on a phone, and the note below says which doors each
+           choice closes anyway. -->
+      <button data-v="internet" onclick="setConnMode('internet')">Internet</button>
+      <button data-v="radio" onclick="setConnMode('radio')">Radio</button>
+      <button data-v="offline" onclick="setConnMode('offline')">Offline</button>
+    </div>
+    <p class="hint" id="connModeNote" style="margin-left:4px"></p>
+  </div>
   <div class="settings-sec">
     <p class="hint">Sync when off your network</p>
-    <div class="row" id="relayModeRow">
-      <button data-v="automatic" class="btn-plain" onclick="setRelayMode('automatic')">Automatic</button>
-      <button data-v="custom" class="btn-plain" onclick="setRelayMode('custom')">Custom</button>
+    <!-- Same fix as the row above, and the same bug it had: this control has
+         been marking its choice with `.sel` since RR-0 and `.sel` has never
+         been styled outside .segmented, so neither option ever looked picked. -->
+    <div class="segmented" id="relayModeRow">
+      <button data-v="automatic" onclick="setRelayMode('automatic')">Automatic</button>
+      <button data-v="custom" onclick="setRelayMode('custom')">Custom</button>
     </div>
     <p class="hint" id="relayModeNote" style="margin-left:4px"></p>
     <div class="list">
@@ -797,6 +837,32 @@
        every notification listener the person has ever granted access to,
        and that is the fact the choice is actually about. -->
   <div class="settings-cat" data-cat="notifications">
+  <!-- FIRST IN THE TAB, because it is the only setting here that changes what
+       OTHER PEOPLE can do. It sat under the notification policy in a tab
+       called "Notifications", where somebody looking for a connection setting
+       had no reason to look — which is exactly what happened during the beta.
+       The tab is "This device" for the same reason. -->
+  <div class="settings-sec">
+    <p class="hint">Staying connected</p>
+    <div class="segmented" id="stayMode">
+      <button data-v="off" onclick="stayPick(false)">Off</button>
+      <button data-v="on" onclick="stayPick(true)">Stay connected</button>
+    </div>
+    <p class="hint" style="margin-left:4px">While this is on, Quiet holds its connection even when you are not
+      looking at it, and Android shows a permanent notice saying so. It uses
+      battery.</p>
+    <!-- THE HALF NOBODY WAS TOLD. Photos, voice notes and video are not
+         carried by the relay — only the message that mentions them is — so
+         the bytes live on the device that sent them until somebody opens the
+         card. With this off, a phone that locks takes them with it, and the
+         person you sent them to sees a picture that never arrives. That was
+         reported as a bug and it was this setting. -->
+    <p class="hint" style="margin-left:4px">It also decides whether photos, voice and video <em>you</em> sent stay
+      openable. Their bytes live on this device, not on a relay — so with this
+      on, people can open them whenever; with it off, only while your app is
+      awake and connected.</p>
+    <p class="hint warn" id="stayMsg" style="margin-left:4px"></p>
+  </div>
   <div class="settings-sec">
     <p class="hint">What notifications may show</p>
     <div class="segmented" id="notifPolicy">
@@ -806,17 +872,19 @@
     </div>
     <p class="hint" id="notifPolicyWhat" style="margin-left:4px"></p>
   </div>
-  <div class="settings-sec">
-    <p class="hint">Staying connected</p>
-    <div class="segmented" id="stayMode">
-      <button data-v="off" onclick="stayPick(false)">Off</button>
-      <button data-v="on" onclick="stayPick(true)">Stay connected</button>
+  <!-- Shown only where a passphrase is actually remembered, which is only on
+       a host that can keep one. Somebody who types it every launch has
+       nothing here to switch off, and a dead row explaining that would be
+       worse than no row. -->
+  <div class="settings-sec" id="unlockSec" hidden>
+    <p class="hint">Opening this app</p>
+    <p class="hint" style="margin-left:4px">Your passphrase is saved on this device, in Android's own keystore, so
+      Quiet opens without asking. It cannot be copied off the phone — but
+      anyone who can unlock the phone can open Quiet.</p>
+    <div class="row">
+      <button class="btn-plain" onclick="forgetPassphrase()">Ask for the passphrase every time</button>
     </div>
-    <p class="hint" style="margin-left:4px">While this is on, Quiet holds its connection even when you are not
-      looking at it, and Android shows a permanent notice saying so. It uses
-      battery. With it off, messages arrive while the app is running and are
-      caught up when you come back.</p>
-    <p class="hint warn" id="stayMsg" style="margin-left:4px"></p>
+    <p class="hint warn" id="unlockMsg" style="margin-left:4px"></p>
   </div>
   <div class="settings-sec">
     <p class="hint" style="margin-left:4px">A notification is not private. Its text appears on the lock screen and is

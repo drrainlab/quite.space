@@ -128,8 +128,23 @@ const I18N = {
     'radio.meet.failed': ({ why }) => `Did not work: ${why}`,
     'radio.meet.unavailable': ({ why }) => `Cannot read the segment: ${why}`,
 
+    // transport policy. Each line says what is USED and what is not, because
+    // the difference between "prefers" and "never opens" is the whole reason
+    // somebody reaches for this switch.
+    'conn.mode.auto': 'Whatever is available: a relay, the local network, the radio.',
+    'conn.mode.internet': 'A relay and the local network. The radio stays off the air.',
+    'conn.mode.radio': 'The radio only. No relay connection is opened at all.',
+    'conn.mode.offline': 'Nothing leaves this device. What you write is kept and waits.',
+    // What the CHIP says when the policy, not the network, is the reason.
+    // "Not connected" would send somebody looking for a fault they do not
+    // have; both of these name the choice that is in force.
+    'conn.policy.offline': 'Offline — by your setting',
+    'conn.policy.unreadable': 'Held — transport setting unreadable',
+    'conn.mode.unreadable': ({ mode }) =>
+      `This device has "${mode}" stored, which this build does not understand — so nothing is sent until you choose one above.`,
+
     // relay topology (RR wave)
-    'relay.mode.auto': 'Relays are chosen by measuring the real path from this device. The best one is used, a second is kept as a backup.',
+    'relay.mode.auto':'Relays are chosen by measuring the real path from this device. The best one is used, a second is kept as a backup.',
     'relay.mode.custom': 'Only the relay you name below is used — never an official one behind your back.',
     'relay.saved.auto': 'saved — measuring relays…',
     'relay.saved.custom': 'saved — syncing through',
@@ -181,7 +196,10 @@ const I18N = {
     'prev.media_unavailable': 'media is not loaded in a preview \u2014 follow the space to see it',
     'prev.load_audio': '\u25b6 Load audio',
     'prev.load_video': '\u25b6 Load video',
-    'prev.looking': 'Looking for a holder\u2026',
+    // "Holder" is this protocol's word, not a reader's: somebody looking at a
+    // picture that has not arrived wants to know it is LOADING first, and why
+    // it is taking a moment second.
+    'prev.looking': 'Loading media \u2014 looking for a peer who has it\u2026',
     'prev.progress': ({ got, total }) => `Loading media\u2026 ${got} of ${total} chunks`,
     'prev.loading': 'Loading\u2026',
     'prev.download_file': 'Download file',
@@ -346,8 +364,16 @@ const I18N = {
     // an app say so; these say it in the interface too, rather than leaving
     // the system's own notice to explain a choice nobody was told about.
     'stay.on': 'On. Android will show a permanent notice while it lasts.',
-    'stay.off': 'Off. Messages arrive while Quiet is running.',
+    // Turning it OFF now has a consequence for other people, so switching it
+    // off is where that is said — once, plainly, at the moment it becomes true.
+    'stay.off': 'Off. Messages arrive while Quiet is running, and photos you '
+      + 'sent can only be opened while it is.',
     'stay.failed': 'This device cannot hold the mode.',
+    // Not "failed": nothing broke, and the sentence has to survive being read
+    // by somebody who did not press anything. It names who switched it off
+    // and leaves trying again to them.
+    'stay.refused': 'Android would not let this run, so it is off. '
+      + 'Press "Stay connected" to try again.',
 
     // deleting a space (SD-0). THE WORDS ARE THE FEATURE: every one of these
     // strings exists to stop somebody assuming a promise the system cannot

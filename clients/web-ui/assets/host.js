@@ -81,6 +81,34 @@ const HOST = (() => {
     setStayConnected(on) {
       return call('setStayConnected', !!on) === true;
     },
+
+    /**
+     * Whether this device opens without asking for the passphrase.
+     *
+     * The one call here that reads rather than tells, and it is a boolean
+     * about the device in front of the person — see HostBridge for why that
+     * is not the same as the getters the bridge refuses to have. On an older
+     * host without the verb, `call` answers false, which is the safe reading:
+     * the setting simply does not appear.
+     */
+    unlockRemembered() {
+      return call('unlockRemembered') === true;
+    },
+
+    /** Ask again next launch. */
+    forgetPassphrase() {
+      return call('forgetPassphrase') === true;
+    },
+
+    /**
+     * Whether the platform refused to run "stay connected".
+     *
+     * False on a host that does not know the verb, which is the right answer
+     * for one that never refused anything.
+     */
+    stayRefused() {
+      return call('stayRefused') === true;
+    },
   };
 })();
 
@@ -157,6 +185,28 @@ function notifSyncUI() {
   if (what) what.textContent = t('notif.' + notifChoice);
 }
 
+// ---- a remembered passphrase ----
+//
+// The host keeps it so the app opens without asking. The whole reason that is
+// defensible is that it can be undone from here — and the row appears only
+// where there is actually something to undo.
+function unlockSyncUI() {
+  const sec = document.getElementById('unlockSec');
+  if (!sec) return;
+  sec.hidden = !HOST.unlockRemembered();
+}
+
+function forgetPassphrase() {
+  const msg = document.getElementById('unlockMsg');
+  const ok = HOST.forgetPassphrase();
+  if (msg) {
+    msg.textContent = ok
+      ? 'Forgotten. Quiet will ask for it the next time it opens.'
+      : 'This device could not forget it — nothing changed.';
+  }
+  if (ok) unlockSyncUI();
+}
+
 // The tab exists only where something is listening.
 if (typeof document !== 'undefined') {
   document.addEventListener('DOMContentLoaded', () => {
@@ -164,17 +214,30 @@ if (typeof document !== 'undefined') {
     if (tab && HOST.present) tab.style.display = '';
     notifSyncUI();
     staySyncUI();
+    unlockSyncUI();
   });
 }
 
 
 // ---- the "stay connected" mode (AR-1c) ----
 //
-// ASKED FOR, NEVER ASSUMED. Holding a connection costs battery, and Android
-// makes an app say so with a permanent notification for exactly that reason.
-// So the switch starts off, the sentence beside it says what it buys and what
-// it costs, and nothing here turns it on by itself.
-let stayChoice = localStorage.getItem('stay.connected.echo') === '1';
+// ON BY DEFAULT, AND THE COST IS SAID OUT LOUD. It used to start off, on the
+// argument that holding a connection spends somebody's battery on a decision
+// they did not make. What that argument missed is that the mode is not only
+// about receiving: media bytes never travel to the relay, so a phone with
+// this off takes every photo it has ever sent offline with it, and the person
+// on the other side is left looking at a picture that never arrives with no
+// way to tell why. A default that quietly breaks other people's screens is
+// not the conservative choice it looks like.
+//
+// So it starts on, Android shows the permanent notice it requires, the
+// sentence beside the switch says what it buys and what it costs, and turning
+// it off is the first thing in the tab.
+//
+// THIS IS AN ECHO, NOT THE SETTING. The host owns the mode; this mirrors it
+// so the segmented control is painted correctly before any call is made, and
+// its default has to match the host's (RuntimeController.availabilityRequested).
+let stayChoice = (localStorage.getItem('stay.connected.echo') ?? '1') === '1';
 
 function stayPick(on) {
   const msg = document.getElementById('stayMsg');
@@ -189,5 +252,27 @@ function stayPick(on) {
 }
 
 function staySyncUI() {
+  // THE HOST IS THE TRUTH; THIS IS AN ECHO, and a refusal is where the two
+  // come apart. Pressing "Stay connected" succeeds here — the bridge answers
+  // before the service has tried to start — and the platform may refuse it a
+  // moment later, which turns the mode off over there while this side still
+  // remembers a yes. The control would then show "Stay connected" over a mode
+  // that is not running, which is the one thing a switch must never do.
+  const refused = HOST.stayRefused();
+  if (refused && stayChoice) {
+    stayChoice = false;
+    localStorage.setItem('stay.connected.echo', '0');
+  }
   pickSeg('stayMode', stayChoice ? 'on' : 'off');
+  // WHO PUT IT THERE. A refused start turns the mode off so nothing retries in
+  // a loop, and that leaves a control sitting in a position the person did not
+  // choose, reading as their own decision or as a setting that does nothing.
+  // Said only while it is true — the next successful start clears it — so it
+  // describes now, not a bad afternoon last week.
+  const msg = document.getElementById('stayMsg');
+  if (!msg) return;
+  if (refused) msg.textContent = t('stay.refused');
+  // Only a refusal is an alarm. The ordinary "On."/"Off." this element also
+  // carries is a result, and colouring those would cry wolf on every press.
+  msg.classList.toggle('alarm', refused);
 }

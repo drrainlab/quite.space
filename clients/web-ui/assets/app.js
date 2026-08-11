@@ -272,6 +272,11 @@ async function openSettings() {
     document.getElementById('relayInfo').textContent = '';
     relayMode = s.relay_mode || 'custom';
     syncRelayModeUI();
+    // Unset means Auto — the fresh-install default, and the node reads it the
+    // same way (modeFor). A mode this build does not recognise is left
+    // showing nothing selected rather than mislabelled as Auto.
+    connMode = ((s.connectivity || {}).mode) || 'auto';
+    syncConnModeUI();
     renderRelayDiagnostics();
     renderRelayPublicPanel();
   } catch (e) { /* settings unavailable */ }
@@ -295,6 +300,46 @@ function showSettingsCat(cat) {
     el.classList.toggle('active', el.dataset.cat === cat));
   document.querySelectorAll('#setTabs button').forEach(b =>
     b.classList.toggle('sel', b.dataset.cat === cat));
+}
+
+// ---- transport policy: which ways out of this device are permitted ----
+//
+// The node has had this all along and enforces it before a connection is
+// opened (TransportAllowed); what was missing was any way to say it. Auto is
+// the default and picks for itself, which is right until somebody has a
+// reason — a bill, a battery, a border — to decide instead.
+let connMode = 'auto';
+
+function syncConnModeUI() {
+  document.querySelectorAll('#connModeRow button').forEach(b =>
+    b.classList.toggle('sel', b.dataset.v === connMode));
+  const note = document.getElementById('connModeNote');
+  if (!note) return;
+  // A stored mode this build does not know is not lit as anything and is not
+  // described as anything — the node's own reading of it is "hold", and the
+  // honest screen for that is the words, not a selected button.
+  const known = ['auto', 'internet', 'radio', 'offline'].includes(connMode);
+  note.textContent = known ? t('conn.mode.' + connMode)
+    : t('conn.mode.unreadable', { mode: connMode });
+}
+
+// Applied on press, not on Save. Anything else would leave a window where the
+// screen says one thing and the radio does another.
+async function setConnMode(mode) {
+  const was = connMode;
+  connMode = mode;
+  syncConnModeUI();
+  try {
+    await api('/api/settings', { method: 'POST',
+      body: JSON.stringify({ ...currentSettingsBody(), connectivity: { mode } }) });
+  } catch (e) {
+    // The node refused, so nothing changed there — say so and go back to
+    // what is actually in force rather than leaving the choice lit.
+    connMode = was;
+    syncConnModeUI();
+    const note = document.getElementById('connModeNote');
+    if (note) note.textContent = e.message;
+  }
 }
 
 // ---- relay mode, trust and diagnostics (RR wave) ----
@@ -608,7 +653,9 @@ if (window.matchMedia) {
  * alone.
  */
 function relayVerdict(base, rs) {
-  if (!rs || !rs.active) return null;
+  // Silent by policy is not a verdict about the relay at all — the person
+  // already knows, because they chose it, and connectionSummary is saying so.
+  if (!rs || !rs.active || rs.blocked) return null;
   if (!rs.last_error) {
     // The light breathes in the sync's own rhythm — the pulse IS the
     // cadence, not decoration. Clamped so a 2s cycle does not strobe and a
@@ -668,6 +715,19 @@ function applyComposerRail() {
 }
 
 function showScreen(which) {
+  // ON A PHONE, NAVIGATING CLOSES THE PANE IT WAS PRESSED IN.
+  //
+  // The four nav buttons MOVE into the hamburger pane on a narrow screen
+  // (placeNavExtras), so "discover" is pressed inside the pane — and nothing
+  // took it away afterwards. The catalog opened behind a panel still covering
+  // it, and the only way out was the scrim or the back gesture.
+  //
+  // Here rather than at each button, because this function is the one place
+  // that knows the middle column has changed what it shows, and all four of
+  // its callers are deliberate navigations. Through setPanel so the history
+  // entry the pane pushed is CONSUMED — closing it any other way leaves an
+  // entry behind, and the person's next back press does nothing visible.
+  if (compactScreen() && compactPane) setPanel(compactPane, true);
   if (which !== 'catalog' && typeof CAT !== 'undefined' && CAT.leaving) CAT.leaving();
   if (which !== 'signals' && typeof qrLeaving === 'function') qrLeaving();
   const screens = { conversation: 'content', catalog: 'catalogScreen', signals: 'signalsScreen' };
@@ -679,27 +739,48 @@ function showScreen(which) {
 
 function connectionSummary(status) {
   const lan = status.lan, radio = status.radio || {};
+  // THE POLICY IS READ BEFORE THE SOCKETS. A listener that exists but may not
+  // be used is not a way out, and naming it would tell somebody who chose
+  // Offline that their choice did not take. The node enforces this properly
+  // (TransportAllowed, before a connection is opened); here it only has to
+  // stop the chip describing a door that is bolted.
+  const mode = (status.connectivity || {}).mode || 'auto';
+  if ((status.connectivity || {}).unreadable) {
+    return { text: t('conn.policy.unreadable'), cls: 'off', kind: 'off' };
+  }
+  if (mode === 'offline') {
+    return { text: t('conn.policy.offline'), cls: 'off', kind: 'off' };
+  }
+  const mayRadio = mode === 'auto' || mode === 'radio';
+  const mayLocal = mode === 'auto' || mode === 'internet';
   // A MODEM IS NOT A PERSON. `connected` says a radio is plugged into this
   // device; peer_links says how many peers it can actually reach. Treating
   // the first as a peer count made a modem with an empty segment announce
   // "Radio · 1" — one peer, which was the modem itself.
   const onAir = radio.connected ? (radio.peer_links || 0) : 0;
   let state = t('conn.off'), cls = 'off', kind = 'off', peers = 0;
-  // ORDER IS THE CLAIM. This names how a message travels NOW, and a live
-  // local link is what carries whenever there is one — so it is asked
-  // first. The radio used to win merely by being attached, which meant that
-  // when Wi-Fi came back the messages visibly went the fast way while the
-  // chip went on saying radio. Seen on a phone with both up at once.
-  if (lan.peers > 0) {
-    state = t('conn.direct'); cls = ''; kind = 'direct'; peers = lan.peers;
-  } else if (radio.connected) {
+  // ORDER IS THE CLAIM, and this function names the FALLBACK ladder: the
+  // relay outranks everything here and is decided by the caller, so what is
+  // left is how this device reaches anybody once the relay cannot.
+  //
+  // Radio is asked first, because attaching a modem is a deliberate act with
+  // a cable in it — somebody who plugged one in and lost the relay wants to
+  // be told the radio is what they have. This is a REVERSAL: local links used
+  // to come first, to stop the chip saying "radio" while Wi-Fi quietly
+  // carried the traffic. Relay-first absorbs that case, since Wi-Fi that
+  // works reaches the relay and the chip says relay — what remains is a
+  // local network with no way out, where naming the radio is the useful
+  // answer even though a peer across the room is still reached directly.
+  if (radio.connected && mayRadio) {
     // A radio that is attached IS how this device is reachable, whether or
     // not anybody has answered yet — so the mark says radio and the COUNT
     // says whether anyone is confirmed. Falling through to "listening" here
     // would tell somebody alone in a field with a modem in their hand that
     // they have no radio at all.
     state = t('conn.radio'); cls = 'mesh'; kind = 'radio'; peers = onAir;
-  } else if (lan.listening) {
+  } else if (lan.peers > 0 && mayLocal) {
+    state = t('conn.direct'); cls = ''; kind = 'direct'; peers = lan.peers;
+  } else if (lan.listening && mayLocal) {
     state = t('conn.lan'); cls = ''; kind = 'lan';
   }
   // The count belongs to the path being NAMED, not to every path at once.
@@ -833,6 +914,10 @@ async function refresh() {
   }
   try {
     status = await api('/api/status');
+    // The build's own ceiling, taken from the node rather than repeated
+    // here. Zero until the first poll answers, which onFilePicked reads as
+    // "not known yet" and lets the server decide, exactly as before.
+    if (status.max_asset_bytes) maxAssetBytes = status.max_asset_bytes;
     // Somebody may be waiting at a door. Folded into the refresh that was
     // happening anyway rather than a poll of its own.
     if (typeof refreshDoor === 'function') refreshDoor();
@@ -858,23 +943,26 @@ async function refresh() {
       chipText = s.text;
       chipKind = s.kind;
       chipCls = 'conn-chip ' + s.cls + (s.cls === 'off' ? '' : ' up');
-      // A live local link is the end of the question: nothing outranks
-      // somebody in the same room, so the relay is not even asked.
-      if (chipKind !== 'direct') {
-        try {
-          const rs = await api('/api/relay/status');
-          const d = relayVerdict(chipKind, rs);
-          if (d) {
-            // text: null means "keep what you had, but carry my reason" —
-            // the relay is unwell and something better is already named.
-            if (d.text) {
-              chipText = d.text; chipCls = d.cls; chipKind = d.kind;
-              pulseMs = d.pulseMs || pulseMs;
-            }
-            chipWhy = d.why || chipWhy;
+      // THE RELAY IS ASKED FIRST, ALWAYS. It is the path that reaches people
+      // who are not here — the other ways reach whoever happens to be in
+      // range — so a working relay is the headline and everything below it
+      // is what this device falls back to. It used to be skipped whenever a
+      // local link existed, on the argument that nothing outranks somebody
+      // in the same room; that made the chip report the smallest true fact
+      // instead of the largest one.
+      try {
+        const rs = await api('/api/relay/status');
+        const d = relayVerdict(chipKind, rs);
+        if (d) {
+          // text: null means "keep what you had, but carry my reason" —
+          // the relay is unwell and something else is already named.
+          if (d.text) {
+            chipText = d.text; chipCls = d.cls; chipKind = d.kind;
+            pulseMs = d.pulseMs || pulseMs;
           }
-        } catch (e) { /* relay status optional */ }
-      }
+          chipWhy = d.why || chipWhy;
+        }
+      } catch (e) { /* relay status optional */ }
     }
     const conn = document.getElementById('conn');
     const cText = document.getElementById('connText');
@@ -2990,6 +3078,34 @@ function textNode(cls, s) {
 // broken — the only true statement is that nobody is currently answering.
 const UNAVAILABLE_TEXT = 'media temporarily unavailable — no online source';
 
+// WHO we are waiting for, when the entry knows.
+//
+// The bytes of a photo are not on the relay — only the message that mentions
+// them is — so they live on the device that sent them until somebody opens
+// the card. "No online source" is therefore true and useless: it reads as a
+// fault in the app, when the fact is that one particular person's phone is
+// asleep. Naming them turns a broken-looking picture into an ordinary wait.
+//
+// Falls back to the plain sentence whenever the author is unknown or is
+// ourselves — "waiting for you" would be nonsense on a device that is plainly
+// running, and it happens for a fetch of our own media from a second device.
+// STILL LOOKING AND GAVE UP ARE DIFFERENT FACTS, and the node has always
+// known which: `fetching` + no_source means the loop is running and nobody
+// has answered YET, `failed` + no_source means it stopped. Both used to
+// render the same sentence, so the one question a person actually has —
+// "is it still trying, or is that it?" — had no answer on the screen.
+function waitingForText(e, live) {
+  const who = (!e || e.mine || PROTOCOL) ? '' : (e.author_name || '');
+  if (live) {
+    return who
+      ? `still looking for ${who}'s device…`
+      : 'still looking for someone who has this…';
+  }
+  return who
+    ? `${who}'s device did not answer — tap to look again`
+    : 'nobody answered — tap to look again';
+}
+
 function retryLink(assetId) {
   const b = document.createElement('button');
   b.className = 'asset-retry';
@@ -3012,16 +3128,24 @@ function assetNote(e) {
   if (!a) return n;
   if (a.state === 'complete') {
     n.textContent = `⬇ open original · ${fmtBytes(a.size)}`;
-    n.onclick = () => window.open(`/api/spaces/${current}/assets/${a.id}?token=${token}`, '_blank');
+    // Through the viewer, which knows how to close itself. A file has no
+    // preview to open into, so it goes on being handed to the platform.
+    n.onclick = () => {
+      const kind = e.kind === 'visual' || e.kind === 'video' || e.kind === 'audio' || e.kind === 'voice';
+      if (kind) openViewer(a, e.kind === 'voice' ? 'audio' : e.kind, e.alt || e.title || e.caption || '');
+      else window.open(`/api/spaces/${current}/assets/${a.id}?token=${token}`, '_blank');
+    };
   } else if (a.state === 'fetching' && a.reason === 'no_source') {
-    // Still asking, but nobody online is answering. Say that, rather than
-    // animating a progress bar that is not progressing.
-    n.className = 'asset-note asset-unavailable';
-    n.textContent = UNAVAILABLE_TEXT;
-    n.appendChild(retryLink(a.id));
+    // STILL ASKING. Not a progress bar — nothing is progressing — and not a
+    // verdict either: the loop is running and a holder coming online is
+    // answered without anybody pressing anything. No retry link here, for
+    // the same reason: there is nothing to retry that is not already
+    // happening.
+    n.className = 'asset-note asset-waiting';
+    n.textContent = waitingForText(e, true);
   } else if (a.state === 'fetching') {
     n.textContent = `fetching… ${a.total - a.missing}/${a.total}`;
-    n.appendChild(makeWaterfall());
+    n.appendChild(makeProgress(a.total - a.missing, a.total));
   } else if (a.state === 'failed' && a.reason === 'integrity_error') {
     // The one terminal failure here, and it must not be dressed up as a
     // network problem: these bytes did not match their hash, so they are
@@ -3031,7 +3155,9 @@ function assetNote(e) {
   } else if (a.state === 'failed' &&
              (a.reason === 'no_source' || a.reason === 'no_peers')) {
     n.className = 'asset-note asset-unavailable';
-    n.textContent = UNAVAILABLE_TEXT;
+    // no_peers is about US — no relay, no link — so it is never somebody
+    // else's phone being asleep and must not be described as one.
+    n.textContent = a.reason === 'no_source' ? waitingForText(e, false) : UNAVAILABLE_TEXT;
     n.appendChild(retryLink(a.id));
   } else {
     n.textContent = `⬇ fetch original · ${fmtBytes(a.size)} · not local yet`;
@@ -3211,14 +3337,33 @@ function autoMediaBg(el, assetId) {
     (reason) => markUnavailable(el, reason));
 }
 
-// makeWaterfall: a tiny ASCII "waterfall" with a flowing gradient, to sit next
-// to a fetch-progress readout. Pure CSS animation (no timer), so it is safe to
-// recreate on every re-render without leaking intervals.
-function makeWaterfall() {
+// makeProgress: the rail that sits next to a fetch-progress readout. Pure CSS
+// animation (no timer), so it is safe to recreate on every re-render without
+// leaking intervals.
+//
+// have/total are chunks, and they are OPTIONAL: a caller that does not know
+// them yet passes nothing and gets the seeking state. NOTHING ARRIVED YET IS
+// ALSO UNKNOWN — zero of seven says how much is coming, not how far along this
+// is, and a rail sitting empty at 0% looks like a fetch that has died. Both go
+// to the travelling segment, which claims no fraction.
+function makeProgress(have, total) {
   const el = document.createElement('span');
-  el.className = 'wfall';
-  el.setAttribute('aria-hidden', 'true');
-  el.textContent = '╽┃╿║┃╽║┃╿';
+  const fill = document.createElement('i');
+  const known = Number.isFinite(total) && total > 0 && Number.isFinite(have) && have > 0;
+  if (!known) {
+    el.className = 'prog seeking';
+    el.setAttribute('aria-hidden', 'true'); // the readout beside it says it
+    el.appendChild(fill);
+    return el;
+  }
+  const pct = Math.min(100, Math.round((have / total) * 100));
+  el.className = 'prog';
+  el.setAttribute('role', 'progressbar');
+  el.setAttribute('aria-valuemin', '0');
+  el.setAttribute('aria-valuemax', '100');
+  el.setAttribute('aria-valuenow', String(pct));
+  fill.style.width = pct + '%';
+  el.appendChild(fill);
   return el;
 }
 
@@ -3414,6 +3559,96 @@ async function forwardPost(docID) {
   }
 }
 
+// OPENING A FILE IS THE APP'S JOB, not the browser's.
+//
+// Every "open original" here used to be window.open() on the asset URL, which
+// hands the bytes to whatever the platform does with an image: on a phone,
+// the picture at its natural size in a scrolling window with no way back into
+// the conversation and nothing to save it with. The viewer fits the media to
+// the screen, has a close button a thumb can hit, and answers the back
+// gesture because it is a <dialog> (armBackClosesDialogs).
+//
+// kind decides the element and nothing else: video keeps its controls, a
+// picture is a picture.
+function openViewer(asset, kind, label) {
+  const stage = document.getElementById('viewerStage');
+  const dlg = document.getElementById('dlgViewer');
+  if (!stage || !dlg || !asset) return;
+  const name = downloadName(label, asset.media_type);
+  const src = `/api/spaces/${current}/assets/${asset.id}?token=${token}`;
+  stage.innerHTML = '';
+  let el;
+  if (kind === 'video') {
+    el = document.createElement('video');
+    el.controls = true; el.autoplay = true; el.playsInline = true;
+  } else if (kind === 'audio') {
+    el = document.createElement('audio');
+    el.controls = true; el.autoplay = true;
+  } else {
+    el = document.createElement('img');
+    el.alt = name || '';
+  }
+  el.src = src;
+  stage.appendChild(el);
+  document.getElementById('viewerName').textContent = name;
+  const save = document.getElementById('viewerSave');
+  save.href = src;
+  // Without this a save lands under the asset id, which is a hash.
+  save.setAttribute('download', name);
+  dlg.showModal();
+}
+
+// A NAME A FILE SYSTEM WILL TAKE, AND AN EXTENSION SO THE FILE OPENS.
+//
+// A picture carries no filename through the protocol — only alt text and a
+// media type — so the first version saved photos as "a very wide test image",
+// with no extension. On a phone that is a file nothing will open: Android
+// picks the app by extension, not by sniffing.
+//
+// The stem is whatever the person wrote, made safe and short; the extension
+// comes from the media type, which is signed alongside the bytes.
+function downloadName(label, mediaType) {
+  const known = {
+    'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp',
+    'image/gif': 'gif', 'image/heic': 'heic', 'image/avif': 'avif',
+    'video/mp4': 'mp4', 'video/quicktime': 'mov', 'video/webm': 'webm',
+    'audio/mpeg': 'mp3', 'audio/ogg': 'ogg', 'audio/wav': 'wav',
+    'audio/mp4': 'm4a', 'audio/webm': 'weba', 'audio/flac': 'flac',
+  };
+  const sub = String(mediaType || '').split('/')[1] || '';
+  // The subtype is a decent guess for anything not listed; parameters and
+  // vendor prefixes are dropped so "video/x-matroska;codecs=…" is not a name.
+  const ext = known[mediaType] || sub.split(';')[0].replace(/^x-/, '') || 'bin';
+  let stem = String(label || '').trim()
+    .replace(/[\\/:*?"<>| -]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .slice(0, 60)
+    .trim();
+  if (!stem) stem = 'file';
+  return /\.[a-z0-9]{2,5}$/i.test(stem) ? stem : `${stem}.${ext}`;
+}
+
+// EMPTIED WHENEVER IT CLOSES, and closing happens three ways: the button,
+// Esc, and the back gesture. Left in place, a <video> goes on holding its
+// buffer — on a phone that is the whole file — and a <img> its decoded bitmap.
+//
+// Watching the `open` ATTRIBUTE rather than listening for the `close` event,
+// because the event did not arrive: measured here, a listener attached to
+// this dialog saw nothing on close(), while the attribute change is exactly
+// what armBackClosesDialogs already relies on and is demonstrably reliable.
+// One mechanism, once, rather than two that disagree.
+if (typeof document !== 'undefined') {
+  document.addEventListener('DOMContentLoaded', () => {
+    const dlg = document.getElementById('dlgViewer');
+    if (!dlg) return;
+    new MutationObserver(() => {
+      if (dlg.open) return;
+      const stage = document.getElementById('viewerStage');
+      if (stage) stage.innerHTML = '';
+    }).observe(dlg, { attributes: true, attributeFilter: ['open'] });
+  });
+}
+
 function renderVisual(e) {
   const wrap = document.createElement('div');
   if (e.caption) wrap.appendChild(textNode('txt', e.caption));
@@ -3427,7 +3662,7 @@ function renderVisual(e) {
     // clean up.
     markArriving(img, e.asset);
     img.onclick = () => { if (e.asset?.state === 'complete')
-      window.open(`/api/spaces/${current}/assets/${e.asset.id}?token=${token}`, '_blank'); };
+      openViewer(e.asset, 'visual', e.alt || e.caption || 'photo'); };
     wrap.appendChild(img);
   } else {
     wrap.appendChild(textNode('txt', '🖼 ' + e.alt));
@@ -3755,8 +3990,22 @@ function captureVideoPoster(file) {
   });
 }
 
+// The node's ceiling for one asset, learned from /api/status. 0 = not yet
+// known, in which case nothing is refused here.
+let maxAssetBytes = 0;
+
 async function onFilePicked(file) {
   if (!file) return;
+  // REFUSED AT THE MOMENT IT IS CHOSEN. This used to travel: the composer
+  // opened, a person wrote a caption and an alt text, pressed send, and got
+  // "declared size missing or over limit" in a browser alert — the server's
+  // own words, at the end, with no number in them and the work lost.
+  if (maxAssetBytes && file.size > maxAssetBytes) {
+    alert(`${file.name} is ${fmtBytes(file.size)} — this build carries up to ` +
+      `${fmtBytes(maxAssetBytes)} in one message.`);
+    fileInput.value = '';
+    return;
+  }
   pendingFile = file;
   pendingPreview = null;
   pendingVideoMeta = null;

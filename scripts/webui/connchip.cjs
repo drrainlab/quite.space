@@ -79,12 +79,20 @@ check('a modem attached, one neighbour on the air',
   { lan: { peers: 0, listening: true }, radio: { connected: true, peer_links: 1 } },
   { kind: 'radio', count: 1 });
 
-// AND THE ONE THE USER FOUND. Wi-Fi comes back while the radio is still
-// attached: the messages visibly travel the fast way, and the chip went on
-// saying radio because a radio was plugged in.
-check('wifi returns while the radio stays attached',
+// REVERSED, ON PURPOSE, AND HERE IS THE WHOLE STORY. This case was found on
+// a phone: Wi-Fi came back while the radio stayed attached, the messages
+// visibly went the fast way, and the chip went on saying radio merely because
+// a modem was plugged in. The fix then was to put local links first.
+//
+// The ladder has since changed above this function: the relay is asked FIRST
+// and wins whenever it is healthy, which is what "Wi-Fi came back" means in
+// practice — so the case that produced the old ordering no longer reaches
+// here at all. What reaches here is the remainder: a local network that
+// cannot get out, with a modem attached. Naming the radio there is the
+// useful answer, and it is what the person who plugged it in asked for.
+check('no way out but the air, and a modem is attached',
   { lan: { peers: 1, listening: true }, radio: { connected: true, peer_links: 1 } },
-  { kind: 'direct', count: 1 });
+  { kind: 'radio', count: 1 });
 
 // AND THE ONE THAT SENT ME BACK HERE. lan.peers used to count every live
 // link, so a radio arrived as a LAN peer and two people talking over LoRa in
@@ -94,6 +102,40 @@ check('wifi returns while the radio stays attached',
 check('nobody on the network, one peer met over the air',
   { lan: { peers: 0, listening: false }, radio: { connected: true, peer_links: 1 } },
   { kind: 'radio', count: 1 });
+
+// ---- the transport policy, which outranks every socket --------------------
+//
+// A listener that exists but may not be used is not a way out. Every claim
+// below is about the chip describing a door the person themselves bolted:
+// getting these wrong tells somebody their setting did not take, which is the
+// one mistake a privacy switch must never make.
+check('offline by choice — the sockets are irrelevant',
+  { lan: { peers: 3, listening: true }, radio: { connected: true, peer_links: 2 },
+    connectivity: { mode: 'offline' } },
+  { kind: 'off', count: undefined });
+
+check('radio only — a LAN peer is not a way out',
+  { lan: { peers: 2, listening: true }, radio: { connected: true, peer_links: 1 },
+    connectivity: { mode: 'radio' } },
+  { kind: 'radio', count: 1 });
+
+// Radio-only with no radio is genuinely nowhere, and must say so rather than
+// falling back to the network the policy just forbade.
+check('radio only, nothing plugged in',
+  { lan: { peers: 2, listening: true }, radio: {}, connectivity: { mode: 'radio' } },
+  { kind: 'off', count: undefined });
+
+check('internet only — an attached modem stays off the air',
+  { lan: { peers: 2, listening: true }, radio: { connected: true, peer_links: 1 },
+    connectivity: { mode: 'internet' } },
+  { kind: 'direct', count: 2 });
+
+// A stored mode this build cannot read means the node is holding everything.
+// "Not connected" would send somebody hunting for a fault they do not have.
+check('a policy this build cannot read',
+  { lan: { peers: 2, listening: true }, radio: {},
+    connectivity: { mode: 'quantum', unreadable: true } },
+  { kind: 'off', count: undefined });
 
 // ---- where the relay stands against everything else -----------------------
 //
@@ -136,6 +178,13 @@ if (!kept || kept.text !== null || !kept.why) {
 }
 
 verdict('no relay configured at all', 'radio', none, 'radio');
+
+// A relay silenced BY POLICY is not a verdict about the relay. It used to
+// arrive as last_error — "relay is not permitted in offline mode" — in the
+// same field as a dead socket, and the chip drew the red light for a choice
+// the person made on purpose. The node now says `blocked` and means it.
+verdict('the relay is silent because it was told to be',
+  'off', { active: true, blocked: true }, 'off');
 
 if (failures) {
   console.log(`\n${failures} claim(s) the chip makes are not true`);

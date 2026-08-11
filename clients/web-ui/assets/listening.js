@@ -302,7 +302,10 @@ function renderListeningRoom(box, inst) {
         st.fetchingAsset = s.track.asset;
         autoFetchAsset(s.track.asset, () => refreshSession());
       }
-      controls.appendChild(makeWaterfall()); // flowing progress flourish
+      // The same rail the feed uses. asset_total is absent until the node has
+      // the manifest, and makeProgress reads that as "seeking" on its own.
+      controls.appendChild(makeProgress(
+        s.track.asset_total - s.track.asset_missing, s.track.asset_total));
     }
     const unc = SYNC_CLOCK.uncertaintyMs();
     meta.textContent = s.command

@@ -401,9 +401,17 @@ const PREV = (() => {
     load.className = 'prev-loading';
     load.textContent = t('prev.looking');
     img.after(load);
+    // AN <img> WITH NO SRC IS A BROKEN IMAGE, and the browser draws it as
+    // one: a torn-page icon with the alt text beside it, which here is the
+    // camera's own filename. So a post being fetched showed a column of
+    // "14A7402D-CDD7-4946-A0F3-DEF63EACED03.jpg" in error icons. The element
+    // stays in the flow — it is where the picture will go — but nothing is
+    // drawn for it until there are bytes to draw.
+    img.style.display = 'none';
     prevFetch(pid, asset, (ok, state, reason) => {
       load.remove();
       if (ok) {
+        img.style.display = '';
         img.src = prevAssetURL(pid, asset);
         return;
       }
