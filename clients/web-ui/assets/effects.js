@@ -1,9 +1,12 @@
 // Resonant Surfaces (RP-2A). A reaction may briefly touch the OBJECT it
-// landed on (arrival) and leave a calm accumulated trace (residue). Effects
-// are derived presentation: the wire carries meaning only; effect ids
-// resolve exclusively through this client-owned allowlist. Invariants: no
-// layout shift (overlay layer), alpha-capped residue, nothing painted over
-// media pixels, static fallback, fully disableable.
+// landed on (arrival) — and that is all: the accumulated state is carried
+// by the chips with their counts, and the surface itself stays calm (the
+// persistent residue ring was retired by the owner's call — a touched
+// message hangs in space exactly like an untouched one). Effects are
+// derived presentation: the wire carries meaning only; effect ids resolve
+// exclusively through this client-owned allowlist. Invariants: no layout
+// shift (overlay layer), nothing painted over media pixels, static
+// fallback, fully disableable.
 
 const RESFX = (() => {
   // ---- effect registry (allowlist) ----
@@ -40,7 +43,7 @@ const RESFX = (() => {
     botanical: ['⌁', '❋', '˚', '∿'],
   };
   const FILLER_SET = 'constellation';
-  // Per-meaning glyph colors ride the same CSS vars the residue uses;
+  // Per-meaning glyph colors ride the shared --fx-* voice vars;
   // anything unmapped (and every unicode reaction) falls to the accent.
   const KEY_COLOR = {
     warmth: 'var(--fx-warm)', join: 'var(--fx-join)',
@@ -211,11 +214,6 @@ const RESFX = (() => {
       floorWhenHidden: 'static',
     });
   }
-  // ---- intensity: bounded logarithmic curve (1→0.12, 3→~0.19, 10→0.27, cap 0.30)
-  function intensity(count) {
-    return Math.min(0.30, 0.12 + 0.15 * Math.log10(Math.max(1, count)));
-  }
-
   // ---- fx layer ----
   function ensureLayer(host) {
     let layer = host.querySelector(':scope > .fx-layer');
@@ -226,41 +224,6 @@ const RESFX = (() => {
       host.appendChild(layer);
     }
     return layer;
-  }
-
-  // applyResidue paints the calm accumulated state: ONE dominant residue +
-  // at most one secondary accent (effect mixer). Idempotent — safe to call
-  // on every render; arrival never fires from here.
-  function applyResidue(host, res) {
-    if (!host) return;
-    const mode = effectsMode();
-    const layer = host.querySelector(':scope > .fx-layer');
-    if (mode === 'off' || !res || !(res.groups || []).length) {
-      if (layer) { layer.remove(); host.classList.remove('fx-host'); }
-      host.style.removeProperty('--fx-i');
-      host.style.removeProperty('--fx-i2');
-      host.classList.remove('fx-residue', 'fx-residue-2');
-      return;
-    }
-    // Dominant = max count, canonical-order tie-break (groups arrive in
-    // canonical order, so the first maximum is deterministic).
-    let dom = null, sec = null;
-    for (const g of res.groups) {
-      if (!dom || g.count > dom.count) { sec = dom && dom.count > 0 ? dom : sec; dom = g; }
-      else if (!sec || g.count > sec.count) sec = g;
-    }
-    const l = ensureLayer(host);
-    l.dataset.effect = effectFor(dom);
-    host.classList.add('fx-residue');
-    host.style.setProperty('--fx-i', intensity(dom.count).toFixed(3));
-    if (sec && res.groups.length > 1) {
-      l.dataset.effect2 = effectFor(sec);
-      host.classList.add('fx-residue-2');
-      host.style.setProperty('--fx-i2', (intensity(sec.count) * 0.6).toFixed(3));
-    } else {
-      host.classList.remove('fx-residue-2');
-      delete l.dataset.effect2;
-    }
   }
 
   // ---- arrival: one-shot, budgeted ----
@@ -283,7 +246,7 @@ const RESFX = (() => {
   function firePulse(host, group, delta, spawnFx) {
     const mode = effectsMode();
     if (mode === 'off' || mode === 'static' || !host || !group) return;
-    if (!inViewport(host)) return;      // offscreen: residue only
+    if (!inViewport(host)) return;      // offscreen: nothing to show it to
     if (running.has(host)) {            // per-target: 1 running + 1 pending
       // Coalesce into the pending slot: the latest group wins the effect,
       // but the magnitudes ADD — five people arriving during a running
@@ -324,14 +287,14 @@ const RESFX = (() => {
   }
 
   // onAggregateChange: called from the feed's delta paths on a rendered
-  // entry. Residue always refreshes; arrival plays only for the groups
-  // that actually GREW — the caller computes deltas against its previous
-  // snapshot (computeResDeltas). No deltas — first paint, catch-up, full
-  // rebuild — means residue only. That asymmetry IS the no-replay guard:
-  // history may repaint a trace, but only an observed delta may animate.
+  // entry. Arrival plays only for the groups that actually GREW — the
+  // caller computes deltas against its previous snapshot (computeResDeltas).
+  // No deltas — first paint, catch-up, full rebuild — means nothing at all:
+  // the chips with their counts already carry the accumulated state, and
+  // that asymmetry IS the no-replay guard — only an observed delta may
+  // animate, history repaints nothing but the row.
   function onAggregateChange(node, res, deltas) {
     const host = node.querySelector('.bubble') || node;
-    applyResidue(host, res);
     const ds = deltas || [];
     if (!ds.length) return;
     // The ladder runs only at 'full'; 'subtle' stays a small Echo, and
@@ -351,5 +314,5 @@ const RESFX = (() => {
     firePulse(host, top.group, total, spawnFx);
   }
 
-  return { applyResidue, fireArrival, onAggregateChange, effectsMode, intensity };
+  return { fireArrival, onAggregateChange, effectsMode };
 })();

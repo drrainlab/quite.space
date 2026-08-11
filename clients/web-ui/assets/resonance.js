@@ -167,22 +167,11 @@ function renderResonanceRow(res, targetId, onChange) {
     }, 450);
   }, { passive: true });
   add.addEventListener('touchend', () => clearTimeout(pressT));
-  // The residue below still runs either way: what other people said is worth
-  // seeing whether or not this device may add to it.
   if (mayResonate) row.appendChild(add);
-  // Residue (RP-2A) refreshes on every render — calm state, no arrival here.
-  //
-  // Deliberately NOT the article: a message bubble wearing a faint ring
-  // reads as a touched object, but the same ring around a whole post drew a
-  // contour around the entire reading surface — and since AM-6 that surface
-  // IS the atmosphere, which carries the post's mood by itself. The chips in
-  // the resonance row still say who resonated; the post's aesthetics get
-  // their own pass later.
-  requestAnimationFrame(() => {
-    if (typeof RESFX === 'undefined') return;
-    const host = row.closest('.bubble, .shelf-card');
-    if (host) RESFX.applyResidue(host, res);
-  });
+  // No residue on the host — the owner's call: the chips with their counts
+  // ARE the accumulated state, and a touched message hangs in space exactly
+  // like an untouched one. Arrival flashes still play from the feed's delta
+  // paths (effects.js), but the steady state paints nothing on the surface.
   return row;
 }
 

@@ -138,7 +138,8 @@ const D = (group, delta) => ({ group, delta });
 
   RESFX.onAggregateChange(node, agg(sem('warmth', 30)), []);
   check('history (no deltas) never animates: zero glyphs', glyphs(bubble).length, 0);
-  check('...but the residue is painted', bubble.classList.contains('fx-residue'), true);
+  check('...and no residue is painted — the chips carry the state',
+    bubble.classList.contains('fx-residue'), false);
   check('...and no arrival class fired',
     bubble.className.includes('fx-arrive-'), false);
 }
@@ -163,7 +164,7 @@ const D = (group, delta) => ({ group, delta });
 
   RESFX.onAggregateChange(node, agg(sem('warmth', 3)), [D(sem('warmth', 3), 3)]);
   check('static refuses all glyphs', glyphs(bubble).length, 0);
-  check('...but keeps the residue', bubble.classList.contains('fx-residue'), true);
+  check('...and paints no residue either', bubble.classList.contains('fx-residue'), false);
 }
 
 {
