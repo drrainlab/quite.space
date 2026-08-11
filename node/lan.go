@@ -27,6 +27,10 @@ type LANStatus struct {
 	Listening bool
 	Port      int
 	Peers     int
+	// Bound counts peers AUTHENTICATED on those links (T6-LAN hello) — the
+	// devices whose copies the room is actually carrying. Peers counts
+	// sockets; Bound counts people the chip may honestly name.
+	Bound int
 }
 
 // StartLAN begins listening, announcing, and discovering. announceAddr is
@@ -48,9 +52,11 @@ func (r *Runtime) StartLAN(listenAddr, announceAddr string) error {
 	if err != nil {
 		return err
 	}
+	lanStop := make(chan struct{})
 	r.mu.Lock()
 	r.lanNode = n
 	r.lanPort = port
+	r.lanStop = lanStop
 	r.mu.Unlock()
 
 	// Announce loop.
@@ -63,6 +69,8 @@ func (r *Runtime) StartLAN(listenAddr, announceAddr string) error {
 			r.announceOnce(announceAddr, port, selfNonce)
 			select {
 			case <-r.stop:
+				return
+			case <-lanStop:
 				return
 			case <-t.C:
 			}
@@ -109,10 +117,57 @@ func (r *Runtime) StartLAN(listenAddr, announceAddr string) error {
 	r.wg.Add(1)
 	go func() {
 		defer r.wg.Done()
-		<-r.stop
+		select {
+		case <-r.stop:
+		case <-lanStop:
+		}
 		stopListen()
 	}()
 	return nil
+}
+
+// StopLAN ends the LAN lifecycle StartLAN began — listener, announces,
+// discovery, and every live local link — without touching the rest of the
+// runtime. The room emptied; the node lives on. Idempotent.
+func (r *Runtime) StopLAN() {
+	r.mu.Lock()
+	n, stop := r.lanNode, r.lanStop
+	r.lanNode, r.lanPort, r.lanStop = nil, 0, nil
+	var conns []link
+	for _, ll := range r.links {
+		if transportOfLink(ll.label) == TransportLAN {
+			conns = append(conns, ll.c)
+		}
+	}
+	r.mu.Unlock()
+	if stop != nil {
+		close(stop)
+	}
+	if n != nil {
+		n.Close()
+	}
+	// Closing the conns is what the peers can SEE: their pump ticks notice,
+	// drop the link, and evict any observed route bound to it.
+	for _, c := range conns {
+		if cl, ok := c.(interface{ Close() error }); ok {
+			cl.Close()
+		}
+	}
+}
+
+// lanPeerDevice reports whether dev is authenticated live on a local link —
+// the observed-route query (T6-LAN). True requires BOTH halves: the device
+// proved its key on this very TLS session, and the link is still up. This
+// is the only door through which "local" may influence delivery.
+func (r *Runtime) lanPeerDevice(dev id.DeviceID) bool {
+	r.mu.Lock()
+	l, ok := r.lanPeers[dev]
+	r.mu.Unlock()
+	if !ok || l == nil {
+		return false
+	}
+	closed, _ := l.Closed()
+	return !closed
 }
 
 // announcedSpaces is which spaces this node is willing to tell the LAN it
@@ -359,6 +414,11 @@ func (r *Runtime) adoptLinkFiltered(c link, pump, summaryEvery time.Duration,
 	r.liveLinks[linkKind]++
 	r.mu.Unlock()
 
+	// Introduce this device on the new wire (T6-LAN). Only links that can
+	// bind a signature to their own session say anything; the rest stay
+	// anonymous and never become route candidates.
+	r.sendLANHello(c)
+
 	r.wg.Add(1)
 	go func() {
 		defer r.wg.Done()
@@ -475,6 +535,7 @@ func (r *Runtime) adoptLinkFiltered(c link, pump, summaryEvery time.Duration,
 			// over this link at all. It looked like an occasional slow test
 			// because the list order comes from a map.
 			var beacons [][]byte
+			var hellos [][]byte
 			for _, pkt := range c.Poll() {
 				raw, err := reasm.Feed(pkt)
 				if errors.Is(err, kernelsync.ErrNotFragment) {
@@ -489,6 +550,13 @@ func (r *Runtime) adoptLinkFiltered(c link, pump, summaryEvery time.Duration,
 				// noteBeacon takes r.mu itself.
 				if b, ok := kernelsync.ExtractBeacon(raw); ok {
 					beacons = append(beacons, b)
+					continue
+				}
+				// A hello is about the LINK, like a beacon: no terminal id,
+				// nothing to route. Verified after the lock (noteLANHello
+				// takes r.mu itself).
+				if h, ok := kernelsync.ExtractHello(raw); ok {
+					hellos = append(hellos, h)
 					continue
 				}
 				term, ok := kernelsync.PeekTerminal(raw)
@@ -511,6 +579,9 @@ func (r *Runtime) adoptLinkFiltered(c link, pump, summaryEvery time.Duration,
 
 			for _, b := range beacons {
 				r.noteBeacon(label, b, time.Now())
+			}
+			for _, h := range hellos {
+				r.noteLANHello(c, h)
 			}
 
 			// Health is recorded from what ACTUALLY happened on the wire,
@@ -545,6 +616,13 @@ func (r *Runtime) dropConn(c link) {
 		r.rnodeRadio, r.rnodeEP, r.rnodeLink = nil, nil, nil
 		r.meshSupervised = false
 	}
+	boundDied := false
+	for dev, l := range r.lanPeers {
+		if l == c {
+			delete(r.lanPeers, dev)
+			boundDied = true
+		}
+	}
 	for _, st := range r.spaces {
 		kept := st.conns[:0]
 		for _, x := range st.conns {
@@ -553,6 +631,8 @@ func (r *Runtime) dropConn(c link) {
 			}
 		}
 		st.conns = kept
+		// Link-scoped sync state dies with the link.
+		st.eng.ForgetEndpoint(c)
 	}
 	// And out of the registry, or a space created after this link died
 	// would be wired into a corpse.
@@ -564,6 +644,18 @@ func (r *Runtime) dropConn(c link) {
 	}
 	r.links = keptLinks
 	r.mu.Unlock()
+	// A device whose relay copies were being suppressed just left the wire
+	// (T6-LAN). Whatever was handed to that wire and not yet converged has
+	// no other carrier now — so the relay push progress resets and the next
+	// cycle re-offers the whole log once. Dedup makes the re-offer
+	// idempotent; skipping it makes a quiet space lossy.
+	if boundDied {
+		if rs := r.relaySync; rs != nil {
+			rs.mu.Lock()
+			rs.lastLen = map[id.TerminalID]int{}
+			rs.mu.Unlock()
+		}
+	}
 	// Outside the lock: closing an endpoint can reach back into the runtime,
 	// and a deadlock here would freeze every space at once.
 	if deadEP != nil {
@@ -596,7 +688,17 @@ func (r *Runtime) LAN() LANStatus {
 		}
 		peers++
 	}
-	return LANStatus{Listening: r.lanNode != nil, Port: r.lanPort, Peers: peers}
+	bound := 0
+	for _, l := range r.lanPeers {
+		if l == nil {
+			continue
+		}
+		if closed, _ := l.Closed(); closed {
+			continue
+		}
+		bound++
+	}
+	return LANStatus{Listening: r.lanNode != nil, Port: r.lanPort, Peers: peers, Bound: bound}
 }
 
 // ConnectPeer dials a peer directly (manual connection, also used in tests).

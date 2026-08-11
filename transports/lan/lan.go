@@ -157,6 +157,33 @@ func (c *Conn) Closed() (bool, error) {
 // Close shuts the connection down.
 func (c *Conn) Close() error { return c.c.Close() }
 
+// SessionBinding exports keying material bound to THIS TLS session. Both
+// ends derive the same bytes; nothing off this connection can. It is what
+// lets a signature name a device ON A LINK rather than in general: signing
+// the exported material proves the key holder is a live party to this very
+// session — no replay onto another connection, no relaying by a
+// person-in-the-middle (their sessions export different material). TLS 1.3
+// is enforced at dial and listen, so the export is always defined.
+func (c *Conn) SessionBinding(label string) ([]byte, bool) {
+	tc, ok := c.c.(*tls.Conn)
+	if !ok {
+		return nil, false
+	}
+	// The accept side has not necessarily completed the handshake yet —
+	// crypto/tls finishes it lazily on first I/O, and the exporter is
+	// undefined until then. Handshake() is idempotent: a completed session
+	// returns immediately, a pending one completes now.
+	if err := tc.Handshake(); err != nil {
+		return nil, false
+	}
+	state := tc.ConnectionState()
+	ekm, err := state.ExportKeyingMaterial(label, nil, 32)
+	if err != nil || len(ekm) != 32 {
+		return nil, false
+	}
+	return ekm, true
+}
+
 // ---- Node: listener + dialer with ephemeral TLS ----
 
 // Node is one LAN presence: a TLS listener and a dialer sharing an

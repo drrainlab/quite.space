@@ -113,7 +113,32 @@ type Engine struct {
 	// its own lock around every engine call).
 	pending map[id.Hash]bool
 
+	// peerSum retains the newest summary each endpoint's peer has stated —
+	// what that peer, by its own account, already holds. PushPending uses it
+	// to push only the delta at delivery time (T6-LAN) instead of waiting a
+	// summary cadence. Forgotten with the endpoint (ForgetEndpoint): a
+	// summary describes a replica across a LIVE link, never a durable fact.
+	peerSum map[transports.Endpoint]*summary
+
 	reasmSt *Reassembler
+}
+
+// PushPending pushes this log's frames that ep's peer has not stated it
+// holds — the delivery-time push. With no summary from the peer yet, it
+// pushes everything (the receiver's log dedups, so eagerness costs bytes,
+// never correctness). The caller serializes engine access as always.
+func (e *Engine) PushPending(ep transports.Endpoint) error {
+	sum := e.peerSum[ep]
+	if sum == nil {
+		sum = &summary{terminal: e.Log.Terminal, chains: nil}
+	}
+	return e.pushMissing(ep, sum)
+}
+
+// ForgetEndpoint drops link-scoped state for a dead endpoint. Without it a
+// long-lived space collects summaries for every connection it ever saw.
+func (e *Engine) ForgetEndpoint(ep transports.Endpoint) {
+	delete(e.peerSum, ep)
 }
 
 type reassembly struct {
@@ -193,6 +218,7 @@ type message struct {
 	receipt []byte
 	attempt []byte
 	beacon  []byte
+	hello   []byte
 }
 
 func decodeMessage(data []byte) (*message, error) {
@@ -299,6 +325,12 @@ func decodeMessage(data []byte) (*message, error) {
 			}
 		case keyBeacon:
 			msg.beacon, err = d.ReadBytes()
+		case keyHello:
+			var b []byte
+			b, err = d.ReadBytes()
+			if err == nil {
+				msg.hello = append([]byte(nil), b...)
+			}
 		case keyReceipt:
 			var b []byte
 			b, err = d.ReadBytes()
@@ -446,6 +478,12 @@ func (e *Engine) Handle(ep transports.Endpoint, raw []byte) (applied int, reject
 	}
 	switch msg.msgType {
 	case msgSummary:
+		// Remember what the peer just stated it holds — PushPending's
+		// baseline for delivery-time deltas over this endpoint (T6-LAN).
+		if e.peerSum == nil {
+			e.peerSum = map[transports.Endpoint]*summary{}
+		}
+		e.peerSum[ep] = msg.sum
 		if err := e.pushMissing(ep, msg.sum); err != nil {
 			return applied, rejected, err
 		}

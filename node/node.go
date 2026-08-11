@@ -81,6 +81,15 @@ type Runtime struct {
 
 	lanNode *lan.Node
 	lanPort int
+	// lanStop ends the LAN lifecycle started by StartLAN without touching
+	// the rest of the runtime (StopLAN; the room emptied, the node lives).
+	lanStop chan struct{}
+	// lanPeers is the OBSERVED route table (T6-LAN): device → the live
+	// local link that device is authenticated on. Ephemeral by doctrine —
+	// bound to an authenticated DeviceID, valid only while the link lives,
+	// never written to the keystore. The delivery loop consults it to
+	// suppress relay copies that a live local wire makes redundant.
+	lanPeers map[id.DeviceID]link
 	// mesh is a SUPERVISED link (RB-2): it outlives the device behind it and
 	// redials with backoff, so a radio that is unplugged and plugged back in
 	// does not leave the node permanently deaf.

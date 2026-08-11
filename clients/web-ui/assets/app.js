@@ -655,7 +655,7 @@ if (window.matchMedia) {
  * `base` is what connectionSummary already decided. Returns null to leave it
  * alone.
  */
-function relayVerdict(base, rs) {
+function relayVerdict(base, rs, room) {
   // Silent by policy is not a verdict about the relay at all — the person
   // already knows, because they chose it, and connectionSummary is saying so.
   if (!rs || !rs.active || rs.blocked) return null;
@@ -663,7 +663,14 @@ function relayVerdict(base, rs) {
     // The light breathes in the sync's own rhythm — the pulse IS the
     // cadence, not decoration. Clamped so a 2s cycle does not strobe and a
     // 5min one does not look dead.
-    return { text: 'relay', cls: 'conn-chip up', kind: 'relay',
+    //
+    // AND THE ROOM IS NAMED BESIDE IT (T6-LAN). The relay stays the
+    // headline — it reaches the people who are not here — but when devices
+    // are authenticated on the local wire, their copies ride the room, and
+    // a chip saying only "relay" would claim a path those messages are not
+    // taking. `room` counts AUTHENTICATED local peers, never raw sockets.
+    const text = room > 0 ? t('conn.relay_room', { count: room }) : 'relay';
+    return { text, cls: 'conn-chip up', kind: 'relay',
       pulseMs: Math.min(12000, Math.max(2400, rs.interval_ms || 4000)) };
   }
   // Unwell. Its complaint is carried either way — "issue" on its own is the
@@ -956,7 +963,11 @@ async function refresh() {
       // instead of the largest one.
       try {
         const rs = await api('/api/relay/status');
-        const d = relayVerdict(chipKind, rs);
+        // Authenticated local peers, only when policy lets the wire carry.
+        const cm = (status.connectivity || {}).mode || 'auto';
+        const room = (cm === 'auto' || cm === 'internet')
+          ? ((status.lan || {}).bound || 0) : 0;
+        const d = relayVerdict(chipKind, rs, room);
         if (d) {
           // text: null means "keep what you had, but carry my reason" —
           // the relay is unwell and something else is already named.

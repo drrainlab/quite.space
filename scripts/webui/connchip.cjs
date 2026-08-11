@@ -40,7 +40,7 @@ function cut(name) {
   }
   return src.slice(s, e);
 }
-const relayVerdict = new Function(cut('relayVerdict') + '; return relayVerdict;')();
+const relayVerdict = new Function('t', cut('relayVerdict') + '; return relayVerdict;')(t);
 
 let failures = 0;
 function check(what, status, want) {
@@ -178,6 +178,29 @@ if (!kept || kept.text !== null || !kept.why) {
 }
 
 verdict('no relay configured at all', 'radio', none, 'radio');
+
+// THE ROOM BESIDE THE RELAY (T6-LAN). Two devices authenticated on the local
+// wire carry each other's copies directly; the relay keeps the mark — it
+// reaches the people who are not here — but the words must say the room is
+// carrying too. Zero authenticated peers must leave the text exactly as it
+// always was: sockets are not people, and a mere listener names nobody.
+{
+  const withRoom = relayVerdict('direct', healthy, 2);
+  if (!withRoom || withRoom.text !== 'conn.relay_room' || withRoom.kind !== 'relay') {
+    failures++;
+    console.log(`FAIL a healthy relay with 2 authenticated local peers must say the room is carrying
+  got  ${withRoom && withRoom.text}`);
+  } else {
+    console.log('ok   relay + 2 in the room — the words carry both facts');
+  }
+  const alone = relayVerdict('off', healthy, 0);
+  if (!alone || alone.text !== 'relay') {
+    failures++;
+    console.log('FAIL zero local peers must not change the relay text');
+  } else {
+    console.log('ok   relay alone reads exactly as before');
+  }
+}
 
 // A relay silenced BY POLICY is not a verdict about the relay. It used to
 // arrive as last_error — "relay is not permitted in offline mode" — in the

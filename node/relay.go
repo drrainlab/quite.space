@@ -215,7 +215,7 @@ func (r *Runtime) PushToRelay(addr string, tid id.TerminalID) (int, uint64, erro
 // deliverSpace instead, which routes per recipient.
 func (r *Runtime) pushToRelay(addr string, tid id.TerminalID, policy AssetPolicy) (int, int, uint64, error) {
 	pushed, reached, _, deadline, err := r.deliverSpaceRouted(tid, policy,
-		func(id.DeviceID) string { return addr })
+		func(id.DeviceID) string { return addr }, false)
 	return pushed, reached, deadline, err
 }
 
@@ -268,7 +268,7 @@ func (r *Runtime) deliverSpace(tid id.TerminalID, policy AssetPolicy, syncingAt 
 			}
 			// The cycle's explicit endpoint: used, never recorded.
 			return syncingAt
-		})
+		}, true)
 	return pushed, reached, noRoute, err
 }
 
@@ -280,7 +280,7 @@ func (r *Runtime) deliverSpace(tid id.TerminalID, policy AssetPolicy, syncingAt 
 // as sent. route answers "which endpoint carries this recipient's copy";
 // "" means no route is known and the recipient is skipped and counted.
 func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
-	route func(id.DeviceID) string) (int, int, int, uint64, error) {
+	route func(id.DeviceID) string, lanOffload bool) (int, int, int, uint64, error) {
 	r.mu.Lock()
 	st, ok := r.spaces[tid]
 	if !ok {
@@ -407,7 +407,59 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 		// than mark these frames as handed off.
 		return len(frames), 0, 0, 0, nil
 	}
+	// THE LOCAL WIRE FIRST (T6-LAN). A recipient whose device is
+	// authenticated live on a local link gets its copy pushed over that
+	// wire NOW — the pending delta against what the peer last stated it
+	// holds — and NO relay copy: a parallel copy "just in case" would keep
+	// the relay carrying the room's whole conversation and the offload
+	// would be theatre. The fallback lives at the attempt level instead: a
+	// wire that fails before acceptance drops the recipient back into the
+	// relay grouping below, this same cycle. A binding that dies later
+	// resets push progress (dropConn), so nothing is stranded on a road
+	// that closed. Manual PushToRelay never offloads — "push current
+	// space" is an explicit hand-everything-to-the-relay.
+	lanReached := 0
+	if lanOffload && r.connectivity().allows(TransportLAN, tid) {
+		r.mu.Lock()
+		labelOf := map[link]string{}
+		for _, ll := range r.links {
+			labelOf[ll.c] = ll.label
+		}
+		kept := recipients[:0]
+		for _, dev := range recipients {
+			l := r.lanPeers[dev]
+			live := l != nil
+			if live {
+				if closed, _ := l.Closed(); closed {
+					live = false
+				}
+			}
+			if !live {
+				kept = append(kept, dev)
+				continue
+			}
+			// OnSent closures attribute the hand-off to the current link.
+			r.curLink = labelOf[l]
+			err := st.eng.PushPending(l)
+			r.curLink = ""
+			if err != nil {
+				kept = append(kept, dev) // failed before acceptance: relay
+				continue
+			}
+			lanReached++
+		}
+		recipients = kept
+		r.mu.Unlock()
+	}
+	if len(recipients) == 0 {
+		// Everybody was on the wire. The relay is not even dialled.
+		return len(frames), lanReached, 0, 0, nil
+	}
 	if err := r.relayGate(); err != nil {
+		if lanReached > 0 {
+			// The relay is refused by policy, but the room heard us.
+			return len(frames), lanReached, len(recipients), 0, nil
+		}
 		return 0, 0, 0, 0, err
 	}
 	now = uint64(time.Now().Unix())
@@ -444,7 +496,7 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 		byEndpoint[ep] = append(byEndpoint[ep], dev)
 	}
 
-	reached := 0
+	relayReached := 0
 	var sendErr error
 	// Deterministic endpoint order, so failures are stable to read.
 	eps := make([]string, 0, len(byEndpoint))
@@ -477,7 +529,7 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 						return err
 					}
 				}
-				reached++
+				relayReached++
 			}
 			return nil
 		}); err != nil {
@@ -488,7 +540,7 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 			}
 		}
 	}
-	if reached == 0 && sendErr != nil {
+	if relayReached == 0 && lanReached == 0 && sendErr != nil {
 		return 0, 0, noRoute, 0, sendErr
 	}
 	if oversize > 0 {
@@ -499,16 +551,19 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 			oversize, tid.String()[:8], maxRelayItem)
 	}
 
-	if reached > 0 {
+	if relayReached > 0 {
 		// Record the honest receipt level for every pushed event: the relay
-		// accepted them; nobody received anything yet.
+		// accepted them; nobody received anything yet. LAN hand-offs are NOT
+		// in here — their claim is handed_to_transport, recorded by the
+		// engine's OnSent hook at the moment of the push; pretending a wire
+		// hand-off was a relay acceptance would be a lie in the ledger.
 		r.mu.Lock()
 		for _, eid := range eventIDs {
 			_ = st.space.Trust.RecordTransportReceipt(eid, tid, claims.DeliveryAcceptedByRelay)
 		}
 		r.mu.Unlock()
 	}
-	return len(frames), reached, noRoute, deadline, sendErr
+	return len(frames), relayReached + lanReached, noRoute, deadline, sendErr
 }
 
 // addRelayWants records blob hashes to request over the relay for a space

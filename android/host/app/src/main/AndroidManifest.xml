@@ -8,6 +8,11 @@
          state — the node still syncs and the log is still the truth. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- LAN discovery (T6-LAN): announces ride multicast UDP, and Android
+         drops multicast on the floor unless a MulticastLock is held. The
+         lock is acquired by RuntimeController for exactly as long as the
+         node runs with LAN on. -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Voice messages. Asked for at the moment the record button is pressed,
          not at launch, and never held: the WebView's getUserMedia is denied

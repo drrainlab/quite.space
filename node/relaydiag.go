@@ -46,6 +46,11 @@ type RelayDiagnostics struct {
 	Ingress []string         `json:"ingress,omitempty"`
 	Peers   []PeerRouteBrief `json:"peers,omitempty"`
 	NoRoute int              `json:"no_route_peers,omitempty"`
+	// LocalPeers are devices authenticated live on a local link right now
+	// (T6-LAN observed routes). Ephemeral by doctrine — this list is the
+	// ONLY place they surface; they are never in Peers, because Peers is
+	// the durable book and these are the room.
+	LocalPeers []string `json:"local_peers,omitempty"`
 }
 
 // PeerRouteBrief is one peer device's delivery picture, for diagnostics.
@@ -123,6 +128,15 @@ func (r *Runtime) RelayDiagnosticsSnapshot() RelayDiagnostics {
 	// The route book, briefly (RT-0).
 	d.Ingress = r.SelfIngressRoutes()
 	r.mu.Lock()
+	for dev, l := range r.lanPeers {
+		if l == nil {
+			continue
+		}
+		if closed, _ := l.Closed(); closed {
+			continue
+		}
+		d.LocalPeers = append(d.LocalPeers, dev.Hex()[:8])
+	}
 	for dev, routes := range r.ks.PeerRoutes {
 		brief := PeerRouteBrief{Device: dev.Hex()[:8]}
 		for _, rt := range routes {
@@ -137,6 +151,7 @@ func (r *Runtime) RelayDiagnosticsSnapshot() RelayDiagnostics {
 	}
 	r.mu.Unlock()
 	sort.Slice(d.Peers, func(i, j int) bool { return d.Peers[i].Device < d.Peers[j].Device })
+	sort.Strings(d.LocalPeers)
 	return d
 }
 

@@ -326,7 +326,7 @@ class QuietActivity : ComponentActivity() {
         // form.
         vault.load()?.let { stored ->
             autoAttempt = stored
-            controller.ensureStarted(stored, null, false)
+            controller.ensureStarted(stored, null, true)
         }
 
         controller.addListener(runtimeListener)   // also renders the current state
@@ -545,7 +545,7 @@ class QuietActivity : ComponentActivity() {
                     // The CONTROLLER opens the node. This Activity never calls
                     // the binding's Start and never resolves a data directory
                     // — one owner, one directory, one lock.
-                    controller.ensureStarted(pass, null, false)
+                    controller.ensureStarted(pass, null, true)
                 }
             })
         }

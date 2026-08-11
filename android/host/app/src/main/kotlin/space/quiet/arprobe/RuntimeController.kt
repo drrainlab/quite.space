@@ -1,6 +1,7 @@
 package space.quiet.arprobe
 
 import android.content.Context
+import android.net.wifi.WifiManager
 import android.util.Log
 import org.json.JSONObject
 import space.quiet.quietcore.Candidate
@@ -502,6 +503,13 @@ class RuntimeController private constructor(appContext: Context) {
         worker.execute {
             try {
                 publish()                                    // "opening" is now visible
+                // Multicast is dropped by the Wi-Fi stack unless a lock is
+                // held, and LAN discovery IS multicast — without this the
+                // phone announces into the void and hears nobody (T6-LAN).
+                // Held for the node's lifetime, released in stop(); the
+                // battery cost is the price of "stay connected", which is
+                // already this app's default posture.
+                if (withLAN) acquireMulticast()
                 Quietcore.start(
                     dataDir().absolutePath,
                     passphrase ?: "",
@@ -519,6 +527,33 @@ class RuntimeController private constructor(appContext: Context) {
         }
     }
 
+    private var multicast: WifiManager.MulticastLock? = null
+
+    private fun acquireMulticast() {
+        try {
+            if (multicast?.isHeld == true) return
+            val wifi = app.getSystemService(Context.WIFI_SERVICE) as WifiManager
+            multicast = wifi.createMulticastLock("quiet-lan").apply {
+                setReferenceCounted(false)
+                acquire()
+            }
+        } catch (t: Throwable) {
+            // A phone that cannot multicast is an ordinary phone: the node
+            // still opens, LAN discovery just stays deaf, and the core's own
+            // status carries the LAN error if StartLAN itself failed.
+            Log.w(TAG, "multicast lock unavailable", t)
+        }
+    }
+
+    private fun releaseMulticast() {
+        try {
+            multicast?.takeIf { it.isHeld }?.release()
+        } catch (t: Throwable) {
+            Log.w(TAG, "multicast release failed", t)
+        }
+        multicast = null
+    }
+
     /** Closes the core. Safe when nothing is open. */
     fun stop() {
         worker.execute {
@@ -527,6 +562,7 @@ class RuntimeController private constructor(appContext: Context) {
             } catch (t: Throwable) {
                 Log.w(TAG, "stop failed", t)
             } finally {
+                releaseMulticast()
                 publish()
             }
         }

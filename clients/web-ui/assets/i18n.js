@@ -20,6 +20,7 @@ const I18N = {
     'conn.off': 'Not connected',
     'conn.here': ({ count }) => `${count} ${plural(count, 'person', 'people')} here`,
     'conn.summary': ({ state, count }) => `${state} · ${count} here`,
+    'conn.relay_room': ({ count }) => `relay · ${count} nearby`,
     'conn.details': 'Connection details',
     'conn.mesh_node': ({ node }) => `mesh · node ${node}`,
     // For a carrier that has no node numbers, which is every carrier except
@@ -1180,6 +1181,7 @@ const I18N = {
     'conn.off': 'не подключено',
     'conn.here': ({ count }) => `${count} ${pluralRu(count, 'человек', 'человека', 'человек')} здесь`,
     'conn.summary': ({ state, count }) => `${state} · ${count} здесь`,
+    'conn.relay_room': ({ count }) => `реле · рядом ${count}`,
     'conn.details': 'подробности соединения',
     'conn.mesh_node': ({ node }) => `mesh · узел ${node}`,
     'conn.radio_carrier': ({ carrier }) => `радио · ${carrier}`,

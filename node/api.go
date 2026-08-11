@@ -403,6 +403,9 @@ type statusResp struct {
 		Listening bool `json:"listening"`
 		Port      int  `json:"port"`
 		Peers     int  `json:"peers"`
+		// bound = peers whose DEVICE is authenticated on the wire (T6-LAN):
+		// the number the chip may honestly call "in the room".
+		Bound int `json:"bound"`
 	} `json:"lan"`
 	Mesh struct {
 		Connected bool   `json:"connected"`
@@ -493,6 +496,7 @@ func (a *APIServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 	resp.DeviceXPub = hex.EncodeToString(a.rt.Device.X25519Pub[:])
 	l := a.rt.LAN()
 	resp.LAN.Listening, resp.LAN.Port, resp.LAN.Peers = l.Listening, l.Port, l.Peers
+	resp.LAN.Bound = l.Bound
 	// The neutral face first, because it is the one that answers for every
 	// carrier. Detail is dropped HERE and nowhere else: the mesh object below
 	// already carries the Meshtastic diagnostic in the shape the client reads,

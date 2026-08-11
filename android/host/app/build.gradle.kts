@@ -31,8 +31,8 @@ android {
         // BUMP versionCode FOR EVERY BUILD THAT LEAVES THIS MACHINE. Android
         // refuses to install an apk whose code is not higher than the one on
         // the phone, and the failure reads as a corrupt download.
-        versionCode = 7
-        versionName = "0.1.0-beta.7"
+        versionCode = 8
+        versionName = "0.1.0-beta.8"
         ndk { abiFilters += "arm64-v8a" }
 
         // AR-1b.6b.5. The structural notification tests are INSTRUMENTED
