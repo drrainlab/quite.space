@@ -118,17 +118,19 @@ func (r *Runtime) EnsureAISpace() (id.TerminalID, error) {
 	// Memory "everything", not private_history: people will want to pass an
 	// answer on to somebody, and sealing the past inside a room with one
 	// human member would be policy theatre.
+	// LocalOnly at creation, not after it: the space is attached to
+	// r.spaces inside this call, and the announce and relay loops read
+	// that map — a tick landing between the attach and a later stamp
+	// would have seen the AI's room without its flag.
 	tid, err := r.CreateSpaceWithOptions(AgentLabel, CreateOptions{
 		Character: terminals.DefaultCharacter("orbit"),
+		LocalOnly: true,
 	})
 	if err != nil {
 		return id.TerminalID{}, err
 	}
 
 	r.mu.Lock()
-	meta := r.ks.Spaces[tid]
-	meta.LocalOnly = true
-	r.ks.Spaces[tid] = meta
 	r.ks.Agent.Space = tid
 	st := r.spaces[tid]
 	// The agent publishes its manifest so the room honestly shows what is

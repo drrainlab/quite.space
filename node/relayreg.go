@@ -23,6 +23,7 @@ package node
 import (
 	"errors"
 	"strings"
+	"sync/atomic"
 )
 
 // Relay roles a descriptor may advertise. Strings, not iota — they are
@@ -119,10 +120,30 @@ func (rr RelayRegistry) Compatible(protoMin, protoMax int) []RelayDescriptor {
 	return out
 }
 
-// BuiltinRelayRegistry is this build's snapshot. The public beta adds the
-// four official regional entries here (pins from `terminal-relay`'s
-// startup banner) — a constant edit, no architecture change.
-var BuiltinRelayRegistry = RelayRegistry{
+// BuiltinRelayRegistry returns this build's registry snapshot. A FUNCTION,
+// not a var, loaded atomically: the automatic-selection goroutine reads the
+// registry in the background while the test suite swaps it per test
+// (withRelayRegistry) — a plain global was the suite's one data race.
+// Production never writes it; the setter exists for tests.
+func BuiltinRelayRegistry() RelayRegistry {
+	return relayRegistryV.Load().(RelayRegistry)
+}
+
+func setBuiltinRelayRegistry(reg RelayRegistry) { relayRegistryV.Store(reg) }
+
+// Initialized by var-dependency order: the shipped literal below is built
+// first, then this atomic wraps it — before any init() or test runs.
+var relayRegistryV = func() *atomic.Value {
+	v := new(atomic.Value)
+	v.Store(shippedBuiltinRegistry)
+	return v
+}()
+
+// shippedBuiltinRegistry is the snapshot compiled into the binary. The
+// public beta adds the official regional entries here (pins from
+// `terminal-relay`'s startup banner) — a constant edit, no architecture
+// change.
+var shippedBuiltinRegistry = RelayRegistry{
 	Version: 1,
 	Relays: []RelayDescriptor{
 		{

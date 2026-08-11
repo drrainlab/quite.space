@@ -54,7 +54,7 @@ func (r *Runtime) personalRelayLadder() []string {
 	var out []string
 	for _, sref := range []string{st.SelectedPrimary, st.SelectedBackup} {
 		if ref, err := ParseRelayRef(sref); err == nil {
-			if ep, ok := ref.Resolve(BuiltinRelayRegistry); ok {
+			if ep, ok := ref.Resolve(BuiltinRelayRegistry()); ok {
 				out = append(out, ep)
 			}
 		}
@@ -92,7 +92,7 @@ func (r *Runtime) policyRelaysOf(tid id.TerminalID) (addrs []string, present boo
 		if err != nil {
 			continue
 		}
-		if ep, ok := ref.Resolve(BuiltinRelayRegistry); ok {
+		if ep, ok := ref.Resolve(BuiltinRelayRegistry()); ok {
 			addrs = append(addrs, ep)
 		}
 	}
@@ -204,7 +204,7 @@ func (r *Runtime) quicklinkCandidates() []string {
 		s  float64
 	}
 	var cs []cand
-	for _, d := range BuiltinRelayRegistry.Compatible(RelayProtocolVersionMin, RelayProtocolVersionMax) {
+	for _, d := range BuiltinRelayRegistry().Compatible(RelayProtocolVersionMin, RelayProtocolVersionMax) {
 		s := math.Inf(1) // unmeasured sorts last but stays a candidate
 		if ps := st.Stats[RelayRef{Official: d.ID}.String()]; ps != nil {
 			s = relayScore(*ps)

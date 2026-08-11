@@ -13,6 +13,7 @@ import (
 
 	"github.com/drrainlab/quiet_places/kernel/assets"
 	"github.com/drrainlab/quiet_places/kernel/eventlog"
+	"github.com/drrainlab/quiet_places/kernel/storage"
 	"github.com/drrainlab/quiet_places/protocol/claims"
 	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/protocol/signal"
@@ -209,17 +210,82 @@ func (r *Runtime) PushToRelay(addr string, tid id.TerminalID) (int, uint64, erro
 	return n, deadline, err
 }
 
-// pushToRelay returns (framesPrepared, recipients, deadline, err). recipients
-// is how many peer inboxes actually received a copy — 0 means "nobody
-// addressable yet" (a solo space, or a fresh joiner before its first pull),
-// which is a clean no-op, not an error. The auto-sync loop keys its progress
-// on recipients so it retries rather than marking undelivered frames as sent.
+// pushToRelay delivers every recipient's copy through ONE named relay — the
+// manual push API and the single-relay tests. The background loop uses
+// deliverSpace instead, which routes per recipient.
 func (r *Runtime) pushToRelay(addr string, tid id.TerminalID, policy AssetPolicy) (int, int, uint64, error) {
+	pushed, reached, _, deadline, err := r.deliverSpaceRouted(tid, policy,
+		func(id.DeviceID) string { return addr })
+	return pushed, reached, deadline, err
+}
+
+// deliverSpace is RT-0's egress: each recipient's copy goes to THAT
+// recipient's route, recipients sharing an endpoint share a connection, and
+// a recipient whose known routes are all down is COUNTED and held — never
+// silently re-aimed at the sender's own relay in the hope that somebody
+// listens there.
+//
+// THE LEGACY BOOTSTRAP POLICY, named and scoped. A device the book knows
+// NOTHING about — a membership formed through a channel that carries no
+// routes: a direct invite, a radio join, the pre-upgrade era — is delivered
+// at this node's own relay, and that assumption is RECORDED as a legacy
+// route the moment it is first used, so diagnostics show it for what it is
+// and any real route supersedes it. That is the single-relay era's rule,
+// kept for the relationships formed under it. What it must never become is
+// a fallback for a device whose stated routes are merely unhealthy: falling
+// from "Bob said B" to "my own relay then" is the divergence this wave
+// removes, so known-but-down HOLDS — without exception. A peer route
+// coinciding with our own ingress is not provenance: from "we both listened
+// on A, A died, I moved to C" it does not follow that the peer is on C, and
+// inferring it would be RT-0's disease back under a legacy label. Until T5's
+// pre-advertised fallback, a dead stated route has exactly one honest
+// answer: NO_ROUTE, said out loud.
+//
+// syncingAt is the endpoint the calling sync cycle is armed with — an
+// EXECUTION CONTEXT for legacy single-address sync (relaySyncOnce, manual
+// sync, tests), scoped to this one cycle. It backstops the bootstrap when
+// the settings resolve to nothing, and it is never RouteBook knowledge: it
+// must not create PeerRoutes or SelfIngress entries, must not survive the
+// cycle, and is never returned by the general resolver.
+func (r *Runtime) deliverSpace(tid id.TerminalID, policy AssetPolicy, syncingAt string) (pushed, reached, noRoute int, err error) {
+	pushed, reached, noRoute, _, err = r.deliverSpaceRouted(tid, policy,
+		func(dev id.DeviceID) string {
+			r.mu.Lock()
+			known := len(r.ks.PeerRoutes[dev])
+			r.mu.Unlock()
+			if known > 0 {
+				if eps := r.PeerRoutesFor(dev); len(eps) > 0 {
+					return eps[0]
+				}
+				return "" // stated routes exist and are all down: HOLD (until T5)
+			}
+			// Nothing known at all: the legacy bootstrap, recorded.
+			if ep := r.ResolvePersonalRelay(); ep != "" {
+				r.mu.Lock()
+				r.recordPeerRouteLocked(dev, ep, "relay", storage.RouteLegacy)
+				r.mu.Unlock()
+				return ep
+			}
+			// The cycle's explicit endpoint: used, never recorded.
+			return syncingAt
+		})
+	return pushed, reached, noRoute, err
+}
+
+// deliverSpaceRouted returns (framesPrepared, reached, noRoute, deadline,
+// err). reached is how many peer inboxes actually received a copy — 0 means
+// "nobody addressable yet" (a solo space, or a fresh joiner before its first
+// pull), which is a clean no-op, not an error. The auto-sync loop keys its
+// progress on reached so it retries rather than marking undelivered frames
+// as sent. route answers "which endpoint carries this recipient's copy";
+// "" means no route is known and the recipient is skipped and counted.
+func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
+	route func(id.DeviceID) string) (int, int, int, uint64, error) {
 	r.mu.Lock()
 	st, ok := r.spaces[tid]
 	if !ok {
 		r.mu.Unlock()
-		return 0, 0, 0, errors.New("node: unknown space")
+		return 0, 0, 0, 0, errors.New("node: unknown space")
 	}
 	var frames [][]byte
 	var eventIDs []id.EventID
@@ -285,7 +351,7 @@ func (r *Runtime) pushToRelay(addr string, tid id.TerminalID, policy AssetPolicy
 		return nil
 	}); err != nil {
 		r.mu.Unlock()
-		return 0, 0, 0, err
+		return 0, 0, 0, 0, err
 	}
 	var fleeting [][]byte    // frames that carry their own deadline
 	var fleetingUntil uint64 // the earliest of those deadlines
@@ -337,16 +403,18 @@ func (r *Runtime) pushToRelay(addr string, tid id.TerminalID, policy AssetPolicy
 	if len(recipients) == 0 {
 		// Nobody addressable yet (solo space, or a fresh joiner before its
 		// first pull). Frames were prepared but delivered to no one — a clean
-		// no-op. Reporting recipients==0 lets the auto-sync loop retry rather
+		// no-op. Reporting reached==0 lets the auto-sync loop retry rather
 		// than mark these frames as handed off.
-		return len(frames), 0, 0, nil
+		return len(frames), 0, 0, 0, nil
 	}
 	if err := r.relayGate(); err != nil {
-		return 0, 0, 0, err
+		return 0, 0, 0, 0, err
 	}
 	now = uint64(time.Now().Unix())
 	bucket := relay.Bucket(now)
 	expires := now + uint64(DefaultRelayTTL/time.Second)
+
+
 	var deadline uint64
 	biggest := 0
 	for _, b := range bodies {
@@ -358,31 +426,70 @@ func (r *Runtime) pushToRelay(addr string, tid id.TerminalID, policy AssetPolicy
 	if biggest >= bulkThreshold {
 		withLane = r.withRelayBulk
 	}
-	if err := withLane(addr, func(client *relay.Client) error {
-		for _, dev := range recipients {
-			hint := relay.HintFor(tid, dev, bucket)
-			// One mailbox, several items. A Collect drains them all and the
-			// receiver folds each independently, so the only thing the split
-			// costs is wire ops — and the alternative was a space that stops
-			// delivering the day its log outgrows one item.
-			for _, b := range bodies {
-				d, err := client.Put(hint, expires, b)
-				if err != nil {
-					return err
+
+	// EACH RECIPIENT'S COPY GOES TO THAT RECIPIENT'S ROUTE (RT-0).
+	// Recipients sharing an endpoint share one connection and one batch; a
+	// recipient with no route is counted and skipped — never posted to the
+	// sender's own relay in the hope that somebody happens to listen there.
+	// The mailbox hint itself is route-independent (space, device, bucket),
+	// so nothing about addressing changes — only which machine holds it.
+	byEndpoint := map[string][]id.DeviceID{}
+	noRoute := 0
+	for _, dev := range recipients {
+		ep := route(dev)
+		if ep == "" {
+			noRoute++
+			continue
+		}
+		byEndpoint[ep] = append(byEndpoint[ep], dev)
+	}
+
+	reached := 0
+	var sendErr error
+	// Deterministic endpoint order, so failures are stable to read.
+	eps := make([]string, 0, len(byEndpoint))
+	for ep := range byEndpoint {
+		eps = append(eps, ep)
+	}
+	sort.Strings(eps)
+	for _, ep := range eps {
+		devs := byEndpoint[ep]
+		if err := withLane(ep, func(client *relay.Client) error {
+			for _, dev := range devs {
+				hint := relay.HintFor(tid, dev, bucket)
+				// One mailbox, several items. A Collect drains them all and
+				// the receiver folds each independently, so the only thing
+				// the split costs is wire ops — and the alternative was a
+				// space that stops delivering the day its log outgrows one
+				// item.
+				for _, b := range bodies {
+					d, err := client.Put(hint, expires, b)
+					if err != nil {
+						return err
+					}
+					deadline = d
 				}
-				deadline = d
+				// A status, on its own clock. The relay forgets it when it
+				// goes stale, which is the whole of what "no custody" was
+				// protecting.
+				for _, b := range fleetingBodies {
+					if _, err := client.Put(hint, fleetingUntil, b); err != nil {
+						return err
+					}
+				}
+				reached++
 			}
-			// A status, on its own clock. The relay forgets it when it goes
-			// stale, which is the whole of what "no custody" was protecting.
-			for _, b := range fleetingBodies {
-				if _, err := client.Put(hint, fleetingUntil, b); err != nil {
-					return err
-				}
+			return nil
+		}); err != nil {
+			// One endpoint down must not silence the others: keep going and
+			// report the first failure — the loop retries the whole space.
+			if sendErr == nil {
+				sendErr = err
 			}
 		}
-		return nil
-	}); err != nil {
-		return 0, 0, 0, err
+	}
+	if reached == 0 && sendErr != nil {
+		return 0, 0, noRoute, 0, sendErr
 	}
 	if oversize > 0 {
 		// Said out loud rather than dropped in silence: a single frame past
@@ -392,14 +499,16 @@ func (r *Runtime) pushToRelay(addr string, tid id.TerminalID, policy AssetPolicy
 			oversize, tid.String()[:8], maxRelayItem)
 	}
 
-	// Record the honest receipt level for every pushed event: the relay
-	// accepted them; nobody received anything yet.
-	r.mu.Lock()
-	for _, eid := range eventIDs {
-		_ = st.space.Trust.RecordTransportReceipt(eid, tid, claims.DeliveryAcceptedByRelay)
+	if reached > 0 {
+		// Record the honest receipt level for every pushed event: the relay
+		// accepted them; nobody received anything yet.
+		r.mu.Lock()
+		for _, eid := range eventIDs {
+			_ = st.space.Trust.RecordTransportReceipt(eid, tid, claims.DeliveryAcceptedByRelay)
+		}
+		r.mu.Unlock()
 	}
-	r.mu.Unlock()
-	return len(frames), len(recipients), deadline, nil
+	return len(frames), reached, noRoute, deadline, sendErr
 }
 
 // addRelayWants records blob hashes to request over the relay for a space
@@ -522,6 +631,33 @@ func (w *wantAccumulator) answer(r *Runtime, client *relay.Client, tid id.Termin
 	}
 }
 
+// answerWantsRouted answers a private-space media want at the WANTER's own
+// route rather than on the connection the want arrived through. The mailbox
+// hint is route-independent — (space, device, bucket) — so the only decision
+// here is which machine to Put it on, and the honest answer is "wherever the
+// asker listens". No route known → no answer sent: the asker's own retry
+// ladder keeps asking, and LAN/direct may serve them meanwhile — better than
+// depositing bytes on a machine nobody reads.
+func (r *Runtime) answerWantsRouted(tid id.TerminalID, wanter []byte, wants [][]byte) {
+	if len(wanter) != len(id.DeviceID{}) {
+		return
+	}
+	var dev id.DeviceID
+	copy(dev[:], wanter)
+	if dev == r.Device.ID {
+		return
+	}
+	eps := r.PeerRoutesFor(dev)
+	if len(eps) == 0 {
+		return
+	}
+	// Bulk lane: answers carry media blobs.
+	_ = r.withRelayBulk(eps[0], func(client *relay.Client) error {
+		r.answerWants(client, tid, wanter, wants, nil, false)
+		return nil
+	})
+}
+
 func (r *Runtime) answerWants(client *relay.Client, tid id.TerminalID, wanter []byte, wants [][]byte, replyBox []byte, public bool) {
 	if len(wants) == 0 {
 		return
@@ -544,6 +680,32 @@ func (r *Runtime) answerWants(client *relay.Client, tid id.TerminalID, wanter []
 		return
 	}
 	expires := now + uint64(DefaultRelayTTL/time.Second)
+
+	// WHICH OF THESE HASHES BELONGS TO THIS SPACE, decided once, before any
+	// network I/O — this function deliberately runs without r.mu (it dials
+	// and Puts), so the index is read here in one short critical section
+	// rather than inside the send loop, where it would be an unsynchronised
+	// map read racing every indexRef.
+	//
+	// The check itself closes a cross-space oracle: the blob store is
+	// node-global, so without it a member of one space could ask for a hash
+	// they learned somewhere else and learn from the answer whether this
+	// node holds it. The peer path already refuses that question
+	// (kernel/sync's serveBlobs gates on BlobAllowed); the relay path did
+	// not. Small in practice — blobs stay encrypted, and knowing a
+	// ciphertext's hash usually means already having it — but a rule that
+	// holds on one transport and not the other is how the gap got here.
+	inScope := make(map[id.Hash]bool, len(wants))
+	r.mu.Lock()
+	for _, hb := range wants {
+		if len(hb) != id.Size {
+			continue
+		}
+		var h id.Hash
+		copy(h[:], hb)
+		inScope[h] = r.assetIdx.allowed(h, tid)
+	}
+	r.mu.Unlock()
 
 	// The relay carries each item as one CBOR byte string, capped by
 	// codec.MaxItemLen (1 MiB). So a media answer must be SPLIT into
@@ -571,6 +733,9 @@ func (r *Runtime) answerWants(client *relay.Client, tid id.TerminalID, wanter []
 		}
 		var h id.Hash
 		copy(h[:], hb)
+		if !inScope[h] {
+			continue
+		}
 		data, err := r.root.GetBlob(h)
 		if err != nil {
 			continue // we do not hold it; another member may
@@ -652,8 +817,20 @@ func (r *Runtime) applyRelayItems(client *relay.Client, items [][]byte) (int, er
 		// hold, pushed into the requester's inbox (the response half of
 		// on-demand media over the relay). Runs without r.mu — it does network
 		// I/O.
+		//
+		// ROUTED TO THE WANTER (RT-0). This used to answer on `client` — the
+		// connection the want arrived through, which is OUR ingress — and
+		// while everybody shared one relay that was also the asker's relay.
+		// The moment it was not, the answer landed in a mailbox on a machine
+		// the asker never reads: the last cross-relay gap the T0 media test
+		// caught after messages already crossed. A reply box still answers
+		// in place — the asker minted it for THIS relay on purpose.
 		if len(parts.Wants) > 0 {
-			r.answerWants(client, terminal, parts.Wanter, parts.Wants, parts.ReplyBox, false)
+			if len(parts.ReplyBox) > 0 {
+				r.answerWants(client, terminal, parts.Wanter, parts.Wants, parts.ReplyBox, false)
+			} else {
+				r.answerWantsRouted(terminal, parts.Wanter, parts.Wants)
+			}
 		}
 		r.mu.Lock()
 		st, ok := r.spaces[terminal]

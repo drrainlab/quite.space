@@ -346,8 +346,16 @@ func (r *Runtime) acceptOne(client *relay.Client, recs []*passRecord, sealed []b
 			epochN, epochKey, mf, err := st.space.AcceptIntoSpace(r.Self,
 				req.Device, req.DeviceXpub, req.DisplayName, r.Principal.ID, now)
 			if err == nil {
+				// The route exchange, both directions, in the one moment
+				// both sides are talking (RT-0). The guest said where to
+				// answer; the acceptance says where we are. Persistence
+				// rides commitAdmissionLocked below.
+				for _, ep := range req.ReturnRoutes {
+					r.recordPeerRouteLocked(req.Device, ep, "relay", storage.RouteInvitation)
+				}
 				acc := &terminals.Accepted{RequestID: req.RequestID,
-					ManifestFrame: mf, EpochN: epochN, EpochKey: epochKey}
+					ManifestFrame: mf, EpochN: epochN, EpochKey: epochKey,
+					Routes: r.advertisedRoutesLocked(), AcceptorDevice: r.Device.ID}
 				// The memory policy decides whether the past travels with
 				// the pass (LR-4): private_history keeps earlier epochs
 				// sealed to those who lived them.
@@ -448,8 +456,16 @@ func (r *Runtime) JoinByPass(shared string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// The ReturnRouteHint (RT-0): "you can answer me at these endpoints".
+	// Without it the host would know the guest's DEVICE and no route to it —
+	// rec.relay is the host's own rendezvous, which proves nothing about
+	// where the guest listens. Advertising creates the obligation to listen,
+	// which advertisedRoutesLocked records in the same breath.
+	r.mu.Lock()
+	returnRoutes := r.advertisedRoutesLocked()
+	r.mu.Unlock()
 	reqID, sealedReq, err := terminals.BuildJoinRequestWithSecret(pass, secret,
-		r.Device, r.DisplayName(), nonce, r.Device.SignKey())
+		r.Device, r.DisplayName(), nonce, r.Device.SignKey(), returnRoutes...)
 	if err != nil {
 		return "", err
 	}
@@ -589,6 +605,16 @@ func (r *Runtime) adoptAccepted(at *joinAttempt, acc *terminals.Accepted) error 
 	// silence, and an empty title already projects.
 	r.ks.Spaces[at.space] = storage.SpaceMeta{Title: title,
 		Unnamed: known && title == "", ManifestFrame: acc.ManifestFrame}
+	// The other half of the route exchange (RT-0): the acceptance names the
+	// acceptor's device and where it listens. THE line this wave exists for
+	// on the guest's side — without it, "where the host lives" died with
+	// the JoinRecord's pruning window and the guest fell back to its own
+	// relay, which is the split.
+	if acc.AcceptorDevice != (id.DeviceID{}) {
+		for _, ep := range acc.Routes {
+			r.recordPeerRouteLocked(acc.AcceptorDevice, ep, "relay", storage.RouteInvitation)
+		}
+	}
 	r.attach(at.space, s)
 	if _, _, err := r.Self.PublishManifest(s); err != nil {
 		return err

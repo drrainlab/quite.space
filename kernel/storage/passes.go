@@ -74,6 +74,11 @@ type EntryRecord struct {
 	DecidedAt uint64
 	State     EntryState
 	Outcome   EntryOutcome
+	// Routes is the knocker's ReturnRouteHint (RT-0), held with the entry
+	// because the host may approve hours after the knock — and admitting
+	// somebody whose return address was already forgotten would grant a
+	// membership nobody can deliver to.
+	Routes []string
 }
 
 // PassRecord is the owner's durable acceptance state for one pass.
@@ -131,7 +136,7 @@ func appendPassRecords(buf []byte, recs []PassRecord) []byte {
 		}
 		buf = codec.AppendArray(buf, len(r.Entries))
 		for _, e := range r.Entries {
-			buf = codec.AppendArray(buf, 8)
+			buf = codec.AppendArray(buf, 9)
 			buf = codec.AppendBytes(buf, e.Request[:])
 			buf = codec.AppendBytes(buf, e.Device[:])
 			buf = codec.AppendBytes(buf, e.Xpub[:])
@@ -140,6 +145,10 @@ func appendPassRecords(buf []byte, recs []PassRecord) []byte {
 			buf = codec.AppendUint(buf, e.DecidedAt)
 			buf = codec.AppendUint(buf, uint64(e.State))
 			buf = codec.AppendUint(buf, uint64(e.Outcome))
+			buf = codec.AppendArray(buf, len(e.Routes))
+			for _, rt := range e.Routes {
+				buf = codec.AppendText(buf, rt)
+			}
 		}
 	}
 	return buf
@@ -245,8 +254,21 @@ func readPassRecords(d *codec.Decoder) ([]PassRecord, error) {
 				return nil, e
 			}
 			ent.Outcome = EntryOutcome(ov)
+			if ec >= 9 {
+				rc, e := d.ReadArray()
+				if e != nil {
+					return nil, e
+				}
+				for j := 0; j < rc; j++ {
+					rt, e := d.ReadText()
+					if e != nil {
+						return nil, e
+					}
+					ent.Routes = append(ent.Routes, rt)
+				}
+			}
 			// Forward compatibility: a newer build may write more fields.
-			for i := 8; i < ec; i++ {
+			for i := 9; i < ec; i++ {
 				if e := d.SkipItem(); e != nil {
 					return nil, e
 				}

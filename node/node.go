@@ -480,6 +480,12 @@ func Open(dataDir string, passphrase []byte, displayName string) (rt *Runtime, e
 	// a durable journal whose doors nobody watches is the same bug wearing
 	// a different coat (QL-0, ADR-012 invariant 7).
 	r.restoreSagaLocked()
+	// RT-0 legacy migration, exactly once: a node upgraded from the
+	// single-relay era gets one recorded route per known member device —
+	// the relay everybody genuinely shared — so yesterday's installations
+	// keep talking. Runs before the save below so it rides the same write;
+	// a fresh install has no spaces and records nothing.
+	r.backfillLegacyRoutesLocked()
 	if err := r.saveKeystore(); err != nil {
 		return nil, err
 	}
@@ -719,6 +725,19 @@ func verifySpaceManifest(tid id.TerminalID, frame []byte) error {
 type CreateOptions struct {
 	Character terminals.Character
 	Policy    terminals.SpacePolicy
+	// LocalOnly marks a space that must never be announced on a LAN,
+	// published to a relay, mirrored, or made the target of a link — the
+	// local Agent Terminal's room (AI-0).
+	//
+	// It is an OPTION rather than a later write on purpose. Stamping it
+	// afterwards left a window: CreateSpaceWithOptions attaches the space
+	// to r.spaces, and the sync and announce loops read that map, so a
+	// tick landing between the attach and the stamp would have seen the
+	// AI's space without its flag and derived a mailbox hint for it.
+	// Sealed content, so at most the hint's existence leaked — but a
+	// negative guarantee with a window in it is not one. LocalOnly from
+	// birth, in the same critical section that creates the space.
+	LocalOnly bool
 }
 
 // CreateSpace mints a private space owned by this node (default character).
@@ -776,6 +795,8 @@ func (r *Runtime) CreateSpaceWithOptions(title string, o CreateOptions) (id.Term
 		Title: title, Owned: true,
 		ManifestFrame: s.ManifestFrame, Members: s.Members(),
 		Visibility: string(o.Policy.Effective()),
+		// Before attach, deliberately — see CreateOptions.LocalOnly.
+		LocalOnly: o.LocalOnly,
 	}
 	r.attach(s.ID, s)
 	if _, _, err := r.Self.PublishManifest(s); err != nil {

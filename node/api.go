@@ -6,6 +6,7 @@ package node
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -13,6 +14,7 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"slices"
 	"strings"
@@ -58,8 +60,87 @@ func (a *APIServer) Serve(port int) (string, net.Listener, error) {
 	if err != nil {
 		return "", nil, err
 	}
-	go http.Serve(l, a.Handler())
+	go http.Serve(l, loopbackOnly(a.Handler()))
 	return l.Addr().String(), l, nil
+}
+
+// loopbackOnly refuses a request that reached the listener under somebody
+// else's name, or from somebody else's page.
+//
+// BINDING 127.0.0.1 DOES NOT MEAN ONLY THIS MACHINE CAN REACH IT. A web
+// page the person is merely visiting can point a name it controls at
+// 127.0.0.1 (DNS rebinding) and then talk to this API from its own
+// JavaScript, in their browser, with their network position. What arrives
+// looks local because it IS local — the packet really did come from
+// loopback. The one thing that gives it away is the name the request asked
+// for: the interface asks for 127.0.0.1 or localhost, and a rebound page
+// asks for evil.example. So the Host is checked, and an Origin, when the
+// browser sends one, has to be one of ours too.
+//
+// This wraps the LISTENER rather than the routes, and that placement is
+// the point. A rebinding attack needs a TCP port to rebind ONTO; a host
+// that mounts Handler() somewhere with no listener at all — the Wails
+// AssetServer in cmd/wails-probe, and the desktop shell after it — has no
+// such surface, and would fail a loopback-name check for the honest
+// reason that its WebView asks for whatever name the framework chose.
+// Guarding the listener guards exactly the thing that can be attacked, and
+// leaves the thing that cannot alone.
+//
+// Not a replacement for the token: this stops a stranger's page from
+// reaching the API, and the token stops everything else. Both, or neither
+// is worth much.
+func loopbackOnly(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !loopbackName(hostOnly(r.Host)) {
+			httpErr(w, http.StatusForbidden,
+				errors.New("this API answers to 127.0.0.1 and localhost only"))
+			return
+		}
+		// A same-origin fetch from the interface sends either no Origin or
+		// our own; anything else is another page talking to us.
+		if o := r.Header.Get("Origin"); o != "" && !loopbackOrigin(o) {
+			httpErr(w, http.StatusForbidden,
+				errors.New("cross-origin requests are not accepted here"))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// hostOnly strips the port from a Host header, leaving the name.
+func hostOnly(host string) string {
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		return h
+	}
+	return strings.Trim(host, "[]") // bare IPv6, or a name with no port
+}
+
+// loopbackName says whether a Host names this machine's loopback. An empty
+// Host is refused rather than waved through: HTTP/1.1 requires one, and
+// nothing that speaks to this API omits it.
+func loopbackName(h string) bool {
+	if h == "" {
+		return false
+	}
+	if strings.EqualFold(h, "localhost") {
+		return true
+	}
+	// Any loopback address, not just 127.0.0.1 — the whole 127/8 block and
+	// ::1 all reach this listener.
+	if ip := net.ParseIP(strings.Trim(h, "[]")); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
+}
+
+// loopbackOrigin checks an Origin header the same way. A malformed origin
+// is refused, not parsed generously.
+func loopbackOrigin(o string) bool {
+	u, err := url.Parse(o)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	return loopbackName(hostOnly(u.Host))
 }
 
 func itoa(n int) string {
@@ -282,7 +363,13 @@ func (a *APIServer) auth(next http.HandlerFunc) http.HandlerFunc {
 		if tok == "" {
 			tok = r.URL.Query().Get("token")
 		}
-		if tok != a.token {
+		// Constant time, because `!=` on strings returns as soon as two
+		// bytes differ and so takes measurably longer for a token that
+		// shares a longer prefix. Over loopback against 128 random bits
+		// that is not a practical attack — but this token opens every
+		// route, and a comparison that leaks its own progress is not the
+		// place to be relaxed about it.
+		if subtle.ConstantTimeCompare([]byte(tok), []byte(a.token)) != 1 {
 			httpErr(w, http.StatusUnauthorized, errors.New("missing or wrong token"))
 			return
 		}

@@ -77,7 +77,7 @@ func pinVerifier(endpoint string, pins []string) func(string) error {
 // dialRelay opens a relay connection under the right trust profile.
 func (r *Runtime) dialRelay(addr string) (*relay.Client, error) {
 	// Official entry for this endpoint? Its pin set decides.
-	for _, d := range BuiltinRelayRegistry.Relays {
+	for _, d := range BuiltinRelayRegistry().Relays {
 		if d.Endpoint != addr {
 			continue
 		}

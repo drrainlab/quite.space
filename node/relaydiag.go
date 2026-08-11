@@ -6,7 +6,10 @@ package node
 import (
 	"errors"
 	"net/http"
+	"sort"
 	"strings"
+
+	"github.com/drrainlab/quiet_places/kernel/storage"
 )
 
 // RelayDiagnostics is the copyable snapshot.
@@ -34,6 +37,21 @@ type RelayDiagnostics struct {
 	LastError      string `json:"last_error,omitempty"`
 	// Public spaces and where their traffic goes ("" = the personal relay).
 	Spaces []PublicSpaceStatus `json:"spaces,omitempty"`
+	// The route book (RT-0), so "where does this go" and "why is this held"
+	// are answerable on screen. Ingress is every endpoint this device
+	// listens on; Peers summarises delivery routes per known peer device —
+	// endpoints and provenance only, never mailbox hints or caps. NoRoute
+	// counts peer devices this node currently cannot deliver to at all:
+	// non-zero here is the honest face of a hold that used to be silence.
+	Ingress []string         `json:"ingress,omitempty"`
+	Peers   []PeerRouteBrief `json:"peers,omitempty"`
+	NoRoute int              `json:"no_route_peers,omitempty"`
+}
+
+// PeerRouteBrief is one peer device's delivery picture, for diagnostics.
+type PeerRouteBrief struct {
+	Device string   `json:"device"` // short prefix — enough to correlate
+	Routes []string `json:"routes"` // "endpoint (provenance)" per entry
 }
 
 // RelayDiagnosticsSnapshot assembles the bundle. Nothing here is secret:
@@ -42,7 +60,7 @@ type RelayDiagnostics struct {
 func (r *Runtime) RelayDiagnosticsSnapshot() RelayDiagnostics {
 	s := r.GetSettings()
 	st := r.loadRelayState()
-	d := RelayDiagnostics{RegistryVersion: BuiltinRelayRegistry.Version}
+	d := RelayDiagnostics{RegistryVersion: BuiltinRelayRegistry().Version}
 	// relayIsAutomatic, NOT a literal comparison — see its comment: it is the
 	// one reading of the mode, and the difference is the whole fresh-install
 	// case. A new node stores "" and means automatic; comparing to the string
@@ -62,7 +80,7 @@ func (r *Runtime) RelayDiagnosticsSnapshot() RelayDiagnostics {
 	}
 	if d.Primary != "" {
 		if ref, err := ParseRelayRef(d.Primary); err == nil {
-			if ep, ok := ref.Resolve(BuiltinRelayRegistry); ok {
+			if ep, ok := ref.Resolve(BuiltinRelayRegistry()); ok {
 				d.PrimaryHealth = r.pool().health(ep)
 				// Waiting on purpose is not the same as being broken, and
 				// from outside they are identical: sync active, relay
@@ -72,7 +90,7 @@ func (r *Runtime) RelayDiagnosticsSnapshot() RelayDiagnostics {
 				}
 				switch {
 				case ref.Official != "":
-					if desc, found := BuiltinRelayRegistry.ByID(ref.Official); found {
+					if desc, found := BuiltinRelayRegistry().ByID(ref.Official); found {
 						if len(desc.SPKIPins) > 0 {
 							d.Trust = "official-pinned"
 						} else {
@@ -101,7 +119,42 @@ func (r *Runtime) RelayDiagnosticsSnapshot() RelayDiagnostics {
 	d.IntervalMs = sync.IntervalMs
 	d.LastError = sync.LastErr
 	d.Spaces = sync.Public
+
+	// The route book, briefly (RT-0).
+	d.Ingress = r.SelfIngressRoutes()
+	r.mu.Lock()
+	for dev, routes := range r.ks.PeerRoutes {
+		brief := PeerRouteBrief{Device: dev.Hex()[:8]}
+		for _, rt := range routes {
+			brief.Routes = append(brief.Routes,
+				rt.Endpoint+" ("+provenanceWord(rt.Provenance)+")")
+		}
+		if len(brief.Routes) == 0 {
+			d.NoRoute++
+			continue
+		}
+		d.Peers = append(d.Peers, brief)
+	}
+	r.mu.Unlock()
+	sort.Slice(d.Peers, func(i, j int) bool { return d.Peers[i].Device < d.Peers[j].Device })
 	return d
+}
+
+// provenanceWord names a provenance for a person reading diagnostics.
+func provenanceWord(p uint8) string {
+	switch p {
+	case storage.RouteManual:
+		return "manual"
+	case storage.RouteInvitation:
+		return "invitation"
+	case storage.RouteAdvertised:
+		return "advertised"
+	case storage.RouteObserved:
+		return "observed"
+	case storage.RouteLegacy:
+		return "legacy"
+	}
+	return "unknown"
 }
 
 func (a *APIServer) handleRelayDiagnostics(w http.ResponseWriter, r *http.Request) {
@@ -171,7 +224,7 @@ func (a *APIServer) handleRelayRemeasure(w http.ResponseWriter, r *http.Request)
 	}
 	// Move the sync loop onto the (possibly new) primary right away.
 	if ref, err := ParseRelayRef(primary); err == nil {
-		if ep, ok := ref.Resolve(BuiltinRelayRegistry); ok {
+		if ep, ok := ref.Resolve(BuiltinRelayRegistry()); ok {
 			s := a.rt.GetSettings()
 			a.rt.applyRelaySync(ep, relayInterval(s))
 		}

@@ -74,6 +74,11 @@ type heldReason struct {
 // whole point of distinguishing them from silence.
 const (
 	heldNoRecipient = "nobody to send to yet"
+	// heldNoRoute names RT-0's honest hold: members exist and no route to
+	// some of them is known. The frames stay durable and local; delivery to
+	// the routed members went ahead. The one thing this must never become
+	// is a silent Put onto the sender's own relay.
+	heldNoRoute     = "no route to some members yet"
 	heldNoRelay     = "no usable relay for this space"
 	heldNoReadRelay = "no usable relay to read this space from"
 )
@@ -383,16 +388,33 @@ func (r *Runtime) relaySyncOnce(addr string) {
 		}
 		// Background push is LIGHT: frames + manifests only. Media bytes
 		// stay content-addressed and travel on demand, not every cycle.
-		n, recipients, _, err := r.pushToRelay(addr, sp.tid, AssetsManifests)
+		//
+		// ROUTED PER RECIPIENT (RT-0): each member's copy goes to that
+		// member's own route, not to this node's relay. `addr` plays no
+		// part here any more — it survives below only for the public
+		// personal-fallback paths.
+		n, reached, noRoute, err := r.deliverSpace(sp.tid, AssetsManifests, addr)
 		if err != nil {
 			lastErr = err.Error()
 			continue
 		}
-		if recipients == 0 {
+		if reached == 0 && noRoute == 0 {
 			// Nobody addressable yet (fresh joiner before its first pull, or a
 			// solo space): leave lastLen untouched so we retry once we learn a
 			// peer device, instead of marking these frames as handed off.
 			held[sp.tid] = heldReason{heldNoRecipient, sp.n - prev}
+			continue
+		}
+		if noRoute > 0 {
+			// Some members have no known route: their copies were NOT sent
+			// anywhere, and this is said rather than papered over. lastLen
+			// stays put so the space re-offers — cheap, because the whole
+			// log rides every push and dedup makes re-delivery idempotent —
+			// and a route learned later is picked up by the next cycle.
+			held[sp.tid] = heldReason{heldNoRoute, noRoute}
+			if reached > 0 {
+				pushed += n
+			}
 			continue
 		}
 		pushed += n
@@ -539,16 +561,60 @@ func (r *Runtime) relaySyncOnce(addr string) {
 		}
 	}
 
-	pulled, err := r.PullFromRelay(addr)
-	if err != nil {
-		lastErr = err.Error()
+	// LISTEN ON EVERY SELF-INGRESS ENDPOINT (RT-0): the current personal
+	// relay plus everything this device ever advertised to a peer. Whoever
+	// was told "answer me at B" is entitled to keep answering at B, so an
+	// advertised endpoint stays in this loop until a migration wave (T4)
+	// retires it honestly. Never derived from peer routes — the inversion
+	// rule — and each endpoint keeps its own chunk cursor and throttle.
+	pulled := 0
+	// The endpoint this cycle is ARMED with, plus every stored
+	// (once-advertised) ingress. The armed endpoint is the personal relay in
+	// force for this cycle — deliberately NOT re-resolved from settings
+	// mid-cycle: a relay change re-arms the loop, and that re-arm owns the
+	// new address. A cycle that re-resolved raced the change and dialed a
+	// just-selected relay it was never armed for — measured as one refused
+	// dial tripping the breaker and un-selecting a relay before its first
+	// real use.
+	r.mu.Lock()
+	seenIngress := map[string]struct{}{}
+	ingresses := make([]string, 0, len(r.ks.SelfIngress)+1)
+	if addr != "" {
+		seenIngress[addr] = struct{}{}
+		ingresses = append(ingresses, addr)
+	}
+	for _, ing := range r.ks.SelfIngress {
+		if ing.Endpoint == "" {
+			continue
+		}
+		if _, dup := seenIngress[ing.Endpoint]; dup {
+			continue
+		}
+		seenIngress[ing.Endpoint] = struct{}{}
+		ingresses = append(ingresses, ing.Endpoint)
+	}
+	r.mu.Unlock()
+	pullOK := false
+	for _, ingress := range ingresses {
+		got, err := r.PullFromRelay(ingress)
+		pulled += got
+		if err != nil {
+			lastErr = err.Error()
+		} else {
+			pullOK = true
+		}
 	}
 
 	rs.mu.Lock()
 	rs.lastErr = lastErr
 	// The retry schedule, kept here because this is the one place that knows
-	// whether the cycle worked.
-	if lastErr != "" {
+	// whether the cycle worked. A HISTORICAL ingress dying must not put the
+	// whole loop on the failure schedule: the pre-T4 fence keeps every
+	// once-advertised endpoint in the pull list, so until T4 retires them a
+	// permanently dead one is normal life, its dials are absorbed by the
+	// pool's own per-endpoint breaker, and the cycle counts as failed only
+	// when NO ingress answered at all.
+	if lastErr != "" && !pullOK {
 		if rs.failStreak < 30 {
 			rs.failStreak++
 		}
@@ -595,19 +661,19 @@ type RelaySyncStatus struct {
 	Active bool   `json:"active"`
 	// IntervalMs is the sync cadence. The UI breathes its connection light
 	// in this rhythm, so the pulse means something rather than decorating.
-	IntervalMs int                 `json:"interval_ms,omitempty"`
-	Pushed     int                 `json:"pushed"`
-	Pulled     int                 `json:"pulled"`
-	LastErr    string              `json:"last_error,omitempty"`
+	IntervalMs int    `json:"interval_ms,omitempty"`
+	Pushed     int    `json:"pushed"`
+	Pulled     int    `json:"pulled"`
+	LastErr    string `json:"last_error,omitempty"`
 	// Blocked says the relay is silent BY POLICY, not by failure. Without
 	// it the loop reports its own obedience through last_error — "relay is
 	// not permitted in offline mode" arrives in the same field as a dead
 	// socket, and every screen downstream draws the red light for a choice
 	// the person made on purpose.
-	Blocked bool `json:"blocked,omitempty"`
-	AgoPush    int                 `json:"seconds_since_push,omitempty"`
-	AgoPull    int                 `json:"seconds_since_pull,omitempty"`
-	Public     []PublicSpaceStatus `json:"public,omitempty"`
+	Blocked bool                `json:"blocked,omitempty"`
+	AgoPush int                 `json:"seconds_since_push,omitempty"`
+	AgoPull int                 `json:"seconds_since_pull,omitempty"`
+	Public  []PublicSpaceStatus `json:"public,omitempty"`
 	// Held names the spaces that handed nothing over on the last cycle,
 	// and why. Every entry is a state the loop chose deliberately — but
 	// each of them used to look exactly like a delivered message from

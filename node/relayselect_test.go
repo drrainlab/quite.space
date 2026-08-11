@@ -271,7 +271,7 @@ func TestAFallenRelayIsReplacedWithoutARestart(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		ep, ok := ref.Resolve(BuiltinRelayRegistry)
+		ep, ok := ref.Resolve(BuiltinRelayRegistry())
 		if !ok {
 			t.Fatalf("re-selection produced %q, which does not resolve", primary)
 		}

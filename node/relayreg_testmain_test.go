@@ -29,12 +29,12 @@ import (
 
 // shippedRelayRegistry is what the binary carries, kept for the one test
 // whose subject IS the shipped registry.
-var shippedRelayRegistry = BuiltinRelayRegistry
+var shippedRelayRegistry = shippedBuiltinRegistry
 
 func TestMain(m *testing.M) {
-	empty := BuiltinRelayRegistry
+	empty := BuiltinRelayRegistry()
 	empty.Relays = nil
-	BuiltinRelayRegistry = empty
+	setBuiltinRelayRegistry(empty)
 	os.Exit(m.Run())
 }
 
@@ -43,9 +43,9 @@ func TestMain(m *testing.M) {
 // a lookup.
 func withRelayRegistry(t *testing.T, ds ...RelayDescriptor) {
 	t.Helper()
-	saved := BuiltinRelayRegistry
-	t.Cleanup(func() { BuiltinRelayRegistry = saved })
+	saved := BuiltinRelayRegistry()
+	t.Cleanup(func() { setBuiltinRelayRegistry(saved) })
 	reg := saved
 	reg.Relays = ds
-	BuiltinRelayRegistry = reg
+	setBuiltinRelayRegistry(reg)
 }

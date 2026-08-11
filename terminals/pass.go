@@ -279,6 +279,19 @@ type JoinRequest struct {
 	Device      id.DeviceID
 	DeviceXpub  [32]byte
 	DisplayName string
+	// ReturnRoutes is the newcomer's ReturnRouteHint (RT-0): "you can answer
+	// me at these endpoints". Transport-level reachability that lives only
+	// inside this sealed exchange — never a space event, never the log, so
+	// ADR-015's rule (topology stays out of the append-only record) holds.
+	//
+	// OUTSIDE the signed body, deliberately: the signature is rebuilt from
+	// parsed fields by every verifier, so a host from before this field
+	// would rebuild six keys, fail the signature, and refuse every newer
+	// guest. Integrity here comes from the HPKE seal instead — only a
+	// bearer of the pass secret can produce the envelope this rides in, and
+	// that bearer is the same party the hint describes. T3's signed
+	// reachability advertisement subsumes this.
+	ReturnRoutes []string
 }
 
 const (
@@ -289,6 +302,7 @@ const (
 	jrDeviceX   = 5
 	jrName      = 6
 	jrSignature = 7
+	jrRoutes    = 8
 )
 
 func (r *JoinRequest) signingBody() []byte {
@@ -317,19 +331,32 @@ func joinInfo(space id.TerminalID, passID [16]byte) []byte {
 // pass's acceptor device. The bearer secret proves possession of the pass;
 // request_id = SHA256(pass_id ‖ device_id ‖ nonce) so retries are idempotent.
 func BuildJoinRequestWithSecret(pass *Pass, secret []byte, dev *identity.Device,
-	displayName string, nonce []byte, devicePriv ed25519.PrivateKey) (reqID [32]byte, sealed []byte, err error) {
+	displayName string, nonce []byte, devicePriv ed25519.PrivateKey,
+	returnRoutes ...string) (reqID [32]byte, sealed []byte, err error) {
 
 	reqID = sha256.Sum256(append(append(pass.PassID[:], dev.ID[:]...), nonce...))
 	r := &JoinRequest{
 		RequestID: reqID, PassID: pass.PassID, Secret: append([]byte(nil), secret...),
 		Device: dev.ID, DeviceXpub: dev.X25519Pub, DisplayName: displayName,
+		ReturnRoutes: returnRoutes,
 	}
 	body := r.signingBody()
 	sig := ed25519.Sign(devicePriv, body)
-	full := codec.AppendMap(nil, 7)
+	n := 7
+	if len(r.ReturnRoutes) > 0 {
+		n++
+	}
+	full := codec.AppendMap(nil, n)
 	full = append(full, body[1:]...)
 	full = codec.AppendUint(full, jrSignature)
 	full = codec.AppendBytes(full, sig)
+	if len(r.ReturnRoutes) > 0 {
+		full = codec.AppendUint(full, jrRoutes)
+		full = codec.AppendArray(full, len(r.ReturnRoutes))
+		for _, rt := range r.ReturnRoutes {
+			full = codec.AppendText(full, rt)
+		}
+	}
 
 	enc, ct, err := crypto.SealTo(pass.AcceptorXpub, joinInfo(pass.Space, pass.PassID), full)
 	if err != nil {
@@ -411,6 +438,16 @@ func decodeJoinRequest(b []byte) (*JoinRequest, []byte, error) {
 			r.DisplayName, er = d.ReadText()
 		case jrSignature:
 			sig, er = d.ReadBytes()
+		case jrRoutes:
+			var cnt int
+			if cnt, er = d.ReadArray(); er == nil {
+				for i := 0; i < cnt && er == nil; i++ {
+					var rt string
+					if rt, er = d.ReadText(); er == nil {
+						r.ReturnRoutes = append(r.ReturnRoutes, rt)
+					}
+				}
+			}
 		default:
 			er = d.SkipItem()
 		}
@@ -440,6 +477,13 @@ type Accepted struct {
 	EpochN        uint64
 	EpochKey      [32]byte
 	History       []crypto.EpochKey
+	// Routes is the acceptor's ReturnRouteHint (RT-0): "and I am reachable
+	// at these endpoints" — with AcceptorDevice naming whose reachability
+	// this is, because the guest cannot key a route book entry on a device
+	// it has not learned yet. Same trust basis as the rest of this record:
+	// sealed to the newcomer, unsigned, subsumed by T3's advertisements.
+	Routes         []string
+	AcceptorDevice id.DeviceID
 }
 
 func acceptInfo(space id.TerminalID, reqID [32]byte) []byte {
@@ -452,6 +496,9 @@ func BuildAccepted(space id.TerminalID, deviceXpub [32]byte, a *Accepted) ([]byt
 	n := 4
 	if len(a.History) > 0 {
 		n++
+	}
+	if len(a.Routes) > 0 {
+		n += 2 // routes + the device they belong to travel together
 	}
 	body := codec.AppendMap(nil, n)
 	body = codec.AppendUint(body, 1)
@@ -470,6 +517,15 @@ func BuildAccepted(space id.TerminalID, deviceXpub [32]byte, a *Accepted) ([]byt
 			body = codec.AppendUint(body, e.N)
 			body = codec.AppendBytes(body, e.Key[:])
 		}
+	}
+	if len(a.Routes) > 0 {
+		body = codec.AppendUint(body, 6)
+		body = codec.AppendArray(body, len(a.Routes))
+		for _, rt := range a.Routes {
+			body = codec.AppendText(body, rt)
+		}
+		body = codec.AppendUint(body, 7)
+		body = codec.AppendBytes(body, a.AcceptorDevice[:])
 	}
 	enc, ct, err := crypto.SealTo(deviceXpub, acceptInfo(space, a.RequestID), body)
 	if err != nil {
@@ -549,6 +605,21 @@ func OpenAccepted(space id.TerminalID, reqID [32]byte, xpriv [32]byte, sealed []
 				}
 				copy(e.Key[:], kb)
 				a.History = append(a.History, e)
+			}
+		case 6:
+			var cnt int
+			if cnt, er = d.ReadArray(); er == nil {
+				for i := 0; i < cnt && er == nil; i++ {
+					var rt string
+					if rt, er = d.ReadText(); er == nil {
+						a.Routes = append(a.Routes, rt)
+					}
+				}
+			}
+		case 7:
+			var v []byte
+			if v, er = d.ReadBytes(); er == nil && len(v) == len(a.AcceptorDevice) {
+				copy(a.AcceptorDevice[:], v)
 			}
 		default:
 			er = d.SkipItem()

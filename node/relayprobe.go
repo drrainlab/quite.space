@@ -197,7 +197,7 @@ func autoCandidates(rr RelayRegistry) []RelayDescriptor {
 // DIFFERENT region — two relays in one failure domain are one relay
 // with extra steps.
 func (r *Runtime) runAutoSelection() (primary, backup string) {
-	cands := autoCandidates(BuiltinRelayRegistry)
+	cands := autoCandidates(BuiltinRelayRegistry())
 	sem := make(chan struct{}, probeParallel)
 	done := make(chan struct{})
 	for _, d := range cands {
@@ -310,7 +310,7 @@ func (r *Runtime) startAutomaticRelay(interval time.Duration) {
 		if st.SelectedPrimary != "" && st.NetworkFingerprint == fingerprint &&
 			time.Since(time.Unix(st.LastSelectionUnix, 0)) < time.Hour {
 			if ref, err := ParseRelayRef(st.SelectedPrimary); err == nil {
-				if ep, ok := ref.Resolve(BuiltinRelayRegistry); ok {
+				if ep, ok := ref.Resolve(BuiltinRelayRegistry()); ok {
 					r.applyRelaySync(ep, interval)
 					r.watchForABetterRelay(interval, fingerprint)
 					return
@@ -337,7 +337,7 @@ func (r *Runtime) startAutomaticRelay(interval time.Duration) {
 			fingerprint = networkFingerprint()
 			if primary, _ := r.runAutoSelection(); primary != "" {
 				if ref, err := ParseRelayRef(primary); err == nil {
-					if ep, ok := ref.Resolve(BuiltinRelayRegistry); ok {
+					if ep, ok := ref.Resolve(BuiltinRelayRegistry()); ok {
 						r.applyRelaySync(ep, interval)
 						r.watchForABetterRelay(interval, fingerprint)
 						return
@@ -406,7 +406,7 @@ func (r *Runtime) watchForABetterRelay(interval time.Duration, since string) {
 			if err != nil {
 				continue
 			}
-			ep, ok := ref.Resolve(BuiltinRelayRegistry)
+			ep, ok := ref.Resolve(BuiltinRelayRegistry())
 			// Only when it is a DIFFERENT relay: applyRelaySync tears the
 			// loop down and builds it back, and doing that to land on the
 			// address already in use is a stall for nothing.

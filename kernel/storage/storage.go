@@ -160,6 +160,12 @@ type Keystore struct {
 	// delete must not quietly bring the space back; that is not a decision
 	// they made twice.
 	Forgotten map[id.TerminalID]int64
+	// The route book (RT-0). SelfIngress is where THIS device listens for
+	// its mail; PeerRoutes is where it may deliver to each known peer
+	// device. Directed on purpose and never derived from each other — see
+	// routes.go for why the inversion is the bug class this exists to end.
+	SelfIngress []Route
+	PeerRoutes  map[id.DeviceID][]Route
 	// Settings is an opaque local-settings blob owned by the node layer
 	// (UI prefs + LLM config, including the API key). Encrypted at rest with
 	// the rest of the keystore; never leaves the device except to the
@@ -268,6 +274,7 @@ func NewKeystore(p *identity.Principal, d *identity.Device) *Keystore {
 		Epochs:        map[id.TerminalID][]crypto.EpochKey{},
 		Spaces:        map[id.TerminalID]SpaceMeta{},
 		Forgotten:     map[id.TerminalID]int64{},
+		PeerRoutes:    map[id.DeviceID][]Route{},
 	}
 }
 
@@ -303,6 +310,7 @@ const (
 	ksKeyAgent     = 15 // AI-0 the local Agent Terminal and its space
 	ksKeyRadio     = 16 // the radio this device attaches, and its segment seed
 	ksKeyForgotten = 17 // SD-0 spaces this device was told to forget
+	ksKeyRoutes    = 18 // RT-0 the route book: self ingress + per-peer delivery
 )
 
 // ksMapArity is how many top-level pairs encode() writes, and it MUST equal
@@ -310,7 +318,7 @@ const (
 // which is a poor place for a number that bricks every keystore when it is
 // wrong: too few and the trailing pair goes unread, so Done() fails and
 // nobody can open their data again. Named here, next to the keys it counts.
-const ksMapArity = 17
+const ksMapArity = 18
 
 func (k *Keystore) encode() []byte {
 	buf := codec.AppendMap(nil, ksMapArity)
@@ -398,6 +406,8 @@ func (k *Keystore) encode() []byte {
 		buf = codec.AppendBytes(buf, f.id[:])
 		buf = codec.AppendUint(buf, uint64(f.at))
 	}
+	buf = codec.AppendUint(buf, ksKeyRoutes)
+	buf = appendRouteBook(buf, k.SelfIngress, k.PeerRoutes)
 	return buf
 }
 
@@ -511,6 +521,7 @@ func decodeKeystore(data []byte) (*Keystore, error) {
 		Epochs:        map[id.TerminalID][]crypto.EpochKey{},
 		Spaces:        map[id.TerminalID]SpaceMeta{},
 		Forgotten:     map[id.TerminalID]int64{},
+		PeerRoutes:    map[id.DeviceID][]Route{},
 	}
 	for {
 		key, ok, er := m.Next()
@@ -807,6 +818,8 @@ func decodeKeystore(data []byte) (*Keystore, error) {
 				copy(tid[:], raw)
 				k.Forgotten[tid] = int64(at)
 			}
+		case ksKeyRoutes:
+			k.SelfIngress, k.PeerRoutes, er = readRouteBook(d)
 		default:
 			er = d.SkipItem()
 		}

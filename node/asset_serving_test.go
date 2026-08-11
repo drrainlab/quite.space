@@ -1,6 +1,9 @@
 package node
 
 import (
+	"bufio"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -147,5 +150,155 @@ func TestAnAutomaticNodeDoesNotAdoptARelayFromAPastedLink(t *testing.T) {
 	// A pre-modes node that had an address keeps it and is not automatic.
 	if relayIsAutomatic(Settings{Relay: "example:7411"}) {
 		t.Error("a node with a configured address reads as automatic")
+	}
+}
+
+// ---------------------------------------------------------------------
+// L2/L3: the listener answers to its own name, and to nobody else's.
+
+func TestOnlyLoopbackNamesReachTheListener(t *testing.T) {
+	// Binding 127.0.0.1 does not mean only this machine can reach the API:
+	// a page the person is merely visiting can point a name it controls at
+	// 127.0.0.1 and talk to it from their browser. The packet really is
+	// local; the name it asked for is what gives it away.
+	for _, h := range []string{
+		"127.0.0.1:8790", "localhost:8790", "LOCALHOST:8790",
+		"[::1]:8790", "127.0.0.53:8790", "127.0.0.1", "localhost",
+	} {
+		if !loopbackName(hostOnly(h)) {
+			t.Errorf("%q refused — the interface asks for exactly these", h)
+		}
+	}
+	for _, h := range []string{
+		"evil.example:8790", // the rebinding case, in one line
+		"quiet.example.com", "192.168.1.10:8790", "10.0.0.1:8790",
+		"0.0.0.0:8790", "", "localhost.evil.example:8790",
+	} {
+		if loopbackName(hostOnly(h)) {
+			t.Errorf("%q accepted — that is somebody else's name", h)
+		}
+	}
+}
+
+func TestACrossOriginPageIsTurnedAway(t *testing.T) {
+	for _, o := range []string{
+		"http://127.0.0.1:8790", "http://localhost:8790", "http://[::1]:8790",
+	} {
+		if !loopbackOrigin(o) {
+			t.Errorf("%q refused — that is our own page", o)
+		}
+	}
+	for _, o := range []string{
+		"https://evil.example", "http://evil.example:8790",
+		"null", "", "not a url at all", "file://",
+	} {
+		if loopbackOrigin(o) {
+			t.Errorf("%q accepted as same-origin", o)
+		}
+	}
+}
+
+func TestTheGuardWrapsTheListenerAndRefusesInOneSentence(t *testing.T) {
+	reached := false
+	h := loopbackOnly(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached = true
+	}))
+
+	// A rebound page: local packet, somebody else's name.
+	req := httptest.NewRequest("GET", "http://evil.example/api/spaces", nil)
+	req.Host = "evil.example"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if reached {
+		t.Error("a request under another name reached the routes")
+	}
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("status %d, want 403", rec.Code)
+	}
+
+	// The interface itself.
+	reached = false
+	req = httptest.NewRequest("GET", "http://127.0.0.1:8790/api/spaces", nil)
+	req.Host = "127.0.0.1:8790"
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if !reached {
+		t.Fatalf("the interface's own request was refused: %d %s", rec.Code, rec.Body)
+	}
+
+	// Right name, somebody else's page: a direct cross-origin fetch, which
+	// the Host check alone would wave through.
+	reached = false
+	req = httptest.NewRequest("POST", "http://127.0.0.1:8790/api/spaces", nil)
+	req.Host = "127.0.0.1:8790"
+	req.Header.Set("Origin", "https://evil.example")
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if reached {
+		t.Error("a cross-origin request reached the routes")
+	}
+}
+
+func TestTheTokenComparisonDoesNotLeakItsProgress(t *testing.T) {
+	// Not a timing measurement — those are flaky by nature. This pins that
+	// the comparison goes through crypto/subtle at all, by checking the one
+	// behaviour a length-first shortcut would break: a token that shares
+	// every byte but is longer must still be refused.
+	a := &APIServer{token: "0123456789abcdef"}
+	h := a.auth(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTeapot)
+	})
+	for _, tok := range []string{"", "0", "0123456789abcde", "0123456789abcdef0", "x"} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest("GET", "/api/x?token="+tok, nil)
+		h(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("token %q got %d, want 401", tok, rec.Code)
+		}
+	}
+	rec := httptest.NewRecorder()
+	h(rec, httptest.NewRequest("GET", "/api/x?token=0123456789abcdef", nil))
+	if rec.Code != http.StatusTeapot {
+		t.Errorf("the right token got %d", rec.Code)
+	}
+}
+
+// The guard is only worth anything if Serve actually puts it on. This goes
+// through a real listener, because that is the thing being defended: a
+// wrapper that exists but is never mounted defends nothing, and the unit
+// tests above would not notice.
+func TestServeMountsTheLoopbackGuard(t *testing.T) {
+	a := &APIServer{token: "t"}
+	addr, l, err := a.Serve(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+
+	ask := func(host string) int {
+		c, err := net.Dial("tcp", addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.Close()
+		fmt.Fprintf(c, "GET /api/status?token=t HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n", host)
+		res, err := http.ReadResponse(bufio.NewReader(c), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		return res.StatusCode
+	}
+
+	// A page that rebound its own name onto 127.0.0.1 — the packet is
+	// local, the name is not ours.
+	if code := ask("evil.example"); code != http.StatusForbidden {
+		t.Errorf("a rebound name got %d from the real listener, want 403", code)
+	}
+	// The interface's own request must still get through the guard. (Any
+	// status but 403 means the guard passed it on; this runtime has no
+	// Runtime behind it, so what the route then does is not the subject.)
+	if code := ask("127.0.0.1"); code == http.StatusForbidden {
+		t.Error("the interface's own Host was refused")
 	}
 }

@@ -54,6 +54,10 @@ func (r *Runtime) parkAtTheDoor(client *relay.Client, rec *passRecord,
 		rec.entries = append(rec.entries, storage.EntryRecord{
 			Request: req.RequestID, Device: req.Device, Xpub: req.DeviceXpub,
 			Name: req.DisplayName, AskedAt: now, State: storage.EntryPending,
+			// The knocker's return routes, kept with the knock: approval may
+			// come hours later, and admitting somebody whose return address
+			// was forgotten grants a membership nobody can deliver to (RT-0).
+			Routes: append([]string(nil), req.ReturnRoutes...),
 		})
 	}
 	rendezvous := rec.pass.Rendezvous
@@ -296,6 +300,16 @@ func (r *Runtime) admitFromDoor(client *relay.Client, rec *passRecord,
 	pruneEntries(rec, now)
 	r.passes.mu.Unlock()
 
+	// The knocker's return routes, held with the entry since the knock.
+	var guestRoutes []string
+	r.passes.mu.Lock()
+	for i := range rec.entries {
+		if rec.entries[i].Request == reqID {
+			guestRoutes = append([]string(nil), rec.entries[i].Routes...)
+		}
+	}
+	r.passes.mu.Unlock()
+
 	r.mu.Lock()
 	st := r.spaces[space]
 	var resp []byte
@@ -303,8 +317,14 @@ func (r *Runtime) admitFromDoor(client *relay.Client, rec *passRecord,
 		epochN, epochKey, mf, err := st.space.AcceptIntoSpace(r.Self,
 			device, xpub, name, r.Principal.ID, now)
 		if err == nil {
+			// The route exchange, both directions (RT-0) — same as the
+			// automatic accept path; persistence rides the admission commit.
+			for _, ep := range guestRoutes {
+				r.recordPeerRouteLocked(device, ep, "relay", storage.RouteInvitation)
+			}
 			acc := &terminals.Accepted{RequestID: reqID,
-				ManifestFrame: mf, EpochN: epochN, EpochKey: epochKey}
+				ManifestFrame: mf, EpochN: epochN, EpochKey: epochKey,
+				Routes: r.advertisedRoutesLocked(), AcceptorDevice: r.Device.ID}
 			if _, ch := st.space.Character(); ch.Memory != "private_history" {
 				acc.History = st.space.EpochHistory()
 			}
