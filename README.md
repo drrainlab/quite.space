@@ -87,3 +87,25 @@ types without networking, implement the deterministic codec, publish test
 vectors — then identity, event log, sync over loopback.
 
 > Two headless nodes and a source-only Sensor must work before any pretty UI.
+
+## Licence
+
+Two licences, split by what a piece of code *does*:
+
+- **Apache-2.0** — the protocol, schemas, kernel, transports, SDKs and the
+  clients. Everything we want to see everywhere: run it, embed it, ship a
+  closed product on top of it, put Terminal Network on a device. The patent
+  grant is explicit.
+- **AGPL-3.0-only** — the components an operator stands up so that *other
+  people* can use them: today the relay server and the custody bridge. Free
+  to run, to modify and to charge for hosting — but offer a modified version
+  to users over a network and those users can have that version's source.
+
+Names, logos and the Official Relay / Verified Space marks are not granted
+by either licence: see [TRADEMARK_POLICY.md](TRADEMARK_POLICY.md). Fork
+freely, under your own name.
+
+The reasoning, the directory-by-directory map, and **one prerequisite that
+must be done before the first public push**, are in
+[LICENSING.md](LICENSING.md). Contributing: [CONTRIBUTING.md](CONTRIBUTING.md).
+Reporting a vulnerability: [SECURITY.md](SECURITY.md).

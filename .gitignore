@@ -20,9 +20,19 @@ vendor/
 *.log
 tmp/
 
-# Local build output
+# Local build output. The cross-compiled Linux binaries used to be TRACKED
+# (terminal-linux-amd64 was 14 MB, quiet-radio-linux-amd64 4 MB) — 18 MB of
+# build output that every clone pays for forever. Untracked as of the
+# release tidy-up; see LICENSING.md's note about history if the size of the
+# pack matters before the first push.
 /terminal
 /quiet-bridge
+/terminal-linux-amd64
+/quiet-radio-linux-amd64
+*-linux-amd64
+*-linux-arm64
+*-darwin-amd64
+*-darwin-arm64
 
 # The release signing key and where it lives (AR-1e). Never in the repo.
 android/host/keystore.properties

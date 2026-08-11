@@ -1,3 +1,14 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+// Copyright 2026 Gleb Bondarenko and the quite.space contributors
+//
+// This is a NETWORK SERVICE, and it is licensed differently from the rest
+// of the repository: the protocol and everything a client needs is
+// Apache-2.0, while a component somebody stands up so that OTHER PEOPLE
+// can use it is AGPL-3.0-only. Run it, modify it, charge to host it — but
+// if you offer a modified version to users over a network, those users are
+// entitled to that version's source. See LICENSING.md.
+//
 // Command terminal-relay runs a standalone blind relay node (plan §22,
 // M1.5). Anyone can run one; no relay is mandatory; this one cannot read
 // what it carries — it stores rotating hints and ciphertext with TTLs, and
