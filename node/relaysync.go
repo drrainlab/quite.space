@@ -40,6 +40,8 @@ type relaySyncState struct {
 	// space last showed activity. Quiet spaces sync on a slow cadence.
 	tick       uint64
 	lastChange map[id.TerminalID]time.Time
+	// When each mirrored directory last had its cards walked.
+	lastFollow map[id.TerminalID]time.Time
 	// A CYCLE THAT FAILED IS NOT EVIDENCE THAT NOTHING IS HAPPENING, and the
 	// quiet tier treats it as if it were: a space with no local change syncs
 	// once every quietEvery ticks, so after the network came back the relay
@@ -84,9 +86,30 @@ const (
 const (
 	quietAfter = 60 * time.Second
 	quietEvery = 15
+	// seedEvery is the quiet cadence for a node that SEEDS a space: how
+	// often it looks for other people's media requests. Faster than the
+	// ordinary quiet tier and slower than every tick — about six seconds at
+	// the 2s default, which is the difference between a mirror that answers
+	// while somebody is still looking at the screen and one that answers
+	// after they have decided it is broken.
+	seedEvery = 3
 	// retryCeiling bounds the wait after a failed cycle. See the backoff
 	// below for why it is stated in seconds rather than in ticks.
 	retryCeiling = 5 * time.Second
+	// suspendGap is how much wall time may run past monotonic time before
+	// the device is taken to have been ASLEEP rather than merely busy.
+	//
+	// The two clocks agree while a machine is awake, to within scheduling
+	// noise; they diverge when the kernel suspends, because Go's monotonic
+	// clock is CLOCK_MONOTONIC and that one stops. Ten seconds is far above
+	// any tick this loop could be late by and far below the shortest sleep
+	// worth reacting to.
+	//
+	// A wall-clock STEP — an NTP correction, a timezone-less clock being
+	// set — also lands here and is welcome to: the response is to stop
+	// waiting and try the relay now, which is safe whether or not the
+	// device really slept.
+	suspendGap = 10 * time.Second
 )
 
 func quietStagger(tid id.TerminalID) uint64 { return uint64(tid[0]) % quietEvery }
@@ -156,6 +179,7 @@ func (r *Runtime) applyRelaySync(addr string, interval time.Duration) {
 		t := time.NewTicker(interval)
 		defer t.Stop()
 		r.relaySyncOnce(addr) // an immediate first pass
+		last := time.Now()
 		for {
 			select {
 			case <-r.stop:
@@ -163,10 +187,64 @@ func (r *Runtime) applyRelaySync(addr string, interval time.Duration) {
 			case <-stop:
 				return
 			case <-t.C:
+				// THE FIRST TICK AFTER A SLEEP IS NOT AN ORDINARY TICK, and
+				// this loop is where it is cheapest to notice: it runs on a
+				// timer, so the gap it was late by IS the measurement.
+				//
+				// Round(0) strips the monotonic reading, leaving the wall
+				// clock; Since keeps it. Awake, the two agree. Asleep, only
+				// the wall clock advanced, and the difference is how long
+				// the device was gone.
+				now := time.Now()
+				if deviceSlept(now.Round(0).Sub(last.Round(0)), now.Sub(last)) {
+					r.onWake()
+				}
+				last = now
 				r.relaySyncOnce(addr)
 			}
 		}
 	}()
+}
+
+// deviceSlept compares how much time passed on the two clocks between one
+// tick and the next.
+//
+// wall is measured with monotonic readings STRIPPED (Round(0)); mono keeps
+// them. Awake, the two track each other to within scheduling noise. Suspended,
+// only the wall clock advanced — Go's monotonic clock is CLOCK_MONOTONIC and
+// the kernel stops it — so their difference is how long the device was gone.
+//
+// Split out from the loop so the threshold can be tested: the two clock reads
+// cannot be faked in a test, and the arithmetic between them is the part that
+// decides anything.
+func deviceSlept(wall, mono time.Duration) bool { return wall-mono > suspendGap }
+
+// onWake is called on the first tick after the device was suspended.
+//
+// EVERYTHING TIMED IS NOW WRONG IN ONE DIRECTION: every deadline set before
+// the sleep is still as far away as it was, because the clock that measures it
+// stopped too. That direction is always "wait longer", and the waiting is
+// always for evidence that was never gathered — nothing was measured while the
+// device was off. So the waiting is dropped, and the next cycle finds out for
+// real.
+//
+// Deliberately NOT a signal from the platform. Android could tell us, and a
+// laptop lid could not, and neither could a phone whose host build predates
+// the verb — the difference between the two clocks is the same measurement
+// everywhere and needs nobody's cooperation.
+func (r *Runtime) onWake() {
+	// Read WITHOUT going through pool(), which would create one: a node that
+	// has never dialled a relay has no stale connections to drop, and waking
+	// must not be the thing that starts a janitor.
+	if p := r.relayPoolV.Load(); p != nil {
+		p.wake()
+	}
+	if rs := r.relaySync; rs != nil {
+		rs.mu.Lock()
+		rs.failStreak = 0
+		rs.nextRetry = time.Time{}
+		rs.mu.Unlock()
+	}
 }
 
 // relaySyncOnce pushes changed spaces and pulls once.
@@ -253,6 +331,21 @@ func (r *Runtime) relaySyncOnce(addr string) {
 		}
 		quiet := now0.Sub(rs.lastChange[sp.tid]) > quietAfter
 		hot[sp.tid] = !quiet || tick%quietEvery == quietStagger(sp.tid)
+		// A SEEDER CANNOT SEE ITS WORK COMING. Every other reason to be hot
+		// is something this node knows about itself — its log moved, it wants
+		// media, somebody is looking at it. Answering OTHER people's requests
+		// is the one job whose trigger is invisible from here, so the quiet
+		// tier silences exactly the node that volunteered to be reachable.
+		//
+		// Measured against the demo catalog with the owner switched off: the
+		// mirror held every byte and a cold reader still waited about a
+		// minute, nearly all of it for a mirror on a thirty-second listen.
+		// A shorter, fixed cadence of its own — one Fetch of the ingress
+		// hints, no mailbox touched — costs a fraction of that and is what
+		// the volunteering was for.
+		if sp.seed && !hot[sp.tid] {
+			hot[sp.tid] = tick%seedEvery == quietStagger(sp.tid)%seedEvery
+		}
 	}
 	// Recovering from a failure: ask again, everywhere, on the schedule the
 	// failure earned rather than the one silence earned.
@@ -330,6 +423,26 @@ func (r *Runtime) relaySyncOnce(addr string) {
 		}
 		for tid, n := range got {
 			ingressGot[tid] = n
+		}
+	}
+	// AND THE ANSWERS COME BACK WHERE THEY WERE ASKED FOR. A media want for
+	// a public space travels to the SPACE's relay; the holder answers into a
+	// reply box on that same machine. Collecting only from the personal relay
+	// — which is what PullFromRelay below does — finds those answers only
+	// while the two addresses happen to be the same one. See
+	// CollectReplyBoxesAt for what that cost the day they stopped being.
+	//
+	// Readers as well as publishers: a reader replica's writeAddr is the
+	// space's relay too, which is exactly where its own ask went.
+	boxesByAddr := map[string][]id.TerminalID{}
+	for _, sp := range spaces {
+		if (sp.pub || sp.reader || sp.contrib) && sp.writeAddr != "" && sp.writeAddr != addr {
+			boxesByAddr[sp.writeAddr] = append(boxesByAddr[sp.writeAddr], sp.tid)
+		}
+	}
+	for wa, tids := range boxesByAddr {
+		if _, err := r.CollectReplyBoxesAt(wa, tids); err != nil {
+			lastErr = err.Error()
 		}
 	}
 	for _, sp := range spaces {
@@ -410,6 +523,13 @@ func (r *Runtime) relaySyncOnce(addr string) {
 				if err := r.mirrorKeepalive(sp.writeAddr, sp.tid); err != nil {
 					lastErr = err.Error()
 				}
+				// A mirrored directory brings what it lists with it. Paced
+				// on its own clock: the cards change about as often as
+				// somebody edits a catalogue, and the work is a network open
+				// per card that this loop must not repeat every two seconds.
+				if r.dueToFollow(sp.tid) {
+					r.mirrorFollowCards(sp.tid)
+				}
 			}
 			if sp.seed {
 				if err := r.seedForSpace(sp.writeAddr, sp.tid); err != nil {
@@ -479,6 +599,12 @@ type RelaySyncStatus struct {
 	Pushed     int                 `json:"pushed"`
 	Pulled     int                 `json:"pulled"`
 	LastErr    string              `json:"last_error,omitempty"`
+	// Blocked says the relay is silent BY POLICY, not by failure. Without
+	// it the loop reports its own obedience through last_error — "relay is
+	// not permitted in offline mode" arrives in the same field as a dead
+	// socket, and every screen downstream draws the red light for a choice
+	// the person made on purpose.
+	Blocked bool `json:"blocked,omitempty"`
 	AgoPush    int                 `json:"seconds_since_push,omitempty"`
 	AgoPull    int                 `json:"seconds_since_pull,omitempty"`
 	Public     []PublicSpaceStatus `json:"public,omitempty"`
@@ -540,8 +666,10 @@ func (r *Runtime) RelaySync() RelaySyncStatus {
 		titles[tid] = r.ks.Spaces[tid].Title
 	}
 	r.mu.Unlock()
+	// Asked with r.mu released — it reads the settings, which takes the lock.
+	blocked := !r.anySpaceAllows(TransportRelay)
 	if rs == nil {
-		return RelaySyncStatus{Public: public}
+		return RelaySyncStatus{Public: public, Blocked: blocked}
 	}
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
@@ -549,7 +677,13 @@ func (r *Runtime) RelaySync() RelaySyncStatus {
 		Addr: rs.addr, Active: rs.addr != "" && rs.stop != nil,
 		IntervalMs: int(rs.interval / time.Millisecond),
 		Pushed:     rs.pushed, Pulled: rs.pulled, LastErr: rs.lastErr,
-		Public: public,
+		Public: public, Blocked: blocked,
+	}
+	if blocked {
+		// The last thing that went wrong was that we declined to try. That
+		// is not a fault to report, and leaving it in last_error would keep
+		// a stale complaint on screen for as long as the setting holds.
+		st.LastErr = ""
 	}
 	if !rs.lastPush.IsZero() {
 		st.AgoPush = int(time.Since(rs.lastPush).Seconds())

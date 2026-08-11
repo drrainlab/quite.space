@@ -329,6 +329,65 @@ func (p *relayPool) closeAll() {
 	}
 }
 
+// wake undoes everything a suspend invalidated: the waiting, and the sockets.
+//
+// WHY A DEVICE COMING BACK IS NOT AN ORDINARY MOMENT. Two separate things are
+// wrong at once when a phone's screen has been off for a while.
+//
+// The pooled TCP connections are dead. Nothing told us — a peer that vanished
+// while we were suspended sends no RST anywhere we can hear — so the first
+// push after waking spends a dial timeout discovering it, three times, and
+// then the breaker is charged and holds for its cooldown.
+//
+// And the cooldown itself is measured with a clock that was asleep. Go's
+// time.Now carries CLOCK_MONOTONIC, which STOPS while an Android device is
+// suspended, so `backoffUntil` set thirty seconds before the phone slept is
+// still thirty seconds away when it wakes — however long the night was. The
+// backoff ladder reaches two minutes, and a person who unlocks their phone and
+// waits two minutes for the relay is looking at an app that appears broken.
+//
+// Neither is a failure to be counted. The endpoint was never measured while
+// the device was asleep; there is no evidence about it, and the honest state
+// is the one a fresh node has. Untrusted is the exception, and the ONLY one: a
+// pin mismatch is a fact about the relay's identity, which sleeping did not
+// change and waking must not clear.
+func (p *relayPool) wake() {
+	p.mu.Lock()
+	peers := make([]*relayPeer, 0, len(p.peers))
+	for _, pe := range p.peers {
+		peers = append(peers, pe)
+	}
+	p.mu.Unlock()
+
+	for _, pe := range peers {
+		pe.mu.Lock()
+		untrusted := pe.untrusted
+		if !untrusted {
+			pe.failures = 0
+			pe.attempt = 0
+			pe.backoffUntil = time.Time{}
+			pe.localOutage = false
+			pe.successStreak = 0
+		}
+		pe.mu.Unlock()
+		if untrusted {
+			continue
+		}
+		// The sockets go too. Keeping one would hand the next cycle a
+		// connection that looks open and is not, which is the slowest way
+		// to learn it: a write succeeds into a dead socket and the failure
+		// arrives at the read, a timeout later.
+		for _, lane := range []*relayLane{&pe.control, &pe.bulk} {
+			lane.mu.Lock()
+			if lane.client != nil {
+				lane.client.Close()
+				lane.client = nil
+			}
+			lane.mu.Unlock()
+		}
+	}
+}
+
 // janitor closes idle lanes; started with the runtime's sync machinery.
 func (p *relayPool) janitor() {
 	t := time.NewTicker(time.Minute)
