@@ -19,7 +19,10 @@
     --glass: rgba(32,24,38,.66); --glass-border: rgba(215,164,239,.20);
     --glass-blur: 24px; --shadow: none;
     /* bubbles */
-    --bubble-own: rgba(211,154,231,.16); --bubble-other: var(--panel);
+    /* Barely-there glass (2026-08-07, dark-first): a bubble is a breath of
+       surface over the starfield, not a card. Legibility comes from the
+       backdrop blur in .bubble, not from the fill. */
+    --bubble-own: rgba(211,154,231,.10); --bubble-other: rgba(222,199,241,.05);
     /* geometry + type */
     --radius-sm: 8px; --radius-md: 12px; --radius-lg: 18px;
     --font-scale: 1;
@@ -828,11 +831,27 @@
   .bubble {
     background: var(--bubble-other); border: 0;
     border-radius: var(--radius-lg); padding: 11px 15px;
-    box-shadow: 0 1px 2px rgba(0,0,0,.10), 0 4px 14px -6px rgba(0,0,0,.14);
+    /* GLASS: the fill is almost nothing, so the blur is what makes text
+       readable over the starfield — it averages whatever is behind into a
+       calm tone. The inset hairline is a light catch along the top edge,
+       which is what reads as glass rather than as a grey rectangle. NOTE:
+       #log carries no mask-image, which is the one thing that would kill
+       backdrop-filter here (learned on the article bar); if a fade is ever
+       added to the chat scroller, these bubbles go flat that day. */
+    backdrop-filter: blur(10px) saturate(1.15);
+    -webkit-backdrop-filter: blur(10px) saturate(1.15);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.055),
+                0 1px 2px rgba(0,0,0,.10), 0 4px 14px -6px rgba(0,0,0,.14);
     position: relative; word-break: break-word;
     /* terminal cadence: message text in mono */
     font-family: var(--font-mono); font-size: 12.5px; line-height: 1.55;
     letter-spacing: -.1px;
+  }
+  /* Somebody who asked for less transparency gets a solid surface — the
+     same accommodation the header and dialogs already make. */
+  @media (prefers-reduced-transparency: reduce) {
+    .bubble { background: var(--panel); backdrop-filter: none;
+      -webkit-backdrop-filter: none; }
   }
   .msg.own .bubble { background: var(--bubble-own); }
   .msg:not(.grouped) .bubble { border-top-left-radius: var(--radius-sm); }
