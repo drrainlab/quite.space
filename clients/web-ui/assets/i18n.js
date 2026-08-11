@@ -1836,8 +1836,11 @@ function setLocale(l) {
   document.documentElement.lang = l;
   applyI18n(document);
   // The live surfaces build their own strings on every tick, so one refresh
-  // carries the new language through the feed, the navigator and the chips.
+  // carries the new language through the feed, the navigator's sections and
+  // the chips. What a tick deliberately does NOT repaint — a search box that
+  // would lose a half-typed query — is relabelled explicitly.
   if (typeof syncSettingsUI === 'function') syncSettingsUI();
+  if (typeof NAV !== 'undefined' && NAV.relabel) NAV.relabel();
   if (typeof refresh === 'function') refresh();
 }
 

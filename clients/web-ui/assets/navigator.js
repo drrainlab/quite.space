@@ -847,8 +847,25 @@ const NAV = (() => {
     note('ai', spaces.some(s => s.ai) ? '' : t('share.ai.empty'));
   }
 
+  // The section headings and the empty notes are written on every paint, so
+  // a language change reaches them through the ordinary tick. The search box
+  // is not — it is built once in buildChrome and then deliberately never
+  // touched by render, because repainting it would cost somebody their typed
+  // query mid-search. That is the right trade for a poll and the wrong one
+  // for a locale change, so setLocale calls this instead: it relabels the
+  // chrome of every live view and leaves the value, the focus and the
+  // selection exactly where they are.
+  function relabel() {
+    for (const v of views) {
+      const search = /** @type {HTMLInputElement} */(v.root.querySelector('.nav-search'));
+      if (search) search.placeholder = v.select ? t('share.search') : t('nav.search');
+      const clear = v.root.querySelector('.nav-search-clear');
+      if (clear) clear.setAttribute('aria-label', t('nav.search.clear'));
+    }
+  }
+
   return {
-    mount, mountPicker, render, busy, addRef,
+    mount, mountPicker, render, busy, addRef, relabel,
     sources, addSource, removeSource, officialOff, setOfficialOff,
     /** @type {(id:string)=>void} */
     onOpen: () => {},
