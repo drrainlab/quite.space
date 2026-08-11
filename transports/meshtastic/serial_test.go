@@ -3,6 +3,7 @@ package meshtastic
 import (
 	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -127,5 +128,43 @@ func TestAQuietLinkSurvivesOnceTheHandshakeIsOver(t *testing.T) {
 	if err != nil || n != 0 {
 		t.Fatalf("a connected radio with nothing to say returned (%d, %v) — that "+
 			"tears down a working link every time the air goes quiet", n, err)
+	}
+}
+
+// A `serial:` target arrives from the local API. That is behind the session
+// token — but the token opens every route, and a route that opens an
+// ARBITRARY PATH is a different kind of thing from one that reads a space.
+func TestOnlyADeviceLookingPathIsOpened(t *testing.T) {
+	for _, ok := range []string{
+		"/dev/ttyUSB0", "/dev/ttyACM0",
+		"/dev/cu.usbserial-0001", "/dev/tty.usbmodem24EC4A307B541",
+		"/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0", // the symlink form
+		"COM3", "com12", `\\.\COM12`,
+	} {
+		if !looksLikeASerialDevice(ok) {
+			t.Errorf("%q refused — that is a real radio path", ok)
+		}
+	}
+	for _, bad := range []string{
+		"/etc/passwd", "/etc/shadow",
+		"/Users/somebody/.ssh/id_rsa",
+		"/dev/../etc/passwd", // the reason traversal is refused by name
+		"../../etc/passwd",
+		"", "relay.example:7411", "tcp:127.0.0.1",
+	} {
+		if looksLikeASerialDevice(bad) {
+			t.Errorf("%q accepted as a serial device", bad)
+		}
+	}
+}
+
+func TestOpeningANonDeviceSaysWhatIsWrong(t *testing.T) {
+	_, err := OpenSerial("/etc/passwd")
+	if err == nil {
+		t.Fatal("a regular file was opened as a radio")
+	}
+	if !strings.Contains(err.Error(), "not a serial device path") {
+		t.Errorf("refused with %q — the reason should name the shape, not the "+
+			"termios failure that would otherwise have happened by luck", err)
 	}
 }

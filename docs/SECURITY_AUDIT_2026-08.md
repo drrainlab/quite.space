@@ -503,16 +503,64 @@ eight.
 **L13** — `Number()` rather than `esc()` on the undecryptable count: the
 honest way to keep a count out of markup is to make it a number.
 
+## Fourth pass — the allocation bounds, the serial path, and one SSRF
+
+**L9** — `manifest.Decode` reserved a text list's backing array from a
+count a stranger wrote, bounded only by the codec's 1 MiB item ceiling: a
+five-byte array header claiming a million entries reserved ~16 MiB before
+reading one. The loop then failed on the first missing item and the memory
+came back, which is why it never looked like a leak — it looked like a
+phone doing GC under a flood of tiny malformed frames. Refused before
+allocating now, at the same bound `Validate` applies on the way out.
+
+**L10** — `projection.Decode` had no size ceiling of its own. It is not
+reachable today, because every caller caps its input — and that is the
+reason to add it rather than not: *safe because of who happens to call it*
+expires silently, and the failure would be an allocation, not an error.
+
+**L11** — `CutPoint` ids are length-checked where they are read. `copy()`
+truncates or zero-pads rather than complaining, so a malformed cut point
+was accepted as a DIFFERENT device; `Verify` would still reject the
+envelope, but every other id in that decoder is checked at the point of
+reading.
+
+**L5** — `serial:` targets are shape-checked: a device node under `/dev`
+or a COM port, no traversal. Shaped rather than enumerated, so
+`/dev/serial/by-id/…` still works. `serial.Open` would mostly have failed
+on a regular file anyway; what this buys is that `/etc/passwd` is refused
+**by name instead of by luck**.
+
+**L4 — narrowed deliberately, not filtered.** A blanket "no internal
+addresses" rule would be wrong here: relay, LAN and mesh addresses are
+*supposed* to be local, and the LLM base URL legitimately points at Ollama
+on localhost. That rule would break the local-provider case — the one this
+project cares about — to inconvenience a caller who already holds the
+token and can read every space.
+
+So exactly one thing is refused, and only where both halves of the
+argument hold: **link-local addresses on the LLM path**. Nobody runs a
+model at 169.254.169.254, that address hands back cloud credentials on a
+hosted node, and the LLM path is the ONE outbound dial whose response
+comes *back* to the caller — relay and LAN dials parse their answer as
+their own wire protocol and discard it, so they are a probe at worst. A
+name is deliberately NOT resolved: that would be a TOCTOU check, and one
+that looks stronger than it is costs more than it gives.
+
 ## Still open
 
-Recorded, not scheduled. None is a known exploit; each is a place where a
-future mistake would cost more than it should.
+Recorded, not scheduled.
 
 - **L1** — the token in query strings. Structural: an `<img>` cannot send
   a header, so media URLs need it until asset access is redesigned.
-  `connect-src`, the Host/Origin guard and now `script-src 'self'` each
-  blunt the consequence from a different side.
-- **L4/L5** — the SSRF and serial-path primitives behind the token.
-- **L8** — self-declared `Mentions` forcing a signal; related to the
-  already-tracked per-space signals toggle.
-- **L9–L11** — the allocation and robustness items, none reachable today.
+  `connect-src`, the Host/Origin guard and `script-src 'self'` each blunt
+  the consequence from a different side.
+- **L8 — reclassified.** This is not a security fix waiting to be
+  written; it is an attention-policy decision, and writing one here would
+  be inventing policy. A mention is a signed claim by a real author who is
+  genuinely in a space with you — `attention/rules.go` calls it a HARD
+  reason because it IS a fact about addressing, and `Mentions` is already
+  documented as the author's claim rather than a verified property. What
+  is actually at stake is *who may put something in your cross-space
+  inbox*, which is the question the already-tracked per-space signals
+  toggle exists to answer, after the study it calls for. Left there on
+  purpose.

@@ -3,7 +3,10 @@ package manifest
 import (
 	"bytes"
 	"crypto/ed25519"
+	"strings"
 	"testing"
+
+	"github.com/drrainlab/quiet_places/protocol/codec"
 
 	"github.com/drrainlab/quiet_places/protocol/capability"
 	"github.com/drrainlab/quiet_places/protocol/id"
@@ -139,5 +142,37 @@ func TestRevisionChain(t *testing.T) {
 	added, removed := capability.NewSet(got.Capabilities...).Diff(capability.NewSet(m.Capabilities...))
 	if len(added) != 0 || len(removed) != 0 {
 		t.Fatalf("unexpected capability diff: +%v -%v", added, removed)
+	}
+}
+
+// A manifest arrives from whoever announced it — over a LAN, a relay, or a
+// radio. The count in a text list is a number a stranger wrote, and the
+// codec bounds it only by MaxItemLen: a five-byte array header claiming a
+// million entries used to reserve the backing array before reading one.
+// The loop then failed on the first missing item and the memory went back,
+// which is why this never looked like a leak; it looked like a phone doing
+// GC under a flood of tiny malformed frames.
+func TestADeclaredCountIsRefusedBeforeItIsAllocated(t *testing.T) {
+	frame := func(n uint64) []byte {
+		buf := codec.AppendMap(nil, 1)
+		buf = codec.AppendUint(buf, 9) // keyLabels
+		buf = codec.AppendArray(buf, int(n))
+		return buf
+	}
+	// Far past any manifest that could pass Validate, and cheap to send.
+	if _, err := Decode(frame(1 << 20)); err == nil {
+		t.Fatal("a million-item list was accepted")
+	} else if !strings.Contains(err.Error(), "items in a text list") {
+		t.Errorf("refused for the wrong reason: %v — the count check did not fire", err)
+	}
+	// One past the bound is refused; the bound itself is not (it fails
+	// later, on the truncated body, which is the honest place).
+	if _, err := Decode(frame(maxTextItems + 1)); err == nil ||
+		!strings.Contains(err.Error(), "items in a text list") {
+		t.Errorf("one past the bound was not refused as oversized: %v", err)
+	}
+	if _, err := Decode(frame(maxTextItems)); err != nil &&
+		strings.Contains(err.Error(), "items in a text list") {
+		t.Error("a list exactly at the bound was refused as oversized")
 	}
 }

@@ -122,6 +122,13 @@ const (
 	MaxSchemas = 64
 )
 
+// maxTextItems is what the DECODER will allocate for one text list, before
+// it has read anything. Validate applies the per-list bounds above on the
+// way out; this is the same ceiling applied on the way in, so a declared
+// count that could never pass validation never costs memory either. The
+// larger of the two, because one helper reads every list.
+const maxTextItems = MaxSchemas
+
 // Manifest is the parsed view; the wire truth is the canonical frame.
 type Manifest struct {
 	ProtocolVersion uint64
@@ -367,6 +374,23 @@ func Decode(frame []byte) (*Manifest, error) {
 		n, err := d.ReadArray()
 		if err != nil {
 			return nil, err
+		}
+		// REFUSE BEFORE ALLOCATING. `n` is a number a stranger wrote, and
+		// the codec bounds it only by MaxItemLen (1<<20) — so a five-byte
+		// array header declaring a million entries used to reserve ~16 MiB
+		// of string headers here, before a single element was read. The
+		// loop below then fails on the first missing item and the memory
+		// goes back, which is why this never showed as a leak; what it
+		// showed as was a phone doing GC under a flood of tiny malformed
+		// frames.
+		//
+		// The bound is the same one Validate applies on the way out, so a
+		// manifest that would have been refused as too large is refused
+		// before it costs anything. The publication decoder next door has
+		// checked its count first for exactly this reason since PS-0
+		// (readTextArray, publication.go); this one did not.
+		if n > maxTextItems {
+			return nil, fmt.Errorf("manifest: more than %d items in a text list", maxTextItems)
 		}
 		out := make([]string, 0, n)
 		for range n {

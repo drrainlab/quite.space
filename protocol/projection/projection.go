@@ -24,6 +24,7 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 
 	"github.com/drrainlab/quiet_places/protocol/codec"
 	"github.com/drrainlab/quiet_places/protocol/id"
@@ -43,6 +44,22 @@ const FormatVersion = 2
 
 // magic distinguishes projection envelopes from bundles and CBOR frames.
 const magic = "QPP1"
+
+// MaxEnvelopeBytes is the largest envelope Decode will look at.
+//
+// The bound belongs HERE rather than in whoever calls Decode, and that is
+// the point of adding it. signal.Decode has refused an oversized frame
+// since M0.1; this decoder relied entirely on its callers, and today they
+// happen to cover it — the LAN reader caps a packet at 1 MiB and the relay
+// caps an item at 768 KiB — so nothing is reachable now. But "safe because
+// of who happens to call it" is a property that expires silently the first
+// time somebody feeds these bytes in from a path with its own idea of a
+// ceiling, and the failure would be an allocation, not an error.
+//
+// One relay item's worth, which is what the builder targets
+// (terminals.MaxProjectionBytes, 768 KiB) with room for framing. Anything
+// larger could not have travelled as one item anyway.
+const MaxEnvelopeBytes = 1 << 20
 
 // CutPoint records where one author chain's complete history resumes: the
 // projection carries this chain's frames from AfterSeq+1 onward (or none);
@@ -207,6 +224,10 @@ func (e *Envelope) ContentDigest() [32]byte {
 // — call Verify with the wire bytes next; nothing may be trusted before
 // both succeed).
 func Decode(data []byte) (*Envelope, error) {
+	if len(data) > MaxEnvelopeBytes {
+		return nil, fmt.Errorf("projection: envelope is %d bytes, over the %d ceiling",
+			len(data), MaxEnvelopeBytes)
+	}
 	if len(data) < len(magic) || string(data[:len(magic)]) != magic {
 		return nil, errors.New("projection: not a projection envelope")
 	}
@@ -273,6 +294,17 @@ func Decode(data []byte) (*Envelope, error) {
 				if e3 != nil {
 					return nil, e3
 				}
+				// LENGTH-CHECKED, like every other id in this decoder.
+				// copy() truncates a long value and zero-pads a short one
+				// rather than complaining, so a malformed cut point used to
+				// be accepted silently as a DIFFERENT device — not a memory
+				// hazard, and Verify would reject the tampered envelope
+				// anyway (it re-encodes the fixed 32 bytes), but "wrong on
+				// purpose and caught two layers later" is not how the space
+				// id and publisher device above are read.
+				if len(db) != id.Size {
+					return nil, errors.New("projection: bad cut-point device")
+				}
 				copy(c.Device[:], db)
 				if c.AfterSeq, er = d.ReadUint(); er != nil {
 					return nil, er
@@ -280,6 +312,9 @@ func Decode(data []byte) (*Envelope, error) {
 				tb, e4 := d.ReadBytes()
 				if e4 != nil {
 					return nil, e4
+				}
+				if len(tb) != id.Size {
+					return nil, errors.New("projection: bad cut-point tip")
 				}
 				copy(c.Tip[:], tb)
 				e.CutPoints = append(e.CutPoints, c)

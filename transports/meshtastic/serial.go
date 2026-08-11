@@ -1,6 +1,7 @@
 package meshtastic
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -17,7 +18,37 @@ func OpenSerial(device string) (*Radio, error) {
 	return openSerial(device, Options{})
 }
 
+// looksLikeASerialDevice refuses a path that is plainly not a radio.
+//
+// `serial:` targets arrive from the local API, so this sits behind the
+// session token — but the token opens every route, and a route that opens
+// an ARBITRARY PATH on the machine is a different kind of thing from one
+// that reads a space. serial.Open would mostly fail on a regular file
+// (it issues termios ioctls), which makes this cheap insurance rather
+// than a fix for a known hole; what it buys is that "open /etc/passwd" or
+// "open ~/.ssh/id_rsa" is refused by name instead of by luck.
+//
+// Deliberately shaped, not enumerated: every real serial device is a node
+// under /dev (including /dev/serial/by-id/… symlinks, which is why the
+// prefix is the whole rule rather than a list of tty patterns), or a COM
+// port on Windows. Traversal is refused outright — a path that has to
+// climb out of /dev to reach its target is not describing a radio.
+func looksLikeASerialDevice(device string) bool {
+	if device == "" || strings.Contains(device, "..") {
+		return false
+	}
+	// Windows: COM3, or the \\.\COM12 long form.
+	if u := strings.ToUpper(device); strings.HasPrefix(u, "COM") ||
+		strings.HasPrefix(u, `\\.\COM`) {
+		return true
+	}
+	return strings.HasPrefix(device, "/dev/")
+}
+
 func openSerial(device string, opts Options) (*Radio, error) {
+	if !looksLikeASerialDevice(device) {
+		return nil, fmt.Errorf("meshtastic: %q is not a serial device path", device)
+	}
 	port, err := serial.Open(device, &serial.Mode{BaudRate: 115200})
 	if err != nil {
 		return nil, err

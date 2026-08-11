@@ -11,7 +11,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -62,12 +64,54 @@ func (c *Client) Generate(ctx context.Context, cfg Config, system, user string) 
 	}
 }
 
-func (c *Client) do(ctx context.Context, method, url string, headers map[string]string, body any) ([]byte, error) {
+// refuseLinkLocal is the one narrowing worth making on an outbound address
+// a person configured.
+//
+// This is a provider URL: it legitimately points at a cloud API, at Ollama
+// on localhost, or at a model server on the LAN. So a general "no internal
+// addresses" rule would be WRONG here — it would break the local-provider
+// case, which is the one this project actually cares about, to defend
+// against a caller that already holds the session token and can read every
+// space anyway.
+//
+// What is different about link-local is the cloud metadata service at
+// 169.254.169.254 (and fd00:ec2::254). Nobody runs a model there, and on a
+// node hosted on a VPS — a mirror, a relay operator — that address hands
+// back credentials for the whole account. This is also the ONE outbound
+// path in the tree where the response comes BACK to the caller: relay and
+// LAN dials parse their answer as their own wire protocol and discard it,
+// so they are a probe at worst, while an answer here is rendered. A target
+// with a real prize and a real channel, and no legitimate use, is exactly
+// the shape that should be refused by name.
+func refuseLinkLocal(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("llm: bad provider url")
+	}
+	host := u.Hostname()
+	ip := net.ParseIP(host)
+	if ip == nil {
+		// A NAME is not resolved here on purpose. Doing so would be a
+		// TOCTOU check — the dial resolves again and may get a different
+		// answer — and pretending otherwise is worse than not checking.
+		// Literals are what a metadata probe uses.
+		return nil
+	}
+	if ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+		return fmt.Errorf("llm: %s is a link-local address, not a provider", host)
+	}
+	return nil
+}
+
+func (c *Client) do(ctx context.Context, method, endpoint string, headers map[string]string, body any) ([]byte, error) {
+	if err := refuseLinkLocal(endpoint); err != nil {
+		return nil, err
+	}
 	b, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(b))
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(b))
 	if err != nil {
 		return nil, err
 	}
