@@ -120,3 +120,32 @@ func TestTheInlineAllowlistRefusesSVGAtTheSource(t *testing.T) {
 		t.Error("image/png is not on the inline allowlist — ordinary media broke")
 	}
 }
+
+// ---------------------------------------------------------------------
+// M2: opening a pasted link must not take an automatic node out of
+// automatic mode.
+//
+// RR changed what an empty Settings.Relay means — in automatic mode it is
+// the normal state, not a gap — and this call site still read it the old
+// way. Writing the link's address there pinned the node to a relay chosen
+// by whoever wrote the link.
+
+func TestAnAutomaticNodeDoesNotAdoptARelayFromAPastedLink(t *testing.T) {
+	// The predicate is the whole fix, so it is what gets pinned: a node in
+	// automatic mode is never "unconfigured", however blank the field.
+	if !relayIsAutomatic(Settings{RelayMode: "automatic"}) {
+		t.Error("an explicitly automatic node reads as not automatic")
+	}
+	if !relayIsAutomatic(Settings{}) {
+		t.Error("a fresh node (no mode, no address) must default to automatic")
+	}
+	// The case that still adopts, deliberately: custom mode with nowhere
+	// to go, where a deliberate paste is a reasonable offer.
+	if relayIsAutomatic(Settings{RelayMode: "custom"}) {
+		t.Error("an explicit custom choice was overridden")
+	}
+	// A pre-modes node that had an address keeps it and is not automatic.
+	if relayIsAutomatic(Settings{Relay: "example:7411"}) {
+		t.Error("a node with a configured address reads as automatic")
+	}
+}

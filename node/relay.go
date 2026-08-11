@@ -420,6 +420,18 @@ func (r *Runtime) addRelayWants(tid id.TerminalID, hashes []id.Hash) {
 	}
 }
 
+// wantsBlobLocked says whether this node actually asked for a blob in this
+// space — the gate on relay-carried blob ingest. Caller holds r.mu.
+//
+// A mirror's greedy pull and the ordinary on-demand fetch both register
+// through addRelayWants, so this is the one question worth asking: not
+// "may this peer speak to me" (a blind relay cannot answer that) but "did
+// I ask for these bytes".
+func (r *Runtime) wantsBlobLocked(tid id.TerminalID, h id.Hash) bool {
+	_, ok := r.relayWants[tid][h]
+	return ok
+}
+
 // clearRelayWants drops hashes from the want set (fetch completed or gave up),
 // so we stop asking for them.
 func (r *Runtime) clearRelayWants(tid id.TerminalID, hashes []id.Hash) {
@@ -662,13 +674,67 @@ func (r *Runtime) applyRelayItems(client *relay.Client, items [][]byte) (int, er
 		// Carried blobs: verify-by-hash happens inside PutBlob addressing
 		// (content-addressed store recomputes the id); possession proves
 		// nothing about access — decryption still needs the block's key.
-		for _, b := range blobs {
+		//
+		// EXPECTED-ONLY, like every other blob ingest. This loop used to
+		// store whatever a bundle carried, and it was the one path that
+		// did not gate: kernel/sync's acceptBlob refuses anything outside
+		// e.pending, and swarmCollect drops an unexpected hash before it
+		// costs anything. Nobody can forge a blob's identity — the store
+		// is content-addressed — but the ingress hint for a space's inbox
+		// is derivable by any member, so an unfiltered loop let one member
+		// write unbounded padding into every other member's blob store,
+		// permanently: nothing references those bytes and there is no GC.
+		//
+		// "Expected" here is wider than the want set, and it has to be.
+		// A relay bundle carries blobs PROACTIVELY — that is the whole
+		// dead drop: an offline peer collects the event, the manifest and
+		// the chunks in one pull, having asked for nothing. So a blob is
+		// admitted when the space's own asset graph references it
+		// (assetIdx.allowed, the same question serveBlobs asks on the peer
+		// path) or when this node asked for it outright. Frames are
+		// ingested above, so a ref that arrived in THIS bundle already
+		// counts. What is refused is the thing that was never referenced
+		// by anything and never requested: padding.
+		store := func(b []byte) bool {
+			h := id.HashOf(b)
+			if !r.assetIdx.allowed(h, terminal) && !r.wantsBlobLocked(terminal, h) {
+				return false
+			}
 			_, _ = r.root.PutBlob(b)
+			return true
+		}
+		var deferred [][]byte
+		for _, b := range blobs {
+			if !store(b) {
+				deferred = append(deferred, b)
+			}
 		}
 		// A delivered manifest may unlock chunk indexing.
 		for h := range r.assetIdx.manifestOwner {
 			if r.root.HasBlob(h) {
 				r.onBlobStored(h)
+			}
+		}
+		// Second pass, for the bundle that carried a manifest AND its
+		// chunks together: until that manifest was stored and indexed just
+		// above, its chunk ids were referenced by nothing this node knew
+		// about, so the first pass could not tell them from padding. One
+		// retry resolves it without a second round trip — and a blob that
+		// is still unreferenced after the manifest landed is refused for
+		// good, which is the case the gate exists for.
+		if len(deferred) > 0 {
+			again := false
+			for _, b := range deferred {
+				if store(b) {
+					again = true
+				}
+			}
+			if again {
+				for h := range r.assetIdx.manifestOwner {
+					if r.root.HasBlob(h) {
+						r.onBlobStored(h)
+					}
+				}
 			}
 		}
 		r.persistEpochsLocked(terminal, st.space)

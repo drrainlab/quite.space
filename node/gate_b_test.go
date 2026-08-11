@@ -222,3 +222,74 @@ func TestBundleBlobsAndUnknownKeySkip(t *testing.T) {
 		t.Fatalf("old-style decode: %v", err)
 	}
 }
+
+// The blob store is not a mailbox anybody may write to.
+//
+// A relay bundle carries blobs proactively — that is the dead drop above,
+// and it is why this ingest cannot simply demand that every blob was
+// asked for. But "carried proactively" is not "carried by anyone, about
+// anything": a space's inbox hint is derivable by every member, and an
+// unfiltered loop let one of them write unbounded padding into every
+// other member's store, permanently — nothing references those bytes and
+// there is no GC.
+//
+// Asserted together with the delivery it must not break, because a gate
+// that also stopped real media would pass a refusal-only test.
+func TestUnreferencedBlobsAreRefusedWhileRealMediaStillArrives(t *testing.T) {
+	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+	addr := "127.0.0.1:" + itoa(port)
+
+	rtA := openRuntime(t, t.TempDir(), "alice")
+	defer rtA.Close()
+	rtB := openRuntime(t, t.TempDir(), "bob")
+	defer rtB.Close()
+
+	tid, err := rtA.CreateSpace("Padding")
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := randBytes(t, 60_000)
+	ref := emitVisual(t, rtA, tid, content, 16384)
+	invite, err := rtA.MintInvite(tid, rtB.Device.ID, rtB.Device.X25519Pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rtB.JoinInvite(invite); err != nil {
+		t.Fatal(err)
+	}
+
+	// A member — anyone who can derive bob's inbox hint, which is every
+	// member — pushes junk into it. It is well-formed and correctly
+	// addressed; it is simply about nothing.
+	junk := randBytes(t, 40_000)
+	client, err := relay.DialClient(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	hint := relay.HintFor(tid, rtB.Device.ID, relay.Bucket(uint64(time.Now().Unix())))
+	if _, err := client.Put(hint, 0, bundle.EncodeWithBlobs(tid, nil, [][]byte{junk})); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := rtA.PushToRelay(addr, tid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rtB.PullFromRelay(addr); err != nil {
+		t.Fatal(err)
+	}
+
+	// The refusal.
+	if rtB.root.HasBlob(id.HashOf(junk)) {
+		t.Error("a blob referenced by nothing and asked for by nobody was stored")
+	}
+	// The delivery, in the same breath.
+	got, _, err := rtB.RetrieveAsset(tid, ref.PublicIDHex())
+	if err != nil || !bytes.Equal(got, content) {
+		t.Fatalf("the gate broke honest media delivery: %v", err)
+	}
+}

@@ -63,6 +63,12 @@ func DefaultCharacter(archetype string) Character {
 	return c
 }
 
+// maxPresenceStates bounds a space's presence vocabulary. Enforced when a
+// character is written (Validate) AND when one is read off the wire
+// (admissiblePresence) — the second is what makes it a bound rather than
+// a request.
+const maxPresenceStates = 12
+
 // reservedPresence lists states custom presence must not impersonate:
 // these look like protocol facts, and character may never fake those
 // (invariant §2.4; user's rule about custom statuses).
@@ -160,10 +166,44 @@ func ParseCharacter(labels []string) (string, Character) {
 				c.Rituals = append(c.Rituals, kv[1])
 			}
 		case "presence":
-			c.Presence = strings.Split(kv[1], ",")
+			c.Presence = admissiblePresence(strings.Split(kv[1], ","))
 		}
 	}
 	return title, c
+}
+
+// admissiblePresence keeps the states a reader may honestly show.
+//
+// The vocabulary is authored by whoever owns the space and arrives inside
+// a manifest, whose own Validate bounds how MANY labels there are and
+// nothing about what is in them. Character.Validate holds the real rule —
+// no state may impersonate a protocol fact (invariant §2.4) — and it runs
+// only when a character is WRITTEN. So until this existed, a space could
+// declare a presence state of "verified" or "system" and every reader
+// would render it beside the honest ones, which is precisely the
+// impersonation reservedPresence was introduced to prevent.
+//
+// Individual states are dropped, never the manifest: refusing a whole
+// space over one bad word would make content disappear, and this
+// codebase's rule on the read path is the same one qp.kind follows — an
+// unknown or inadmissible VALUE is ignored, never fatal. A space that
+// declares nothing but reserved words ends up with no vocabulary, which
+// reads correctly as "this space declares no presence states".
+//
+// The cap matches Validate's own, so a hostile manifest cannot hand every
+// reader ten thousand menu items to build.
+func admissiblePresence(states []string) []string {
+	var out []string
+	for _, s := range states {
+		if len(out) >= maxPresenceStates {
+			break
+		}
+		if ValidatePresenceState(s) != nil {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
 }
 
 // Validate keeps the character within the v1 envelope and enforces the
@@ -181,7 +221,7 @@ func (c Character) Validate() error {
 	if len(c.Rituals) > 3 {
 		return errors.New("terminals: at most three rituals (they define life here — choose)")
 	}
-	if len(c.Presence) > 12 {
+	if len(c.Presence) > maxPresenceStates {
 		return errors.New("terminals: presence vocabulary too large")
 	}
 	for _, p := range c.Presence {

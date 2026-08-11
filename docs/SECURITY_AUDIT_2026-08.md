@@ -1,8 +1,13 @@
 # Security audit — pre-beta, 2026-08-11
 
-**Nothing here is fixed.** This is a findings register, written before the
-public beta so that the cheap mistakes are known rather than discovered by
-a stranger. Threat model: **something reaching the user's device or gaining
+> **Status, 2026-08-11 (same day): H1–H4, M1, M2 and L7's sibling are
+> FIXED — see the two commits following this file. What remains open is
+> listed under "Still open" at the end. The findings below are kept in
+> their original wording, because a register that quietly rewrites itself
+> to match the code stops being evidence.**
+
+This began as a findings register, written before the public beta so that
+the cheap mistakes are known rather than discovered by a stranger. Threat model: **something reaching the user's device or gaining
 control it should not have.** Six read-only passes — local HTTP API,
 untrusted wire parsing, web-UI DOM sinks, asset/blob handling, the
 executable-payload boundary (ADR-013), and the consent/impersonation model.
@@ -346,25 +351,92 @@ handler with request data. Preview media correctly sets `no-store`, and
 
 ---
 
-## Suggested order, if and when this is worked
+## What was done, and what it cost
 
-Not a plan — a reading of the dependency structure.
+Worked in the order below. Two corrections to my own recommendations came
+out of doing it, and both are worth keeping.
 
-1. **A CSP** is the single highest-value item: one header, and H1–H4 stop
-   being code execution even where the underlying sink survives.
-2. **The two escaping bugs** are small and local: a JS-string escaper (or
-   `addEventListener` + `dataset`) for the six `onclick` sites, and
-   `SAFE_SCHEME` on the three `href` assignments.
-3. **Re-validate on the inbound path** — the root cause behind H1 and H3.
-   `Character.Validate()` after `ParseCharacter`, `publication.Validate` (or
-   at least `checkURL`) after inbound `Decode`. Costs a decision about what
-   to do with a frame that is signed but invalid.
-4. **A media-type allowlist** for `AssetRef.MediaType`, mirroring the
-   `AllowedPreviewMIME` that already exists for previews.
-5. **The want-set gate on `node/relay.go:811`**, matching the two paths that
-   already have one.
-6. **M2**, which is a one-line condition once someone decides what "adopt"
-   should mean in automatic mode.
+**A CSP was NOT one header.** The claim above — "one header, and H1–H4
+stop being code execution" — assumed a strict `script-src 'self'`, and
+`index.html` declares ~215 inline `on*` handlers that such a policy
+breaks. They are all first-party, literal, and unreachable by remote
+content, so they are not the vulnerability; they are just what a strict
+policy would take down with it. So the CSP shipped in two layers and one
+honest compromise:
 
-Items 1–4 are all client-or-serving-layer; none touches the protocol, the
-wire, or any signed structure.
+- **the interface** gets everything strict except `script-src`, which
+  carries `'unsafe-inline'` with the reason and the price written at
+  `node/api.go`. `connect-src 'self'` is the part that earns its keep: it
+  closes the silent exfiltration channels, so even a successful injection
+  cannot post the log or the token anywhere. Top-level navigation is not
+  covered and the comment says so rather than implying otherwise.
+- **asset responses** get `sandbox` with no `allow-scripts`, which is
+  strict and costs nothing, because an asset is never an app page. That
+  is what closes H4 at the second layer.
+- **`script-src 'self'` remains unearned.** Migrating the 215 handlers to
+  `addEventListener` is what buys it, and it is the one change that would
+  make an injected `<script>` or `javascript:` URI inert on its own.
+  Recorded under "Still open" rather than quietly dropped.
+
+**Re-validating inbound publications was considered and declined.** The
+audit proposed `publication.Validate` after inbound `Decode`. Doing it
+would make a signed-but-malformed post *disappear*, and on a read path in
+a local-first app that is the wrong failure direction — the same argument
+the codebase already made for `qp.kind` ("an unknown value is ignored,
+never fatal", CAT-0b gate 1). The fix belongs where the danger is: the
+client refuses to make a bad URL clickable (`MD.safeHref`), and the node
+keeps serving the author's bytes unaltered. Where re-validation WAS right
+is the case the audit did not name — see below.
+
+Fixed, in order:
+
+1. **CSP, two layers** — `node/api.go` (`uiPolicy`, `uiSecurityHeaders`),
+   `node/api_blocks.go` (`sandbox` on every asset response).
+2. **The six `onclick` sites** — presence menu rebuilt as nodes with a
+   real listener; gateway rows on one delegated listener bound once (a
+   per-repaint bind would have fired once per poll tick); radio meet and
+   quicklink moved to `data-` attributes. Plus a seventh the audit missed
+   — `gwAttach`/`gwAttachRNode` — found by the mechanical grep now in
+   `scripts/webui/injection.cjs`, which is the argument for having it.
+3. **The three `href` sites** — one exported predicate, `MD.safeHref`,
+   shared with the markdown renderer that already had it right. It tests
+   the address with control characters stripped, so an embedded newline
+   cannot walk around the scheme check.
+4. **A different inbound re-validation than the one proposed**, and a
+   better one: `ParseCharacter` never ran `Character.Validate`, so the
+   `reservedPresence` rule — no presence state may impersonate a protocol
+   fact — was enforced on write and **not on read**. A space could declare
+   a presence state of `verified`, `system` or `admin` and every reader
+   would render it beside the honest ones. `admissiblePresence` now drops
+   inadmissible states (and caps the count) while keeping the space, which
+   is the tolerant-on-read shape this codebase already uses.
+5. **The inline-render allowlist** — `schemas.AllowedInlineMIME`.
+   Deliberately not an upload allowlist: what an unlisted type loses is
+   the right to be *rendered*, never the right to be shared.
+6. **The want-set gate** — `node/relay.go` now refuses a relay-carried
+   blob this node never asked for, matching `acceptBlob` and
+   `swarmCollect`.
+7. **M2** — `OpenPublicLink` no longer adopts a link's relay on a node in
+   automatic mode, where an empty `Settings.Relay` is the normal state and
+   not a gap.
+
+## Still open
+
+Recorded, not scheduled. None is a known exploit; each is a place where a
+future mistake would cost more than it should.
+
+- **`script-src 'self'`**, gated on migrating ~215 first-party inline
+  handlers (see above). The single highest-value remaining item.
+- **L1/L2** — the token in query strings, and no Origin/Host validation.
+  Both are structural: an `<img>` cannot send a header, so the media URLs
+  need the query string until asset access is redesigned. `connect-src`
+  now blunts the consequence.
+- **L3** — non-constant-time token comparison.
+- **L4/L5** — the SSRF and serial-path primitives behind the token.
+- **L6** — `answerWants` serves any held blob by hash without the
+  space-scope check its peer-path sibling applies.
+- **L7** — `LocalOnly` stamped after the AI space is already attached.
+  Bounded, but should be LocalOnly-from-birth.
+- **L8** — self-declared `Mentions` forcing a signal; related to the
+  already-tracked per-space signals toggle.
+- **L9–L13** — the allocation and robustness items, none reachable today.

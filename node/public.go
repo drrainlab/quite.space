@@ -315,8 +315,30 @@ func (r *Runtime) OpenPublicLink(link string) (id.TerminalID, error) {
 	if err := r.OpenPublicSpace(tid, relayAddr); err != nil {
 		return id.TerminalID{}, err
 	}
-	// Remember the relay for the background loop if none is configured yet.
-	if s := r.GetSettings(); s.Relay == "" {
+	// Remember the relay for the background loop if none is configured yet
+	// — and "not configured yet" is NOT the same question it was when this
+	// was written.
+	//
+	// RR changed what an empty Relay means. In automatic mode it is the
+	// NORMAL state: the measured selection keeps its result in relays.json
+	// and deliberately leaves Settings.Relay blank, because Settings holds
+	// the person's decisions and a measurement is not one. So writing an
+	// address here would not fill a gap; it would take a node OUT of
+	// automatic mode and pin it, permanently and silently, to a relay named
+	// by whoever wrote the link. The relay stays blind to content, but it
+	// gains the metadata position and the power to withhold — bought with
+	// a paste the person meant as "show me this space".
+	//
+	// This is the same class as the six call sites the RR tail fixed
+	// (71b8776): code reading Settings.Relay as though empty meant
+	// unconfigured. This one was missed because it reads as an act of
+	// helpfulness rather than a resolver.
+	//
+	// A node in CUSTOM mode with a blank address genuinely has nowhere to
+	// go, and a deliberate paste is a reasonable moment to offer one — so
+	// that case still adopts, which is the behaviour this line was added
+	// for in the first place.
+	if s := r.GetSettings(); s.Relay == "" && !relayIsAutomatic(s) {
 		s.Relay = relayAddr
 		_ = r.SetSettings(s)
 	}

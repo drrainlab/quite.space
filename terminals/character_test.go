@@ -114,3 +114,68 @@ func TestPrivateHistoryInvite(t *testing.T) {
 		t.Fatalf("undecryptable count wrong: %d", replica.Undecryptable)
 	}
 }
+
+// A space's presence vocabulary arrives inside somebody else's manifest,
+// and manifest.Validate bounds the label COUNT, not what is in a label.
+// Character.Validate holds the honesty rule but runs only on WRITE, so
+// until admissiblePresence existed the read path accepted anything.
+func TestReadingAPresenceVocabularyDropsWhatItMayNotShow(t *testing.T) {
+	labels := []string{"a space", "qp.archetype=campfire",
+		// "verified" and "system" impersonate protocol facts; "always
+		// online" hides one inside a phrase, which is why the rule
+		// matches per word token rather than on the whole string.
+		"qp.presence=around,verified,listening,system,always online,busy"}
+	_, c := terminals.ParseCharacter(labels)
+
+	for _, bad := range []string{"verified", "system", "always online"} {
+		for _, got := range c.Presence {
+			if got == bad {
+				t.Errorf("read a presence state that impersonates a protocol fact: %q", bad)
+			}
+		}
+	}
+	want := []string{"around", "listening", "busy"}
+	if len(c.Presence) != len(want) {
+		t.Fatalf("kept %v, want the honest ones %v", c.Presence, want)
+	}
+	for i := range want {
+		if c.Presence[i] != want[i] {
+			t.Errorf("kept %v, want %v", c.Presence, want)
+			break
+		}
+	}
+	// What survives the read must also pass the write rule — otherwise the
+	// two halves disagree and one of them is decoration.
+	if err := c.Validate(); err != nil {
+		t.Errorf("a character read off the wire does not validate: %v", err)
+	}
+}
+
+// Dropping states, never the space: refusing a whole manifest over one bad
+// word would make content disappear, which is the wrong failure direction
+// on a read path.
+func TestASpaceOfNothingButReservedWordsSimplyHasNoVocabulary(t *testing.T) {
+	_, c := terminals.ParseCharacter([]string{"a space", "qp.presence=online,offline,admin"})
+	if len(c.Presence) != 0 {
+		t.Errorf("kept %v, want nothing", c.Presence)
+	}
+	if c.Archetype == "" {
+		t.Error("the rest of the character was lost with the vocabulary")
+	}
+}
+
+// A hostile manifest must not be able to hand every reader an unbounded
+// menu to build.
+func TestAnOversizedVocabularyIsCutToTheBound(t *testing.T) {
+	many := make([]string, 0, 50)
+	for i := 0; i < 50; i++ {
+		many = append(many, "state_"+string(rune('a'+i%26))+string(rune('a'+i/26)))
+	}
+	_, c := terminals.ParseCharacter([]string{"s", "qp.presence=" + strings.Join(many, ",")})
+	if len(c.Presence) > 12 {
+		t.Errorf("kept %d states, bound is %d", len(c.Presence), 12)
+	}
+	if err := c.Validate(); err != nil {
+		t.Errorf("the cut vocabulary does not validate: %v", err)
+	}
+}
