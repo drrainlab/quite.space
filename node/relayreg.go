@@ -58,6 +58,24 @@ type RelayDescriptor struct {
 	// Empty = local-lan profile (loopback/LAN — no pinning; identity on
 	// those paths lives in event signatures, as everywhere else).
 	SPKIPins []string `json:"spki_pins,omitempty"`
+
+	// ManualOnly keeps an entry out of AUTOMATIC selection while leaving it
+	// fully resolvable. It exists for one kind of row: a relay that is right
+	// for whoever deliberately stood it up and wrong for everybody else.
+	//
+	// Measured selection has no way to tell those apart on its own. A relay
+	// on the same machine wins on RTT against every relay in the world, and
+	// winning is exactly the wrong outcome — a relay's value is that OTHER
+	// PEOPLE ARE THERE, and a mailbox nobody else uses is not a meeting
+	// place. The beta saw the consequence as a quicklink refused with
+	// "nothing waiting under those words", which was true: the words were
+	// waiting on the shared relay, and that phone was not.
+	//
+	// A tag on the row rather than a rule about loopback addresses, because
+	// the distinguishing fact is what the entry is FOR. A relay somebody runs
+	// on their LAN for a group in one building is not loopback and should be
+	// selectable; the development entry below is on loopback and should not.
+	ManualOnly bool `json:"manual_only,omitempty"`
 }
 
 // LocalLAN reports whether this descriptor runs under the local-lan trust
@@ -121,20 +139,27 @@ var BuiltinRelayRegistry = RelayRegistry{
 			},
 			Official: true,
 			// no pins: local-lan profile
+			//
+			// AND NEVER CHOSEN FOR ANYBODY. This row is here so a developer
+			// can say `official:local-dev`, and its Priority of 100 is the
+			// highest in the file — which, before ManualOnly, meant any
+			// machine with something answering on 7411 selected it on the
+			// spot and stopped meeting anyone.
+			ManualOnly: true,
 		},
 		{
-			// The shared test relay. Named for what it IS: standing this box
-			// up (ADR/plan, 2026-08-05) came with the warning that it must
-			// never drift into being production infrastructure, and a label
-			// saying "official EU relay" is exactly how that drift starts.
+			// Amsterdam. It began as AR-0c's staging box, with the warning
+			// that it must never drift into being production infrastructure —
+			// and then it did, because it is the relay every beta build has
+			// been meeting on. The id is kept as it is: changing a registry
+			// id orphans every space whose signed policy already names it.
 			//
 			// It sits BELOW local-dev on priority, but priority is only an
-			// administrative tie-break: selection is measured, so a relay on
-			// this machine wins on RTT whenever it is up, and this one is
-			// what a node falls to when it is not.
+			// administrative tie-break: selection is measured, and local-dev
+			// is not a candidate at all (ManualOnly).
 			ID:          "staging-1",
 			Endpoint:    "91.201.114.71:7411",
-			Label:       "Shared test relay",
+			Label:       "Amsterdam",
 			Region:      "eu",
 			Priority:    50,
 			ProtocolMin: 1,
@@ -149,6 +174,36 @@ var BuiltinRelayRegistry = RelayRegistry{
 			// stood up — RR-1's persistent identity key held across every
 			// restart since. A SET so rotation is [current, next].
 			SPKIPins: []string{"A63rjukjUJkPVU98l0XPdKjRiDNXTVs1xCm9Xs7jyI4="},
+		},
+		{
+			// THE SECOND REGION, and the first time the backup rule has
+			// anything to choose from: runAutoSelection prefers a backup in a
+			// DIFFERENT region, because two relays in one failure domain are
+			// one relay with extra steps. Until now there was only eu.
+			//
+			// Same priority as Amsterdam on purpose. Neither is "the main
+			// one" — every device measures the real path and picks for
+			// itself, which is the whole point of automatic mode, and a tie
+			// here means nothing overrides that measurement.
+			ID:          "ru-1",
+			Endpoint:    "178.20.45.239:7411",
+			Label:       "Russia",
+			Region:      "ru",
+			Priority:    50,
+			ProtocolMin: 1,
+			ProtocolMax: 1,
+			Roles: []string{
+				RelayRoleBootstrap, RelayRolePersonalInbox,
+				RelayRoleSpaceRendezvous, RelayRolePublicHost,
+			},
+			Official: true,
+			// Read off the running box AND verified over the wire from a
+			// second machine with `terminal relay show-identity` — the log
+			// line says what the process believes, the handshake says what a
+			// client will actually be offered. Confirmed to survive a restart
+			// (RR-1's persistent key, /var/lib/quiet-relay-ru). A SET so
+			// rotation ships as [current, next] → [next].
+			SPKIPins: []string{"gk0X84yjjmahVYaUO7snq/a/BecbtX4deDFp7hGkC/c="},
 		},
 	},
 }

@@ -43,7 +43,14 @@ func (r *Runtime) RelayDiagnosticsSnapshot() RelayDiagnostics {
 	s := r.GetSettings()
 	st := r.loadRelayState()
 	d := RelayDiagnostics{RegistryVersion: BuiltinRelayRegistry.Version}
-	if s.RelayMode == "automatic" {
+	// relayIsAutomatic, NOT a literal comparison — see its comment: it is the
+	// one reading of the mode, and the difference is the whole fresh-install
+	// case. A new node stores "" and means automatic; comparing to the string
+	// made this screen report "custom, primary —" on a device that was at
+	// that moment syncing happily through a measured official relay. The one
+	// screen somebody opens to find out why the relay is not working was
+	// telling them the selection had never run.
+	if relayIsAutomatic(s) {
 		d.Mode = "automatic"
 		d.Primary = st.SelectedPrimary
 		d.Backup = st.SelectedBackup

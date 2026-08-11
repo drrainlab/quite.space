@@ -164,7 +164,13 @@ func (r *Runtime) ResolvePublicWriteRelay(tid id.TerminalID) string {
 // endpoint.
 func (r *Runtime) PersonalRelayRef() string {
 	s := r.GetSettings()
-	if s.RelayMode == "automatic" {
+	// relayIsAutomatic, not the literal string, and here it MATTERS MOST of
+	// the three places that got this wrong. A fresh install stores "" and
+	// means automatic; taking the custom branch found no configured address
+	// and returned no ref at all — so a public space created on a
+	// newly-installed device was signed with NOWHERE FOR ITS TRAFFIC TO GO,
+	// and the person opening its link elsewhere had nothing to point at.
+	if relayIsAutomatic(s) {
 		st := r.loadRelayState()
 		if ref, err := ParseRelayRef(st.SelectedPrimary); err == nil && !ref.IsZero() {
 			return ref.String()
