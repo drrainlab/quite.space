@@ -1,6 +1,7 @@
 package space.quiet.arprobe
 
 import android.Manifest
+import android.app.DownloadManager
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -8,12 +9,16 @@ import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
+import android.text.Editable
 import android.text.InputType
+import android.text.TextWatcher
 import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.PermissionRequest
+import android.webkit.URLUtil
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -24,6 +29,7 @@ import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
@@ -81,6 +87,33 @@ class QuietActivity : ComponentActivity() {
 
     /** Per Activity instance: the way back is offered once, never nagged. */
     private var recoveryOffered = false
+
+    /** Where a remembered passphrase lives, and the only thing that reads it. */
+    private val vault by lazy { PassphraseVault(applicationContext) }
+
+    /**
+     * The passphrase currently being tried, held until the core says whether
+     * it worked. Nothing is written down before that: a stored typo would
+     * become an auto-open that fails on every launch and cannot be corrected
+     * from a screen that no longer appears.
+     */
+    @Volatile
+    private var pendingPassphrase: String? = null
+
+    /**
+     * Set when the attempt in flight came from the vault rather than from
+     * somebody typing. Its failure means the remembered value is no longer
+     * good — the keystore was replaced, or the data directory was — and the
+     * only way out of that loop is to forget it and ask.
+     */
+    @Volatile
+    private var autoAttempt: String? = null
+
+    /** What the last failed attempt was refused for, shown on the panel. */
+    private var unlockMessage: String? = null
+
+    /** What is in the field, so rebuilding the panel does not empty it. */
+    private var lastTyped: String = ""
 
     /** The URL currently shown, so a state change does not reload needlessly. */
     private var loaded: String? = null
@@ -215,6 +248,21 @@ class QuietActivity : ComponentActivity() {
                 }
             }
             webViewClient = LocalOnlyClient()
+            // SAVING A FILE IS A THING A WEBVIEW CANNOT DO BY ITSELF, and its
+            // way of saying so is to do nothing at all: an <a download> tap
+            // reaches here, and with no listener registered the default is to
+            // ignore it. No error, no log line, a button that is simply inert
+            // — the same shape as the file chooser and the microphone before
+            // them.
+            //
+            // ONLY OUR OWN NODE'S URLS ARE ACCEPTED. The download goes out
+            // through Android's DownloadManager, which fetches the URL in a
+            // different process, so this must never become a way for a page
+            // to have the system fetch something else — the WebView is locked
+            // to loopback, and so is this.
+            setDownloadListener { url, _, contentDisposition, mimeType, _ ->
+                saveDownload(url, contentDisposition, mimeType)
+            }
             // AR-1b.8 — the interface's way back. Registered once, on the one
             // WebView this app has, and every method on it demands the node's
             // own session token: see HostBridge for why the origin lock is not
@@ -235,6 +283,9 @@ class QuietActivity : ComponentActivity() {
                             AvailabilityService.stop(this@QuietActivity)
                         }
                     },
+                    unlockRemembered = { vault.has() },
+                    forgetPassphrase = { vault.forget() },
+                    stayRefused = { controller.availabilityRefused() },
                 ),
                 "QuietHost",
             )
@@ -266,6 +317,16 @@ class QuietActivity : ComponentActivity() {
             )
             view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
             insets
+        }
+
+        // A REMEMBERED PASSPHRASE OPENS THE NODE BEFORE ANY SCREEN IS DRAWN.
+        // Asked for BEFORE addListener so the first render is "Opening…" and
+        // not a blank field that vanishes half a second later — a flash of the
+        // unlock panel on every launch is the same complaint in a shorter
+        // form.
+        vault.load()?.let { stored ->
+            autoAttempt = stored
+            controller.ensureStarted(stored, null, false)
         }
 
         controller.addListener(runtimeListener)   // also renders the current state
@@ -305,8 +366,23 @@ class QuietActivity : ComponentActivity() {
         // returns, and it does not reload anything.
         //
         // What this deliberately does NOT do is survive a reboot on its own.
-        // That needs its own decision, and a mode that quietly reappeared
-        // after a restart would be a battery cost nobody re-consented to.
+        // A boot receiver is its own decision; coming back when somebody opens
+        // the app is enough, and it keeps the mode tied to a person's presence.
+        applyAvailabilityMode()
+    }
+
+    /**
+     * Start the mode if it is wanted and not already running.
+     *
+     * GATED ON THE CORE BEING OPEN, which matters now that the mode is on by
+     * default: onResume runs while the unlock panel is still up on a fresh
+     * install, and a permanent notification announcing that the app is staying
+     * connected — over a node that has not been opened and cannot carry
+     * anything — would be a claim about nothing. So it is reconciled here AND
+     * from [render] the moment the runtime comes alive.
+     */
+    private fun applyAvailabilityMode() {
+        if (!controller.isAlive()) return
         if (controller.availabilityRequested() && controller.availabilityLeaseCount() == 0) {
             AvailabilityService.start(this)
         }
@@ -326,10 +402,62 @@ class QuietActivity : ComponentActivity() {
 
     private fun render(state: String) {
         when (state) {
-            RuntimeController.STATE_ALIVE -> showInterface()
+            RuntimeController.STATE_ALIVE -> {
+                // IT WORKED, SO NOW IT MAY BE WRITTEN DOWN. This is the only
+                // place that stores one, and it is reached only by a value the
+                // core has already opened with.
+                pendingPassphrase?.let { pass ->
+                    pendingPassphrase = null
+                    autoAttempt = null
+                    if (!vault.has()) vault.save(pass)
+                }
+                unlockMessage = null
+                showInterface()
+                // The core is open, so "staying connected" is now a claim
+                // about something. Starting a foreground service is only
+                // allowed from a visible Activity, and this is one.
+                applyAvailabilityMode()
+            }
             RuntimeController.STATE_OPENING -> showStatus("Opening…", unlockable = false)
-            else -> showStatus("Quiet is not running on this device yet.", unlockable = true)
+            else -> {
+                // An attempt that ended here was refused. WHY is in the core's
+                // status, and throwing it away is what made this screen so
+                // hard to get past: a person typed a word, pressed Open, and
+                // got back the same blank field with no sentence anywhere.
+                pendingPassphrase?.let {
+                    pendingPassphrase = null
+                    unlockMessage = unlockReason(controller.lastError())
+                    if (autoAttempt != null) {
+                        // The remembered value no longer opens this data
+                        // directory. Keeping it would retry the same failure
+                        // on every launch, in front of a person who has no
+                        // screen from which to change it.
+                        autoAttempt = null
+                        vault.forget()
+                        unlockMessage = "The saved passphrase no longer opens this device's data. " +
+                            "Enter it again."
+                    }
+                }
+                showStatus("Quiet is not running on this device yet.", unlockable = true)
+            }
         }
+    }
+
+    /**
+     * The core's error, as a sentence for somebody holding a phone.
+     *
+     * The rule that sent the beta's testers in circles is the first case: the
+     * keystore has required eight bytes since it was written, and nothing on
+     * this screen has ever said so.
+     */
+    private fun unlockReason(err: String?): String = when {
+        err == null || err.isBlank() -> "That did not open. Check the passphrase and try again."
+        err.contains("at least 8") -> "Too short — a passphrase needs at least 8 characters."
+        err.contains("wrong passphrase") -> "That passphrase does not open this device's data."
+        err.contains("already running") -> "Quiet is already open. Give it a moment."
+        err.contains("locked by another") || err.contains("data-dir") ->
+            "Another copy of Quiet is using this data. Close it and try again."
+        else -> err
     }
 
     /**
@@ -378,15 +506,46 @@ class QuietActivity : ComponentActivity() {
             val field = EditText(this).apply {
                 setHint("Passphrase")
                 inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+                // THE TEXT SURVIVES A REFUSAL. The panel is rebuilt on every
+                // state change, so a rejected attempt used to take the typed
+                // characters with it and the person started over — on a phone
+                // keyboard, with a passphrase, blind behind dots.
+                setText(lastTyped)
+                setSelection(lastTyped.length)
+                addTextChangedListener(object : TextWatcher {
+                    override fun afterTextChanged(s: Editable?) { lastTyped = s?.toString() ?: "" }
+                    override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                    override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                })
             }
             panel.addView(field)
+            // THE RULE, BEFORE IT IS BROKEN. Said up front rather than only
+            // after a refusal: a requirement a person meets on the first try
+            // costs them nothing to have been told.
+            val note = TextView(this).apply {
+                setText(unlockMessage ?: "At least 8 characters. This is what encrypts everything on this device.")
+                gravity = Gravity.CENTER
+            }
+            panel.addView(note)
             panel.addView(Button(this).apply {
                 setText("Open")
                 setOnClickListener {
+                    val pass = field.text.toString()
+                    // Checked HERE as well as in the core, because a round
+                    // trip through a failed open to learn a length rule is a
+                    // second of nothing and then a sentence — and the sentence
+                    // is the whole answer.
+                    if (pass.length < MIN_PASSPHRASE) {
+                        note.setText(
+                            "Too short — a passphrase needs at least $MIN_PASSPHRASE characters."
+                        )
+                        return@setOnClickListener
+                    }
+                    pendingPassphrase = pass
                     // The CONTROLLER opens the node. This Activity never calls
                     // the binding's Start and never resolves a data directory
                     // — one owner, one directory, one lock.
-                    controller.ensureStarted(field.text.toString(), null, false)
+                    controller.ensureStarted(pass, null, false)
                 }
             })
         }
@@ -532,6 +691,45 @@ class QuietActivity : ComponentActivity() {
      * going — a WebView that follows arbitrary links is a browser without an
      * address bar.
      */
+    /**
+     * Hand one of our own files to Android's downloads.
+     *
+     * THE HOST CHECK IS THE WHOLE SECURITY OF THIS. DownloadManager fetches
+     * in another process with its own network access, so a page that could
+     * name any URL here would have found a way around the WebView's loopback
+     * lock. Only the node's own address is accepted, and the check is the
+     * same shape as [LocalOnlyClient]'s.
+     *
+     * The session token rides in the URL because that is how the node's API
+     * is addressed at all, and it therefore reaches DownloadManager's own
+     * records. That is a loopback token for a node the person is already
+     * holding — but it is the reason this refuses anything it does not have
+     * to accept.
+     */
+    private fun saveDownload(url: String, contentDisposition: String?, mimeType: String?) {
+        val uri = runCatching { Uri.parse(url) }.getOrNull()
+        val host = uri?.host
+        if (uri == null || (host != "127.0.0.1" && host != "localhost")) {
+            Log.w(TAG, "refused a download that was not ours: $url")
+            return
+        }
+        val name = URLUtil.guessFileName(url, contentDisposition, mimeType)
+        val req = DownloadManager.Request(uri)
+            .setTitle(name)
+            .setMimeType(mimeType)
+            .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+            .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, name)
+        try {
+            (getSystemService(DOWNLOAD_SERVICE) as DownloadManager).enqueue(req)
+            Toast.makeText(this, "Saving $name…", Toast.LENGTH_SHORT).show()
+        } catch (t: Throwable) {
+            // Saying nothing would leave a button that looks broken, which is
+            // exactly what this whole listener exists to stop.
+            Log.w(TAG, "the download could not be queued", t)
+            Toast.makeText(this, "This device would not save the file.", Toast.LENGTH_LONG).show()
+        }
+    }
+
     private inner class LocalOnlyClient : WebViewClient() {
         override fun shouldOverrideUrlLoading(
             view: WebView,
@@ -546,6 +744,14 @@ class QuietActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "quiet-activity"
+
+        /**
+         * Mirrors kernel/storage's own floor (ErrPassphraseTooShort). Stated
+         * here so the screen can say it BEFORE the core refuses, and kept in
+         * step with that constant rather than chosen independently — a screen
+         * that demanded more than the keystore does would be inventing a rule.
+         */
+        private const val MIN_PASSPHRASE = 8
 
         const val EXTRA_SPACE = "space_id"
         const val EXTRA_MESSAGE = "target_message_id"

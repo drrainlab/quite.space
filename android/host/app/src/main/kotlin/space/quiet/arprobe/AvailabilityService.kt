@@ -12,13 +12,21 @@ import android.os.IBinder
 import android.util.Log
 
 /**
- * AR-1c.1 — "Stay connected", and it is a MODE A PERSON TURNS ON.
+ * AR-1c.1 — "Stay connected": ON BY DEFAULT, AND NEVER INVISIBLE.
  *
- * NOT AN INVISIBLE SERVICE SWITCHED ON FOR EVERYBODY. A messenger that keeps
- * a process alive without being asked is spending somebody's battery on a
- * decision they did not make, and Android is right to make that awkward. So
- * this exists behind an explicit switch, says so in a permanent notification
- * while it runs, and can be turned off from that notification.
+ * This began as a mode a person had to turn on, because keeping a process
+ * alive spends somebody's battery on a decision they did not make. The
+ * default was reversed once it was clear what the other side of it costs:
+ * media bytes never travel to the relay, so a phone with this off takes every
+ * photo it has ever sent offline with it, and the person waiting sees a
+ * picture that never arrives and no reason why. A default that quietly breaks
+ * other people's screens is not the cautious one.
+ *
+ * WHAT SURVIVES THE REVERSAL IS THE VISIBILITY, and it is the part that made
+ * the original argument right. The mode says so in a permanent notification
+ * for as long as it runs, can be turned off from that notification without
+ * opening the app, and sits first in its settings tab. On by default is not
+ * the same as on by stealth.
  *
  * IT IS NOT A SECOND OWNER OF THE CORE. [RuntimeController] owns the runtime
  * at Application scope and always has; this service holds a LEASE on it. The
@@ -66,12 +74,17 @@ class AvailabilityService : Service() {
         } catch (t: Throwable) {
             // A start refused by the platform — a background start, a missing
             // type, a permission — must not take the app down with it. The
-            // mode simply does not come on, and the switch says so.
+            // mode does not come on, and the refusal is RECORDED rather than
+            // only logged: the switch goes to Off either way, and without this
+            // there is nothing to tell a person that the system did that and
+            // not them.
             Log.w(TAG, "the availability mode could not start", t)
-            controller.setAvailabilityRequested(false)
+            controller.noteAvailabilityRefused()
             stopSelf()
             return START_NOT_STICKY
         }
+        // It is running, so any earlier refusal is history.
+        controller.clearAvailabilityRefused()
 
         if (!leased) {
             leased = true

@@ -45,6 +45,9 @@ internal class HostBridge(
     private val coordinator: NotificationCoordinator,
     private val policy: (PresentationPolicy) -> Unit,
     private val stayConnected: (Boolean) -> Unit,
+    private val unlockRemembered: () -> Boolean,
+    private val forgetPassphrase: () -> Unit,
+    private val stayRefused: () -> Boolean,
 ) {
 
     /** True when the caller proved it is the page our own node served. */
@@ -135,6 +138,48 @@ internal class HostBridge(
     fun setStayConnected(pass: String?, on: Boolean): Boolean {
         if (!admitted(pass)) return refuse("setStayConnected")
         stayConnected(on)
+        return true
+    }
+
+    /**
+     * Whether the platform refused to let "stay connected" run.
+     *
+     * A boolean about this device, in the same family as [unlockRemembered]
+     * — see there for why answering one is not the getter the bridge refuses
+     * to have. It exists so a switch sitting at Off can say who put it there.
+     */
+    @JavascriptInterface
+    fun stayRefused(pass: String?): Boolean {
+        if (!admitted(pass)) return refuse("stayRefused")
+        return stayRefused()
+    }
+
+    /**
+     * Whether this device opens without being asked for the passphrase.
+     *
+     * A BOOLEAN, WHICH IS THE ONLY REASON IT MAY BE ANSWERED AT ALL. The rule
+     * above — nothing is returned — is about facts a stolen token could carry
+     * away, and "there is a saved passphrase" is not one: anybody who can call
+     * this is already looking at a node that opened, so they can see that it
+     * did. The passphrase itself has no getter anywhere and never will.
+     */
+    @JavascriptInterface
+    fun unlockRemembered(pass: String?): Boolean {
+        if (!admitted(pass)) return refuse("unlockRemembered")
+        return unlockRemembered()
+    }
+
+    /**
+     * Stop remembering it: the next launch asks again.
+     *
+     * The person's own fact about their own device, in the same family as the
+     * notification policy — and the reason storing one is defensible at all.
+     * A convenience that cannot be switched off is not a convenience.
+     */
+    @JavascriptInterface
+    fun forgetPassphrase(pass: String?): Boolean {
+        if (!admitted(pass)) return refuse("forgetPassphrase")
+        forgetPassphrase()
         return true
     }
 

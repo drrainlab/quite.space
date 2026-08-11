@@ -250,13 +250,64 @@ class RuntimeController private constructor(appContext: Context) {
      * a lease is a live holder, this is an intention, and it is what survives
      * the process so the switch does not lie after a restart.
      */
+    /**
+     * Whether this device should stay reachable when nobody is looking at it.
+     *
+     * THE DEFAULT IS ON, and it is a product decision rather than a
+     * convenience. Media is not carried by the relay — only the message that
+     * mentions it is — so a photo's bytes live on the phone that sent them
+     * until somebody opens the card. With this off, a phone that locks takes
+     * every picture it ever sent with it, and the person on the other side
+     * watches a placeholder that never resolves. That was reported as a bug
+     * twice before anybody worked out it was a setting, and it will be
+     * reported as a bug by everybody who never finds the switch.
+     *
+     * What it costs is stated where it is spent: a permanent notification
+     * Android requires us to show, and battery. Both are visible, and the
+     * switch that turns it off is the first thing in its settings tab.
+     */
     fun availabilityRequested(): Boolean =
-        enabledPrefs.getBoolean(KEY_AVAILABILITY, false)
+        enabledPrefs.getBoolean(KEY_AVAILABILITY, true)
 
     fun setAvailabilityRequested(on: Boolean) {
-        enabledPrefs.edit().putBoolean(KEY_AVAILABILITY, on).commit()
+        // Asking for it again clears any refusal: the person is entitled to a
+        // fresh answer, and a stale complaint beside a switch they just turned
+        // on would be describing the last attempt, not this one.
+        enabledPrefs.edit()
+            .putBoolean(KEY_AVAILABILITY, on)
+            .apply { if (on) putBoolean(KEY_AVAILABILITY_REFUSED, false) }
+            .commit()
         publish()
     }
+
+    /**
+     * The platform would not let the mode start.
+     *
+     * WHY THIS HAS TO BE RECORDED RATHER THAN ONLY LOGGED. A refused start
+     * turns the intention off so nothing loops — correct, and invisible: the
+     * person then finds the switch sitting at Off and reads it as their own
+     * choice, or as the setting not working. That was survivable while the
+     * mode was off by default and is not now, because a device that cannot
+     * hold it is a device whose media nobody else can open, and the only
+     * clue would be a line in logcat.
+     */
+    fun noteAvailabilityRefused() {
+        enabledPrefs.edit()
+            .putBoolean(KEY_AVAILABILITY, false)
+            .putBoolean(KEY_AVAILABILITY_REFUSED, true)
+            .commit()
+        publish()
+    }
+
+    /** Cleared the moment the mode actually runs — see [noteAvailabilityRefused]. */
+    fun clearAvailabilityRefused() {
+        if (!enabledPrefs.getBoolean(KEY_AVAILABILITY_REFUSED, false)) return
+        enabledPrefs.edit().putBoolean(KEY_AVAILABILITY_REFUSED, false).commit()
+        publish()
+    }
+
+    fun availabilityRefused(): Boolean =
+        enabledPrefs.getBoolean(KEY_AVAILABILITY_REFUSED, false)
 
     fun acquireAvailabilityLease(): Int {
         val n = availabilityLeases.incrementAndGet()
@@ -424,6 +475,20 @@ class RuntimeController private constructor(appContext: Context) {
     fun isAlive(): Boolean = state() == STATE_ALIVE
 
     /**
+     * Why the last attempt to open failed, as the core put it, or null.
+     *
+     * The core has always recorded this and no host has ever read it, so the
+     * unlock screen showed the same fixed sentence whether the passphrase was
+     * eight characters short or the data directory was held by another
+     * process. A reason nobody surfaces is a reason nobody has.
+     */
+    fun lastError(): String? = try {
+        JSONObject(Quietcore.status()).optString("last_error", "").ifEmpty { null }
+    } catch (e: Exception) {
+        null
+    }
+
+    /**
      * Opens the core if it is not already open. Returns immediately; the work
      * happens on the controller's own thread, because it is seconds long and
      * the caller is usually the main thread.
@@ -522,6 +587,7 @@ class RuntimeController private constructor(appContext: Context) {
     companion object {
         private const val KEY_POLICY = "presentation_policy"
         private const val KEY_AVAILABILITY = "availability_mode"
+        private const val KEY_AVAILABILITY_REFUSED = "availability_refused"
 
         /**
          * The stored choice, or the strict default. An unreadable or unknown

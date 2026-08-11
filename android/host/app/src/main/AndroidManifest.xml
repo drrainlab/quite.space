@@ -39,9 +39,13 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING" />
 
+    <!-- android:label is the name under the icon, and it is the PRODUCT's
+         rather than the project's: the interface says quite.space in its own
+         header, and a launcher that said something else would be a second
+         name for one thing. -->
     <application
         android:name=".QuietApp"
-        android:label="Quiet"
+        android:label="quite.space"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:allowBackup="false"
