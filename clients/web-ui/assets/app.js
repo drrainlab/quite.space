@@ -3315,7 +3315,17 @@ async function autoFetchAsset(assetId, onReady, onUnavailable, onProgress) {
 // cache-buster once an on-view fetch completes (forces the browser to reload
 // the previously-missing bytes).
 function assetURL(assetId) {
-  return `/api/spaces/${current}/assets/${assetId}?token=${token}`;
+  // The id comes out of somebody else's document, so it is encoded rather
+  // than pasted. An asset id is hex — the node hex-decodes it and demands
+  // exactly 16 or 32 bytes — but that check happens at the far end of a
+  // request this function has to build FIRST, and a caller does not always
+  // put the result somewhere forgiving. autoMediaBg drops it into a CSS
+  // url("…"), where a quote and a bracket would have closed the string and
+  // opened a second background layer pointing anywhere. (The CSP's
+  // img-src 'self' now refuses that fetch as well; this stops the URL
+  // being malformed in the first place, which is the layer that should
+  // not have needed the other one.)
+  return `/api/spaces/${current}/assets/${encodeURIComponent(assetId)}?token=${token}`;
 }
 // A media element whose bytes never arrive renders as nothing at all — an
 // empty rectangle that looks like a layout bug rather than an absence. When

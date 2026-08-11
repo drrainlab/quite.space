@@ -312,23 +312,24 @@ func (a *APIServer) Handler() http.Handler {
 // be covered: navigate-to left the spec, so `location = "https://…"` still
 // works — noisily, in front of the person.
 //
-// script-src carries 'unsafe-inline' TODAY and should not. index.html
-// declares ~215 inline on* handlers; every one is ours, written into the
-// file with literal arguments, and none is reachable by remote content —
-// so they are not the defect, but they are what a strict script-src would
-// break. Removing them (addEventListener against real function references)
-// is what earns `script-src 'self'`, and it is the one change that would
-// make an injected <script> or javascript: URI inert on its own. Recorded
-// in docs/SECURITY_AUDIT_2026-08.md rather than left as a silent
-// compromise. 'unsafe-eval' is NOT present and must not be added: nothing
-// in the tree needs it, and ADR-013 rests on that.
+// script-src IS 'self' — earned, not assumed. It carried 'unsafe-inline'
+// while index.html declared ~230 inline on* handlers: all ours, all
+// literal, none reachable by remote content, so never the defect — but
+// they were what a strict policy would have taken down with them, and
+// while they were there the permission that kept them alive was the same
+// permission that lets an INJECTED script or a javascript: URI run. They
+// now live in handlers.js, bound one listener per element, and the
+// permission is gone. An injection has nothing to execute with.
+//
+// 'unsafe-eval' is NOT present and must not be added: nothing in the tree
+// needs it, and ADR-013 rests on that.
 //
 // style-src keeps 'unsafe-inline' for the same shape of reason (inline
 // style attributes plus the renderers' own el.style writes). CSS injection
 // is a far smaller prize than script, and the palette/tint values that
 // reach a style are hex-validated at renderers.js:115.
 const uiPolicy = "default-src 'self'; " +
-	"script-src 'self' 'unsafe-inline'; " +
+	"script-src 'self'; " +
 	"style-src 'self' 'unsafe-inline'; " +
 	"img-src 'self' data: blob:; " +
 	"media-src 'self' blob:; " +

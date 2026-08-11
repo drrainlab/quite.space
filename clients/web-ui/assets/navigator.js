@@ -227,7 +227,13 @@ const NAV = (() => {
         const bits = [];
         if (an) bits.push(esc(an));
         bits.push(esc(t('spaces.activity.events', { count: sp.events })));
-        if (sp.undecryptable) bits.push(`<span class="undec">${sp.undecryptable}✦</span>`);
+        // Number(), not esc(): this is a count, and the honest way to keep a
+    // count out of markup is to make it a number rather than to escape
+    // whatever arrived. Every other field on this row is esc()-wrapped;
+    // this one was bare, on the assumption that the reducer only ever
+    // sends an integer — true today, and not a property this line should
+    // be resting on.
+    if (sp.undecryptable) bits.push(`<span class="undec">${Number(sp.undecryptable) || 0}✦</span>`);
         d.innerHTML =
           (v.select ? `<span class="nav-tick">${picked ? '✓' : ''}</span>` : '') +
           (!v.select && (section === 'pinned' || owner)

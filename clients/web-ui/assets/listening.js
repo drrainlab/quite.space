@@ -248,7 +248,7 @@ function renderListeningRoom(box, inst) {
       (!track.asset_state || track.asset_state === 'complete');
     if (assetReady && audio.dataset.src !== track.asset) {
       audio.dataset.src = track.asset;
-      audio.src = `/api/spaces/${current}/assets/${track.asset}?token=${token}`;
+      audio.src = assetURL(track.asset);
     }
 
     controls.innerHTML = '';

@@ -647,7 +647,7 @@ function pubAssetNode(kind, p) {
     wrap.appendChild(img);
   } else {
     const a = document.createElement('a');
-    a.href = p.asset ? `/api/spaces/${current}/assets/${p.asset}?token=${token}` : '#';
+    a.href = p.asset ? assetURL(p.asset) : '#';
     a.textContent = '📄 ' + (p.text || 'file');
     wrap.appendChild(a);
   }
@@ -846,8 +846,10 @@ function renderCompCover() {
   const hint = document.createElement('span');
   hint.className = 'comp-drop-hint';
   if (composerDoc.cover) {
-    zone.style.backgroundImage =
-      `url(/api/spaces/${current}/assets/${composerDoc.cover}?token=${token})`;
+    // Through assetURL, and quoted: this cover is locally chosen rather
+    // than remote, but a CSS url() built by hand is the shape that bit us
+    // in autoMediaBg, and one safe construction is easier to keep than two.
+    zone.style.backgroundImage = `url("${assetURL(composerDoc.cover)}")`;
     hint.textContent = 'cover · click to replace';
     const rm = document.createElement('button');
     rm.className = 'icon-btn comp-cover-rm'; rm.textContent = '✕';
@@ -929,17 +931,17 @@ function mediaDropZone(b) {
     if (b.type === 'image') {
       const img = document.createElement('img');
       img.alt = b.props.text || '';
-      img.src = `/api/spaces/${current}/assets/${b.props.asset}?token=${token}`;
+      img.src = assetURL(b.props.asset);
       preview.appendChild(img);
     } else if (b.type === 'video') {
       const v = document.createElement('video');
       v.controls = true;
-      v.src = `/api/spaces/${current}/assets/${b.props.asset}?token=${token}`;
+      v.src = assetURL(b.props.asset);
       preview.appendChild(v);
     } else if (b.type === 'audio') {
       const au = document.createElement('audio');
       au.controls = true;
-      au.src = `/api/spaces/${current}/assets/${b.props.asset}?token=${token}`;
+      au.src = assetURL(b.props.asset);
       preview.appendChild(au);
     } else {
       const f = document.createElement('div');

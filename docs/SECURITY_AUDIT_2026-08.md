@@ -465,17 +465,54 @@ exactly the shape the gate refuses — a blob belonging to no space — so the
 fixture had been asserting the leak rather than the round trip. Replaced
 with a real published asset, plus the reason, in the test.
 
+## Third pass — `script-src 'self'`, and the two client leftovers
+
+**The permission is gone.** 230 inline `on*` attributes moved out of
+index.html into `handlers.js`, and the policy no longer carries
+`'unsafe-inline'`. That was the item this register called the single
+highest-value one remaining, and the reason is worth restating: those
+handlers were never the vulnerability — all ours, all literal — but while
+they were there the permission that kept them working was the same
+permission that lets an INJECTED script or a `javascript:` URI run. An
+injection now has nothing to execute with.
+
+Done as a generated transform rather than 230 hand edits, and bound one
+listener per element, because that is exactly what an inline attribute
+does: the same body, the same element, the same event, so nothing about
+*when* a handler fires moves. `this` became `el`, which is what `this`
+meant there.
+
+**Three needed translating**, and copying them verbatim would have left
+three controls that look bound and do half their job — a submit that
+submits for real and reloads the page, an arrow key that also scrolls:
+
+    return say(event)                          -> preventDefault when false
+    if (mentionsOnKeydown(event)) return false -> preventDefault + stopPropagation
+    openInviteFromPass();return false          -> preventDefault
+
+`addEventListener` ignores a returned `false`; an inline attribute did not.
+
+**L12** — `assetURL` now encodes the id. It is hex and the node checks
+that, but the check is at the far end of a request this function builds
+first, and `autoMediaBg` drops the result into a CSS `url("…")` where a
+quote and a bracket would have opened a second background layer pointing
+anywhere. Seven other places built the same URL by hand; they go through
+the helper now, so there is one construction to keep right instead of
+eight.
+
+**L13** — `Number()` rather than `esc()` on the undecryptable count: the
+honest way to keep a count out of markup is to make it a number.
+
 ## Still open
 
 Recorded, not scheduled. None is a known exploit; each is a place where a
 future mistake would cost more than it should.
 
-- **`script-src 'self'`**, gated on migrating ~215 first-party inline
-  handlers (see above). The single highest-value remaining item.
 - **L1** — the token in query strings. Structural: an `<img>` cannot send
   a header, so media URLs need it until asset access is redesigned.
-  `connect-src` and now the Host/Origin guard both blunt the consequence.
+  `connect-src`, the Host/Origin guard and now `script-src 'self'` each
+  blunt the consequence from a different side.
 - **L4/L5** — the SSRF and serial-path primitives behind the token.
 - **L8** — self-declared `Mentions` forcing a signal; related to the
   already-tracked per-space signals toggle.
-- **L9–L13** — the allocation and robustness items, none reachable today.
+- **L9–L11** — the allocation and robustness items, none reachable today.

@@ -340,7 +340,12 @@ const PREV = (() => {
   }
 
   function prevAssetURL(pid, asset) {
-    return `/api/public/previews/${pid}/assets/${asset}?token=${token}`;
+    // Encoded for the same reason assetURL encodes: the asset id here came
+    // out of a STRANGER'S publication — this is the preview path, the one
+    // reachable from a public directory nobody has joined — and it is
+    // pasted into a URL before anything has checked it.
+    return `/api/public/previews/${encodeURIComponent(pid)}/assets/${
+      encodeURIComponent(asset)}?token=${token}`;
   }
 
   /** prevFetch drives one session asset: POST the consent, poll the
@@ -349,7 +354,8 @@ const PREV = (() => {
     let last = { state: 'requesting', reason: '' };
     try {
       for (let i = 0; i < 55; i++) {
-        const r = await api(`/api/public/previews/${pid}/assets/${asset}/fetch`,
+        const r = await api(`/api/public/previews/${encodeURIComponent(pid)}/assets/${
+          encodeURIComponent(asset)}/fetch`,
           { method: 'POST' });
         last = r;
         if (onTick) onTick(r);
