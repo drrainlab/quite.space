@@ -21,8 +21,10 @@
     /* bubbles */
     /* Barely-there glass (2026-08-07, dark-first): a bubble is a breath of
        surface over the starfield, not a card. Legibility comes from the
-       backdrop blur in .bubble, not from the fill. */
-    --bubble-own: rgba(211,154,231,.10); --bubble-other: rgba(222,199,241,.05);
+       backdrop blur in .bubble, not from the fill — which is why the fill
+       can sit at three percent (the owner's own DevTools number) and the
+       shape is still carried by the top-edge light catch and the shadow. */
+    --bubble-own: rgba(211,154,231,.04); --bubble-other: rgba(222,199,241,.03);
     /* geometry + type */
     --radius-sm: 8px; --radius-md: 12px; --radius-lg: 18px;
     --font-scale: 1;
