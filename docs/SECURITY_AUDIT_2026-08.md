@@ -420,6 +420,51 @@ Fixed, in order:
    automatic mode, where an empty `Settings.Relay` is the normal state and
    not a gap.
 
+## Second pass — L2, L3, L6, L7
+
+**L2 is the one that mattered, and the placement is the decision.** The
+guard wraps the LISTENER, not the routes:
+
+> Binding 127.0.0.1 does not mean only this machine can reach the API. A
+> page the person is merely visiting can point a name it controls at
+> 127.0.0.1 and talk to the API from their browser, with their network
+> position. The packet really is local. The name it asked for is what
+> gives it away.
+
+So `Serve` refuses a Host that is not a loopback name, and an Origin, when
+the browser sends one, that is not ours. It wraps the listener because a
+rebinding attack needs a TCP port to rebind onto — and a host that mounts
+`Handler()` with no listener at all (the Wails AssetServer in
+`cmd/wails-probe`, and the desktop shell after it) has no such surface,
+while its WebView legitimately asks for whatever name the framework chose.
+Guarding the listener guards exactly what can be attacked and leaves alone
+what cannot. Checked in that shape by a test that goes through a real
+socket, because a wrapper that exists but is never mounted defends nothing.
+
+**L3** — `crypto/subtle` for the token compare. Honest note: its test pins
+the auth behaviour, not the timing. A timing assertion would be flaky, and
+`!=` would pass the same cases; the test says so rather than implying more.
+
+**L6** — `answerWants` now answers only for blobs the space's own asset
+graph references. The check is taken once, under a short lock, BEFORE the
+network I/O, because that function deliberately runs without `r.mu` and
+the index is an ordinary map — a per-hash check inside the send loop would
+have been a data race, which is the sort of fix that is worse than the
+finding. Verified first that no legitimate flow is lost: `indexRef` runs
+from `onBlockEvent` for every decrypted block, so every asset that belongs
+to a space is indexed for it.
+
+**L7** — `LocalOnly` moved into `CreateOptions`, so the AI's space carries
+it from birth inside the same critical section that creates and attaches
+it, instead of a stamp written after the sync loops could already see it.
+
+**The suite found the one real regression, and it was mine.**
+`TestSwarmRoundTripWithoutASpace` went red on L6: its fixture put a raw
+blob straight into the node-global store and asked for it back. That is
+exactly the shape the gate refuses — a blob belonging to no space — so the
+fixture had been asserting the leak rather than the round trip. Replaced
+with a real published asset, plus the reason, in the test.
+
 ## Still open
 
 Recorded, not scheduled. None is a known exploit; each is a place where a
@@ -427,16 +472,10 @@ future mistake would cost more than it should.
 
 - **`script-src 'self'`**, gated on migrating ~215 first-party inline
   handlers (see above). The single highest-value remaining item.
-- **L1/L2** — the token in query strings, and no Origin/Host validation.
-  Both are structural: an `<img>` cannot send a header, so the media URLs
-  need the query string until asset access is redesigned. `connect-src`
-  now blunts the consequence.
-- **L3** — non-constant-time token comparison.
+- **L1** — the token in query strings. Structural: an `<img>` cannot send
+  a header, so media URLs need it until asset access is redesigned.
+  `connect-src` and now the Host/Origin guard both blunt the consequence.
 - **L4/L5** — the SSRF and serial-path primitives behind the token.
-- **L6** — `answerWants` serves any held blob by hash without the
-  space-scope check its peer-path sibling applies.
-- **L7** — `LocalOnly` stamped after the AI space is already attached.
-  Bounded, but should be LocalOnly-from-birth.
 - **L8** — self-declared `Mentions` forcing a signal; related to the
   already-tracked per-space signals toggle.
 - **L9–L13** — the allocation and robustness items, none reachable today.

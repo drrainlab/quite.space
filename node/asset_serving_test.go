@@ -281,7 +281,10 @@ func TestServeMountsTheLoopbackGuard(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer c.Close()
-		fmt.Fprintf(c, "GET /api/status?token=t HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n", host)
+		// A path with no handler: the mux answers 404 without touching a
+		// Runtime this bare APIServer does not have. The subject is the
+		// guard in front of the mux, not any route behind it.
+		fmt.Fprintf(c, "GET /nothing-here HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n", host)
 		res, err := http.ReadResponse(bufio.NewReader(c), nil)
 		if err != nil {
 			t.Fatal(err)
@@ -295,10 +298,8 @@ func TestServeMountsTheLoopbackGuard(t *testing.T) {
 	if code := ask("evil.example"); code != http.StatusForbidden {
 		t.Errorf("a rebound name got %d from the real listener, want 403", code)
 	}
-	// The interface's own request must still get through the guard. (Any
-	// status but 403 means the guard passed it on; this runtime has no
-	// Runtime behind it, so what the route then does is not the subject.)
-	if code := ask("127.0.0.1"); code == http.StatusForbidden {
-		t.Error("the interface's own Host was refused")
+	// The interface's own request reaches the mux, which 404s it.
+	if code := ask("127.0.0.1"); code != http.StatusNotFound {
+		t.Errorf("the interface's own Host got %d, want the mux's 404", code)
 	}
 }

@@ -122,10 +122,24 @@ func TestSwarmRoundTripWithoutASpace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Alice holds a blob (node-global store) and publishes her projection
-	// so the ingress hints exist.
-	blob := bytes.Repeat([]byte{0x42}, 8192)
-	blobHash, err := alice.root.PutBlob(blob)
+	// Alice publishes a real asset into the space, and her projection so
+	// the ingress hints exist.
+	//
+	// A REAL asset, not a bare PutBlob, and the difference is the point.
+	// answerWants only answers for blobs the space's own asset graph
+	// references (assetIdx.allowed) — otherwise a member of one space
+	// could ask on its ingress for a hash they learned in another and
+	// learn from the answer whether this node holds it. A blob dropped
+	// straight into the node-global store belongs to no space, so it is
+	// exactly what the gate refuses; the fixture used to be one, which
+	// made this test assert the leak rather than the round trip.
+	ref := emitVisual(t, alice, src, randBytes(t, 4096), 16384)
+	wire := ref.WireIDs()
+	if len(wire) == 0 {
+		t.Fatal("the asset carries no wire ids to ask for")
+	}
+	blobHash := wire[0]
+	blob, err := alice.root.GetBlob(blobHash)
 	if err != nil {
 		t.Fatal(err)
 	}
