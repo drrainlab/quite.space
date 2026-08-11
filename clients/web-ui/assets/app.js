@@ -563,7 +563,7 @@ async function doGenerate() {
     msg.textContent = 'Preview applied. Keep it, or generate again.';
     msg.className = 'hint';
     document.getElementById('genAcceptBtn').style.display = '';
-    document.getElementById('genRunBtn').textContent = 'Regenerate';
+    document.getElementById('genRunBtn').textContent = t('ui.gen.again');
   } catch (err) { msg.textContent = err.message; }
   finally { btn.disabled = false; }
 }
@@ -938,7 +938,8 @@ async function refresh() {
     let chipText, chipCls, pulseMs = 0, chipWhy = '', chipKind = 'off';
     if (PROTOCOL) {
       const lan = status.lan;
-      chipText = lan.listening ? `LAN :${lan.port} · ${lan.peers} peers` : 'LAN off';
+      chipText = lan.listening ? t('ui.chip.lan', { port: lan.port, peers: lan.peers })
+        : t('ui.chip.lan_off');
       chipCls = 'conn-chip' + (lan.peers ? ' up' : ' off');
       chipKind = lan.peers ? 'direct' : (lan.listening ? 'lan' : 'off');
     } else {
@@ -1088,18 +1089,18 @@ function renderPublicSurface(sp) {
   const pub = sp.visibility === 'public';
   let label;
   if (sp.publish === 'curated') {
-    label = (pub ? 'PUBLIC' : 'UNLISTED') + ' · READ ONLY';
+    label = t(pub ? 'ui.badge.public_readonly' : 'ui.badge.unlisted_readonly');
   } else if (sp.can_write) {
-    label = (pub ? 'PUBLIC' : 'UNLISTED') + ' · OPEN';
+    label = t(pub ? 'ui.badge.public_open' : 'ui.badge.unlisted_open');
   } else {
-    label = (pub ? 'PUBLIC' : 'UNLISTED') + ' · JOIN TO WRITE';
+    label = t(pub ? 'ui.badge.public_join' : 'ui.badge.unlisted_join');
   }
-  if (!pub) label = 'UNLISTED · ANYONE WITH LINK';
-  if (sp.frozen) label = 'FROZEN · ' + (pub ? 'PUBLIC' : 'UNLISTED');
+  if (!pub) label = t('ui.badge.unlisted_anyone');
+  if (sp.frozen) label = t(pub ? 'ui.badge.frozen_public' : 'ui.badge.frozen_unlisted');
   badge.textContent = label;
   badge.title = sp.frozen
-    ? 'Publication is paused by the owner. Everything already published stays readable.'
-    : 'Anyone who obtains this link can read the space. Access cannot currently be revoked.';
+    ? t('ui.badge.frozen_why')
+    : t('ui.badge.link_why');
   badge.style.display = '';
   // The badge opens the Access sheet: policy for an owner, availability for
   // everyone else (PH-3 — keeping a space alive is not owning it).
@@ -1297,14 +1298,14 @@ function openAccess(sp) {
   const avail = document.getElementById('accAvail');
   avail.hidden = !!sp.owned;
   if (!sp.owned) {
-    document.getElementById('accMirrorBtn').textContent = sp.mirror ? 'Mirroring' : 'Mirror';
+    document.getElementById('accMirrorBtn').textContent = t(sp.mirror ? 'ui.acc.mirroring' : 'ui.acc.mirror');
     document.getElementById('accMirrorBtn').classList.toggle('sel', !!sp.mirror);
     document.getElementById('accSeedBtn').textContent =
-      (sp.seed || sp.mirror) ? 'On' : 'Off';
+      t((sp.seed || sp.mirror) ? 'ui.acc.seed_on' : 'ui.acc.seed_off');
     document.getElementById('accSeedBtn').classList.toggle('sel', !!(sp.seed || sp.mirror));
     const state = document.getElementById('accMirrorState');
     state.textContent = sp.mirror
-      ? 'This node keeps a copy. The space is not yours — nothing you do here changes it.'
+      ? t('ui.acc.mirror_state')
       : '';
     document.getElementById('accMsg').textContent = '';
     dlgAccess.showModal();
@@ -1339,7 +1340,7 @@ function openAccess(sp) {
   document.querySelectorAll('#accRateBtns button').forEach(b =>
     b.classList.toggle('sel', Number(b.dataset.v) === rate));
   document.getElementById('accFreezeBtn').textContent =
-    sp.frozen ? 'Unfreeze publication' : 'Freeze publication';
+    t(sp.frozen ? 'ui.acc.unfreeze' : 'ui.acc.freeze');
   document.getElementById('accMsg').textContent = '';
   document.getElementById('accCurPrin').value = '';
   document.getElementById('accCurDev').value = '';

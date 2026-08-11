@@ -140,7 +140,7 @@ function joinSetMode(m) {
   document.getElementById('joinLinkPane').style.display = m === 'link' ? '' : 'none';
   document.getElementById('joinPassPane').style.display = m === 'pass' ? '' : 'none';
   document.getElementById('joinTitle').textContent =
-    m === 'link' ? 'Enter with a link' : 'Enter with a pass';
+    t(m === 'link' ? 'ui.join.title_link' : 'ui.join.title_pass');
 }
 
 /**

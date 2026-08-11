@@ -13,42 +13,42 @@
        the reading column is the whole screen and the panels are somewhere
        to go rather than something in the way. -->
   <button class="icon-btn panel-toggle" id="tglNav" onclick="togglePanel('nav')"
-    title="Spaces" aria-label="Show or hide the list of spaces"
+    title="Spaces" data-i18n-title="ui.header.spaces_toggle" aria-label="Show or hide the list of spaces" data-i18n-aria="ui.header.spaces_toggle.aria"
     aria-controls="sidebar" aria-expanded="true">☰</button>
   <b class="brand"><img src="brand-lockup.png" alt="quite.space" class="brand-lockup"></b>
   <span id="conn" class="conn-chip off" onclick="dlgLan.showModal()" tabindex="0"
-    role="button" aria-label="Connection details"><span id="connMark" class="conn-mark" aria-hidden="true"></span><span id="connText">Not connected</span><span class="dot"></span></span>
+    role="button" aria-label="Connection details" data-i18n-aria="ui.header.conn.aria"><span id="connMark" class="conn-mark" aria-hidden="true"></span><span id="connText">Not connected</span><span class="dot"></span></span>
   <!-- The four ways in live in the header: they belong to the app, not to
        whichever space happens to be open. "me" sits past the settings
        gear with the other things that are about you rather than about
        the room. Marks and hues: the .nav-act block in styles.css. -->
   <div class="nav-row">
-    <button class="nav-act" data-act="create" aria-label="Create a new space" title="Create a new space" onclick="openWizard()">
+    <button class="nav-act" data-act="create" aria-label="Create a new space" title="Create a new space" data-i18n-title="ui.header.create.title" onclick="openWizard()">
       <svg class="nav-mark" viewBox="0 0 16 16" aria-hidden="true">
         <path d="M8 2.5v11M2.5 8h11"/><circle cx="8" cy="8" r="6.2" opacity=".35"/>
-      </svg><span class="nav-label">space</span></button>
-    <button class="nav-act" data-act="join" aria-label="Enter a space with a pass" title="Enter a space with a pass" onclick="openJoinDialog()">
+      </svg><span class="nav-label" data-i18n="ui.header.nav.space">space</span></button>
+    <button class="nav-act" data-act="join" aria-label="Enter a space with a pass" title="Enter a space with a pass" data-i18n-title="ui.header.join.title" onclick="openJoinDialog()">
       <svg class="nav-mark" viewBox="0 0 16 16" aria-hidden="true">
         <path d="M10.5 2.5h3v11h-3" opacity=".45"/><path d="M2 8h7.5M6.8 5.2 9.6 8l-2.8 2.8"/>
-      </svg><span class="nav-label">join</span></button>
-    <button class="nav-act" data-act="discover" aria-label="Discover public spaces" title="Discover public spaces" onclick="openDiscover()">
+      </svg><span class="nav-label" data-i18n="ui.header.nav.join">join</span></button>
+    <button class="nav-act" data-act="discover" aria-label="Discover public spaces" title="Discover public spaces" data-i18n-title="ui.header.discover.title" onclick="openDiscover()">
       <svg class="nav-mark" viewBox="0 0 16 16" aria-hidden="true">
         <circle cx="8" cy="8" r="6.2" opacity=".35"/><circle cx="8" cy="8" r="3" opacity=".6"/>
         <path d="M8 8 12.4 3.6"/><circle cx="8" cy="8" r="1" fill="currentColor" stroke="none"/>
-      </svg><span class="nav-label">discover</span></button>
-    <button class="nav-act" data-act="signals" aria-label="Signals" title="Signals — what wants your attention" id="signalsBtn" onclick="openSignals()">
+      </svg><span class="nav-label" data-i18n="ui.header.nav.discover">discover</span></button>
+    <button class="nav-act" data-act="signals" aria-label="Signals" data-i18n-aria="ui.header.signals.aria" title="Signals — what wants your attention" data-i18n-title="ui.header.signals.title" id="signalsBtn" onclick="openSignals()">
       <svg class="nav-mark" viewBox="0 0 16 16" aria-hidden="true">
         <path d="M1.5 8h2.2l1.6-4.4L8 12.4l2-6 1.3 1.6h3.2"/>
-      </svg><span class="nav-label">signals</span></button>
+      </svg><span class="nav-label" data-i18n="ui.header.nav.signals">signals</span></button>
   </div>
   <span class="hspace"></span>
-  <span id="mesh" class="dim mono" onclick="openGateway()" style="cursor:pointer" title="Radio" tabindex="0"></span>
-  <button id="settingsBtn" class="icon-btn" onclick="openSettings()" title="Settings" aria-label="Settings">⚙</button>
-  <button class="nav-act" data-act="me" aria-label="Your identity and this device" title="Your identity and this device" onclick="showIdentity()">
+  <span id="mesh" class="dim mono" onclick="openGateway()" style="cursor:pointer" title="Radio" data-i18n-title="ui.header.mesh.title" tabindex="0"></span>
+  <button id="settingsBtn" class="icon-btn" onclick="openSettings()" title="Settings" aria-label="Settings" data-i18n-title="ui.header.settings.title">⚙</button>
+  <button class="nav-act" data-act="me" aria-label="Your identity and this device" title="Your identity and this device" data-i18n-title="ui.header.me.title" onclick="showIdentity()">
     <svg class="nav-mark" viewBox="0 0 16 16" aria-hidden="true">
       <circle cx="8" cy="6" r="2.6"/><path d="M3.2 13.5a4.8 4.8 0 0 1 9.6 0" opacity=".55"/>
-    </svg><span class="nav-label">me</span></button>
-  <span id="fp" class="dim mono" title="your fingerprint"></span>
+    </svg><span class="nav-label" data-i18n="ui.header.nav.me">me</span></button>
+  <span id="fp" class="dim mono" title="your fingerprint" data-i18n-title="ui.header.fingerprint.title"></span>
 </header>
 <main>
   <div id="sidebar">
@@ -62,9 +62,9 @@
     <div id="convbar">
       <span id="convTitle"></span>
       <div class="segmented" id="viewSwitch">
-        <button data-v="chat" class="sel" onclick="switchView('chat')">Chat</button>
-        <button data-v="posts" onclick="switchView('posts')">Posts</button>
-        <button data-v="shelf" onclick="switchView('shelf')">Shelf</button>
+        <button data-v="chat" class="sel" onclick="switchView('chat')" data-i18n="ui.convbar.view.chat">Chat</button>
+        <button data-v="posts" onclick="switchView('posts')" data-i18n="ui.convbar.view.posts">Posts</button>
+        <button data-v="shelf" onclick="switchView('shelf')" data-i18n="ui.convbar.view.shelf">Shelf</button>
       </div>
       <span style="flex:1"></span>
       <span id="visBadge" class="vis-badge" style="display:none"></span>
@@ -75,32 +75,32 @@
            hue and dim with it. The word stays for a wide screen and for a
            screen reader. -->
       <button id="shareLinkBtn" class="btn-plain" style="display:none" onclick="copyPublicLink()"
-              title="Share link" aria-label="Share link">
+              title="Share link" aria-label="Share link" data-i18n-title="ui.convbar.share_link.title">
         <svg class="act-mark" viewBox="0 0 16 16" aria-hidden="true">
           <path d="M6.7 9.3a2.7 2.7 0 0 0 3.8 0l2-2a2.7 2.7 0 0 0-3.8-3.8l-.9.9"/>
           <path d="M9.3 6.7a2.7 2.7 0 0 0-3.8 0l-2 2a2.7 2.7 0 0 0 3.8 3.8l.9-.9" opacity=".55"/>
-        </svg><span class="act-label">Share link</span></button>
+        </svg><span class="act-label" data-i18n="ui.convbar.share_link.label">Share link</span></button>
       <button id="newPostBtn" class="btn-tinted" onclick="openComposer(null,'')"
-              title="New post" aria-label="New post">
+              title="New post" aria-label="New post" data-i18n-title="ui.convbar.new_post.title">
         <svg class="act-mark" viewBox="0 0 16 16" aria-hidden="true">
           <path d="M3.1 12.9 3.9 10.2 10.1 4a1.65 1.65 0 0 1 2.3 2.3l-6.2 6.2z"/>
           <path d="M9.4 4.7 11.7 7" opacity=".5"/>
           <path d="M2.6 14.4h10.8" opacity=".38"/>
-        </svg><span class="act-label">New post</span></button>
+        </svg><span class="act-label" data-i18n="ui.convbar.new_post.label">New post</span></button>
       <!-- Shown only in a directory you can write to. Adding an entry is
            what a directory is FOR, so it is one press, not "compose a
            publication of kind space and paste a link into a block". -->
-      <button id="addSpaceBtn" class="btn-tinted" style="display:none" onclick="CAT.openAddSpace()">+ Add space</button>
-      <button id="customizeBtn" class="icon-btn" style="display:none" onclick="openCustomize()" title="Customize" aria-label="Customize space">
+      <button id="addSpaceBtn" class="btn-tinted" style="display:none" onclick="CAT.openAddSpace()" data-i18n="ui.convbar.add_space">+ Add space</button>
+      <button id="customizeBtn" class="icon-btn" style="display:none" onclick="openCustomize()" title="Customize" data-i18n-title="ui.convbar.customize.title" aria-label="Customize space" data-i18n-aria="ui.convbar.customize.aria">
         <svg class="act-mark" viewBox="0 0 16 16" aria-hidden="true">
           <path d="M8 1.9a6.1 6.1 0 1 0 0 12.2c.85 0 1.35-.55 1.35-1.25 0-.75-.65-1.15-.65-1.85 0-.6.5-1 1.1-1h1.25A3.05 3.05 0 0 0 14.1 6.95C14.1 4.15 11.4 1.9 8 1.9Z"/>
           <circle cx="5.2" cy="6.5" r=".85" fill="currentColor" stroke="none" opacity=".55"/>
           <circle cx="8" cy="4.9" r=".85" fill="currentColor" stroke="none" opacity=".55"/>
           <circle cx="10.8" cy="6.5" r=".85" fill="currentColor" stroke="none" opacity=".55"/>
         </svg></button>
-      <button id="resPalBtn" class="icon-btn" style="display:none" onclick="openResPaletteEditor()" title="Reaction palette" aria-label="Reaction palette">✧</button>
-      <button id="inviteBtn" class="btn-tinted" style="display:none" onclick="openPassCurrent()">invite</button>
-      <button class="icon-btn" onclick="toggleMembers()" title="Space info" aria-label="Space info">ⓘ</button>
+      <button id="resPalBtn" class="icon-btn" style="display:none" onclick="openResPaletteEditor()" title="Reaction palette" aria-label="Reaction palette" data-i18n-title="ui.convbar.res_palette.title">✧</button>
+      <button id="inviteBtn" class="btn-tinted" style="display:none" onclick="openPassCurrent()" data-i18n="ui.convbar.invite">invite</button>
+      <button class="icon-btn" onclick="toggleMembers()" title="Space info" aria-label="Space info" data-i18n-title="ui.convbar.space_info.title">ⓘ</button>
     </div>
     <div id="persona"></div>
     <div id="honesty"></div>
@@ -117,29 +117,29 @@
     <div id="aiBar" class="ai-bar" hidden></div>
     <form id="composer" onsubmit="return say(event)">
       <div id="attachWrap">
-        <button type="button" class="ic" onclick="toggleAttachMenu(event)" title="attach" aria-label="Attach">
+        <button type="button" class="ic" onclick="toggleAttachMenu(event)" title="attach" aria-label="Attach" data-i18n-title="ui.composer.attach.title">
           <svg class="act-mark" viewBox="0 0 16 16" aria-hidden="true">
             <path d="M11.7 7 7 11.7a2.55 2.55 0 0 1-3.6-3.6l5.4-5.4a1.7 1.7 0 0 1 2.4 2.4l-5.4 5.4a.85.85 0 0 1-1.2-1.2l4.8-4.8"/>
           </svg></button>
         <div id="attachMenu" class="attach-menu" style="display:none">
-          <button type="button" onclick="attachPick('photo')">
+          <button type="button" onclick="attachPick('photo')" data-i18n="ui.composer.attach.photo">
             <svg class="act-mark" viewBox="0 0 16 16" aria-hidden="true">
               <path d="M2.2 3.4h11.6v9.2H2.2z"/>
               <path d="m3.6 11.2 3-3.3 2.1 2.2 1.8-1.9 1.9 2" opacity=".6"/>
               <circle cx="5.5" cy="6" r="1" opacity=".6"/>
             </svg>Photo</button>
-          <button type="button" onclick="attachPick('video')">
+          <button type="button" onclick="attachPick('video')" data-i18n="ui.composer.attach.video">
             <svg class="act-mark" viewBox="0 0 16 16" aria-hidden="true">
               <path d="M2.2 3.8h11.6v8.4H2.2z"/>
               <path d="m6.7 6.3 3.7 1.9-3.7 1.9z" opacity=".7"/>
             </svg>Video</button>
-          <button type="button" onclick="attachPick('audio')">
+          <button type="button" onclick="attachPick('audio')" data-i18n="ui.composer.attach.audio">
             <svg class="act-mark" viewBox="0 0 16 16" aria-hidden="true">
               <path d="M6.4 11.5V3.3l6-1.3v8.2"/>
               <ellipse cx="4.8" cy="11.8" rx="1.7" ry="1.35"/>
               <ellipse cx="10.8" cy="10.2" rx="1.7" ry="1.35"/>
             </svg>Audio</button>
-          <button type="button" onclick="attachPick('doc')">
+          <button type="button" onclick="attachPick('doc')" data-i18n="ui.composer.attach.doc">
             <svg class="act-mark" viewBox="0 0 16 16" aria-hidden="true">
               <path d="M4 1.9h5l3 3v9.2H4z"/>
               <path d="M9 1.9v3.1h3" opacity=".6"/>
@@ -147,13 +147,13 @@
             </svg>Document</button>
         </div>
       </div>
-      <button type="button" class="ic" id="voiceBtn" onclick="toggleVoice()" title="record voice" aria-label="Record voice message">
+      <button type="button" class="ic" id="voiceBtn" onclick="toggleVoice()" title="record voice" data-i18n-title="ui.composer.voice.title" aria-label="Record voice message" data-i18n-aria="ui.composer.voice.aria">
         <svg class="act-mark" viewBox="0 0 16 16" aria-hidden="true">
           <path d="M8 1.9a1.9 1.9 0 0 1 1.9 1.9v3.2a1.9 1.9 0 0 1-3.8 0V3.8A1.9 1.9 0 0 1 8 1.9Z"/>
           <path d="M3.9 7.4a4.1 4.1 0 0 0 8.2 0" opacity=".6"/>
           <path d="M8 11.6v2.4" opacity=".6"/>
         </svg></button>
-      <input id="text" placeholder="write into the space…" autocomplete="off"
+      <input id="text" placeholder="write into the space…" data-i18n-ph="ui.composer.input.ph" autocomplete="off"
              oninput="mentionsOnInput(event); mentionsRenderChips()"
              onkeydown="if (mentionsOnKeydown(event)) return false;"
              onblur="mentionsClosePicker()">
@@ -163,15 +163,15 @@
       <div class="picker" id="presencePicker">
         <button type="button" class="picker-btn" id="presenceBtn"
                 aria-haspopup="menu" aria-expanded="false" aria-controls="presenceMenu"
-                title="presence (TTL 5 min)"
+                title="presence (TTL 5 min)" data-i18n-title="ui.composer.presence.title"
                 onclick="presenceToggle()" onkeydown="presenceBtnKey(event)">
-          <span id="presenceLabel">presence…</span>
+          <span id="presenceLabel" data-i18n="presence.pick">presence…</span>
           <span class="picker-chev" aria-hidden="true"></span>
         </button>
         <div class="picker-menu" id="presenceMenu" role="menu"
              aria-labelledby="presenceBtn" hidden></div>
       </div>
-      <button type="submit" style="border:0">send</button>
+      <button type="submit" style="border:0" data-i18n="ui.composer.send">send</button>
     </form>
     <!-- WHAT A RECORDING LOOKS LIKE WHILE IT IS HAPPENING. Before this the
          only sign was the mic button turning red, which on a phone is under
@@ -180,22 +180,22 @@
          a running clock, a live level, and the two ways out. -->
     <div id="recBar" class="rec-bar" role="status" hidden>
       <span class="rec-dot" aria-hidden="true"></span>
-      <span class="rec-word">Recording</span>
+      <span class="rec-word" data-i18n="ui.recorder.word">Recording</span>
       <span id="recTime" class="rec-time" aria-hidden="true">0:00</span>
       <span id="recLevel" class="rec-level" aria-hidden="true"><i></i></span>
       <span style="flex:1"></span>
-      <button type="button" class="btn-plain" onclick="cancelVoice()">Cancel</button>
-      <button type="button" class="btn-tinted" onclick="toggleVoice()">Stop</button>
+      <button type="button" class="btn-plain" onclick="cancelVoice()" data-i18n="ui.recorder.cancel">Cancel</button>
+      <button type="button" class="btn-tinted" onclick="toggleVoice()" data-i18n="ui.recorder.stop">Stop</button>
     </div>
     <div id="readerBar" style="display:none">
-      <button id="joinWriteBtn" class="btn-tinted" style="display:none" onclick="joinCurrentPublic()">Join to write</button>
+      <button id="joinWriteBtn" class="btn-tinted" style="display:none" onclick="joinCurrentPublic()" data-i18n="ui.reader.join_to_write">Join to write</button>
       <span id="readOnlyNote" class="hint" style="display:none"></span>
     </div>
     <input type="file" id="fileInput" style="display:none" onchange="onFilePicked(this.files[0])">
   </div>
   <!-- The share picker IS the Navigator in selection mode (SHARE-0). -->
   <dialog id="dlgShare">
-    <h3>Forward</h3>
+    <h3 data-i18n="ui.share.title">Forward</h3>
     <div id="shareAbout" class="hint"></div>
     <div id="sharePicker" class="share-picker"></div>
     <div id="sharePicked" class="hint share-picked"></div>
@@ -206,16 +206,16 @@
       <input type="checkbox" id="shareRef" checked> <span id="shareRefText"></span>
     </label>
     <div class="row-end">
-      <button class="btn-plain" onclick="SHARE.cancel()">Cancel</button>
-      <button id="shareSend" onclick="SHARE.send()" disabled>Send</button>
+      <button class="btn-plain" onclick="SHARE.cancel()" data-i18n="ui.share.cancel">Cancel</button>
+      <button id="shareSend" onclick="SHARE.send()" disabled data-i18n="ui.share.send">Send</button>
     </div>
   </dialog>
   <!-- One row per destination, always (SHARE-2). -->
   <dialog id="dlgShareResult">
-    <h3>Where it went</h3>
+    <h3 data-i18n="ui.share_result.title">Where it went</h3>
     <div id="shareResultList"></div>
     <div class="row-end">
-      <button onclick="SHARE.closeReport()">Close</button>
+      <button onclick="SHARE.closeReport()" data-i18n="ui.share_result.close">Close</button>
     </div>
   </dialog>
   <!-- The transient post reader (PS-4): a shared card opened for a look.
@@ -231,13 +231,13 @@
        you merely look at is never opened as a room — see catalog.js. -->
   <div id="catalogScreen" style="display:none">
     <div class="sig-bar">
-      <button class="btn-plain" onclick="CAT.back()">← back</button>
+      <button class="btn-plain" onclick="CAT.back()" data-i18n="ui.cat.back">← back</button>
       <div id="catCrumbs" class="cat-crumbs"></div>
       <span style="flex:1"></span>
       <!-- The ONE door to the machinery, and the only place the word
            "directory" is explained. The ordinary path never opens it. -->
       <button class="icon-btn" onclick="CAT.openDirectories()"
-        title="Directories" aria-label="Directories">⋯</button>
+        title="Directories" aria-label="Directories" data-i18n-title="ui.cat.dirsBtn">⋯</button>
     </div>
     <div id="catNote" class="nav-note" hidden></div>
     <div id="catList"></div>
@@ -246,26 +246,26 @@
        run entirely without the featured directory from here; the ordinary
        path never needs it, and neither person gets a different edition. -->
   <dialog id="dlgDirs" class="sheet">
-    <h3>Directories</h3>
-    <p class="hint">The featured directory first, then the ones you add. A directory is an
+    <h3 data-i18n="ui.dirs.title">Directories</h3>
+    <p class="hint" data-i18n="ui.dirs.hint">The featured directory first, then the ones you add. A directory is an
       ordinary public space that lists other places.</p>
     <div id="dirList" class="list"></div>
     <div class="row">
-      <button class="btn-tinted" onclick="CAT.addDirectory()">+ Add directory</button>
-      <button class="btn-plain" onclick="dlgDirs.close()">Done</button>
+      <button class="btn-tinted" onclick="CAT.addDirectory()" data-i18n="ui.dirs.add">+ Add directory</button>
+      <button class="btn-plain" onclick="dlgDirs.close()" data-i18n="ui.dirs.done">Done</button>
     </div>
   </dialog>
   <!-- QuietRank: a cross-space inbox, not a fourth tab inside one space. -->
   <div id="signalsScreen" style="display:none">
     <div class="sig-bar">
-      <button class="btn-plain" onclick="closeSignals()">← back</button>
-      <h3 style="margin:0">Signals</h3>
+      <button class="btn-plain" onclick="closeSignals()" data-i18n="ui.sig.back">← back</button>
+      <h3 style="margin:0" data-i18n="ui.sig.title">Signals</h3>
       <div class="segmented" id="sigFilter">
-        <button data-f="all" class="sel" onclick="qrSetFilter('all')">All</button>
-        <button data-f="priority" onclick="qrSetFilter('priority')">Priority</button>
-        <button data-f="digest" onclick="qrSetFilter('digest')">Digest</button>
+        <button data-f="all" class="sel" onclick="qrSetFilter('all')" data-i18n="ui.sig.all">All</button>
+        <button data-f="priority" onclick="qrSetFilter('priority')" data-i18n="ui.sig.priority">Priority</button>
+        <button data-f="digest" onclick="qrSetFilter('digest')" data-i18n="ui.sig.digest">Digest</button>
       </div>
-      <button class="btn-plain" onclick="qrMarkAllSeen()">mark all read</button>
+      <button class="btn-plain" onclick="qrMarkAllSeen()" data-i18n="ui.sig.markAll">mark all read</button>
     </div>
     <div id="sigList"></div>
   </div>
@@ -276,18 +276,18 @@
   <h3 id="attachTitle">attach image</h3>
   <div id="attachPreview"></div>
   <p class="hint" id="attachWarn"></p>
-  <input id="attachAlt" placeholder="alt text — what's in the image (required, honest for text terminals)">
-  <input id="attachCaption" placeholder="caption (optional)">
-  <div class="row"><button onclick="sendAttachment()">send</button>
-  <button onclick="dlgAttach.close()">cancel</button></div>
+  <input id="attachAlt" data-i18n-ph="ui.attach.altPh" placeholder="alt text — what's in the image (required, honest for text terminals)">
+  <input id="attachCaption" data-i18n-ph="ui.attach.capPh" placeholder="caption (optional)">
+  <div class="row"><button onclick="sendAttachment()" data-i18n="ui.attach.send">send</button>
+  <button onclick="dlgAttach.close()" data-i18n="ui.attach.cancel">cancel</button></div>
 </dialog>
 
 <dialog id="dlgVoiceReview">
-  <h3>voice message</h3>
+  <h3 data-i18n="ui.voice.title">voice message</h3>
   <div id="voicePlayerHost"></div>
-  <input id="voiceTranscript" placeholder="transcript (optional, but the real fallback on text terminals)">
-  <div class="row"><button onclick="sendVoice()">send</button>
-  <button onclick="dlgVoiceReview.close()">discard</button></div>
+  <input id="voiceTranscript" data-i18n-ph="ui.voice.transcriptPh" placeholder="transcript (optional, but the real fallback on text terminals)">
+  <div class="row"><button onclick="sendVoice()" data-i18n="ui.voice.send">send</button>
+  <button onclick="dlgVoiceReview.close()" data-i18n="ui.voice.discard">discard</button></div>
 </dialog>
 
 <!-- The media viewer.
@@ -299,19 +299,19 @@
      also why this one is DECLARED rather than built in script. -->
 <dialog id="dlgViewer" class="viewer">
   <div class="viewer-bar">
-    <button class="viewer-btn" onclick="dlgViewer.close()" aria-label="Close">✕</button>
+    <button class="viewer-btn" onclick="dlgViewer.close()" aria-label="Close" data-i18n-aria="ui.viewer.close">✕</button>
     <span class="viewer-name" id="viewerName"></span>
-    <a class="viewer-btn" id="viewerSave" download>Save</a>
+    <a class="viewer-btn" id="viewerSave" download data-i18n="ui.viewer.save">Save</a>
   </div>
   <div class="viewer-stage" id="viewerStage"></div>
 </dialog>
 <dialog id="dlgLink">
-  <h3>share a link</h3>
+  <h3 data-i18n="ui.link.title">share a link</h3>
   <input id="linkURL" placeholder="https://…">
-  <input id="linkTitle" placeholder="title (you attach the preview — no server unfurls it)">
-  <input id="linkDescr" placeholder="description (optional)">
-  <div class="row"><button onclick="sendLink()">send</button>
-  <button onclick="dlgLink.close()">cancel</button></div>
+  <input id="linkTitle" data-i18n-ph="ui.link.titlePh" placeholder="title (you attach the preview — no server unfurls it)">
+  <input id="linkDescr" data-i18n-ph="ui.link.descrPh" placeholder="description (optional)">
+  <div class="row"><button onclick="sendLink()" data-i18n="ui.link.send">send</button>
+  <button onclick="dlgLink.close()" data-i18n="ui.link.cancel">cancel</button></div>
 </dialog>
 
 <!-- Adding an entry to a directory (CAT-0b). The lookup is an EXPLICIT
@@ -319,26 +319,26 @@
      something lands in a field is the authoring-end version of what
      CAT-0a's browsing did. -->
 <dialog id="dlgAddSpace">
-  <h3>Add a space</h3>
-  <p class="hint">Paste the link somebody gave you. It goes into this list
+  <h3 data-i18n="ui.addSpace.title">Add a space</h3>
+  <p class="hint" data-i18n="ui.addSpace.hint">Paste the link somebody gave you. It goes into this list
     under whatever you call it here.</p>
-  <input id="addSpaceLink" placeholder="paste a link">
+  <input id="addSpaceLink" data-i18n-ph="ui.addSpace.linkPh" placeholder="paste a link">
   <div class="row">
-    <button class="btn-plain" id="addSpaceLookBtn" onclick="CAT.lookUpSpace()">Look up</button>
+    <button class="btn-plain" id="addSpaceLookBtn" onclick="CAT.lookUpSpace()" data-i18n="ui.addSpace.lookUp">Look up</button>
   </div>
   <div id="addSpaceFound" class="hint" style="display:none"></div>
-  <input id="addSpaceTitle" placeholder="name it" style="display:none">
-  <input id="addSpaceSummary" placeholder="a line about it (optional)" style="display:none">
+  <input id="addSpaceTitle" data-i18n-ph="ui.addSpace.namePh" placeholder="name it" style="display:none">
+  <input id="addSpaceSummary" data-i18n-ph="ui.addSpace.summaryPh" placeholder="a line about it (optional)" style="display:none">
   <p class="hint" id="addSpaceMsg"></p>
   <div class="row">
-    <button class="btn-tinted" id="addSpaceAdd" style="display:none" onclick="CAT.addSpaceToDirectory()">Add</button>
-    <button class="btn-plain" onclick="dlgAddSpace.close()">Cancel</button>
+    <button class="btn-tinted" id="addSpaceAdd" style="display:none" onclick="CAT.addSpaceToDirectory()" data-i18n="ui.addSpace.add">Add</button>
+    <button class="btn-plain" onclick="dlgAddSpace.close()" data-i18n="ui.addSpace.cancel">Cancel</button>
   </div>
 </dialog>
 
 <dialog id="dlgSignal">
-  <h3>live signal — a recipe, not a file</h3>
-  <p class="hint">a few hundred bytes that unfold into a scene on the receiver;
+  <h3 data-i18n="ui.signal.title">live signal — a recipe, not a file</h3>
+  <p class="hint" data-i18n="ui.signal.hint">a few hundred bytes that unfold into a scene on the receiver;
   passes through mesh where an image never could.</p>
   <select id="sigPreset" onchange="renderSignalPreview()">
     <option value="slow-pines@1">slow-pines</option>
@@ -346,49 +346,49 @@
   </select>
   <div id="sigParams"></div>
   <canvas id="sigPreview" width="260" height="120" style="display:block;margin:8px auto;border-radius:4px"></canvas>
-  <div class="row"><button onclick="sendSignal()">send</button>
-  <button onclick="dlgSignal.close()">cancel</button></div>
+  <div class="row"><button onclick="sendSignal()" data-i18n="ui.signal.send">send</button>
+  <button onclick="dlgSignal.close()" data-i18n="ui.signal.cancel">cancel</button></div>
 </dialog>
 
 <dialog id="dlgWiz">
   <div class="wiz-step" id="wiz1">
-    <h3>1 · who is this place for?</h3>
+    <h3 data-i18n="ui.wiz.step1">1 · who is this place for?</h3>
     <div class="arch-grid" id="whoGrid"></div>
-    <div class="row"><button onclick="wizStep(2)">next</button>
-    <button onclick="dlgWiz.close()">cancel</button></div>
+    <div class="row"><button onclick="wizStep(2)" data-i18n="ui.wiz.next">next</button>
+    <button onclick="dlgWiz.close()" data-i18n="ui.wiz.cancel">cancel</button></div>
   </div>
   <div class="wiz-step" id="wiz2">
-    <h3>2 · how should it feel?</h3>
+    <h3 data-i18n="ui.wiz.step2">2 · how should it feel?</h3>
     <div class="arch-grid" id="archGrid"></div>
     <div class="seed" id="moodSeed"></div>
     <div class="row">
       <select id="wMood" style="width:31%" onchange="updSeed()">
-        <option value="dawn">dawn</option><option value="day">day</option>
-        <option value="dusk" selected>dusk</option><option value="night">night</option>
+        <option value="dawn" data-i18n="ui.wiz.mood.dawn">dawn</option><option value="day" data-i18n="ui.wiz.mood.day">day</option>
+        <option value="dusk" selected data-i18n="ui.wiz.mood.dusk">dusk</option><option value="night" data-i18n="ui.wiz.mood.night">night</option>
       </select>
       <select id="wMaterial" style="width:31%" onchange="updSeed()">
-        <option>light</option><option>wood</option><option>glass</option>
-        <option>metal</option><option>fog</option><option>paper</option>
+        <option data-i18n="ui.wiz.mat.light">light</option><option data-i18n="ui.wiz.mat.wood">wood</option><option data-i18n="ui.wiz.mat.glass">glass</option>
+        <option data-i18n="ui.wiz.mat.metal">metal</option><option data-i18n="ui.wiz.mat.fog">fog</option><option data-i18n="ui.wiz.mat.paper">paper</option>
       </select>
       <select id="wMotion" style="width:31%" onchange="updSeed()">
-        <option>still</option><option selected>slow</option><option>lively</option>
+        <option data-i18n="ui.wiz.motion.still">still</option><option selected data-i18n="ui.wiz.motion.slow">slow</option><option data-i18n="ui.wiz.motion.lively">lively</option>
       </select>
     </div>
-    <div class="row"><button onclick="wizStep(1)">back</button><button onclick="wizStep(3)">next</button></div>
+    <div class="row"><button onclick="wizStep(1)" data-i18n="ui.wiz.back">back</button><button onclick="wizStep(3)" data-i18n="ui.wiz.next">next</button></div>
   </div>
   <div class="wiz-step" id="wiz3">
-    <h3>3 · what will you do together?</h3>
-    <p class="hint">up to three rituals — they define how people live here:</p>
+    <h3 data-i18n="ui.wiz.step3">3 · what will you do together?</h3>
+    <p class="hint" data-i18n="ui.wiz.ritualsHint">up to three rituals — they define how people live here:</p>
     <div id="ritualList"></div>
-    <p class="hint">central block:</p>
+    <p class="hint" data-i18n="ui.wiz.centralHint">central block:</p>
     <select id="wCentral">
-      <option>chat</option><option>objects</option><option>audio</option>
-      <option>members</option><option>telemetry</option>
+      <option data-i18n="ui.wiz.central.chat">chat</option><option data-i18n="ui.wiz.central.objects">objects</option><option data-i18n="ui.wiz.central.audio">audio</option>
+      <option data-i18n="ui.wiz.central.members">members</option><option data-i18n="ui.wiz.central.telemetry">telemetry</option>
     </select>
-    <p class="hint">custom presence states (comma separated, optional — they may not
+    <p class="hint" data-i18n="ui.wiz.presenceHint">custom presence states (comma separated, optional — they may not
     impersonate system properties like online/verified/delivered):</p>
-    <input id="wPresence" placeholder="mixing_a_track, reading_not_replying">
-    <div class="row"><button onclick="wizStep(2)">back</button><button onclick="wizStep(4)">next</button></div>
+    <input id="wPresence" data-i18n-ph="ui.wiz.presencePh" placeholder="mixing_a_track, reading_not_replying">
+    <div class="row"><button onclick="wizStep(2)" data-i18n="ui.wiz.back">back</button><button onclick="wizStep(4)" data-i18n="ui.wiz.next">next</button></div>
   </div>
   <div class="wiz-step" id="wiz4">
     <!-- The heading, the memory options and the visibility row are all
@@ -401,17 +401,17 @@
     <input id="wTitle" placeholder="name of the place">
     <div class="wiz-vis">
       <div class="segmented" id="wVisibility">
-        <button data-v="private" class="sel" onclick="pickWizVis('private')">Private</button>
-        <button data-v="public" onclick="pickWizVis('public')">Public by link</button>
+        <button data-v="private" class="sel" onclick="pickWizVis('private')" data-i18n="ui.wiz.private">Private</button>
+        <button data-v="public" onclick="pickWizVis('public')" data-i18n="ui.wiz.publicByLink">Public by link</button>
       </div>
       <div class="segmented" id="wPublicMode" style="display:none">
-        <button data-v="community" class="sel" onclick="pickWizMode('community')">Anyone who comes in can write</button>
-        <button data-v="broadcast" onclick="pickWizMode('broadcast')">Only you post; everyone else reads</button>
+        <button data-v="community" class="sel" onclick="pickWizMode('community')" data-i18n="ui.wiz.modeCommunity">Anyone who comes in can write</button>
+        <button data-v="broadcast" onclick="pickWizMode('broadcast')" data-i18n="ui.wiz.modeBroadcast">Only you post; everyone else reads</button>
       </div>
-      <p class="hint" id="wVisHint" style="display:none">Anyone who obtains the link can read this space. Access cannot currently be revoked.</p>
+      <p class="hint" id="wVisHint" style="display:none" data-i18n="ui.wiz.visHint">Anyone who obtains the link can read this space. Access cannot currently be revoked.</p>
     </div>
-    <div class="row"><button onclick="wizStep(3)">back</button>
-    <button onclick="wizCreate()">create the place</button></div>
+    <div class="row"><button onclick="wizStep(3)" data-i18n="ui.wiz.back">back</button>
+    <button onclick="wizCreate()" data-i18n="ui.wiz.create">create the place</button></div>
   </div>
 </dialog>
 
@@ -421,14 +421,14 @@
 <div id="doorStrip" class="door-strip" hidden></div>
 
 <dialog id="dlgAccess" class="sheet">
-  <h3>Access</h3>
+  <h3 data-i18n="ui.acc.title">Access</h3>
   <div class="settings-sec">
     <div class="list">
       <div class="list-row">
-        <span class="lr-label">Listing</span>
+        <span class="lr-label" data-i18n="ui.acc.listing">Listing</span>
         <div class="segmented" id="accVis">
-          <button data-v="unlisted" onclick="setAccessVis('unlisted')">Unlisted</button>
-          <button data-v="public" onclick="setAccessVis('public')">Public</button>
+          <button data-v="unlisted" onclick="setAccessVis('unlisted')" data-i18n="ui.acc.vis.unlisted">Unlisted</button>
+          <button data-v="public" onclick="setAccessVis('public')" data-i18n="ui.acc.vis.public">Public</button>
         </div>
       </div>
       <!-- Purpose sits ABOVE the write rule, because it changes which
@@ -436,12 +436,12 @@
            who may write; a directory is asked who may add entries — one
            policy value, two vocabularies, never two controls. -->
       <div class="list-row lr-wide">
-        <span class="lr-label">Purpose
-          <span class="lr-sub">what this place is for</span>
+        <span class="lr-label" data-i18n="ui.acc.purpose">Purpose
+          <span class="lr-sub" data-i18n="ui.acc.purposeSub">what this place is for</span>
         </span>
         <div class="segmented" id="accPurpose">
-          <button data-v="" onclick="setAccessPurpose('')">Ordinary space</button>
-          <button data-v="directory" onclick="setAccessPurpose('directory')">Directory</button>
+          <button data-v="" onclick="setAccessPurpose('')" data-i18n="ui.acc.purpose.ordinary">Ordinary space</button>
+          <button data-v="directory" onclick="setAccessPurpose('directory')" data-i18n="ui.acc.purpose.directory">Directory</button>
         </div>
       </div>
       <div class="list-row lr-wide">
@@ -452,69 +452,68 @@
         </div>
       </div>
     </div>
-    <p class="hint" id="accModeHint">Existing posts always remain — policy never rewrites history.</p>
+    <p class="hint" id="accModeHint" data-i18n="ui.acc.modeHint">Existing posts always remain — policy never rewrites history.</p>
     <p class="hint" id="accPurposeHint" style="display:none"></p>
     <!-- Turning a space into a directory asks about the intention, and the
          answer completes right here — never "now go and find the other
          half of your decision in another section". -->
     <div id="accDirWho" style="display:none">
-      <p class="hint" id="accDirWhoQ">Who can add entries?</p>
+      <p class="hint" id="accDirWhoQ" data-i18n="ui.acc.dirWhoQ">Who can add entries?</p>
       <div class="list">
         <div class="list-row">
-          <button class="btn-plain" onclick="pickDirectoryWho('me')">Only me</button>
+          <button class="btn-plain" onclick="pickDirectoryWho('me')" data-i18n="ui.acc.dirWho.me">Only me</button>
         </div>
         <div class="list-row">
-          <button class="btn-plain" onclick="pickDirectoryWho('selected')">Selected people…</button>
+          <button class="btn-plain" onclick="pickDirectoryWho('selected')" data-i18n="ui.acc.dirWho.selected">Selected people…</button>
         </div>
         <div class="list-row">
-          <button class="btn-plain" onclick="pickDirectoryWho('anyone')">Anyone who can post</button>
+          <button class="btn-plain" onclick="pickDirectoryWho('anyone')" data-i18n="ui.acc.dirWho.anyone">Anyone who can post</button>
         </div>
       </div>
     </div>
   </div>
   <div class="settings-sec">
-    <p class="sec-label">Curators</p>
+    <p class="sec-label" data-i18n="ui.acc.curatorsLabel">Curators</p>
     <div id="accCurators" class="list"></div>
     <div class="list">
-      <div class="list-row"><span class="lr-label">Principal</span>
-        <input type="text" id="accCurPrin" placeholder="principal id (hex)"></div>
-      <div class="list-row"><span class="lr-label">Device</span>
-        <input type="text" id="accCurDev" placeholder="device id (hex)"></div>
+      <div class="list-row"><span class="lr-label" data-i18n="ui.acc.principal">Principal</span>
+        <input type="text" id="accCurPrin" placeholder="principal id (hex)" data-i18n-ph="ui.acc.principalPh"></div>
+      <div class="list-row"><span class="lr-label" data-i18n="ui.acc.device">Device</span>
+        <input type="text" id="accCurDev" placeholder="device id (hex)" data-i18n-ph="ui.acc.devicePh"></div>
     </div>
-    <div class="row"><button class="btn-plain" onclick="addCurator()">Add curator device</button></div>
-    <p class="hint">A curator is a specific device of a specific person — they can post the moment you add them.</p>
+    <div class="row"><button class="btn-plain" onclick="addCurator()" data-i18n="ui.acc.addCurator">Add curator device</button></div>
+    <p class="hint" data-i18n="ui.acc.curatorHint">A curator is a specific device of a specific person — they can post the moment you add them.</p>
   </div>
   <div class="settings-sec" id="accRate">
-    <p class="sec-label">How much one contributor may send</p>
+    <p class="sec-label" data-i18n="ui.acc.rateLabel">How much one contributor may send</p>
     <div class="segmented" id="accRateBtns">
-      <button data-v="0" onclick="setContributionLimit(0)">No limit</button>
-      <button data-v="24" onclick="setContributionLimit(24)">Relaxed</button>
-      <button data-v="16" onclick="setContributionLimit(16)">Steady</button>
-      <button data-v="8" onclick="setContributionLimit(8)">Strict</button>
+      <button data-v="0" onclick="setContributionLimit(0)" data-i18n="ui.acc.rate.none">No limit</button>
+      <button data-v="24" onclick="setContributionLimit(24)" data-i18n="ui.acc.rate.relaxed">Relaxed</button>
+      <button data-v="16" onclick="setContributionLimit(16)" data-i18n="ui.acc.rate.steady">Steady</button>
+      <button data-v="8" onclick="setContributionLimit(8)" data-i18n="ui.acc.rate.strict">Strict</button>
     </div>
-    <p class="hint" id="accRateHint">Nothing is lost: over the limit a contribution waits and arrives on a later
-      round. It counts per person, so one loud voice cannot crowd out the room.</p>
+    <p class="hint" id="accRateHint" data-i18n="ui.acc.rateHint">Nothing is lost — over the limit a contribution waits and arrives later. Counted per person, so one voice cannot crowd out the room.</p>
   </div>
   <div class="settings-sec">
     <div class="row">
       <button class="btn-plain" id="accFreezeBtn" onclick="toggleFreeze()">Freeze publication</button>
     </div>
-    <p class="hint" id="accFreezeHint">Freezing pauses everyone's publishing, including yours. Readers see an
+    <p class="hint" id="accFreezeHint" data-i18n="ui.acc.freezeHint">Freezing pauses everyone's publishing, including yours. Readers see an
       honest “frozen” state; drafts stay local until you unfreeze.</p>
   </div>
   <div class="settings-sec" id="accAvail" hidden>
-    <p class="sec-label">Availability</p>
+    <p class="sec-label" data-i18n="ui.acc.availability">Availability</p>
     <div class="list">
       <div class="list-row">
-        <span class="lr-label">Keep this space reachable
-          <span class="lr-sub">Republish what the owner signed, so the space survives their going
+        <span class="lr-label" data-i18n="ui.acc.mirrorLabel">Keep this space reachable
+          <span class="lr-sub" data-i18n="ui.acc.mirrorSub">Republish what the owner signed, so the space survives their going
             offline. You gain no say over it — this node holds no key.</span>
         </span>
         <button class="btn-plain" id="accMirrorBtn" onclick="toggleMirror()">Mirror</button>
       </div>
       <div class="list-row">
-        <span class="lr-label">Share media you already have
-          <span class="lr-sub">Answer other readers with files you already have. Downloads nothing
+        <span class="lr-label" data-i18n="ui.acc.seedLabel">Share media you already have
+          <span class="lr-sub" data-i18n="ui.acc.seedSub">Answer other readers with files you already have. Downloads nothing
             extra — but it tells others you read this space.</span>
         </span>
         <button class="btn-plain" id="accSeedBtn" onclick="toggleSeed()">Off</button>
@@ -523,33 +522,31 @@
     <p class="hint" id="accMirrorState"></p>
   </div>
   <p class="hint" id="accMsg" style="margin-left:4px"></p>
-  <div class="row" style="justify-content:flex-end"><button class="btn-filled" onclick="dlgAccess.close()">Done</button></div>
+  <div class="row" style="justify-content:flex-end"><button class="btn-filled" onclick="dlgAccess.close()" data-i18n="ui.acc.done">Done</button></div>
 </dialog>
 
 <dialog id="dlgJoin">
   <div id="joinInput">
     <h3 id="joinTitle">Enter with a link</h3>
     <div class="segmented" id="joinMode" style="margin-bottom:10px">
-      <button data-m="link" class="sel" onclick="joinSetMode('link')">With a link</button>
-      <button data-m="pass" onclick="joinSetMode('pass')">With a pass</button>
+      <button data-m="link" class="sel" onclick="joinSetMode('link')" data-i18n="ui.join.mode.link">With a link</button>
+      <button data-m="pass" onclick="joinSetMode('pass')" data-i18n="ui.join.mode.pass">With a pass</button>
     </div>
     <div id="joinLinkPane">
-      <p class="hint">Five words someone read out to you. A personal link is
-        spent by opening it; a shared one stays open until it expires — which
-        it is will be shown before you decide.</p>
+      <p class="hint" data-i18n="ui.join.linkHint">Five words someone read out to you. A personal link is spent when opened; a shared one lasts until it expires — shown before you decide.</p>
       <input id="joinWords" placeholder="quiet://moss.ember.tide.wren.slate" autocomplete="off"
              oninput="qlOnWordsInput()" onkeydown="if(event.key==='Enter'){event.preventDefault();enterWithLink()}">
       <p class="hint" id="joinWordsHint"></p>
       <div id="joinPreview" style="display:none"></div>
-      <div class="row"><button onclick="enterWithLink()" id="joinLinkBtn">Open the link</button>
-      <button onclick="dlgJoin.close()">cancel</button></div>
+      <div class="row"><button onclick="enterWithLink()" id="joinLinkBtn" data-i18n="ui.join.openLink">Open the link</button>
+      <button onclick="dlgJoin.close()" data-i18n="ui.join.cancelLink">cancel</button></div>
     </div>
     <div id="joinPassPane" style="display:none">
-    <p class="hint" id="joinPaste">Paste the pass link someone shared with you:</p>
-    <textarea id="joinPass" rows="3" placeholder="paste pass link"></textarea>
-    <div class="row"><button onclick="requestEntry()" id="joinEnterBtn">Request entry</button>
+    <p class="hint" id="joinPaste" data-i18n="ui.join.paste">Paste the pass link someone shared with you:</p>
+    <textarea id="joinPass" rows="3" placeholder="paste pass link" data-i18n-ph="ui.join.passPh"></textarea>
+    <div class="row"><button onclick="requestEntry()" id="joinEnterBtn" data-i18n="ui.join.requestEntry">Request entry</button>
     <button id="apListenBtn" onclick="apToggleListen()">listen for a pass</button>
-    <button onclick="dlgJoin.close()">cancel</button></div>
+    <button onclick="dlgJoin.close()" data-i18n="ui.join.cancelPass">cancel</button></div>
     <div id="apRecv" class="ap-panel" style="display:none">
       <div class="ap-meter"><div class="ap-meter-fill" id="apLevel"></div></div>
       <p class="hint" id="apRecvMsg">Listening… ask them to play the pass.</p>
@@ -561,9 +558,9 @@
     <div class="glyph" id="joinGlyph" style="width:56px;height:56px;margin:6px auto"></div>
     <p class="pass-state" id="joinStateText"></p>
     <div class="row" style="justify-content:center;margin-top:12px">
-      <button id="joinOpenBtn" onclick="openJoined()" style="display:none">Open the space</button>
-      <button onclick="resetJoin()">Enter another pass</button>
-      <button onclick="dlgJoin.close()">close</button>
+      <button id="joinOpenBtn" onclick="openJoined()" style="display:none" data-i18n="ui.join.openSpace">Open the space</button>
+      <button onclick="resetJoin()" data-i18n="ui.join.anotherPass">Enter another pass</button>
+      <button onclick="dlgJoin.close()" data-i18n="ui.join.close">close</button>
     </div>
   </div>
 </dialog>
@@ -597,22 +594,22 @@
           <span class="pass-scan"></span>
         </div>
         <div class="pass-code">
-          <span class="pass-code-label">pass code</span>
+          <span class="pass-code-label" data-i18n="ui.pass.codeLabel">pass code</span>
           <p class="out" id="passLink"></p>
         </div>
       </div>
     </div>
     <div id="passConfig">
       <div class="row" style="margin-top:8px">
-        <label class="pass-opt">Who <select id="passUses"><option value="1">one person</option><option value="10">up to 10</option></select></label>
-        <label class="pass-opt">For <select id="passTtl"><option value="1">1 hour</option><option value="24" selected>24 hours</option><option value="168">7 days</option></select></label>
+        <label class="pass-opt" data-i18n="ui.pass.who">Who <select id="passUses"><option value="1" data-i18n="ui.pass.uses.one">one person</option><option value="10" data-i18n="ui.pass.uses.ten">up to 10</option></select></label>
+        <label class="pass-opt" data-i18n="ui.pass.for">For <select id="passTtl"><option value="1" data-i18n="ui.pass.ttl.1h">1 hour</option><option value="24" selected data-i18n="ui.pass.ttl.24h">24 hours</option><option value="168" data-i18n="ui.pass.ttl.7d">7 days</option></select></label>
       </div>
     </div>
     <div class="row" style="margin-top:12px">
       <button id="passCreateBtn" onclick="mintPass()">Create a pass</button>
       <button id="passCopyBtn" onclick="copyPass()" style="display:none">Copy pass</button>
       <button id="passRevokeBtn" onclick="revokeCurrentPass()" style="display:none">Revoke</button>
-      <button onclick="dlgPass.close()">close</button>
+      <button onclick="dlgPass.close()" data-i18n="ui.pass.close">close</button>
     </div>
     <p class="pass-state warn" id="passMsg" style="display:none"></p>
     <p class="hint" style="margin-top:10px"><a href="#" onclick="openInviteFromPass();return false" id="passTechInvite">Invite a device directly (technical)</a></p>
@@ -625,48 +622,48 @@
   <div id="obStep1" data-step>
     <img src="brand-glyph.png" alt="" class="brand-hero">
     <h3 id="obTitle">quite.space</h3>
-    <p class="hint" id="obLede">Personal spaces for conversations that belong to the people in them.</p>
+    <p class="hint" id="obLede" data-i18n="ui.ob.lede">Personal spaces for conversations that belong to the people in them.</p>
     <!-- "not now" is not politeness, it is the exit. Without it this dialog
          could only be left with Esc, and a phone has no Esc — AR-0d found a
          person held here with no way out but to open another dialog and
          cancel that one. Every step below carries the same escape. -->
     <div class="row" style="margin-top:14px">
-      <button onclick="obStep('name')">Create a space</button>
-      <button onclick="dlgWelcome.close(); openJoinDialog()">Enter with a pass</button>
-      <button class="btn-plain" onclick="dlgWelcome.close()">not now</button>
+      <button onclick="obStep('name')" data-i18n="ui.ob.createSpace">Create a space</button>
+      <button onclick="dlgWelcome.close(); openJoinDialog()" data-i18n="ui.ob.enterPass">Enter with a pass</button>
+      <button class="btn-plain" onclick="dlgWelcome.close()" data-i18n="ui.ob.notNow">not now</button>
     </div>
-    <p class="hint" style="margin-top:12px">No phone, no email, no shared account.</p>
+    <p class="hint" style="margin-top:12px" data-i18n="ui.ob.noAccount">No phone, no email, no shared account.</p>
   </div>
   <div id="obStep2" data-step data-keep-open style="display:none">
-    <h3>What should people call you?</h3>
-    <input id="obName" placeholder="a name" maxlength="64" autocomplete="off">
-    <p class="hint">People see this in your spaces. You can change it later.</p>
+    <h3 data-i18n="ui.ob.nameTitle">What should people call you?</h3>
+    <input id="obName" placeholder="a name" maxlength="64" autocomplete="off" data-i18n-ph="ui.ob.namePh">
+    <p class="hint" data-i18n="ui.ob.nameHint">People see this in your spaces. You can change it later.</p>
     <div class="row">
-      <button onclick="obSubmitName()">Continue</button>
-      <button class="btn-plain" onclick="dlgWelcome.close()">later</button>
+      <button onclick="obSubmitName()" data-i18n="ui.ob.continue">Continue</button>
+      <button class="btn-plain" onclick="dlgWelcome.close()" data-i18n="ui.ob.later">later</button>
     </div>
   </div>
   <div id="obStep3" data-step style="display:none">
-    <h3>Ready</h3>
-    <p class="hint">Your identity was created on this device — nowhere else.</p>
+    <h3 data-i18n="ui.ob.readyTitle">Ready</h3>
+    <p class="hint" data-i18n="ui.ob.readyHint">Your identity was created on this device — nowhere else.</p>
     <div id="obGlyph" style="text-align:center;margin:12px 0"></div>
     <p class="out" id="obWho" style="text-align:center;color:var(--fg)"></p>
     <p class="hint" id="obDevice" style="text-align:center"></p>
-    <div class="row"><button onclick="obFinish()">Continue</button></div>
+    <div class="row"><button onclick="obFinish()" data-i18n="ui.ob.finish">Continue</button></div>
   </div>
 </dialog>
 
 <dialog id="dlgSettings" class="sheet">
-  <h3>Settings</h3>
+  <h3 data-i18n="ui.set.title">Settings</h3>
   <div class="segmented settings-tabs" id="setTabs">
-    <button data-cat="appearance" onclick="showSettingsCat('appearance')">Appearance</button>
-    <button data-cat="relay" onclick="showSettingsCat('relay')">Relay</button>
-    <button data-cat="radio" onclick="showSettingsCat('radio')">Radio</button>
-    <button data-cat="attention" onclick="showSettingsCat('attention'); qrLoadSettings()">Attention</button>
-    <button data-cat="ai" onclick="showSettingsCat('ai')">AI</button>
+    <button data-cat="appearance" data-i18n="ui.set.tab.appearance" onclick="showSettingsCat('appearance')">Appearance</button>
+    <button data-cat="relay" data-i18n="ui.set.tab.relay" onclick="showSettingsCat('relay')">Relay</button>
+    <button data-cat="radio" data-i18n="ui.set.tab.radio" onclick="showSettingsCat('radio')">Radio</button>
+    <button data-cat="attention" data-i18n="ui.set.tab.attention" onclick="showSettingsCat('attention'); qrLoadSettings()">Attention</button>
+    <button data-cat="ai" data-i18n="ui.set.tab.ai" onclick="showSettingsCat('ai')">AI</button>
     <!-- Shown only where a host is listening: on a desktop browser there are
          no system notifications to have a policy about. -->
-    <button data-cat="notifications" id="setTabNotifications" style="display:none"
+    <button data-cat="notifications" id="setTabNotifications" data-i18n="ui.set.tab.device" style="display:none"
             onclick="showSettingsCat('notifications'); notifSyncUI(); unlockSyncUI()">This device</button>
   </div>
   <!-- The Radio tab IS the radio screen. It used to be a paragraph and a
@@ -680,19 +677,17 @@
        bottom, where a second option belongs. -->
   <div class="settings-cat" data-cat="radio">
     <div class="row">
-      <button class="btn-tinted" onclick="dlgSettings.close(); openRadioMeet()">meet over the radio</button>
-      <button onclick="refreshGateway()">refresh</button>
+      <button class="btn-tinted" data-i18n="ui.set.radio.meet" onclick="dlgSettings.close(); openRadioMeet()">meet over the radio</button>
+      <button data-i18n="ui.set.radio.refresh" onclick="refreshGateway()">refresh</button>
     </div>
     <p class="hint" id="meshInfo"></p>
     <div id="gwBody"></div>
 
     <div class="settings-sec">
-      <h4>a Meshtastic node instead</h4>
-      <p class="hint">The other carrier this build speaks, attached by address
-      rather than found: <code>tcp:HOST[:PORT]</code> or
-      <code>serial:/dev/tty…</code>. Where it goes from here is not decided.</p>
+      <h4 data-i18n="ui.set.radio.mesh.h">a Meshtastic node instead</h4>
+      <p class="hint" data-i18n="ui.set.radio.mesh.hint">The other carrier this build speaks — attached by address, not found. Where it goes next is not decided. Accepts <code>tcp:HOST[:PORT]</code> / <code>serial:/dev/tty…</code></p>
       <input id="meshTarget" placeholder="tcp:192.168.1.42  or  serial:/dev/tty.usbserial-0001">
-      <div class="row"><button onclick="meshConnect()">connect</button></div>
+      <div class="row"><button data-i18n="ui.set.radio.mesh.connect" onclick="meshConnect()">connect</button></div>
     </div>
   </div>
   <div class="settings-cat" data-cat="appearance">
@@ -717,37 +712,37 @@
         </div>
       </div>
       <div class="list-row">
-        <span class="lr-label">Preset</span>
+        <span class="lr-label" data-i18n="ui.set.preset">Preset</span>
         <div class="segmented" id="setPreset">
-          <button data-v="quiet-glass" onclick="setPreset('quiet-glass');syncSettingsUI()">Quiet Glass</button>
-          <button data-v="daylight" onclick="setPreset('daylight');syncSettingsUI()">Daylight</button>
-          <button data-v="minimal-mono" onclick="setPreset('minimal-mono');syncSettingsUI()">Minimal</button>
-          <button data-v="comfort" onclick="setPreset('comfort');syncSettingsUI()">Comfort</button>
+          <button data-v="quiet-glass" data-i18n="ui.set.preset.quietglass" onclick="setPreset('quiet-glass');syncSettingsUI()">Quiet Glass</button>
+          <button data-v="daylight" data-i18n="ui.set.preset.daylight" onclick="setPreset('daylight');syncSettingsUI()">Daylight</button>
+          <button data-v="minimal-mono" data-i18n="ui.set.preset.minimal" onclick="setPreset('minimal-mono');syncSettingsUI()">Minimal</button>
+          <button data-v="comfort" data-i18n="ui.set.preset.comfort" onclick="setPreset('comfort');syncSettingsUI()">Comfort</button>
         </div>
       </div>
       <div class="list-row">
-        <span class="lr-label">Starfield</span>
+        <span class="lr-label" data-i18n="ui.set.starfield">Starfield</span>
         <div class="segmented" id="setStarfield">
-          <button data-v="drift" onclick="setStarfield('drift')">Drift</button>
-          <button data-v="still" onclick="setStarfield('still')">Still</button>
-          <button data-v="off" onclick="setStarfield('off')">Off</button>
+          <button data-v="drift" data-i18n="ui.set.starfield.drift" onclick="setStarfield('drift')">Drift</button>
+          <button data-v="still" data-i18n="ui.set.starfield.still" onclick="setStarfield('still')">Still</button>
+          <button data-v="off" data-i18n="ui.set.starfield.off" onclick="setStarfield('off')">Off</button>
         </div>
       </div>
       <div class="list-row">
-        <span class="lr-label">Atmosphere</span>
+        <span class="lr-label" data-i18n="ui.set.atmo">Atmosphere</span>
         <div class="segmented" id="setAtmosphere">
-          <button data-v="full" onclick="setAtmosphere('full')">Full</button>
-          <button data-v="calm" onclick="setAtmosphere('calm')">Calm</button>
-          <button data-v="poster" onclick="setAtmosphere('poster')">Still</button>
-          <button data-v="off" onclick="setAtmosphere('off')">Off</button>
+          <button data-v="full" data-i18n="ui.set.atmo.full" onclick="setAtmosphere('full')">Full</button>
+          <button data-v="calm" data-i18n="ui.set.atmo.calm" onclick="setAtmosphere('calm')">Calm</button>
+          <button data-v="poster" data-i18n="ui.set.atmo.still" onclick="setAtmosphere('poster')">Still</button>
+          <button data-v="off" data-i18n="ui.set.atmo.off" onclick="setAtmosphere('off')">Off</button>
         </div>
       </div>
       <div class="list-row">
-        <span class="lr-label">Atmosphere sound</span>
+        <span class="lr-label" data-i18n="ui.set.atmosound">Atmosphere sound</span>
         <div class="segmented" id="setAtmosphereSound">
-          <button data-v="ask" onclick="setAtmosphereSound('ask')">Ask</button>
-          <button data-v="remember" onclick="setAtmosphereSound('remember')">Remember</button>
-          <button data-v="never" onclick="setAtmosphereSound('never')">Never</button>
+          <button data-v="ask" data-i18n="ui.set.atmosound.ask" onclick="setAtmosphereSound('ask')">Ask</button>
+          <button data-v="remember" data-i18n="ui.set.atmosound.remember" onclick="setAtmosphereSound('remember')">Remember</button>
+          <button data-v="never" data-i18n="ui.set.atmosound.never" onclick="setAtmosphereSound('never')">Never</button>
         </div>
       </div>
       <!-- The technical layer. It used to be a word above every conversation
@@ -755,28 +750,28 @@
            capability set knows to come looking, and everybody else was
            paying for the reminder. Described by what it SHOWS. -->
       <div class="list-row">
-        <span class="lr-label">Protocol view<span class="lr-sub"> · ids, capabilities, raw state</span></span>
+        <span class="lr-label" data-i18n="ui.set.protocol">Protocol view<span class="lr-sub" data-i18n="ui.set.protocol.sub"> · ids, capabilities, raw state</span></span>
         <div class="segmented" id="setProtocol">
-          <button data-v="off" onclick="setProtocolView(false)">Off</button>
-          <button data-v="on" onclick="setProtocolView(true)">On</button>
+          <button data-v="off" data-i18n="ui.set.protocol.off" onclick="setProtocolView(false)">Off</button>
+          <button data-v="on" data-i18n="ui.set.protocol.on" onclick="setProtocolView(true)">On</button>
         </div>
       </div>
       <div class="list-row">
-        <span class="lr-label">Motion</span>
+        <span class="lr-label" data-i18n="ui.set.motion">Motion</span>
         <div class="segmented" id="setRenderMode">
-          <button data-v="auto" onclick="setRenderMode('auto')">Auto</button>
-          <button data-v="full" onclick="setRenderMode('full')">Full</button>
-          <button data-v="reduced" onclick="setRenderMode('reduced')">Reduced</button>
-          <button data-v="minimal" onclick="setRenderMode('minimal')">Minimal</button>
+          <button data-v="auto" data-i18n="ui.set.motion.auto" onclick="setRenderMode('auto')">Auto</button>
+          <button data-v="full" data-i18n="ui.set.motion.full" onclick="setRenderMode('full')">Full</button>
+          <button data-v="reduced" data-i18n="ui.set.motion.reduced" onclick="setRenderMode('reduced')">Reduced</button>
+          <button data-v="minimal" data-i18n="ui.set.motion.minimal" onclick="setRenderMode('minimal')">Minimal</button>
         </div>
       </div>
       <div class="list-row">
-        <span class="lr-label">Effects<span class="lr-sub"> · how reactions touch objects</span></span>
+        <span class="lr-label" data-i18n="ui.set.effects">Effects<span class="lr-sub" data-i18n="ui.set.effects.sub"> · how reactions touch objects</span></span>
         <div class="segmented" id="setEffects">
-          <button data-v="full" onclick="setEffectsMode('full')">Full</button>
-          <button data-v="subtle" onclick="setEffectsMode('subtle')">Subtle</button>
-          <button data-v="static" onclick="setEffectsMode('static')">Static</button>
-          <button data-v="off" onclick="setEffectsMode('off')">Off</button>
+          <button data-v="full" data-i18n="ui.set.effects.full" onclick="setEffectsMode('full')">Full</button>
+          <button data-v="subtle" data-i18n="ui.set.effects.subtle" onclick="setEffectsMode('subtle')">Subtle</button>
+          <button data-v="static" data-i18n="ui.set.effects.static" onclick="setEffectsMode('static')">Static</button>
+          <button data-v="off" data-i18n="ui.set.effects.off" onclick="setEffectsMode('off')">Off</button>
         </div>
       </div>
     </div>
@@ -789,62 +784,62 @@
        "nothing leaves this device" and then waits for a Save button would be
        telling the truth only after a second press. -->
   <div class="settings-sec">
-    <p class="sec-label">Ways out of this device</p>
+    <p class="sec-label" data-i18n="ui.set.rl.ways">Ways out of this device</p>
     <!-- SEGMENTED, not a plain row: `.sel` is only styled inside .segmented,
          so a row of btn-plain shows no sign of which one is chosen — which is
          unusable for a switch whose whole job is to say what is in force. -->
     <div class="segmented" id="connModeRow">
-      <button data-v="auto" onclick="setConnMode('auto')">Auto</button>
+      <button data-v="auto" data-i18n="ui.set.rl.conn.auto" onclick="setConnMode('auto')">Auto</button>
       <!-- "Internet" and "Radio", not "Internet only": under a header that
            already says these are the WAYS OUT, the word "only" is what makes
            the row wrap on a phone, and the note below says which doors each
            choice closes anyway. -->
-      <button data-v="internet" onclick="setConnMode('internet')">Internet</button>
-      <button data-v="radio" onclick="setConnMode('radio')">Radio</button>
-      <button data-v="offline" onclick="setConnMode('offline')">Offline</button>
+      <button data-v="internet" data-i18n="ui.set.rl.conn.internet" onclick="setConnMode('internet')">Internet</button>
+      <button data-v="radio" data-i18n="ui.set.rl.conn.radio" onclick="setConnMode('radio')">Radio</button>
+      <button data-v="offline" data-i18n="ui.set.rl.conn.offline" onclick="setConnMode('offline')">Offline</button>
     </div>
     <p class="hint" id="connModeNote" style="margin-left:4px"></p>
   </div>
   <div class="settings-sec">
-    <p class="sec-label">Sync when off your network</p>
+    <p class="sec-label" data-i18n="ui.set.rl.sync">Sync when off your network</p>
     <!-- Same fix as the row above, and the same bug it had: this control has
          been marking its choice with `.sel` since RR-0 and `.sel` has never
          been styled outside .segmented, so neither option ever looked picked. -->
     <div class="segmented" id="relayModeRow">
-      <button data-v="automatic" onclick="setRelayMode('automatic')">Automatic</button>
-      <button data-v="custom" onclick="setRelayMode('custom')">Custom</button>
+      <button data-v="automatic" data-i18n="ui.set.rl.mode.automatic" onclick="setRelayMode('automatic')">Automatic</button>
+      <button data-v="custom" data-i18n="ui.set.rl.mode.custom" onclick="setRelayMode('custom')">Custom</button>
     </div>
     <p class="hint" id="relayModeNote" style="margin-left:4px"></p>
     <div class="list">
       <div class="list-row" id="relayAddrRow">
-        <span class="lr-label">Address</span>
-        <input type="text" id="relaySetAddr" placeholder="host:port, e.g. 203.0.113.7:7411 (blank = off)">
+        <span class="lr-label" data-i18n="ui.set.rl.addr">Address</span>
+        <input type="text" id="relaySetAddr" data-i18n-ph="ui.set.rl.addr.ph" placeholder="host:port, e.g. 203.0.113.7:7411 (blank = off)">
       </div>
       <div class="list-row">
-        <span class="lr-label">Sync every<span class="lr-sub"> (s)</span></span>
+        <span class="lr-label" data-i18n="ui.set.rl.every">Sync every<span class="lr-sub" data-i18n="ui.set.rl.every.sub"> (s)</span></span>
         <input type="number" id="relaySetInterval" min="1" max="3600" step="1" placeholder="2">
       </div>
     </div>
     <p class="hint" id="relaySetMsg" style="margin-left:4px"></p>
     <div class="row">
-      <button class="btn-tinted" onclick="saveRelay()">Save &amp; sync</button>
-      <button class="btn-plain" onclick="remeasureRelays()">Re-measure</button>
-      <button class="btn-plain" onclick="copyRelayDiagnostics()">Copy diagnostics</button>
+      <button class="btn-tinted" data-i18n="ui.set.rl.save" onclick="saveRelay()">Save &amp; sync</button>
+      <button class="btn-plain" data-i18n="ui.set.rl.remeasure" onclick="remeasureRelays()">Re-measure</button>
+      <button class="btn-plain" data-i18n="ui.set.rl.diag" onclick="copyRelayDiagnostics()">Copy diagnostics</button>
     </div>
-    <p class="hint" style="margin-left:4px">Set an address and this device pushes and pulls every few seconds. Media
-      stays on demand — open a card to fetch its bytes. “Accepted by relay” is
-      never “delivered”.</p>
+    <p class="hint" style="margin-left:4px" data-i18n="ui.set.rl.hint">Set an address and this device syncs every few seconds. Media stays on
+      demand — open a card to fetch it. “Accepted by relay” is never
+      “delivered”.</p>
     <div id="relayDiagPanel" class="relay-public"></div>
     <div id="relayPublicPanel" class="relay-public"></div>
   </div>
   <div class="settings-sec">
-    <p class="sec-label">Manual · one-off hand-off</p>
+    <p class="sec-label" data-i18n="ui.set.rl.manual">Manual · one-off hand-off</p>
     <div class="row">
-      <button class="btn-plain" onclick="relayPush()">Push current space</button>
-      <button class="btn-plain" onclick="relayPull()">Pull for all spaces</button>
+      <button class="btn-plain" data-i18n="ui.set.rl.push" onclick="relayPush()">Push current space</button>
+      <button class="btn-plain" data-i18n="ui.set.rl.pull" onclick="relayPull()">Pull for all spaces</button>
     </div>
     <p class="hint" id="relayInfo" style="margin-left:4px"></p>
-    <p class="hint" style="margin-left:4px">Uses the address above. A full dead-drop (media included) for the current space, or a one-time collect for every space — handy before going offline. Auto-sync above already keeps text flowing.</p>
+    <p class="hint" style="margin-left:4px" data-i18n="ui.set.rl.manual.hint">Uses the address above. A full dead-drop (media included) for this space, or a one-time collect for all spaces. Auto-sync above already keeps text flowing.</p>
   </div>
   </div>
   <!-- AR-1b.7b — what the phone's own notification surfaces may say.
@@ -859,12 +854,12 @@
        had no reason to look — which is exactly what happened during the beta.
        The tab is "This device" for the same reason. -->
   <div class="settings-sec">
-    <p class="sec-label">Staying connected</p>
+    <p class="sec-label" data-i18n="ui.set.dev.stay">Staying connected</p>
     <div class="segmented" id="stayMode">
-      <button data-v="off" onclick="stayPick(false)">Off</button>
-      <button data-v="on" onclick="stayPick(true)">Stay connected</button>
+      <button data-v="off" data-i18n="ui.set.dev.stay.off" onclick="stayPick(false)">Off</button>
+      <button data-v="on" data-i18n="ui.set.dev.stay.on" onclick="stayPick(true)">Stay connected</button>
     </div>
-    <p class="hint" style="margin-left:4px">Quiet keeps its connection while you are away. Android shows a
+    <p class="hint" style="margin-left:4px" data-i18n="ui.set.dev.stay.hint">Quiet keeps its connection while you are away. Android shows a
       permanent notice, and it uses battery.</p>
     <!-- THE HALF NOBODY WAS TOLD. Photos, voice notes and video are not
          carried by the relay — only the message that mentions them is — so
@@ -872,16 +867,16 @@
          card. With this off, a phone that locks takes them with it, and the
          person you sent them to sees a picture that never arrives. That was
          reported as a bug and it was this setting. -->
-    <p class="hint" style="margin-left:4px">It also decides whether media you sent stays openable: those bytes live
+    <p class="hint" style="margin-left:4px" data-i18n="ui.set.dev.media.hint">It also decides whether media you sent stays openable: those bytes live
       here, not on a relay. Off means only while your app is awake.</p>
     <p class="hint warn" id="stayMsg" style="margin-left:4px"></p>
   </div>
   <div class="settings-sec">
-    <p class="sec-label">What notifications may show</p>
+    <p class="sec-label" data-i18n="ui.set.dev.notif">What notifications may show</p>
     <div class="segmented" id="notifPolicy">
-      <button data-v="hidden" onclick="notifPick('hidden')">Nothing</button>
-      <button data-v="space" onclick="notifPick('space')">Space name</button>
-      <button data-v="preview" onclick="notifPick('preview')">Full preview</button>
+      <button data-v="hidden" data-i18n="ui.set.dev.notif.nothing" onclick="notifPick('hidden')">Nothing</button>
+      <button data-v="space" data-i18n="ui.set.dev.notif.space" onclick="notifPick('space')">Space name</button>
+      <button data-v="preview" data-i18n="ui.set.dev.notif.preview" onclick="notifPick('preview')">Full preview</button>
     </div>
     <p class="hint" id="notifPolicyWhat" style="margin-left:4px"></p>
   </div>
@@ -890,16 +885,16 @@
        nothing here to switch off, and a dead row explaining that would be
        worse than no row. -->
   <div class="settings-sec" id="unlockSec" hidden>
-    <p class="sec-label">Opening this app</p>
-    <p class="hint" style="margin-left:4px">Saved in Android's own keystore, so Quiet opens without asking. It cannot
+    <p class="sec-label" data-i18n="ui.set.dev.unlock">Opening this app</p>
+    <p class="hint" style="margin-left:4px" data-i18n="ui.set.dev.unlock.hint">Saved in Android's own keystore, so Quiet opens without asking. It cannot
       leave the phone — but anyone who can unlock the phone can open Quiet.</p>
     <div class="row">
-      <button class="btn-plain" onclick="forgetPassphrase()">Ask for the passphrase every time</button>
+      <button class="btn-plain" data-i18n="ui.set.dev.unlock.forget" onclick="forgetPassphrase()">Ask for the passphrase every time</button>
     </div>
     <p class="hint warn" id="unlockMsg" style="margin-left:4px"></p>
   </div>
   <div class="settings-sec">
-    <p class="hint" style="margin-left:4px">A notification is not private: its text shows on the lock screen, and
+    <p class="hint" style="margin-left:4px" data-i18n="ui.set.dev.notif.warn">A notification is not private: its text shows on the lock screen, and
       every app with notification access can read it. That is why this starts
       at “Nothing”.</p>
     <p class="hint warn" id="notifMsg" style="margin-left:4px"></p>
@@ -908,47 +903,47 @@
 
   <div class="settings-cat" data-cat="attention">
   <div class="settings-sec">
-    <p class="sec-label">Local AI attention</p>
+    <p class="sec-label" data-i18n="ui.set.attn.h">Local AI attention</p>
     <div class="segmented" id="attnMode">
-      <button data-v="off" onclick="qrPickMode('off')">Off</button>
-      <button data-v="minimal" class="sel" onclick="qrPickMode('minimal')">Minimal</button>
-      <button data-v="custom" onclick="qrPickMode('custom')">Custom</button>
+      <button data-v="off" data-i18n="ui.set.attn.off" onclick="qrPickMode('off')">Off</button>
+      <button data-v="minimal" class="sel" data-i18n="ui.set.attn.minimal" onclick="qrPickMode('minimal')">Minimal</button>
+      <button data-v="custom" data-i18n="ui.set.attn.custom" onclick="qrPickMode('custom')">Custom</button>
     </div>
-    <p class="hint" style="margin-left:4px">Notices questions, replies and messages addressed to you. All of it runs on
+    <p class="hint" style="margin-left:4px" data-i18n="ui.set.attn.hint">Notices questions, replies and messages addressed to you. All of it runs on
       this device — nothing is sent to an external AI.</p>
   </div>
   <div class="settings-sec">
-    <p class="sec-label">Your names</p>
+    <p class="sec-label" data-i18n="ui.set.attn.names">Your names</p>
     <div class="list"><div class="list-row">
-      <span class="lr-label">Aliases<span class="lr-sub"> comma separated</span></span>
+      <span class="lr-label" data-i18n="ui.set.attn.aliases">Aliases<span class="lr-sub" data-i18n="ui.set.attn.aliases.sub"> comma separated</span></span>
       <input type="text" id="attnAliases" placeholder="Глеб, gleb">
     </div></div>
-    <p class="hint" style="margin-left:4px">Used to spot when someone writes to you by name. Explicit, because guessing name forms fires on ordinary words.</p>
+    <p class="hint" style="margin-left:4px" data-i18n="ui.set.attn.names.hint">Used to spot when someone writes to you by name. Explicit, because guessing name forms fires on ordinary words.</p>
   </div>
   <div class="settings-sec">
-    <p class="sec-label">What you care about</p>
+    <p class="sec-label" data-i18n="ui.set.attn.watched">What you care about</p>
     <textarea id="attnWatched" rows="4" placeholder="mesh-сети и автономная связь&#10;open-source CAD&#10;предложения о сотрудничестве"></textarea>
-    <p class="hint" style="margin-left:4px">One per line. Matched as phrases today; a later wave adds cross-language meaning.</p>
+    <p class="hint" style="margin-left:4px" data-i18n="ui.set.attn.watched.hint">One per line. Matched as phrases today; a later wave adds cross-language meaning.</p>
   </div>
   <div class="settings-sec">
-    <p class="sec-label">How often it may interrupt</p>
+    <p class="sec-label" data-i18n="ui.set.attn.budget">How often it may interrupt</p>
     <div class="list">
-      <div class="list-row"><span class="lr-label">Max per day</span>
+      <div class="list-row"><span class="lr-label" data-i18n="ui.set.attn.maxday">Max per day</span>
         <input type="number" id="attnMaxDay" min="0" max="200"></div>
-      <div class="list-row"><span class="lr-label">Min gap<span class="lr-sub"> seconds</span></span>
+      <div class="list-row"><span class="lr-label" data-i18n="ui.set.attn.gap">Min gap<span class="lr-sub" data-i18n="ui.set.attn.gap.sub"> seconds</span></span>
         <input type="number" id="attnGap" min="0" max="86400"></div>
-      <div class="list-row"><span class="lr-label">Quiet hours</span>
+      <div class="list-row"><span class="lr-label" data-i18n="ui.set.attn.quiet">Quiet hours</span>
         <input type="checkbox" id="attnQuiet" style="width:auto"></div>
-      <div class="list-row"><span class="lr-label">From / to<span class="lr-sub"> hour</span></span>
+      <div class="list-row"><span class="lr-label" data-i18n="ui.set.attn.fromto">From / to<span class="lr-sub" data-i18n="ui.set.attn.fromto.sub"> hour</span></span>
         <input type="number" id="attnQuietFrom" min="0" max="23" style="width:70px">
         <input type="number" id="attnQuietTo" min="0" max="23" style="width:70px"></div>
     </div>
-    <p class="hint" style="margin-left:4px">Over-budget signals move to the digest — they are never dropped.</p>
+    <p class="hint" style="margin-left:4px" data-i18n="ui.set.attn.budget.hint">Over-budget signals move to the digest — they are never dropped.</p>
   </div>
   <div class="settings-sec">
     <div class="row">
-      <button class="btn-tinted" onclick="qrSaveSettings()">Save</button>
-      <button class="btn-plain" onclick="qrForget()">Delete what it learned</button>
+      <button class="btn-tinted" data-i18n="ui.set.attn.save" onclick="qrSaveSettings()">Save</button>
+      <button class="btn-plain" data-i18n="ui.set.attn.forget" onclick="qrForget()">Delete what it learned</button>
     </div>
     <p class="hint" id="attnMsg" style="margin-left:4px"></p>
   </div>
@@ -958,30 +953,30 @@
   <div class="settings-sec">
     <div class="list">
       <div class="list-row">
-        <span class="lr-label">Provider</span>
+        <span class="lr-label" data-i18n="ui.set.ai.provider">Provider</span>
         <div class="segmented" id="setProvider">
           <button data-v="anthropic" onclick="pickProvider('anthropic')">Claude</button>
           <button data-v="openai" onclick="pickProvider('openai')">OpenAI</button>
-          <button data-v="openai-compatible" onclick="pickProvider('openai-compatible')">Custom</button>
-          <button data-v="local" onclick="pickProvider('local')">Local</button>
+          <button data-v="openai-compatible" data-i18n="ui.set.ai.provider.custom" onclick="pickProvider('openai-compatible')">Custom</button>
+          <button data-v="local" data-i18n="ui.set.ai.provider.local" onclick="pickProvider('local')">Local</button>
         </div>
       </div>
-      <div class="list-row"><span class="lr-label">Model</span>
+      <div class="list-row"><span class="lr-label" data-i18n="ui.set.ai.model">Model</span>
         <input type="text" id="llmModel" placeholder="e.g. claude-sonnet-5 / llama3.1"></div>
-      <div class="list-row" id="rowBaseURL"><span class="lr-label">Base URL</span>
+      <div class="list-row" id="rowBaseURL"><span class="lr-label" data-i18n="ui.set.ai.baseurl">Base URL</span>
         <input type="text" id="llmBaseURL" placeholder="https://… or http://localhost:11434"></div>
-      <div class="list-row" id="rowKey"><span class="lr-label">API key</span>
-        <input type="password" id="llmKey" placeholder="stored on this device only" autocomplete="off"></div>
+      <div class="list-row" id="rowKey"><span class="lr-label" data-i18n="ui.set.ai.key">API key</span>
+        <input type="password" id="llmKey" data-i18n-ph="ui.set.ai.key.ph" placeholder="stored on this device only" autocomplete="off"></div>
     </div>
     <p class="hint" id="llmMsg" style="margin-left:4px"></p>
     <div class="row">
-      <button class="btn-tinted" onclick="saveLLM()">Save</button>
-      <button class="btn-plain" onclick="testLLM()">Test connection</button>
+      <button class="btn-tinted" data-i18n="ui.set.ai.save" onclick="saveLLM()">Save</button>
+      <button class="btn-plain" data-i18n="ui.set.ai.test" onclick="testLLM()">Test connection</button>
     </div>
-    <p class="hint" style="margin-left:4px">Your key never leaves this device except to reach the provider you choose. Local models need no key.</p>
+    <p class="hint" style="margin-left:4px" data-i18n="ui.set.ai.hint">Your key never leaves this device except to reach the provider you choose. Local models need no key.</p>
   </div>
   </div>
-  <div class="row" style="justify-content:flex-end"><button class="btn-filled" onclick="dlgSettings.close()">Done</button></div>
+  <div class="row" style="justify-content:flex-end"><button class="btn-filled" data-i18n="ui.set.done" onclick="dlgSettings.close()">Done</button></div>
 </dialog>
 
 <!-- SD-0. Three sentences, because each is something a person could
@@ -997,39 +992,39 @@
   <p class="hint warn" id="delSpaceMsg" style="margin-left:4px"></p>
   <div class="row">
     <span style="flex:1"></span>
-    <button class="btn-plain" onclick="dlgDeleteSpace.close()">Cancel</button>
-    <button class="btn-filled danger" id="delSpaceGo" onclick="confirmDeleteSpace()">Delete here</button>
+    <button class="btn-plain" data-i18n="ui.delspace.cancel" onclick="dlgDeleteSpace.close()">Cancel</button>
+    <button class="btn-filled danger" id="delSpaceGo" data-i18n="ui.delspace.go" onclick="confirmDeleteSpace()">Delete here</button>
   </div>
 </dialog>
 
 <dialog id="dlgCustomize" class="sheet">
-  <h3>Customize this space</h3>
-  <p class="hint" id="custPreview" style="margin-left:4px">A signed appearance for everyone here.</p>
+  <h3 data-i18n="ui.cust.title">Customize this space</h3>
+  <p class="hint" data-i18n="ui.cust.preview" id="custPreview" style="margin-left:4px">A signed appearance for everyone here.</p>
   <div class="list">
-    <div class="list-row"><span class="lr-label">Accent</span>
+    <div class="list-row"><span class="lr-label" data-i18n="ui.cust.accent">Accent</span>
       <input type="color" id="custAccent" style="width:52px;height:34px;padding:0;border:0;background:none"></div>
-    <div class="list-row"><span class="lr-label">Background tint</span>
+    <div class="list-row"><span class="lr-label" data-i18n="ui.cust.tint">Background tint</span>
       <input type="color" id="custTint" style="width:52px;height:34px;padding:0;border:0;background:none"></div>
-    <div class="list-row"><span class="lr-label">Dim<span class="lr-sub"> · how dark the canvas</span></span>
+    <div class="list-row"><span class="lr-label" data-i18n="ui.cust.dim">Dim<span class="lr-sub" data-i18n="ui.cust.dim.sub"> · how dark the canvas</span></span>
       <input type="range" id="custDim" min="0" max="1000" step="20" style="flex:1"></div>
-    <div class="list-row"><span class="lr-label">Motion</span>
+    <div class="list-row"><span class="lr-label" data-i18n="ui.cust.motion">Motion</span>
       <div class="segmented" id="custMotion">
-        <button data-v="still" onclick="pickSeg('custMotion','still')">Still</button>
-        <button data-v="quiet" onclick="pickSeg('custMotion','quiet')">Quiet</button>
-        <button data-v="lively" onclick="pickSeg('custMotion','lively')">Lively</button>
+        <button data-v="still" onclick="pickSeg('custMotion','still')" data-i18n="ui.cust.motion.still">Still</button>
+        <button data-v="quiet" onclick="pickSeg('custMotion','quiet')" data-i18n="ui.cust.motion.quiet">Quiet</button>
+        <button data-v="lively" onclick="pickSeg('custMotion','lively')" data-i18n="ui.cust.motion.lively">Lively</button>
       </div></div>
-    <div class="list-row"><span class="lr-label">Density</span>
+    <div class="list-row"><span class="lr-label" data-i18n="ui.cust.density">Density</span>
       <div class="segmented" id="custDensity">
-        <button data-v="calm" onclick="pickSeg('custDensity','calm')">Calm</button>
-        <button data-v="dense" onclick="pickSeg('custDensity','dense')">Dense</button>
+        <button data-v="calm" onclick="pickSeg('custDensity','calm')" data-i18n="ui.cust.density.calm">Calm</button>
+        <button data-v="dense" onclick="pickSeg('custDensity','dense')" data-i18n="ui.cust.density.dense">Dense</button>
       </div></div>
   </div>
   <p class="hint warn" id="custMsg" style="margin-left:4px"></p>
   <div class="row">
-    <button class="btn-plain" id="genLookBtn" onclick="openGenerate()">✨ Generate a look</button>
+    <button class="btn-plain" id="genLookBtn" onclick="openGenerate()" data-i18n="ui.cust.genlook">✨ Generate a look</button>
     <span style="flex:1"></span>
-    <button class="btn-plain" onclick="dlgCustomize.close()">Cancel</button>
-    <button class="btn-filled" onclick="applyCustomize()">Apply</button>
+    <button class="btn-plain" onclick="dlgCustomize.close()" data-i18n="ui.cust.cancel">Cancel</button>
+    <button class="btn-filled" onclick="applyCustomize()" data-i18n="ui.cust.apply">Apply</button>
   </div>
 </dialog>
 
@@ -1038,19 +1033,19 @@
      draft disappears. Its own cancel button is the way out. -->
 <dialog id="dlgComposer" class="sheet composer-sheet" data-keep-open>
   <div class="comp-head">
-    <h3 style="margin:0">Compose a post</h3>
+    <h3 style="margin:0" data-i18n="ui.comp.title">Compose a post</h3>
     <select id="compKind" class="comp-kind" onchange="onKindChange()">
-      <option value="article">article</option><option value="note">note</option>
-      <option value="release">release</option><option value="log">log</option>
+      <option value="article" data-i18n="ui.comp.kind.article">article</option><option value="note" data-i18n="ui.comp.kind.note">note</option>
+      <option value="release" data-i18n="ui.comp.kind.release">release</option><option value="log" data-i18n="ui.comp.kind.log">log</option>
       <!-- Named for what it IS to a reader, not for the protocol object it
            produces. The one-press way to make one is "+ Add space" inside a
            directory; this stays for anybody composing by hand. -->
-      <option value="space">a link to another place</option>
+      <option value="space" data-i18n="ui.comp.kind.space">a link to another place</option>
     </select>
   </div>
   <div id="compCover"></div>
-  <input id="compTitle" class="comp-title" placeholder="Title" maxlength="200">
-  <input id="compSummary" class="comp-summary" placeholder="A short summary (optional)" maxlength="1000">
+  <input id="compTitle" data-i18n-ph="ui.comp.ph.title" class="comp-title" placeholder="Title" maxlength="200">
+  <input id="compSummary" data-i18n-ph="ui.comp.ph.summary" class="comp-summary" placeholder="A short summary (optional)" maxlength="1000">
   <!-- The body and the tools, side by side. The tools used to sit BELOW
        everything, which meant that adding a block to a long post was a
        scroll to the bottom, a press, and a scroll back to where the block
@@ -1063,19 +1058,19 @@
     <aside class="comp-rail" id="compRail">
       <button type="button" class="comp-rail-toggle" id="compRailToggle"
               onclick="toggleComposerRail()" aria-expanded="true"
-              aria-controls="compChips">Blocks</button>
+              aria-controls="compChips" data-i18n="ui.comp.rail.blocks">Blocks</button>
       <div class="comp-chips" id="compChips"></div>
     </aside>
   </div>
   <div class="row comp-ai">
-    <input id="compAIPrompt" placeholder="✨ describe the post — AI drafts, you publish" style="flex:1">
-    <button class="btn-plain" onclick="aiDraftPost()">Draft</button>
+    <input id="compAIPrompt" data-i18n-ph="ui.comp.ph.ai" placeholder="✨ describe the post — AI drafts, you publish" style="flex:1">
+    <button class="btn-plain" onclick="aiDraftPost()" data-i18n="ui.comp.draft">Draft</button>
   </div>
   <p class="hint" id="compMsg"></p>
   <div class="row" style="justify-content:flex-end">
-    <button class="btn-plain" onclick="saveComposerDraft()">Save draft</button>
-    <button class="btn-plain" onclick="closeComposer()">Close</button>
-    <button class="btn-filled" onclick="publishComposer()">Publish</button>
+    <button class="btn-plain" onclick="saveComposerDraft()" data-i18n="ui.comp.savedraft">Save draft</button>
+    <button class="btn-plain" onclick="closeComposer()" data-i18n="ui.comp.close">Close</button>
+    <button class="btn-filled" onclick="publishComposer()" data-i18n="ui.comp.publish">Publish</button>
   </div>
 </dialog>
 
@@ -1090,30 +1085,30 @@
   </div>
   <p class="hint warn" id="appBlockMsg" style="margin-left:2px"></p>
   <div class="row" style="justify-content:flex-end">
-    <button class="btn-plain" onclick="dlgAppBlock.close()">Cancel</button>
-    <button class="btn-filled" id="appBlockAdd" onclick="confirmAppBlock()">Add</button>
+    <button class="btn-plain" onclick="dlgAppBlock.close()" data-i18n="ui.appblk.cancel">Cancel</button>
+    <button class="btn-filled" id="appBlockAdd" onclick="confirmAppBlock()" data-i18n="ui.appblk.add">Add</button>
   </div>
 </dialog>
 
 <dialog id="dlgGenerate" class="sheet">
-  <h3>✨ Generate a look</h3>
+  <h3 data-i18n="ui.gen.title">✨ Generate a look</h3>
   <p class="hint" id="genProviderNote" style="margin-left:4px"></p>
-  <textarea id="genPrompt" rows="3" placeholder="night listening room, soft violet light, calm"></textarea>
+  <textarea id="genPrompt" data-i18n-ph="ui.gen.ph.prompt" rows="3" placeholder="night listening room, soft violet light, calm"></textarea>
   <p class="hint warn" id="genMsg" style="margin-left:4px"></p>
   <div class="row">
     <button class="btn-filled" id="genRunBtn" onclick="doGenerate()">Generate</button>
     <span style="flex:1"></span>
-    <button class="btn-plain" onclick="closeGenerate()">Cancel</button>
-    <button class="btn-tinted" id="genAcceptBtn" style="display:none" onclick="acceptGenerate()">Use this look</button>
+    <button class="btn-plain" onclick="closeGenerate()" data-i18n="ui.gen.cancel">Cancel</button>
+    <button class="btn-tinted" id="genAcceptBtn" style="display:none" onclick="acceptGenerate()" data-i18n="ui.gen.accept">Use this look</button>
   </div>
 </dialog>
 
 <dialog id="dlgMe">
-  <h3>This device</h3>
+  <h3 data-i18n="ui.me.title">This device</h3>
   <div id="meGlyph" style="text-align:center;margin:8px 0"></div>
   <p class="out" id="meName" style="text-align:center;color:var(--fg);font-size:16px"></p>
   <p class="hint" id="meDeviceName" style="text-align:center"></p>
-  <p class="hint" style="margin-top:12px">Verification code — read it out loud to confirm the right device:</p>
+  <p class="hint" data-i18n="ui.me.verify" style="margin-top:12px">Verification code — read it out loud to confirm the right device:</p>
   <p class="verify-phrase" id="meVerify" style="text-align:center;color:var(--accent)"></p>
   <!-- A quick link is the only sharing path here that touches a relay, so it
        says so, right where the choice is made. -->
@@ -1123,51 +1118,51 @@
          it is why invite-from-inside is named right here. Everything else
          this block used to explain — what an unnamed place ends up called —
          the app shows the moment it happens. -->
-    <p class="hint">Five words someone can read out loud.
-      <b>They open a new place</b> — never a room you already have; for those,
-      use invite from inside it.</p>
+    <p class="hint" data-i18n="ui.me.ql.hint1">Five words someone can read out loud.
+      <b data-i18n="ui.me.ql.hint2">They open a new place</b><span data-i18n="ui.me.ql.hint3"> — never a room you already have; for those,
+      use invite from inside it.</span></p>
     <!-- Two doors, and the explanation under each says DEVICES, because a
          verified person is not something this protocol can prove. Promising
          "one person" would promise a thing no signature backs. -->
     <div class="segmented" id="qlKind">
-      <button data-v="just-us" class="sel" onclick="qlSetKind('just-us')">Just us</button>
-      <button data-v="a-few" onclick="qlSetKind('a-few')">A few people</button>
+      <button data-v="just-us" class="sel" onclick="qlSetKind('just-us')" data-i18n="ui.me.ql.justus">Just us</button>
+      <button data-v="a-few" onclick="qlSetKind('a-few')" data-i18n="ui.me.ql.afew">A few people</button>
     </div>
     <p class="hint" id="qlKindNote">One device can enter, then the link closes.</p>
     <div class="list" id="qlGroupOpts" hidden>
       <div class="list-row">
-        <span class="lr-label">How many</span>
+        <span class="lr-label" data-i18n="ui.me.ql.howmany">How many</span>
         <select id="qlMaxUses">
-          <option value="2">2 devices</option>
-          <option value="3" selected>3 devices</option>
-          <option value="5">5 devices</option>
-          <option value="10">10 devices</option>
+          <option value="2" data-i18n="ui.me.ql.dev2">2 devices</option>
+          <option value="3" selected data-i18n="ui.me.ql.dev3">3 devices</option>
+          <option value="5" data-i18n="ui.me.ql.dev5">5 devices</option>
+          <option value="10" data-i18n="ui.me.ql.dev10">10 devices</option>
         </select>
       </div>
       <div class="list-row">
-        <span class="lr-label">How long the words last</span>
+        <span class="lr-label" data-i18n="ui.me.ql.howlong">How long the words last</span>
         <select id="qlTtl">
-          <option value="1">1 hour</option>
-          <option value="24" selected>24 hours</option>
-          <option value="168">a week</option>
+          <option value="1" data-i18n="ui.me.ql.ttl1">1 hour</option>
+          <option value="24" selected data-i18n="ui.me.ql.ttl24">24 hours</option>
+          <option value="168" data-i18n="ui.me.ql.ttl168">a week</option>
         </select>
       </div>
       <div class="list-row">
-        <span class="lr-label">Who decides</span>
+        <span class="lr-label" data-i18n="ui.me.ql.whodecides">Who decides</span>
         <div class="segmented" id="qlApproval">
-          <button data-v="" class="sel" onclick="qlSetApproval('')">They walk straight in</button>
-          <button data-v="host" onclick="qlSetApproval('host')">Let them in myself</button>
+          <button data-v="" class="sel" onclick="qlSetApproval('')" data-i18n="ui.me.ql.open">They walk straight in</button>
+          <button data-v="host" onclick="qlSetApproval('host')" data-i18n="ui.me.ql.host">Let them in myself</button>
         </div>
       </div>
     </div>
     <div class="row ql-make">
-      <input type="text" id="qlTitle" placeholder="name (optional)">
-      <button onclick="mintQuickLink()" id="qlMintBtn">Make a quick link</button>
+      <input type="text" id="qlTitle" data-i18n-ph="ui.me.ql.ph.name" placeholder="name (optional)">
+      <button onclick="mintQuickLink()" data-i18n="ui.me.ql.mint" id="qlMintBtn">Make a quick link</button>
     </div>
     <div id="qlOut" style="display:none">
       <p class="ql-phrase" id="qlPhrase"></p>
       <p class="out" id="qlLink"></p>
-      <div class="row"><button onclick="qlCopy()">Copy link</button></div>
+      <div class="row"><button onclick="qlCopy()" data-i18n="ui.me.ql.copy">Copy link</button></div>
       <p class="hint" id="qlNote"></p>
       <p class="hint" id="qlExpiry"></p>
     </div>
@@ -1178,113 +1173,113 @@
        beside your identity, not buried in a settings tab. -->
   <div class="ql-block" id="backupBlock">
     <p class="hint" id="backupState"></p>
-    <p class="hint">A backup holds everything: identity, spaces, keys, history.
+    <p class="hint" data-i18n="ui.me.backup.what">A backup holds everything: identity, spaces, keys, history.
       The file gets its own passphrase.</p>
-    <input id="backupPass" type="password" placeholder="passphrase for the backup file" autocomplete="new-password">
-    <div class="row"><button onclick="saveBackup()" id="backupBtn">Save a backup</button></div>
-    <p class="hint">Restoring is deliberate and separate: a running node holds
+    <input id="backupPass" data-i18n-ph="ui.me.backup.ph.pass" type="password" placeholder="passphrase for the backup file" autocomplete="new-password">
+    <div class="row"><button onclick="saveBackup()" data-i18n="ui.me.backup.save" id="backupBtn">Save a backup</button></div>
+    <p class="hint" data-i18n="ui.me.backup.restore">Restoring is deliberate and separate: a running node holds
       its own directory, so it cannot restore into itself.
       <span class="mono">terminal restore --in FILE --data NEW-DIR</span></p>
   </div>
   <div class="row" style="margin-top:10px">
-    <button onclick="renameSelf()">Change name</button>
-    <button onclick="document.getElementById('meTech').style.display='block'">Technical details</button>
-    <button onclick="dlgMe.close()">Close</button>
+    <button onclick="renameSelf()" data-i18n="ui.me.rename">Change name</button>
+    <button onclick="document.getElementById('meTech').style.display='block'" data-i18n="ui.me.tech">Technical details</button>
+    <button onclick="dlgMe.close()" data-i18n="ui.me.close">Close</button>
   </div>
   <div id="meTech" style="display:none;margin-top:12px">
-    <p class="hint">device id (share with a space owner to be invited):</p>
+    <p class="hint" data-i18n="ui.me.deviceid">device id (share with a space owner to be invited):</p>
     <p class="out" id="meDevice"></p>
     <p class="out" id="meXpub"></p>
-    <p class="hint">fingerprint: <span id="meFp" class="mono"></span></p>
+    <p class="hint" data-i18n="ui.me.fingerprint">fingerprint: <span id="meFp" class="mono"></span></p>
   </div>
 </dialog>
 
 <dialog id="dlgRelayTrust">
-  <h3>Trust this relay identity?</h3>
-  <p class="hint">A custom relay is pinned to its key on first use. Compare
-  this fingerprint with the operator over some other channel. After you
-  confirm, a different key at this address is a hard failure.</p>
+  <h3 data-i18n="ui.relay.title">Trust this relay identity?</h3>
+  <p class="hint" data-i18n="ui.relay.hint">A custom relay is pinned to its key on
+  first use. Compare this fingerprint with the operator over another channel.
+  After you confirm, a different key at this address is a hard failure.</p>
   <p class="hint" id="relayTrustAddr" style="margin-left:4px"></p>
   <pre id="relayTrustPin" class="pin-block"></pre>
   <div class="row">
-    <button class="btn-tinted" onclick="confirmRelayTrust()">It matches — pin it</button>
-    <button onclick="dlgRelayTrust.close()">Cancel</button>
+    <button class="btn-tinted" onclick="confirmRelayTrust()" data-i18n="ui.relay.pin">It matches — pin it</button>
+    <button onclick="dlgRelayTrust.close()" data-i18n="ui.relay.cancel">Cancel</button>
   </div>
   <p class="hint" id="relayTrustMsg" style="margin-left:4px"></p>
 </dialog>
 
 <dialog id="dlgLan">
-  <h3>LAN peer</h3>
-  <p class="hint">Nodes on one network usually find each other by themselves.
+  <h3 data-i18n="ui.lan.title">LAN peer</h3>
+  <p class="hint" data-i18n="ui.lan.hint">Nodes on one network usually find each other by themselves.
   Where that is filtered, connect directly — the peer's port is shown in their
   header.</p>
   <input id="lanAddr" placeholder="peer address, e.g. 127.0.0.1:61898 or 192.168.1.7:52011">
-  <div class="row"><button onclick="lanConnect()">connect</button>
-  <button onclick="dlgLan.close()">close</button></div>
+  <div class="row"><button onclick="lanConnect()" data-i18n="ui.lan.connect">connect</button>
+  <button onclick="dlgLan.close()" data-i18n="ui.lan.close">close</button></div>
   <p class="hint" id="lanInfo"></p>
 </dialog>
 
 
 <dialog id="dlgRadioMeet" class="sheet">
-  <h3>meet over the radio</h3>
+  <h3 data-i18n="ui.radio.title">meet over the radio</h3>
   <p class="hint" id="rmIntro"></p>
   <div class="row">
-    <button onclick="announceOnRadio()">say who I am</button>
-    <button onclick="refreshRadioMeet()">refresh</button>
-    <button onclick="dlgRadioMeet.close()">close</button>
+    <button onclick="announceOnRadio()" data-i18n="ui.radio.announce">say who I am</button>
+    <button onclick="refreshRadioMeet()" data-i18n="ui.radio.refresh">refresh</button>
+    <button onclick="dlgRadioMeet.close()" data-i18n="ui.radio.close">close</button>
   </div>
   <p class="hint" id="rmInfo"></p>
   <div id="rmBody"></div>
 </dialog>
 
 <dialog id="dlgInvite">
-  <h3>invite to <span id="invSpace"></span></h3>
-  <input id="invDevice" placeholder="peer device id (hex)">
-  <input id="invXpub" placeholder="peer device xpub (hex)">
-  <div class="row"><button onclick="mintInvite()">mint invite</button>
-  <button onclick="dlgInvite.close()">close</button></div>
-  <p class="hint">send the string below to the peer over any channel, or let them scan the QR:</p>
+  <h3 data-i18n="ui.inv.title">invite to <span id="invSpace"></span></h3>
+  <input id="invDevice" data-i18n-ph="ui.inv.ph.device" placeholder="peer device id (hex)">
+  <input id="invXpub" data-i18n-ph="ui.inv.ph.xpub" placeholder="peer device xpub (hex)">
+  <div class="row"><button onclick="mintInvite()" data-i18n="ui.inv.mint">mint invite</button>
+  <button onclick="dlgInvite.close()" data-i18n="ui.inv.close">close</button></div>
+  <p class="hint" data-i18n="ui.inv.hint">send the string below to the peer over any channel, or let them scan the QR:</p>
   <p class="out" id="invOut"></p>
   <div id="qrBox"></div>
 </dialog>
 
 <dialog id="dlgResPalette" class="sheet">
-  <h3>✧ Reaction palette</h3>
-  <p class="hint">Up to six meanings this space speaks. Key · label · glyph.</p>
+  <h3 data-i18n="ui.respal.title">✧ Reaction palette</h3>
+  <p class="hint" data-i18n="ui.respal.hint">Up to six meanings this space speaks. Key · label · glyph.</p>
   <div id="resPalSlots"></div>
-  <label class="hint">default (quick tap)
-    <input id="resPalDefault" placeholder="resonates"></label>
+  <label class="hint" data-i18n="ui.respal.default">default (quick tap)
+    <input id="resPalDefault" data-i18n-ph="ui.respal.ph.default" placeholder="resonates"></label>
   <div class="row">
-    <label class="ritual"><input type="checkbox" id="resPalUnicode"> allow any emoji</label>
-    <label class="ritual"><input type="checkbox" id="resPalCounts"> show counts</label>
-    <label class="ritual"><input type="checkbox" id="resPalEffects"> surface effects</label>
+    <label class="ritual" data-i18n="ui.respal.unicode"><input type="checkbox" id="resPalUnicode"> allow any emoji</label>
+    <label class="ritual" data-i18n="ui.respal.counts"><input type="checkbox" id="resPalCounts"> show counts</label>
+    <label class="ritual" data-i18n="ui.respal.effects"><input type="checkbox" id="resPalEffects"> surface effects</label>
   </div>
   <div class="row">
-    <button class="btn-tinted" onclick="saveResPalette()">Save</button>
-    <button class="btn-plain" onclick="dlgResPalette.close()">Cancel</button>
+    <button class="btn-tinted" onclick="saveResPalette()" data-i18n="ui.respal.save">Save</button>
+    <button class="btn-plain" onclick="dlgResPalette.close()" data-i18n="ui.respal.cancel">Cancel</button>
   </div>
   <p class="out" id="resPalMsg"></p>
 </dialog>
 
 <dialog id="dlgListenRoom" class="sheet">
-  <h3>🎧 Add a listening room</h3>
-  <p class="hint">One track, one shared moment. The host presses play; everyone hears the same second.</p>
-  <input id="listenTitle" placeholder="Title — e.g. EP demo, first listen">
+  <h3 data-i18n="ui.listen.title">🎧 Add a listening room</h3>
+  <p class="hint" data-i18n="ui.listen.hint">One track, one shared moment. The host presses play; everyone hears the same second.</p>
+  <input id="listenTitle" data-i18n-ph="ui.listen.ph.title" placeholder="Title — e.g. EP demo, first listen">
   <div id="listenDrop"></div>
   <div class="row">
-    <button class="btn-tinted" onclick="confirmListenRoom()">Add</button>
-    <button class="btn-plain" onclick="dlgListenRoom.close()">Cancel</button>
+    <button class="btn-tinted" onclick="confirmListenRoom()" data-i18n="ui.listen.add">Add</button>
+    <button class="btn-plain" onclick="dlgListenRoom.close()" data-i18n="ui.listen.cancel">Cancel</button>
   </div>
   <p class="out" id="listenMsg"></p>
 </dialog>
 
 <dialog id="dlgKeep">
-  <h3>✦ Keep in space</h3>
-  <p class="hint">Kept moments live on the Shelf — the space's shared memory.</p>
-  <input id="keepNote" maxlength="500" placeholder="a note for the shelf (optional)">
+  <h3 data-i18n="ui.keep.title">✦ Keep in space</h3>
+  <p class="hint" data-i18n="ui.keep.hint">Kept moments live on the Shelf — the space's shared memory.</p>
+  <input id="keepNote" data-i18n-ph="ui.keep.ph.note" maxlength="500" placeholder="a note for the shelf (optional)">
   <div class="row">
-    <button class="btn-tinted" onclick="confirmKeep()">Keep</button>
-    <button onclick="dlgKeep.close()">cancel</button>
+    <button class="btn-tinted" onclick="confirmKeep()" data-i18n="ui.keep.keep">Keep</button>
+    <button onclick="dlgKeep.close()" data-i18n="ui.keep.cancel">cancel</button>
   </div>
   <p class="out" id="keepMsg"></p>
 </dialog>
