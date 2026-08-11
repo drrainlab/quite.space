@@ -487,15 +487,421 @@ const I18N = {
     'action.open': 'Open',
     'action.retry': 'Retry',
     'time.now': 'just now',
+    'set.language': 'Language',
+    'set.theme': 'Theme',
+  },
+
+  // Russian. Written to the same rule the EN catalog states at the top of
+  // this file: no sentence is assembled from independent keys, so the DOM
+  // never bakes in one language's word order. Where English hedges — a
+  // relay ACCEPTED something rather than delivered it, a peer's name is a
+  // claim rather than a fact — the Russian hedges in the same place.
+  ru: {
+    'radio.attach.ask': 'Фраза, общая для вашего сегмента.\n\nКаждое радио в сегменте выводит один и тот же ключ ровно из этих слов, поэтому она должна быть одинаковой везде — включая узел, запущенный с --mesh-seed. Не меньше 16 символов.',
+    'radio.detach': 'отсоединить это радио',
+    'radio.detach.confirm': 'Отложить это радио и забыть о нём? Ничего не теряется — сообщения продолжают ходить через интернет и локальную сеть, а подключить его снова можно когда захотите.',
+    'radio.meet.intro': 'Два радио и больше никого. Когда вы говорите, кто вы, имя этого устройства и его публичный ключ уходят в эфир — их слышат все, кто в радиусе; именно это нужно человеку, чтобы запечатать приглашение вам. Пока вы не ответите, вы никуда не вошли.',
+    'radio.meet.establish': 'проверить, слышат ли вас',
+    'radio.meet.checking': 'проверяем…',
+    'radio.meet.working': 'уходит в эфир…',
+    'radio.meet.reaching': 'Пробуем дозваться по радио…',
+    'radio.meet.probe_sent': 'Спросили, слышат ли вас — один кадр, так что ничего не потрачено. Ответ появится в их строке; нажмите ещё раз, когда там будет сказано, что связь есть.',
+    'radio.meet.offer_again': 'предложить снова',
+    'radio.meet.link_unknown': 'Ещё не спрашивали, слышат ли вас.',
+    'radio.meet.granting': 'Они приняли. Путь внутрь уходит в эфир — на LoRa это займёт минуту.',
+    'radio.meet.line_ready': 'Линия здесь.',
+    'radio.meet.open_line': 'открыть линию',
+    'radio.meet.arrived_title': 'линия здесь',
+    'radio.meet.arrived': ({ who }) => `${who} — доступ открыт, и пространство пришло на это устройство. Больше ничего не нужно.`,
+    'radio.meet.offers': 'ждут вашего ответа',
+    'radio.meet.offers_hint': 'Запечатано для этого устройства, так что никто другой в радиусе его не откроет. Вы входите только когда принимаете — до этого момента это вам ничего не стоило.',
+    'radio.meet.offer': ({ from, space }) => `${from} предлагает путь в «${space}»`,
+    'radio.meet.accept': 'принять',
+    'radio.meet.heard': 'слышно в этом сегменте',
+    'radio.meet.heard_hint': 'Всё, что здесь есть, — это то, что радио сказало о себе само. Приглашение запечатывается на объявленный им ключ, поэтому тот, кто назвался чужим именем, получит приглашение, которое не сможет открыть.',
+    'radio.meet.nobody': 'Пока никто не объявился. На своей стороне человек нажимает «сказать, кто я», а LoRa медленная — дайте ей несколько секунд.',
+    'radio.meet.unnamed': 'радио без имени',
+    'radio.meet.invite_into': ({ space }) => `пригласить в «${space}»`,
+    'radio.meet.invite_here': 'пригласить в это пространство',
+    'radio.meet.start_line': ({ who }) => `начать линию — ${who}`,
+    'radio.meet.also_into': ({ space }) => `или пригласить в «${space}»`,
+    'radio.meet.also_here': 'или пригласить в пространство, которое открыто',
+    'radio.meet.public_space': 'Это пространство публичное, так что запечатывать для одного устройства нечего — его прочитает любой, у кого есть адрес. Чтобы позвать кого-то по радио, откройте обычное пространство.',
+    'radio.meet.offering_short': 'уходит в эфир…',
+    'radio.meet.open_a_space': 'Сначала откройте пространство, в которое хотите позвать.',
+    'radio.meet.announcing': 'Уходит в эфир. LoRa медленная — дайте ей полминуты и следите за «в эфире» ниже: там будет видно движение. Все, кто в радиусе, узнают, что это устройство здесь.',
+    'radio.meet.air': 'в эфире',
+    'radio.meet.messages': 'сообщения',
+    'radio.meet.frames': 'кадры',
+    'radio.meet.in_flight': ({ done, all }) => `${done} из ${all} ${pluralRu(done, 'прошёл', 'прошли', 'прошло')}, один ещё в пути`,
+    'radio.meet.idle': ({ done }) => `${done} ${pluralRu(done, 'прошёл', 'прошли', 'прошло')}, в пути ничего`,
+    'radio.meet.gave_up': ({ n }) => `${n} ${pluralRu(n, 'не дошёл', 'не дошли', 'не дошло')} — другое радио перестало отвечать.`,
+    'radio.meet.no_radio': 'Радио не подключено, так что в эфир ничего не уйдёт.',
+    'radio.meet.no_seed': 'Это радио подключено без seed сегмента, поэтому оно не может нести знакомство. Перезапустите с --mesh-seed.',
+    'radio.meet.offering': 'Предложение ушло по радио. Пока не ответят, никто не участник и ни один ключ никуда не двинулся — следите за «в эфире» ниже.',
+    'radio.meet.joined': 'Вошли.',
+    'radio.meet.unheard': 'Отправка по радио не началась. Попробуйте снова, когда радио будет подключено.',
+    'radio.meet.unconfirmed': 'Подтвердить доставку не удалось. Возможно, приглашение уже дошло — повтор не создаст вторую линию.',
+    'radio.meet.delivered': 'Они услышали. Ждём ответа.',
+    'radio.meet.link_up': 'Радиосвязь установлена.',
+    'radio.meet.link_direct': 'Прямая радиосвязь.',
+    'radio.meet.link_probing': 'Спрашиваем, слышат ли вас…',
+    'radio.meet.link_none': 'Никто не ответил. Их радио может быть выключено или вне радиуса.',
+    'radio.meet.link_gone': 'Они были здесь, и радио замолчало.',
+    'radio.meet.member_unaware': 'Они попросились внутрь, и радио замолчало раньше, чем ответ до них дошёл. Они уже участник здесь — их устройство просто пока об этом не знает. Отправьте ещё раз, когда они вернутся.',
+    'radio.meet.answered': 'Ваш ответ в эфире. Пространство появится здесь, когда его откроют, — не раньше.',
+    'radio.meet.failed': ({ why }) => `Не вышло: ${why}`,
+    'radio.meet.unavailable': ({ why }) => `Не удаётся прочитать сегмент: ${why}`,
+    'spaces.new': '+ пространство',
+    'spaces.join': 'войти',
+    'spaces.me': 'я',
+    'spaces.owner': 'владелец',
+    'spaces.empty.title': 'Пока здесь тихо.',
+    'spaces.empty.body': 'Создайте своё пространство или войдите по пропуску.',
+    'spaces.activity.events': ({ count }) => `${count} ${pluralRu(count, 'момент', 'момента', 'моментов')}`,
+    'spaces.unread': ({ count }) => `${count} ${pluralRu(count, 'новое', 'новых', 'новых')}`,
+    'nav.search': 'Поиск',
+    'nav.search.clear': 'очистить поиск',
+    'nav.sec.pinned': 'закреплённое',
+    'nav.sec.groups': 'группы',
+    'nav.sec.spaces': 'пространства',
+    'nav.sec.people': 'люди',
+    'nav.sec.catalogs': 'каталоги',
+    'nav.sec.recent': 'недавние',
+    'nav.sec.ai': 'AI',
+    'nav.more': 'ещё',
+    'nav.pin': 'Закрепить',
+    'nav.unpin': 'Открепить',
+    'nav.add_to': ({ title }) => `Добавить в ${title}`,
+    'nav.remove_from_group': 'Убрать из этой группы',
+    'nav.remove': 'убрать',
+    'nav.move_up': 'Переместить выше',
+    'nav.move_down': 'Переместить ниже',
+    'nav.move_top': 'Переместить в начало',
+    'nav.group.new': 'Новая группа…',
+    'nav.group.name': 'Назовите эту группу',
+    'nav.group.rename': 'Переименовать…',
+    'nav.group.delete': 'Удалить группу',
+    'nav.group.delete_confirm': ({ title }) =>
+      `Удалить группу «${title}»? Пространства из неё останутся ровно там, где они есть.`,
+    'nav.gone': 'больше не в этом пространстве',
+    'nav.pinned.empty': 'Закрепите то, к чему возвращаетесь.',
+    'nav.groups.empty': 'Соберите в группу то, что связано между собой.',
+    'nav.people.empty': 'Здесь появляется человек, с которым у вас пространство ровно на двоих.',
+    'nav.catalogs.empty': 'Места, которые перечисляют другие места, появятся здесь, когда вы сохраните первое.',
+    'nav.search.none': 'Ничего с таким именем. Навигатор ищет по именам, а не по тому, что было сказано внутри.',
+    'cat.home': 'Открытия',
+    'cat.loading': 'Ищем…',
+    'cat.looking': 'Ищем…',
+    'cat.empty': 'Здесь пока ничего нет.',
+    'cat.untitled': 'без названия',
+    'cat.silent': 'Оттуда ничего не пришло.',
+    'cat.featured_silent': 'Не удалось дотянуться до избранного каталога.',
+    'cat.try_again': 'Попробовать снова',
+    'cat.yours_still_here': 'Каталоги, которые вы добавили, по-прежнему доступны под ⋯',
+    'cat.home_empty': 'Сюда пока ничего не добавили.',
+    'cat.add_directory': 'Добавить каталог',
+    'cat.not_a_directory': 'Эта ссылка ведёт в обычное место, а не в список мест.',
+    'cat.add_discover': 'Добавить в «Открытия»',
+    'cat.added_discover': 'Добавлено в «Открытия» ✓',
+    'cat.remove_discover': 'Убрать из «Открытий»',
+    'cat.official': 'Избранное',
+    'cat.on': 'Вкл',
+    'cat.off': 'Выкл',
+    'cat.copy_link': 'Скопировать ссылку',
+    'cat.copied': 'Скопировано',
+    'cat.leaf.frozen': 'больше не публикует',
+    'cat.leaf.owner_posts': 'здесь пишет владелец',
+    'cat.leaf.anyone_posts': 'писать может каждый, кто вошёл',
+    'cat.leaf.nothing': 'Здесь пока ничего не опубликовали.',
+    'cat.leaf.keep': 'Добавить к моим пространствам',
+    'cat.leaf.go': 'Перейти туда',
+    'cat.cycle': ({ title }) =>
+      `Вы уже внутри «${title}» — этот путь ведёт обратно туда, где вы и есть.`,
+    'cat.add.found_directory': ({ title }) =>
+      title ? `Нашли «${title}» — место, которое перечисляет другие места.`
+            : 'Нашли место, которое перечисляет другие места.',
+    'cat.add.found_space': ({ title }) =>
+      title ? `Нашли «${title}».` : 'Нашли.',
+    'cat.add.unreachable': 'Оттуда сейчас ничего не пришло. Вы всё равно можете ' +
+      'добавить это место — оно покажется как надо, когда станет доступным.',
+    'cat.add.itself': 'Это и есть текущее место. Список не может содержать сам себя.',
+    'cat.add.already': 'Это уже есть в списке.',
+    'cat.add.needs_name': 'Сначала дайте имя — именно его увидят люди.',
+    'cat.paste': 'Добавить каталог\n\nВставьте ссылку, которую вам дали. Каталог — это ' +
+      'обычное публичное место, посты в котором — другие места.',
+    'space.customize': 'Оформление',
+    'space.palette': 'Палитра реакций',
+    'space.delete.btn': 'Удалить с этого устройства',
+    'space.delete.title': 'Удалить это пространство с этого устройства?',
+    'space.delete.what': 'Его сообщения и медиа, которые хранит только это устройство, будут отсюда удалены.',
+    'space.delete.others': 'У всех остальных их копия останется. Никому об этом не скажут.',
+    'space.delete.back': 'Новое приглашение может вернуть его — но удалённая история с ним не вернётся.',
+    'space.delete.confirm': 'Удалить здесь',
+    'space.delete.working': 'Удаляем…',
+    'space.delete.failed': ({ why }) => `Не удалено: ${why}`,
+    'space.waiting': 'ждём кого-нибудь',
+    'space.someone_arrived': 'кто-то пришёл',
+    'space.with_one': ({ names }) => names[0],
+    'space.with_many': ({ names, more }) =>
+      more > 0 ? `${names.join(', ')} и ещё ${more}`
+               : names.slice(0, -1).join(', ') + ' и ' + names[names.length - 1],
+    'space.local_name_note': 'Это имя остаётся на этом устройстве.',
+    'share.card.read': 'Читать пост →',
+    'share.card.read_hint': 'Откроет временный взгляд на публичное пространство, в котором вас нет, по адресу, который выбрал этот человек.',
+    'share.card.forward': '→ Переслать',
+    'share.card.claim': ({ sender }) => `${sender} пересылает этот пост`,
+    'share.ref.toggle': 'приложить путь обратно к посту',
+    'prev.unnamed_space': 'публичное пространство',
+    'prev.untitled': 'без названия',
+    'prev.waiting': 'Сейчас этот пост недоступен по присланному адресу.',
+    'prev.missing': 'Пространство ответило, но этого поста в нём пока нет.',
+    'prev.archived': 'Этот пост убрал автор.',
+    'prev.retry': 'Ещё раз',
+    'prev.back': '← Назад',
+    'prev.follow': 'Добавить пространство к себе',
+    'prev.follow_ro': 'Добавить только для чтения',
+    'prev.join': 'Войти и участвовать',
+    'prev.media_unavailable': 'в предпросмотре медиа не загружается — добавьте пространство к себе, чтобы увидеть',
+    'prev.load_audio': '▶ Загрузить аудио',
+    'prev.load_video': '▶ Загрузить видео',
+    'prev.looking': 'Загружаем медиа — ищем, у кого оно есть…',
+    'prev.progress': ({ got, total }) => `Загружаем медиа… ${got} из ${total} ${pluralRu(total, 'части', 'частей', 'частей')}`,
+    'prev.loading': 'Загружаем…',
+    'prev.download_file': 'Скачать файл',
+    'prev.open_file': 'Открыть файл',
+    'prev.no_response': 'Пока никто не ответил на этот запрос.',
+    'prev.descriptor': 'В этой публикации сейчас недостаточно данных, чтобы запросить это медиа.',
+    'prev.budget': 'Это медиа больше, чем допускает временный предпросмотр.',
+    'prev.integrity': 'Полученное медиа не совпало со своим хешем содержимого и не было показано.',
+    'prev.cancelled': 'Загрузка остановилась, когда предпросмотр закрыли.',
+    'prev.block_skipped': ({ kind }) => `блок «${kind}» — откройте пространство, чтобы увидеть`,
+    'share.search': 'Поиск по людям, пространствам и AI',
+    'share.sec.recent': 'Недавние',
+    'share.sec.ai': 'AI',
+    'share.send': 'Отправить',
+    'share.send_to': ({ count }) => `Отправить (${count})`,
+    'share.comment': 'Добавить комментарий…',
+    'share.comment.ai': 'Что AI должен с этим сделать?',
+    'share.picked': ({ names }) => `Выбрано: ${names}`,
+    'share.about': ({ space }) => `Из ${space}`,
+    'share.closed': 'здесь вы не можете писать',
+    'share.recent.empty': 'Места, куда вы отправляете, появятся здесь.',
+    'share.ai.empty': 'Настройте провайдера AI в настройках, чтобы отправлять ему что-нибудь.',
+    'share.quote.anon': 'кто-то написал',
+    'share.quote.claim': ({ sender, author }) =>
+      `${sender} говорит, что это пришло от ${author}. Подпись вместе с цитатой не пришла — это только слова ${sender}.`,
+    'share.quote.claim_anon': ({ sender }) =>
+      `${sender} говорит, что это пришло откуда-то ещё. Здесь ничто не доказывает, кто это написал.`,
+    'share.result.ok': ({ name }) => `Отправлено: ${name}`,
+    'share.result.no': ({ name, why }) => `Не отправлено: ${name} — ${why}`,
+    'share.wait.connectivity': 'ждёт — не включено ничего, что могло бы это унести',
+    'share.wait.faster_link': 'ждёт — здесь нужен канал шире того, что включён',
+    'share.wait.custody': 'это держит у себя шлюз',
+    'share.proof.relay': 'реле приняло — это ещё не доставка',
+    'share.state.settled': 'передано дальше',
+    'share.state.queued': ({ route }) => `в очереди на ${route}`,
+    'pass.title': 'Пропуск в пространство',
+    'pass.invite_from': ({ who }) => `приглашение от ${who}`,
+    'pass.card_hint': 'С пропуском человек может попроситься войти. Подтверждает ваше устройство — до этого никто не войдёт.',
+    'pass.verify_hint': 'Прочитайте эту фразу тому, кого вы приглашаете, — так он поймёт, что пропуск и правда от вас:',
+    'pass.terms_one': ({ hours }) => `1 вход · годен ${hours} ч`,
+    'pass.terms_many': ({ uses, hours }) => `${uses} ${pluralRu(uses, 'вход', 'входа', 'входов')} · годен ${hours} ч`,
+    'pass.relay': 'Реле для встречи (там ждёт запрос):',
+    'pass.relay_ph': 'адрес реле, например 192.168.1.10:7411',
+    'pass.configure': 'Настроить',
+    'pass.uses': 'Кто может войти',
+    'pass.uses_1': 'один человек',
+    'pass.uses_10': 'до 10 человек',
+    'pass.ttl': 'Годен',
+    'pass.ttl_1': '1 час',
+    'pass.ttl_24': '24 часа',
+    'pass.ttl_168': '7 дней',
+    'pass.create': 'Создать пропуск',
+    'pass.copy': 'Скопировать пропуск',
+    'pass.copied': 'Скопировано',
+    'pass.show_qr': 'Показать QR',
+    'pass.revoke': 'Отозвать',
+    'pass.revoked': 'Этот пропуск отозван. Кто уже внутри — остаётся: отзыв закрывает только новые входы.',
+    'pass.tech_invite': 'Пригласить устройство напрямую (технически)',
+    'pass.need_relay': 'Сначала укажите реле в настройках — именно там ждёт запрос на вход.',
+    'join.title': 'Войти по пропуску',
+    'join.paste': 'Вставьте ссылку-пропуск, которую вам прислали:',
+    'join.enter': 'Попроситься войти',
+    'join.waiting': 'Запрос отправлен — ждём, когда устройство владельца подтвердит ваш вход. Это окно можно закрыть.',
+    'join.offline': 'Устройство владельца не в сети. Ваш запрос ждёт и уйдёт, когда кто-то из вас снова окажется в сети.',
+    'join.ready': 'Вход подтверждён — пространство готово.',
+    'join.open': 'Открыть пространство',
+    'join.expired': 'Этот пропуск истёк. Попросите новый.',
+    'join.expired_waiting': 'Пропуск истёк раньше, чем устройство владельца успело подтвердить. Попросите новый пропуск.',
+    'join.revoked': 'Этот пропуск отозвали раньше, чем ваш вход подтвердили. Попросите новый.',
+    'join.rejected': 'Этот вход не удалось завершить. Попросите новый пропуск.',
+    'app.name': 'quiet spaces',
+    'conn.direct': 'напрямую',
+    'conn.lan': 'локальная сеть',
+    'conn.radio': 'радио',
+    'conn.relay': 'через реле',
+    'conn.syncing': 'догоняем',
+    'conn.offline': 'сейчас связи нет',
+    'conn.off': 'не подключено',
+    'conn.here': ({ count }) => `${count} ${pluralRu(count, 'человек', 'человека', 'человек')} здесь`,
+    'conn.summary': ({ state, count }) => `${state} · ${count} здесь`,
+    'conn.details': 'подробности соединения',
+    'conn.mesh_node': ({ node }) => `mesh · узел ${node}`,
+    'conn.radio_carrier': ({ carrier }) => `радио · ${carrier}`,
+    'entry.waiting.wider_path': ({ size, fits }) =>
+      `Ждём путь пошире — ${size}, а радио несёт ${fits}. ` +
+      `Уйдёт, как только вернётся интернет или локальная сеть. Ничего не потеряно.`,
+    'wiz.tpl.directory': '\u{1F4D6} Каталог',
+    'wiz.tpl.directory_desc': 'место, в котором перечислены другие места',
+    'wiz.remember': '4 · что оно будет помнить?',
+    'wiz.name_ph': 'название места',
+    'wiz.dir.title': 'Назовите каталог',
+    'wiz.dir.name_ph': 'название каталога',
+    'wiz.dir.note': 'Читать этот каталог может любой, у кого есть ссылка, ' +
+      'а записи в него добавляете только вы. Ссылку нельзя забрать обратно.',
+    'access.who_writes_label': 'Кто может писать',
+    'access.writes_anyone': 'Любой, кто вошёл',
+    'access.writes_me': 'Только я и кураторы',
+    'access.who_adds_label': 'Кто может добавлять записи',
+    'access.adds_anyone': 'Любой, кто может публиковать',
+    'access.adds_me': 'Только я и кураторы',
+    'access.curated_confirm': 'Теперь публиковать здесь можете только вы и ' +
+      'кураторы. Всё уже написанное остаётся ровно там, где оно есть.',
+    'access.directory_needs_public': 'Каталог — это список, который читают ' +
+      'другие, так что сначала до этого пространства нужно дать дойти по ссылке.',
+    'access.directory_hint': 'Это место находят по ссылке, и видят в нём ' +
+      'список мест, которые вы туда положили.',
+    'conn.mode.auto': 'Что есть, то и в ходу: реле, локальная сеть, радио.',
+    'conn.mode.internet': 'Реле и локальная сеть. Радио не выходит в эфир.',
+    'conn.mode.radio': 'Только радио. Соединение с реле вообще не открывается.',
+    'conn.mode.offline': 'Ничего не уходит с этого устройства. Написанное вами сохраняется и ждёт.',
+    'conn.policy.offline': 'Не в сети — так вы настроили',
+    'conn.policy.unreadable': 'Придержано — настройка транспорта не читается',
+    'conn.mode.unreadable': ({ mode }) =>
+      `На этом устройстве сохранено «${mode}», а эта сборка такого не понимает — поэтому ничего не отправляется, пока вы не выберете что-то выше.`,
+    'relay.mode.auto': 'Реле выбираются замером настоящего пути с этого устройства. Лучшее идёт в ход, второе остаётся про запас.',
+    'relay.mode.custom': 'В ход идёт только то реле, которое вы назовёте ниже, — и никогда официальное за вашей спиной.',
+    'relay.saved.auto': 'сохранено — замеряем реле…',
+    'relay.saved.custom': 'сохранено — синхронизация через',
+    'relay.off': 'синхронизация через реле выключена',
+    'relay.measuring': 'замеряем…',
+    'relay.measured': 'выбрано',
+    'relay.none': 'сейчас ни до чего не достучаться',
+    'relay.unreachable': 'не удалось достучаться до этого реле:',
+    'relay.copied': 'диагностика скопирована',
+    'relay.diag.mode': 'Режим',
+    'relay.diag.primary': 'Основное',
+    'relay.diag.backup': 'Запасное',
+    'relay.diag.trust': 'Доверие',
+    'relay.diag.health': 'Состояние',
+    'relay.diag.rtt': 'Туда и обратно',
+    'relay.diag.load': 'Нагрузка реле',
+    'relay.diag.sync': 'Фоновая синхронизация',
+    'relay.diag.on': 'идёт',
+    'relay.diag.off': 'выключена',
+    'relay.diag.error': 'Последняя ошибка',
+    'ai.window.remote': ({ provider, model }) =>
+      `Quite AI видит последние 20 сообщений этого пространства и больше ничего. ` +
+      `Каждый вопрос заново отправляет это окно на ${provider} · ${model} через интернет.`,
+    'ai.window.local': ({ model }) =>
+      `Quite AI видит последние 20 сообщений этого пространства и больше ничего. ` +
+      `Каждый вопрос уходит к ${model} на этой машине. С устройства ничего не уходит.`,
+    'ai.unconfigured': 'Подключите провайдера AI в настройках — этому пространству пока некуда отправить вопрос.',
+    'ai.thinking': 'Спросили. Ждём провайдера…',
+    'ai.failed': ({ why }) => `Ответа нет: ${why}. Спросите ещё раз, когда захотите.`,
+    'conv.forward': 'переслать',
+    'pane.close': 'Закрыть',
+    'notif.hidden': 'Уведомление говорит только, что что-то пришло. Ни пространства, ни отправителя, ни текста.',
+    'notif.space': 'Пространство может быть названо. Отправитель и само сообщение остаются в стороне.',
+    'notif.preview': 'Пространство, кто написал и само сообщение — в шторке и на экране блокировки.',
+    'notif.saved': 'Сохранено на этом устройстве.',
+    'notif.failed': 'Не удалось это здесь сохранить.',
+    'stay.on': 'Включено. Пока это так, Android будет держать на экране постоянное уведомление.',
+    'stay.off': 'Выключено. Сообщения приходят, пока Quiet запущен, и отправленные вами ' +
+      'фотографии можно открыть только пока он запущен.',
+    'stay.failed': 'Это устройство не может удержать такой режим.',
+    'stay.refused': 'Android не дал этому работать, поэтому режим выключен. ' +
+      'Нажмите «оставаться на связи», чтобы попробовать снова.',
+    'conv.member': 'участник',
+    'conv.you': 'вы',
+    'conv.write': 'написать в пространство…',
+    'conv.write_short': 'написать…',
+    'conv.send': 'отправить',
+    'conv.reply': 'ответить',
+    'conv.reply_hint': 'ответить на это сообщение и обратиться к его автору',
+    'conv.replying_to': ({ name }) => `отвечаете ${name}`,
+    'conv.cancel_reply': 'отменить ответ',
+    'conv.edited': 'изменено',
+    'entry.unsupported': 'содержимое, которое здесь не показать',
+    'sys.joined_with_pass': ({ who, owner }) => `${who} теперь здесь — по пропуску от ${owner}`,
+    'sys.joined': ({ who }) => `${who} теперь здесь`,
+    'sys.connection_changed': 'Соединение сменилось',
+    'sys.connection_changed_body': 'Сообщения пойдут дальше по локальной сети.',
+    'honesty.undecryptable': ({ count }) =>
+      `${count} ${pluralRu(count, 'момент', 'момента', 'моментов')} вам здесь пока не прочесть (нет ключа — показано, не спрятано)`,
+    'honesty.simulated': 'симуляция',
+    'presence.here': 'здесь',
+    'presence.away': 'ненадолго отошли',
+    'presence.listening': 'слушает',
+    'presence.recording': 'записывает',
+    'presence.unknown': 'присутствие неизвестно',
+    'presence.last_seen': ({ who, ago }) => `${who} последний раз здесь ${ago}`,
+    'presence.is_here': ({ who }) => `${who} здесь`,
+    'presence.pick': 'присутствие…',
+    'device.title': 'Это устройство',
+    'device.trusted': 'Доверенное устройство',
+    'device.verification': 'Код проверки',
+    'device.add': 'Добавить ещё одно устройство',
+    'device.security': 'Безопасность',
+    'device.technical': 'Технические подробности',
+    'action.close': 'закрыть',
+    'action.cancel': 'отмена',
+    'action.share': 'Поделиться',
+    'action.copy': 'Скопировать ссылку',
+    'action.open': 'Открыть',
+    'action.retry': 'Ещё раз',
+    'time.now': 'только что',
+    'set.language': 'Язык',
+    'set.theme': 'Тема',
   },
 };
 
-let LOCALE = 'en';
+// ---- the locale: chosen by the person, remembered on this device ----
+// Device-local like every other client preference (qp.theme, qp.effects):
+// a language is how one person reads, not something a space or a peer has
+// any say in, so it never travels and never enters a manifest.
+const LOCALES = ['en', 'ru'];
 
+function detectLocale() {
+  const saved = localStorage.getItem('qp.lang');
+  if (saved && LOCALES.includes(saved)) return saved;
+  // No choice made yet: follow the system, because a Russian-speaking
+  // person should not have to find a setting before they can read the
+  // first screen. Anything we do not speak reads English.
+  const nav = String(navigator.language || 'en').toLowerCase();
+  return nav.startsWith('ru') ? 'ru' : 'en';
+}
+
+let LOCALE = detectLocale();
+let RTF = new Intl.RelativeTimeFormat(LOCALE, { numeric: 'auto' });
+
+function localeName() { return LOCALE; }
+
+// English has two plural forms; Russian has three. A shared helper cannot
+// flatten that, so each catalog calls its own — plural() for EN, pluralRu()
+// for RU. Grammar belongs to the locale's strings, never to the engine.
 function plural(n, one, many) { return n === 1 ? one : many; }
 
-// t(key, vars) — resolves against the active locale, falls back to the key
-// itself in dev so a missing string is loud, not silent.
+function pluralRu(n, one, few, many) {
+  const m10 = n % 10, m100 = n % 100;
+  if (m10 === 1 && m100 !== 11) return one;
+  if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return few;
+  return many;
+}
+
+// t(key, vars) — resolves against the active locale, falls back to EN, and
+// then to the key itself in dev so a missing string is loud, not silent.
 function t(key, vars) {
   const cat = I18N[LOCALE] || I18N.en;
   let entry = cat[key];
@@ -505,10 +911,65 @@ function t(key, vars) {
 }
 
 // Relative time via Intl — never hand-rolled "N minutes ago" strings.
-const RTF = new Intl.RelativeTimeFormat(LOCALE === 'en' ? 'en' : LOCALE, { numeric: 'auto' });
 function relTime(seconds) {
   if (seconds < 45) return t('time.now');
   if (seconds < 5400) return RTF.format(-Math.round(seconds / 60), 'minute');
   if (seconds < 86400) return RTF.format(-Math.round(seconds / 3600), 'hour');
   return RTF.format(-Math.round(seconds / 86400), 'day');
 }
+
+// ---- the markup half ----
+// Static markup carries a key instead of a sentence:
+//   data-i18n        text content
+//   data-i18n-ph     placeholder=
+//   data-i18n-title  title=, and aria-label= when the element has one
+//   data-i18n-aria   aria-label= alone
+// Anything a script writes keeps going through t() directly, as it always
+// has — this only reaches the strings that live in index.html.
+
+// A label often sits BESIDE nested markup (a .lr-sub, a <code>, a value
+// span). Wiping textContent there would delete that markup, so write into
+// the first text node when the element has element children, and only fall
+// back to textContent for a leaf.
+function setI18nText(el, s) {
+  if (el.children.length && el.firstChild && el.firstChild.nodeType === 3) {
+    el.firstChild.nodeValue = s;
+    return;
+  }
+  el.textContent = s;
+}
+
+function applyI18n(root) {
+  const scope = root || document;
+  scope.querySelectorAll('[data-i18n]').forEach(el =>
+    setI18nText(el, t(el.dataset.i18n)));
+  scope.querySelectorAll('[data-i18n-ph]').forEach(el =>
+    el.setAttribute('placeholder', t(el.dataset.i18nPh)));
+  scope.querySelectorAll('[data-i18n-title]').forEach(el => {
+    const s = t(el.dataset.i18nTitle);
+    el.setAttribute('title', s);
+    // Where a control carries both, they said the same thing in English and
+    // must keep saying the same thing in every other language.
+    if (el.hasAttribute('aria-label')) el.setAttribute('aria-label', s);
+  });
+  scope.querySelectorAll('[data-i18n-aria]').forEach(el =>
+    el.setAttribute('aria-label', t(el.dataset.i18nAria)));
+}
+
+function setLocale(l) {
+  if (!LOCALES.includes(l) || l === LOCALE) return;
+  LOCALE = l;
+  localStorage.setItem('qp.lang', l);
+  RTF = new Intl.RelativeTimeFormat(l, { numeric: 'auto' });
+  document.documentElement.lang = l;
+  applyI18n(document);
+  // The live surfaces build their own strings on every tick, so one refresh
+  // carries the new language through the feed, the navigator and the chips.
+  if (typeof syncSettingsUI === 'function') syncSettingsUI();
+  if (typeof refresh === 'function') refresh();
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.documentElement.lang = LOCALE;
+  applyI18n(document);
+});

@@ -698,8 +698,18 @@
   <div class="settings-cat" data-cat="appearance">
   <div class="settings-sec">
     <div class="list">
+      <!-- Language sits first, and its own two labels are deliberately NOT
+           translated: somebody who has landed in a language they cannot read
+           must still be able to find their way out. -->
       <div class="list-row">
-        <span class="lr-label">Theme</span>
+        <span class="lr-label" data-i18n="set.language">Language</span>
+        <div class="segmented" id="setLang">
+          <button data-v="en" onclick="setLocale('en');syncSettingsUI()">English</button>
+          <button data-v="ru" onclick="setLocale('ru');syncSettingsUI()">Русский</button>
+        </div>
+      </div>
+      <div class="list-row">
+        <span class="lr-label" data-i18n="set.theme">Theme</span>
         <div class="segmented" id="setTheme">
           <button data-v="auto" onclick="setTheme('auto');syncSettingsUI()">Auto</button>
           <button data-v="light" onclick="setTheme('light');syncSettingsUI()">Light</button>
