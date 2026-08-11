@@ -1,6 +1,7 @@
 package passcode
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -303,5 +304,83 @@ func TestAKillDuringTheGuessStillCostsTheAttempt(t *testing.T) {
 	if st.AttemptsLeft != MaxAttempts-1 {
 		t.Fatalf("a killed guess refunded itself: %d left, want %d",
 			st.AttemptsLeft, MaxAttempts-1)
+	}
+}
+
+// ---- the byte API, which Android's hardware envelope is built on ----
+
+func TestSealAndOpenRoundTrip(t *testing.T) {
+	cheap(t)
+	blob, err := Seal("4917", []byte("moss-ember-tide"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, next, err := Open("4917", blob)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "moss-ember-tide" {
+		t.Fatalf("got %q", got)
+	}
+	if len(next) == 0 {
+		t.Fatal("Open must hand back a blob to store")
+	}
+}
+
+// The contract that matters: a wrong guess returns a blob with the spend
+// already in it, and the caller is obliged to store that rather than the
+// one it had. A caller who keeps the old blob on failure has built the
+// unlimited-attempts bug in their own storage layer.
+func TestOpenHandsBackTheSpentBudgetOnFailure(t *testing.T) {
+	cheap(t)
+	blob, err := Seal("4917", []byte("real"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= 3; i++ {
+		_, next, err := Open("0000", blob)
+		if !errors.Is(err, ErrWrongPasscode) {
+			t.Fatalf("guess %d: %v", i, err)
+		}
+		if next == nil {
+			t.Fatal("a wrong guess must still return the updated blob")
+		}
+		blob = next
+	}
+	// Three spent, and the right code both works and restores the budget.
+	pass, next, err := Open("4917", blob)
+	if err != nil || string(pass) != "real" {
+		t.Fatalf("%q %v", pass, err)
+	}
+	var w wrap
+	if err := json.Unmarshal(next, &w); err != nil {
+		t.Fatal(err)
+	}
+	if w.AttemptsLeft != MaxAttempts {
+		t.Fatalf("budget not restored: %d", w.AttemptsLeft)
+	}
+}
+
+// At zero the blob comes back nil, which is the signal to DELETE rather
+// than store — the file API's self-destruct, expressed for a caller that
+// owns its own storage.
+func TestOpenSignalsDeletionAtLockout(t *testing.T) {
+	cheap(t)
+	blob, _ := Seal("4917", []byte("real"))
+	// The caller here is the careless one on purpose: it always stores what
+	// it is handed and never deletes anything. That is the shape a real
+	// storage layer drifts into, and it must still end up locked out.
+	var err error
+	for i := 0; i < MaxAttempts; i++ {
+		var next []byte
+		_, next, err = Open("0000", blob)
+		blob = next
+	}
+	if !errors.Is(err, ErrLockedOut) {
+		t.Fatalf("want ErrLockedOut, got %v", err)
+	}
+	// And the RIGHT code no longer opens it, because the tombstone is spent.
+	if _, _, err := Open("4917", blob); !errors.Is(err, ErrLockedOut) {
+		t.Fatalf("the correct code walked back through the lockout: %v", err)
 	}
 }

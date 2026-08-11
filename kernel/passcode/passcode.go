@@ -206,16 +206,91 @@ func randIndex(n int) (int, error) {
 	}
 }
 
-// Bind seals passphrase under code and writes it to the data directory,
-// replacing any shortcut already there. The caller must have proven the
-// passphrase actually opens the directory first — this package seals what
-// it is handed and cannot tell a real passphrase from a typo.
-func Bind(dataDir, code string, passphrase []byte) error {
+// Seal returns the wrap as bytes instead of writing it, for a caller that
+// has somewhere better to put it than a file.
+//
+// Android is that caller. There, this blob goes inside a second envelope
+// whose key lives in the AndroidKeyStore and cannot leave the device —
+// which changes the threat model completely: a copied file is then not
+// merely expensive to attack, it is unattackable off the device, because
+// the outer key is not in it. The hour that four digits buy on a laptop
+// becomes infinity on a phone, and the attempt counter goes back to being
+// what it should be, a bound on somebody holding the unlocked handset.
+//
+// The attempt counter travels in the blob; whoever stores it is
+// responsible for storing it back after each try. On Android that is the
+// vault, and it has the same durability obligation this package's own
+// file writer has: record the spend BEFORE the guess is computed.
+func Seal(code string, passphrase []byte) ([]byte, error) {
+	w, err := newWrap(code, passphrase)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(w)
+}
+
+// Open is Seal's inverse over bytes. It returns the passphrase and the
+// blob to store back — the attempt counter inside it has moved, whether
+// the guess was right (restored) or wrong (spent).
+//
+// The caller MUST persist the returned blob before acting on the result,
+// including on the error path: that is where the spend is recorded, and
+// dropping it on failure is exactly the bug that turns ten tries into
+// unlimited ones. The blob is never nil, deliberately — at lockout it
+// comes back as a spent tombstone, so a caller that always stores what it
+// is handed is correct, and one that deletes on ErrLockedOut is correct
+// too. There is no branch here that quietly reopens the door.
+func Open(code string, blob []byte) (pass []byte, updated []byte, err error) {
 	if err := validCode(code); err != nil {
-		return err
+		return nil, blob, err
+	}
+	var w wrap
+	if err := json.Unmarshal(blob, &w); err != nil {
+		return nil, blob, fmt.Errorf("passcode: unreadable: %w", err)
+	}
+	if w.AttemptsLeft <= 0 {
+		return nil, blob, ErrLockedOut // already a tombstone; storing it again is fine
+	}
+	w.AttemptsLeft--
+	spent := w.AttemptsLeft
+
+	key, err := derive(code, &w)
+	if err != nil {
+		return nil, blob, err
+	}
+	aead, err := chacha20poly1305.NewX(key)
+	if err != nil {
+		return nil, blob, err
+	}
+	pass, err = aead.Open(nil, w.Nonce, w.Sealed, nil)
+	if err != nil {
+		if spent <= 0 {
+			// A TOMBSTONE, not nil. Returning nil here would have made the
+			// safe path the unusual one: a caller that simply stores
+			// whatever it is handed would have kept the PREVIOUS blob, the
+			// one with an attempt still in it, and walked straight back
+			// through the lockout. Handing back a spent wrap means storing
+			// it is correct, deleting it is correct, and doing nothing is
+			// merely untidy — every branch a caller might take is safe.
+			out, _ := json.Marshal(&w)
+			return nil, out, ErrLockedOut
+		}
+		out, _ := json.Marshal(&w)
+		return nil, out, ErrWrongPasscode
+	}
+	w.AttemptsLeft = MaxAttempts
+	out, _ := json.Marshal(&w)
+	return pass, out, nil
+}
+
+// newWrap is the sealing shared by Bind and Seal, so the two can never
+// disagree about the profile, the nonce or the budget.
+func newWrap(code string, passphrase []byte) (*wrap, error) {
+	if err := validCode(code); err != nil {
+		return nil, err
 	}
 	if len(passphrase) == 0 {
-		return errors.New("passcode: refusing to bind an empty passphrase")
+		return nil, errors.New("passcode: refusing to bind an empty passphrase")
 	}
 	w := &wrap{
 		Version: 1, Digits: len(code),
@@ -224,20 +299,32 @@ func Bind(dataDir, code string, passphrase []byte) error {
 		AttemptsLeft: MaxAttempts, CreatedAt: nowFunc().Unix(),
 	}
 	if _, err := rand.Read(w.Salt); err != nil {
-		return err
+		return nil, err
 	}
 	if _, err := rand.Read(w.Nonce); err != nil {
-		return err
+		return nil, err
 	}
 	key, err := derive(code, w)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	aead, err := chacha20poly1305.NewX(key)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	w.Sealed = aead.Seal(nil, w.Nonce, passphrase, nil)
+	return w, nil
+}
+
+// Bind seals passphrase under code and writes it to the data directory,
+// replacing any shortcut already there. The caller must have proven the
+// passphrase actually opens the directory first — this package seals what
+// it is handed and cannot tell a real passphrase from a typo.
+func Bind(dataDir, code string, passphrase []byte) error {
+	w, err := newWrap(code, passphrase)
+	if err != nil {
+		return err
+	}
 	return write(dataDir, w)
 }
 

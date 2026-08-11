@@ -29,6 +29,7 @@ package quietcore
 // will read when they wire the screen up.
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 
@@ -118,4 +119,36 @@ func jsonOf(v any) string {
 		return `{"bound":false,"error":"encode"}`
 	}
 	return string(b)
+}
+
+// ---- the hardware envelope: bytes in, bytes out ----
+//
+// These two are what the Kotlin vault is built on. The blob they return is
+// meant to go INSIDE an AndroidKeyStore-encrypted envelope, so a copy of
+// the app's storage cannot be attacked off the device at all: the outer key
+// is in hardware and not in the file.
+//
+// gomobile cannot return two values plus an error, so Open's updated blob
+// and the passphrase travel as JSON: {"ok":bool,"kind":string,
+// "passphrase":string,"blob":base64}. The caller MUST store "blob" before
+// acting on "ok" — that is where the spent attempt is recorded.
+
+// SealForVault seals passphrase under code and returns the blob to store.
+func SealForVault(code, passphrase string) ([]byte, error) {
+	return passcode.Seal(code, []byte(passphrase))
+}
+
+// OpenFromVault tries code against blob. See the note above about storing
+// the returned blob first, on every path.
+func OpenFromVault(code string, blob []byte) string {
+	pass, updated, err := passcode.Open(code, blob)
+	out := map[string]any{
+		"ok":   err == nil,
+		"kind": PasscodeErrorKind(err),
+		"blob": base64.StdEncoding.EncodeToString(updated),
+	}
+	if err == nil {
+		out["passphrase"] = string(pass)
+	}
+	return jsonOf(out)
 }
