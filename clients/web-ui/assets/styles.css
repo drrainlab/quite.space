@@ -1908,7 +1908,11 @@
     text-shadow: 2px .4px 0 rgba(255, 62, 205, .7),
                 -2px -.4px 0 rgba(56, 240, 255, .65); }
   .res-row:has(.res-own) .res-add { opacity: .55; }
-  .res-picker { position: fixed; z-index: 60; background: var(--glass);
+  .res-picker { position: fixed; z-index: 60;
+    /* Black half-glass, not the purple --glass token: the palette is where
+       seven colour voices speak at once, and a neutral dark pane is what
+       lets them read as themselves instead of tinting everything rose. */
+    background: rgba(10, 10, 15, .72);
     backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
     border: 1px solid var(--glass-border); border-radius: var(--radius-lg);
     padding: 10px; max-width: 380px; box-shadow: 0 8px 32px rgba(0,0,0,.35);
@@ -1982,12 +1986,12 @@
   .fx-layer { position: absolute; inset: 0; pointer-events: none;
     border-radius: inherit; overflow: hidden; }
   .fx-residue > .fx-layer {
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--acc) calc(var(--fx-i, 0) * 200%), transparent),
-      inset 0 0 18px color-mix(in srgb, var(--acc) calc(var(--fx-i, 0) * 100%), transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fx-star) calc(var(--fx-i, 0) * 160%), transparent),
+      inset 0 0 18px color-mix(in srgb, var(--fx-star) calc(var(--fx-i, 0) * 85%), transparent);
   }
   .fx-residue-2 > .fx-layer {
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--acc) calc(var(--fx-i, 0) * 200%), transparent),
-      inset 0 0 18px color-mix(in srgb, var(--acc) calc(var(--fx-i, 0) * 100%), transparent),
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fx-star) calc(var(--fx-i, 0) * 160%), transparent),
+      inset 0 0 18px color-mix(in srgb, var(--fx-star) calc(var(--fx-i, 0) * 85%), transparent),
       inset 0 -6px 14px color-mix(in srgb, var(--signal) calc(var(--fx-i2, 0) * 120%), transparent);
   }
   /* per-meaning residue voices: warmth glows golden, join breathes green,
@@ -2007,7 +2011,26 @@
      Classes live on the HOST: transform effects move the object itself
      (paint-level, zero layout shift); paint effects target > .fx-layer.
      Each core meaning has its own colour voice. */
-  :root { --fx-warm: #ffb35c; --fx-join: #6fdc8c; --fx-hold: #8fb8ff; }
+  :root { --fx-warm: #ffb35c; --fx-join: #6fdc8c; --fx-hold: #8fb8ff;
+    /* The DEFAULT residue: starlight, not accent. A touched message wears
+       a cool white ring — cosmic against the starfield — and only the
+       meanings with their own voice (warmth/join/hold) override it. */
+    --fx-star: #dfe8ff; }
+  /* One colour voice per core meaning, shared by the chips on a message
+     and the slots in the palette through a single custom property — so
+     the two surfaces cannot drift apart. Unicode reactions set nothing
+     and keep the neutral look. */
+  .res-chip[data-key="resonates"], .res-slot[data-key="resonates"] { --res-c: #dfe8ff; }
+  .res-chip[data-key="warmth"],    .res-slot[data-key="warmth"]    { --res-c: var(--fx-warm); }
+  .res-chip[data-key="spark"],     .res-slot[data-key="spark"]     { --res-c: #ffe27a; }
+  .res-chip[data-key="support"],   .res-slot[data-key="support"]   { --res-c: var(--fx-hold); }
+  .res-chip[data-key="curious"],   .res-slot[data-key="curious"]   { --res-c: #5fe0d0; }
+  .res-chip[data-key="join"],      .res-slot[data-key="join"]      { --res-c: var(--fx-join); }
+  .res-chip[data-key="weight"],    .res-slot[data-key="weight"]    { --res-c: #9aa3b8; }
+  .res-chip .res-sym, .res-slot .res-sym { color: var(--res-c, currentColor); }
+  .res-chip.res-own { border-color: var(--res-c, var(--acc));
+    color: var(--res-c, var(--acc)); }
+  .res-slot.res-own { border-color: var(--res-c, var(--acc)); }
   .fx-subtle, .fx-subtle > .fx-layer { animation-duration: .45s !important; }
 
   /* resonates 〰️ — two heartbeats: the object beats with you */

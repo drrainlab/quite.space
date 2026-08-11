@@ -110,6 +110,10 @@ function renderResonanceRow(res, targetId, onChange) {
     const chip = document.createElement('span');
     const mine = ownId === resIdentity(g);
     chip.className = 'res-chip' + (mine ? ' res-own' : '');
+    // The meaning key rides on the chip so CSS can give each branded
+    // reaction its own colour voice. Unicode reactions carry none and
+    // keep the neutral fallback.
+    if (g.kind === 'semantic' && g.key) chip.dataset.key = g.key;
     const sym = document.createElement('span');
     sym.className = 'res-sym';
     sym.textContent = resGlyph(g);
@@ -210,6 +214,7 @@ function openResPicker(targetId, anchor, res, onChange) {
   for (const s of RES.slots()) {
     const b = document.createElement('button');
     b.className = 'res-slot' + (ownId === 's:' + s.key ? ' res-own' : '');
+    b.dataset.key = s.key;
     b.type = 'button';
     const sym = document.createElement('span');
     sym.className = 'res-sym'; sym.textContent = s.fallback;
