@@ -27,9 +27,22 @@ import (
 
 // Limits (plan: resource limits).
 const (
-	MaxAssetSize      = 64 << 20
-	DefaultChunkSize  = 64 << 10
-	MaxChunksPerAsset = 16384 // 64 MiB at 4 KiB chunks
+	// MaxAssetSize is what one message may carry. Raised from 64 MiB, which
+	// a phone reached the first time somebody tried to send an ordinary
+	// thirteen-second video: 79.8 MB, refused as "declared size missing or
+	// over limit".
+	//
+	// Ingest is STREAMING — memory is one chunk whatever the size — so the
+	// cost of a larger ceiling is disk and patience, not RAM. What it is
+	// bounded by instead is the chunk count below: 500 MiB at the default
+	// 64 KiB chunk is 8000 chunks, comfortably under the cap, while the same
+	// asset at the 4 KiB mesh chunk size would be 128000 and is refused. That
+	// refusal is correct — nobody is sending half a gigabyte over LoRa.
+	MaxAssetSize     = 500 << 20
+	DefaultChunkSize = 64 << 10
+	// MaxChunksPerAsset bounds the manifest, not the asset: 16384 hashes is
+	// 1 GiB at the default chunk size and 64 MiB at the smallest one.
+	MaxChunksPerAsset = 16384
 	MaxManifestBytes  = 1 << 20
 	blobFormatV1      = 1
 )

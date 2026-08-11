@@ -325,7 +325,6 @@ func (r *Runtime) RequestAsset(space id.TerminalID, asset string) error {
 // fetchLoop drives one asset to completion: phase 1 manifest, phase 2
 // chunks; peers tried sequentially (plan §5: no fan-out duplication).
 func (r *Runtime) fetchLoop(key AssetKey, ref *schemas.AssetRef, st *spaceState) FetchReason {
-	deadline := time.Now().Add(2 * time.Minute)
 	relayAddr := r.ResolvePersonalRelay()
 	// Track hashes we asked for over the relay so we can stop asking on exit.
 	registered := map[id.Hash]struct{}{}
@@ -334,6 +333,20 @@ func (r *Runtime) fetchLoop(key AssetKey, ref *schemas.AssetRef, st *spaceState)
 	started := time.Now()
 	progressed := false
 	lastMissing := -1
+	// PATIENCE IS SPENT ON PROGRESS, NEVER ON SILENCE. This was a flat two
+	// minutes from the first attempt, which was survivable while an asset
+	// could not exceed 64 MiB and is not now: a relay hands over about 8 MiB
+	// per round, so half a gigabyte is some sixty rounds and the wall would
+	// arrive with the file a fifth of the way in — a fetch that fails while
+	// it is visibly working, every time, for exactly the files that most
+	// need to be waited for.
+	//
+	// So the clock is reset by ARRIVING BYTES and the wait is for silence.
+	// The ceiling below is not a policy about how long a download may take;
+	// it is a bound on a goroutine, so a peer that dribbles one chunk an hour
+	// cannot keep one alive forever.
+	lastProgress := time.Now()
+	note := func() { lastProgress = time.Now(); progressed = true }
 	defer func() {
 		if len(registered) == 0 {
 			return
@@ -344,7 +357,8 @@ func (r *Runtime) fetchLoop(key AssetKey, ref *schemas.AssetRef, st *spaceState)
 		}
 		r.clearRelayWants(key.Space, hs)
 	}()
-	for attempt := 0; time.Now().Before(deadline); attempt++ {
+	for attempt := 0; time.Since(lastProgress) < fetchIdleGiveUp &&
+		time.Since(started) < fetchHardCeiling; attempt++ {
 		r.mu.Lock()
 		res, err := assets.Missing(r.root, ref)
 		if err != nil {
@@ -357,7 +371,7 @@ func (r *Runtime) fetchLoop(key AssetKey, ref *schemas.AssetRef, st *spaceState)
 		} else if len(res.MissingChunks) > 0 {
 			want = res.MissingChunks
 			if lastMissing >= 0 && len(want) < lastMissing {
-				progressed = true
+				note()
 			}
 			lastMissing = len(want)
 		} else {
@@ -430,9 +444,13 @@ func (r *Runtime) fetchLoop(key AssetKey, ref *schemas.AssetRef, st *spaceState)
 				if !now.ManifestMissing && len(now.MissingChunks) == 0 {
 					return ReasonNone
 				}
-				progressed := (res.ManifestMissing && !now.ManifestMissing) ||
-					len(now.MissingChunks) < len(res.MissingChunks)
-				if progressed {
+				// note(), not a local `progressed :=` — which is what this
+				// was, shadowing the outer flag so a direct-peer fetch that
+				// moved and then stopped reported "no source" instead of a
+				// timeout, and never refreshed the clock either.
+				if (res.ManifestMissing && !now.ManifestMissing) ||
+					len(now.MissingChunks) < len(res.MissingChunks) {
+					note()
 					break // re-plan with fresh missing set
 				}
 			}
@@ -445,6 +463,17 @@ func (r *Runtime) fetchLoop(key AssetKey, ref *schemas.AssetRef, st *spaceState)
 	}
 	return ReasonTimeout
 }
+
+const (
+	// fetchIdleGiveUp is how long a fetch waits with NOTHING new arriving
+	// before it stops. Two minutes of silence is a long time to be asking a
+	// relay for a blob nobody is holding.
+	fetchIdleGiveUp = 2 * time.Minute
+	// fetchHardCeiling bounds the goroutine, not the download. At the ~8 MiB
+	// a relay round hands over, an hour is far more than the largest asset
+	// this build accepts needs, and far less than forever.
+	fetchHardCeiling = time.Hour
+)
 
 // noSourceAfter is how long a fetch may find nothing before the interface
 // is allowed to say so. Short enough that a person is not left guessing,

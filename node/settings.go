@@ -228,7 +228,7 @@ func (a *APIServer) handleSetSettings(w http.ResponseWriter, r *http.Request) {
 		Relay      *string `json:"relay"`
 		RelayMode  *string `json:"relay_mode"`
 		RelaySync  *int    `json:"relay_sync_seconds"`
-		Conn       struct {
+		Conn       *struct {
 			Mode string `json:"mode"`
 		} `json:"connectivity"`
 		LLM struct {
@@ -258,7 +258,21 @@ func (a *APIServer) handleSetSettings(w http.ResponseWriter, r *http.Request) {
 	s.LLM.Model = body.LLM.Model
 	s.LLM.BaseURL = body.LLM.BaseURL
 	s.LLM.APIKey = body.LLM.APIKey
-	s.Connectivity.Mode = ConnectivityMode(body.Conn.Mode)
+	// A POINTER, for the same reason the relay fields are: absent has to be
+	// distinguishable from cleared. Left nil, the whole policy stays zero and
+	// SetSettings' "omitted means leave it alone" guard restores what was
+	// stored — including a mode this build cannot read, which must survive a
+	// settings save from an unrelated screen rather than block it.
+	if body.Conn != nil {
+		s.Connectivity.Mode = ConnectivityMode(body.Conn.Mode)
+		// PER-SPACE OVERRIDES ARE NOT THIS CALLER'S TO DROP. The endpoint
+		// speaks only about the device-wide mode, and the guard above cannot
+		// help once a mode is present: it fires only when the WHOLE policy is
+		// zero. Without this line, naming a mode would carry a nil PerSpace
+		// over the stored one and silently widen every room that had been
+		// narrowed.
+		s.Connectivity.PerSpace = cur.Connectivity.PerSpace
+	}
 	if err := a.rt.SetSettings(s); err != nil {
 		// An unreadable mode is the caller's mistake, not a server fault.
 		if _, badConn := err.(ErrBadConnectivityMode); badConn {

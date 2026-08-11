@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/drrainlab/quiet_places/kernel/assets"
 	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/terminals"
 	qrcode "github.com/skip2/go-qrcode"
@@ -289,6 +290,17 @@ type statusResp struct {
 	// gate, unnoticed because the gate drove the API directly and never looked
 	// at a screen. RadioStatus existed for this and had no caller.
 	Radio RadioStatus `json:"radio"`
+	// The policy in force, beside the facts it governs. A screen that reads
+	// the sockets alone will describe a way out that the policy forbids: an
+	// offline node still HAS a LAN listener, and reporting "local network" to
+	// somebody who chose offline tells them their choice did not take.
+	Connectivity ConnectivityStatus `json:"connectivity"`
+	// What one message may carry, so an interface can refuse a file at the
+	// moment it is CHOSEN rather than after somebody has written a caption
+	// and an alt text for it. Reported rather than duplicated in the client:
+	// two copies of a limit are one limit and one bug waiting for the day
+	// they differ.
+	MaxAssetBytes int64 `json:"max_asset_bytes"`
 }
 
 func (a *APIServer) handleOnboarding(w http.ResponseWriter, r *http.Request) {
@@ -341,6 +353,8 @@ func (a *APIServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 	// put one set of facts on the wire under two different spellings.
 	resp.Radio = a.rt.RadioState()
 	resp.Radio.Detail = nil
+	resp.Connectivity = a.rt.Connectivity()
+	resp.MaxAssetBytes = assets.MaxAssetSize
 
 	m := a.rt.Mesh()
 	resp.Mesh.Connected, resp.Mesh.NodeNum = m.Connected, m.NodeNum
