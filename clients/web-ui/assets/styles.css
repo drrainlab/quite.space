@@ -808,26 +808,33 @@
 
   /* ============ PUI-1: messenger layout + Apple-style controls ============ */
 
-  /* --- message bubbles --- */
-  #log { display: flex; flex-direction: column; gap: 2px; }
+  /* --- message bubbles ---
+     BORDERLESS by decision (2026-08-07): a hairline around every message
+     reads as a form control, not as speech. Separation comes from the
+     surface itself and from AIR — wider group gaps, a touch more padding —
+     which is what makes the feed feel spatial rather than boxed. The soft
+     drop shadow stays: in the light theme a white bubble sits on a
+     near-white page, and the shadow is what keeps it an object. */
+  #log { display: flex; flex-direction: column; gap: 3px; }
   .msg { display: flex; flex-direction: column; align-items: flex-start;
     max-width: 78%; margin: 0; }
   .msg.own { align-self: flex-end; align-items: flex-end; }
-  .msg.grouped { margin-top: 1px; }
-  .msg:not(.grouped) { margin-top: 10px; }
-  .msg .who { display: flex; align-items: center; gap: 6px; margin: 0 4px 3px;
+  .msg.grouped { margin-top: 2px; }
+  .msg:not(.grouped) { margin-top: 16px; }
+  .msg .who { display: flex; align-items: center; gap: 6px; margin: 0 4px 4px;
     color: var(--dim); font-size: 12px; }
   .msg.own .who { flex-direction: row-reverse; }
   .msg.grouped .who { display: none; }
   .bubble {
-    background: var(--bubble-other); border: 1px solid var(--line);
-    border-radius: var(--radius-lg); padding: 10px 14px; box-shadow: var(--shadow);
+    background: var(--bubble-other); border: 0;
+    border-radius: var(--radius-lg); padding: 11px 15px;
+    box-shadow: 0 1px 2px rgba(0,0,0,.10), 0 4px 14px -6px rgba(0,0,0,.14);
     position: relative; word-break: break-word;
     /* terminal cadence: message text in mono */
     font-family: var(--font-mono); font-size: 12.5px; line-height: 1.55;
     letter-spacing: -.1px;
   }
-  .msg.own .bubble { background: var(--bubble-own); border-color: transparent; }
+  .msg.own .bubble { background: var(--bubble-own); }
   .msg:not(.grouped) .bubble { border-top-left-radius: var(--radius-sm); }
   .msg.own:not(.grouped) .bubble { border-top-left-radius: var(--radius-lg);
     border-top-right-radius: var(--radius-sm); }
@@ -1862,32 +1869,83 @@
   .res-chip.res-own { border-color: var(--acc); color: var(--acc); }
   .res-sym { font-size: 13px; line-height: 1; }
   .res-n { font-size: 11px; color: var(--muted); }
-  .res-add { color: var(--muted); cursor: pointer; font-size: 13px;
-    opacity: 0; transition: opacity .15s, color .15s; padding: 0 4px;
-    user-select: none; }
+  /* The resonance star, promoted from an easter egg to a real control:
+     larger, faintly PRESENT even at rest, and wearing a STATIC acid split —
+     the same glyph refracted into magenta and cyan a pixel apart. Static
+     is the design, not a compromise: the feed never runs a loop (AM-3),
+     and a chromatic aberration that just SITS there already says
+     "emotions live here" without asking for motion. */
+  .res-add { color: var(--dim); cursor: pointer; font-size: 17px;
+    line-height: 1; opacity: .35; padding: 2px 6px; user-select: none;
+    transition: opacity .15s, color .15s, text-shadow .18s, transform .18s;
+    text-shadow: 1.2px 0 0 rgba(255, 62, 205, .55),
+                -1.2px 0 0 rgba(56, 240, 255, .50);
+  }
   .msg:hover .res-add, .pub-block:hover .res-add, #pubArticle .res-add,
-  .shelf-card:hover .res-add { opacity: 1; }
-  .res-add:hover { color: var(--acc); }
-  .res-row:has(.res-own) .res-add { opacity: .6; }
+  .shelf-card:hover .res-add { opacity: .9; }
+  .res-add:hover { color: var(--fg); opacity: 1; transform: scale(1.12);
+    text-shadow: 2px .4px 0 rgba(255, 62, 205, .7),
+                -2px -.4px 0 rgba(56, 240, 255, .65); }
+  .res-row:has(.res-own) .res-add { opacity: .55; }
   .res-picker { position: fixed; z-index: 60; background: var(--glass);
     backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
-    border: 1px solid var(--glass-border); border-radius: var(--radius-md);
-    padding: 8px; max-width: 340px; box-shadow: 0 8px 32px rgba(0,0,0,.35); }
-  .res-picker-slots { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; }
+    border: 1px solid var(--glass-border); border-radius: var(--radius-lg);
+    padding: 10px; max-width: 380px; box-shadow: 0 8px 32px rgba(0,0,0,.35);
+    animation: res-picker-in .18s cubic-bezier(.3, 1.4, .5, 1) both;
+    transform-origin: top left; }
+  @keyframes res-picker-in {
+    from { opacity: 0; transform: scale(.88) translateY(-4px); }
+    to   { opacity: 1; transform: scale(1) translateY(0); }
+  }
+  .res-picker-slots { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
   .res-slot { display: flex; flex-direction: column; align-items: center;
-    gap: 2px; border: 1px solid transparent; background: transparent;
-    border-radius: var(--radius-sm); padding: 6px 4px; min-height: 44px; }
-  .res-slot:hover { border-color: var(--acc); background: var(--surface-raised); }
+    gap: 4px; border: 1px solid transparent; background: transparent;
+    border-radius: var(--radius-md); padding: 9px 6px; min-height: 60px;
+    cursor: pointer; transition: transform .16s, background .16s, border-color .16s; }
+  .res-slot:hover { border-color: var(--acc); background: var(--surface-raised);
+    transform: scale(1.06); }
   .res-slot.res-own { border-color: var(--acc); }
-  .res-slot .res-sym { font-size: 16px; }
-  .res-slot .res-lbl { font-size: 10px; color: var(--dim); }
+  /* The palette wears the same acid split as the star — and HERE, in a
+     transient popover somebody deliberately opened, it is allowed to
+     breathe: a seven-second drift of the two colour ghosts, amplitude
+     under a pixel, each slot out of phase so the grid shimmers instead of
+     pulsing. Slow + tiny + desynchronised = nowhere near the AM-3 strobe
+     floor, and prefers-reduced-motion stills it entirely. */
+  .res-slot .res-sym { font-size: 24px; line-height: 1.15;
+    text-shadow: 1.4px 0 0 rgba(255, 62, 205, .5),
+                -1.4px 0 0 rgba(56, 240, 255, .45);
+    animation: res-acid-drift 7s ease-in-out infinite alternate; }
+  .res-slot:nth-child(2) .res-sym { animation-delay: -1.7s; }
+  .res-slot:nth-child(3) .res-sym { animation-delay: -3.1s; }
+  .res-slot:nth-child(4) .res-sym { animation-delay: -4.6s; }
+  .res-slot:nth-child(5) .res-sym { animation-delay: -2.4s; }
+  .res-slot:nth-child(6) .res-sym { animation-delay: -5.8s; }
+  .res-slot:nth-child(7) .res-sym { animation-delay: -0.9s; }
+  @keyframes res-acid-drift {
+    from { text-shadow: 1.4px  .3px 0 rgba(255, 62, 205, .5),
+                       -1.4px -.3px 0 rgba(56, 240, 255, .45); }
+    to   { text-shadow:  .8px -.5px 0 rgba(255, 62, 205, .58),
+                        -.8px  .5px 0 rgba(56, 240, 255, .52); }
+  }
+  .res-slot:hover .res-sym { animation-play-state: paused;
+    text-shadow: 2.2px .5px 0 rgba(255, 62, 205, .7),
+                -2.2px -.5px 0 rgba(56, 240, 255, .62); }
+  .res-slot .res-lbl { font-size: 10.5px; color: var(--dim); }
+  @media (prefers-reduced-motion: reduce) {
+    .res-picker { animation: none; }
+    .res-slot .res-sym { animation: none; }
+    .res-slot, .res-add { transition: none; }
+    .res-slot:hover, .res-add:hover { transform: none; }
+  }
   .res-picker-actions { display: flex; gap: 8px; justify-content: flex-end;
     margin-top: 6px; }
   .res-emoji-grid { display: grid; grid-template-columns: repeat(8, 1fr);
     gap: 2px; margin-top: 8px; max-height: 180px; overflow-y: auto; }
-  .res-emoji-grid button { border: 0; background: transparent; font-size: 16px;
-    min-height: 30px; padding: 2px; border-radius: 4px; }
-  .res-emoji-grid button:hover { background: var(--surface-raised); }
+  .res-emoji-grid button { border: 0; background: transparent; font-size: 20px;
+    min-height: 36px; padding: 2px; border-radius: 6px;
+    transition: transform .14s, background .14s; }
+  .res-emoji-grid button:hover { background: var(--surface-raised);
+    transform: scale(1.15); }
   .res-emoji-grid input { grid-column: 1 / -1; }
   .res-actors { display: flex; flex-direction: column; gap: 4px; }
   .res-actor-line { display: flex; gap: 8px; align-items: baseline;
