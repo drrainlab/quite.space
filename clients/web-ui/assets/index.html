@@ -247,8 +247,8 @@
        path never needs it, and neither person gets a different edition. -->
   <dialog id="dlgDirs" class="sheet">
     <h3>Directories</h3>
-    <p class="hint">Discover shows the featured directory first, then the ones
-      you add. A directory is an ordinary public space that lists other places.</p>
+    <p class="hint">The featured directory first, then the ones you add. A directory is an
+      ordinary public space that lists other places.</p>
     <div id="dirList" class="list"></div>
     <div class="row">
       <button class="btn-tinted" onclick="CAT.addDirectory()">+ Add directory</button>
@@ -473,7 +473,7 @@
     </div>
   </div>
   <div class="settings-sec">
-    <p class="hint">Curators</p>
+    <p class="sec-label">Curators</p>
     <div id="accCurators" class="list"></div>
     <div class="list">
       <div class="list-row"><span class="lr-label">Principal</span>
@@ -485,33 +485,37 @@
     <p class="hint">A curator is a specific device of a specific person — they can post the moment you add them.</p>
   </div>
   <div class="settings-sec" id="accRate">
-    <p class="hint">How much one contributor may send</p>
+    <p class="sec-label">How much one contributor may send</p>
     <div class="segmented" id="accRateBtns">
       <button data-v="0" onclick="setContributionLimit(0)">No limit</button>
       <button data-v="24" onclick="setContributionLimit(24)">Relaxed</button>
       <button data-v="16" onclick="setContributionLimit(16)">Steady</button>
       <button data-v="8" onclick="setContributionLimit(8)">Strict</button>
     </div>
-    <p class="hint" id="accRateHint">Nothing is ever lost: over the limit, a contribution simply waits and arrives on a later round. It applies per person, so one loud voice cannot crowd out the room.</p>
+    <p class="hint" id="accRateHint">Nothing is lost: over the limit a contribution waits and arrives on a later
+      round. It counts per person, so one loud voice cannot crowd out the room.</p>
   </div>
   <div class="settings-sec">
     <div class="row">
       <button class="btn-plain" id="accFreezeBtn" onclick="toggleFreeze()">Freeze publication</button>
     </div>
-    <p class="hint" id="accFreezeHint">Freeze pauses ALL publication — including yours. Readers see an honest “frozen” state; contributors keep drafts locally until you unfreeze.</p>
+    <p class="hint" id="accFreezeHint">Freezing pauses everyone's publishing, including yours. Readers see an
+      honest “frozen” state; drafts stay local until you unfreeze.</p>
   </div>
   <div class="settings-sec" id="accAvail" hidden>
-    <p class="hint">Availability</p>
+    <p class="sec-label">Availability</p>
     <div class="list">
       <div class="list-row">
         <span class="lr-label">Keep this space reachable
-          <span class="lr-sub">Republish what the owner signed and hold its media, so the space survives their being offline. You gain no say over it: this node has no key and can change nothing.</span>
+          <span class="lr-sub">Republish what the owner signed, so the space survives their going
+            offline. You gain no say over it — this node holds no key.</span>
         </span>
         <button class="btn-plain" id="accMirrorBtn" onclick="toggleMirror()">Mirror</button>
       </div>
       <div class="list-row">
         <span class="lr-label">Share media you already have
-          <span class="lr-sub">Answer other readers with files already downloaded. Never downloads anything extra — but it does tell others you have the file, and therefore that you read this space.</span>
+          <span class="lr-sub">Answer other readers with files you already have. Downloads nothing
+            extra — but it tells others you read this space.</span>
         </span>
         <button class="btn-plain" id="accSeedBtn" onclick="toggleSeed()">Off</button>
       </div>
@@ -775,7 +779,7 @@
        "nothing leaves this device" and then waits for a Save button would be
        telling the truth only after a second press. -->
   <div class="settings-sec">
-    <p class="hint">Ways out of this device</p>
+    <p class="sec-label">Ways out of this device</p>
     <!-- SEGMENTED, not a plain row: `.sel` is only styled inside .segmented,
          so a row of btn-plain shows no sign of which one is chosen — which is
          unusable for a switch whose whole job is to say what is in force. -->
@@ -792,7 +796,7 @@
     <p class="hint" id="connModeNote" style="margin-left:4px"></p>
   </div>
   <div class="settings-sec">
-    <p class="hint">Sync when off your network</p>
+    <p class="sec-label">Sync when off your network</p>
     <!-- Same fix as the row above, and the same bug it had: this control has
          been marking its choice with `.sel` since RR-0 and `.sel` has never
          been styled outside .segmented, so neither option ever looked picked. -->
@@ -817,12 +821,14 @@
       <button class="btn-plain" onclick="remeasureRelays()">Re-measure</button>
       <button class="btn-plain" onclick="copyRelayDiagnostics()">Copy diagnostics</button>
     </div>
-    <p class="hint" style="margin-left:4px">Set an address and this device pushes &amp; pulls automatically every few seconds. Media stays on-demand — only text and manifests travel; open a media card to fetch its bytes. “Accepted by relay” is never “delivered”.</p>
+    <p class="hint" style="margin-left:4px">Set an address and this device pushes and pulls every few seconds. Media
+      stays on demand — open a card to fetch its bytes. “Accepted by relay” is
+      never “delivered”.</p>
     <div id="relayDiagPanel" class="relay-public"></div>
     <div id="relayPublicPanel" class="relay-public"></div>
   </div>
   <div class="settings-sec">
-    <p class="hint">Manual · one-off hand-off</p>
+    <p class="sec-label">Manual · one-off hand-off</p>
     <div class="row">
       <button class="btn-plain" onclick="relayPush()">Push current space</button>
       <button class="btn-plain" onclick="relayPull()">Pull for all spaces</button>
@@ -843,28 +849,25 @@
        had no reason to look — which is exactly what happened during the beta.
        The tab is "This device" for the same reason. -->
   <div class="settings-sec">
-    <p class="hint">Staying connected</p>
+    <p class="sec-label">Staying connected</p>
     <div class="segmented" id="stayMode">
       <button data-v="off" onclick="stayPick(false)">Off</button>
       <button data-v="on" onclick="stayPick(true)">Stay connected</button>
     </div>
-    <p class="hint" style="margin-left:4px">While this is on, Quiet holds its connection even when you are not
-      looking at it, and Android shows a permanent notice saying so. It uses
-      battery.</p>
+    <p class="hint" style="margin-left:4px">Quiet keeps its connection while you are away. Android shows a
+      permanent notice, and it uses battery.</p>
     <!-- THE HALF NOBODY WAS TOLD. Photos, voice notes and video are not
          carried by the relay — only the message that mentions them is — so
          the bytes live on the device that sent them until somebody opens the
          card. With this off, a phone that locks takes them with it, and the
          person you sent them to sees a picture that never arrives. That was
          reported as a bug and it was this setting. -->
-    <p class="hint" style="margin-left:4px">It also decides whether photos, voice and video <em>you</em> sent stay
-      openable. Their bytes live on this device, not on a relay — so with this
-      on, people can open them whenever; with it off, only while your app is
-      awake and connected.</p>
+    <p class="hint" style="margin-left:4px">It also decides whether media you sent stays openable: those bytes live
+      here, not on a relay. Off means only while your app is awake.</p>
     <p class="hint warn" id="stayMsg" style="margin-left:4px"></p>
   </div>
   <div class="settings-sec">
-    <p class="hint">What notifications may show</p>
+    <p class="sec-label">What notifications may show</p>
     <div class="segmented" id="notifPolicy">
       <button data-v="hidden" onclick="notifPick('hidden')">Nothing</button>
       <button data-v="space" onclick="notifPick('space')">Space name</button>
@@ -877,36 +880,35 @@
        nothing here to switch off, and a dead row explaining that would be
        worse than no row. -->
   <div class="settings-sec" id="unlockSec" hidden>
-    <p class="hint">Opening this app</p>
-    <p class="hint" style="margin-left:4px">Your passphrase is saved on this device, in Android's own keystore, so
-      Quiet opens without asking. It cannot be copied off the phone — but
-      anyone who can unlock the phone can open Quiet.</p>
+    <p class="sec-label">Opening this app</p>
+    <p class="hint" style="margin-left:4px">Saved in Android's own keystore, so Quiet opens without asking. It cannot
+      leave the phone — but anyone who can unlock the phone can open Quiet.</p>
     <div class="row">
       <button class="btn-plain" onclick="forgetPassphrase()">Ask for the passphrase every time</button>
     </div>
     <p class="hint warn" id="unlockMsg" style="margin-left:4px"></p>
   </div>
   <div class="settings-sec">
-    <p class="hint" style="margin-left:4px">A notification is not private. Its text appears on the lock screen and is
-      readable by every app you have given notification access to. That is why
-      this starts at "Nothing" — the setting is yours to raise, not ours to
-      assume.</p>
+    <p class="hint" style="margin-left:4px">A notification is not private: its text shows on the lock screen, and
+      every app with notification access can read it. That is why this starts
+      at “Nothing”.</p>
     <p class="hint warn" id="notifMsg" style="margin-left:4px"></p>
   </div>
   </div>
 
   <div class="settings-cat" data-cat="attention">
   <div class="settings-sec">
-    <p class="hint">Local AI attention</p>
+    <p class="sec-label">Local AI attention</p>
     <div class="segmented" id="attnMode">
       <button data-v="off" onclick="qrPickMode('off')">Off</button>
       <button data-v="minimal" class="sel" onclick="qrPickMode('minimal')">Minimal</button>
       <button data-v="custom" onclick="qrPickMode('custom')">Custom</button>
     </div>
-    <p class="hint" style="margin-left:4px">Notices questions, replies and messages addressed to you. Everything is processed on this device — nothing is sent to an external AI, and what caught your attention never leaves your machine.</p>
+    <p class="hint" style="margin-left:4px">Notices questions, replies and messages addressed to you. All of it runs on
+      this device — nothing is sent to an external AI.</p>
   </div>
   <div class="settings-sec">
-    <p class="hint">Your names</p>
+    <p class="sec-label">Your names</p>
     <div class="list"><div class="list-row">
       <span class="lr-label">Aliases<span class="lr-sub"> comma separated</span></span>
       <input type="text" id="attnAliases" placeholder="Глеб, gleb">
@@ -914,12 +916,12 @@
     <p class="hint" style="margin-left:4px">Used to spot when someone writes to you by name. Explicit, because guessing name forms fires on ordinary words.</p>
   </div>
   <div class="settings-sec">
-    <p class="hint">What you care about</p>
+    <p class="sec-label">What you care about</p>
     <textarea id="attnWatched" rows="4" placeholder="mesh-сети и автономная связь&#10;open-source CAD&#10;предложения о сотрудничестве"></textarea>
     <p class="hint" style="margin-left:4px">One per line. Matched as phrases today; a later wave adds cross-language meaning.</p>
   </div>
   <div class="settings-sec">
-    <p class="hint">How often it may interrupt</p>
+    <p class="sec-label">How often it may interrupt</p>
     <div class="list">
       <div class="list-row"><span class="lr-label">Max per day</span>
         <input type="number" id="attnMaxDay" min="0" max="200"></div>
@@ -1167,8 +1169,7 @@
   <div class="ql-block" id="backupBlock">
     <p class="hint" id="backupState"></p>
     <p class="hint">A backup holds everything: identity, spaces, keys, history.
-      The file gets its own passphrase — it need not be the one that opens
-      this app.</p>
+      The file gets its own passphrase.</p>
     <input id="backupPass" type="password" placeholder="passphrase for the backup file" autocomplete="new-password">
     <div class="row"><button onclick="saveBackup()" id="backupBtn">Save a backup</button></div>
     <p class="hint">Restoring is deliberate and separate: a running node holds
@@ -1190,10 +1191,9 @@
 
 <dialog id="dlgRelayTrust">
   <h3>Trust this relay identity?</h3>
-  <p class="hint">A custom relay is pinned to its key the first time you use
-  it. Compare this fingerprint with the operator — over a channel that is not
-  this relay. After you confirm, a different key at the same address is a hard
-  failure, not a warning.</p>
+  <p class="hint">A custom relay is pinned to its key on first use. Compare
+  this fingerprint with the operator over some other channel. After you
+  confirm, a different key at this address is a hard failure.</p>
   <p class="hint" id="relayTrustAddr" style="margin-left:4px"></p>
   <pre id="relayTrustPin" class="pin-block"></pre>
   <div class="row">
@@ -1205,10 +1205,9 @@
 
 <dialog id="dlgLan">
   <h3>LAN peer</h3>
-  <p class="hint">nodes on one network usually find each other by multicast
-  announce. If discovery is filtered (common on many networks, and between
-  two nodes on one machine), connect directly: the peer's port is shown in
-  their header as <code>LAN :PORT</code>.</p>
+  <p class="hint">Nodes on one network usually find each other by themselves.
+  Where that is filtered, connect directly — the peer's port is shown in their
+  header.</p>
   <input id="lanAddr" placeholder="peer address, e.g. 127.0.0.1:61898 or 192.168.1.7:52011">
   <div class="row"><button onclick="lanConnect()">connect</button>
   <button onclick="dlgLan.close()">close</button></div>

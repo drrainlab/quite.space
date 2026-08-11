@@ -112,7 +112,7 @@ function gwRadioBlock(g) {
     if (c.preset) rows.push(row('preset', esc(c.preset)));
     rows.push(row('hop limit', c.hopLimit));
     rows.push(row('transmit', c.txEnabled ? 'enabled'
-      : '<span class="gw-off">DISABLED</span>'));
+      : '<span class="gw-off">disabled</span>'));
     (c.channels || []).forEach(ch => {
       const fp = ch.fingerprint ? ` <span class="dim mono">[${esc(ch.fingerprint)}]</span>` : '';
       rows.push(row(`channel ${ch.index}`,

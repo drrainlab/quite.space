@@ -780,8 +780,8 @@
 
   .pass-code { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 7px; }
   .pass-code-label {
-    font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 1.5px;
-    text-transform: uppercase; color: var(--muted);
+    font-family: var(--font-mono); font-size: 9.5px; letter-spacing: .3px;
+    color: var(--muted);
   }
   .pass-code .out {
     flex: 1 1 0; margin: 0; overflow: auto; word-break: break-all;
@@ -1002,7 +1002,7 @@
   .nav-sec { display: flex; flex-direction: column; }
   .nav-sec-head { display: flex; align-items: center; gap: 6px; cursor: pointer;
     padding: 6px 8px; min-height: var(--tap); color: var(--muted);
-    font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+    font-size: 11px; letter-spacing: .02em; }
   .nav-sec-head:hover { color: var(--fg); }
   .nav-sec-t { flex: 1; }
   .nav-count { color: var(--dim); font-size: 11px; letter-spacing: 0; }
@@ -1109,8 +1109,14 @@
   dialog.sheet { border-radius: var(--radius-lg); width: 440px; max-width: calc(100% - 24px); }
   dialog.sheet h3 { font-size: 18px; color: var(--fg); margin-bottom: 12px; }
   .settings-sec { margin-bottom: 14px; }
-  .settings-sec > .hint { text-transform: uppercase; letter-spacing: .4px;
-    font-size: 11px; margin-left: 4px; }
+  /* Body copy under a settings control. This used to be uppercased, which
+     shouted whole paragraphs — and would have been far worse in Russian,
+     where caps carry no small-caps tradition and set much heavier. The
+     section HEADINGS that shared this rule now carry .sec-label instead,
+     so the two stay distinguishable without either of them shouting. */
+  .settings-sec > .hint { font-size: 11px; margin-left: 4px; }
+  .settings-sec > .sec-label { font-size: 12px; margin: 0 0 6px 4px;
+    color: var(--fg); font-weight: 600; opacity: .8; }
   .settings-tabs { display: flex; width: 100%; margin-bottom: 16px; }
   .settings-cat { display: none; }
   .settings-cat.active { display: block; }
@@ -1231,7 +1237,9 @@
   .wiz-vis { margin: 10px 0 4px; display: flex; flex-direction: column; gap: 8px; }
   .wiz-vis .segmented { width: 100%; }
   .card-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
-  .tag-chip { font-size: 10px; letter-spacing: .4px; text-transform: uppercase;
+  /* Author-written topics — never uppercased: the caps mangled somebody
+     else's words, and mangled them worse in Cyrillic. */
+  .tag-chip { font-size: 10px; letter-spacing: .2px;
     color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
     border-radius: 999px; padding: 2px 7px; }
   /* Reply — a structural edge, shown before you send it */
@@ -1261,8 +1269,10 @@
   #signalsScreen { flex: 1; overflow-y: auto; padding: 14px 18px 24px; }
   .sig-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
     margin-bottom: 14px; }
+  /* A real space name — uppercasing somebody's chosen title was never ours
+     to do, and a Cyrillic name in caps is barely readable at 10px. */
   .sig-group { font-family: var(--font-mono); font-size: 10px;
-    letter-spacing: 1.2px; text-transform: uppercase; color: var(--muted);
+    letter-spacing: .3px; color: var(--muted);
     margin: 18px 0 8px; }
   .sig-card {
     border-left: 2px solid color-mix(in srgb, var(--accent) 22%, transparent);
@@ -1273,7 +1283,7 @@
   .sig-card.seen { opacity: .55; }
   .sig-head { display: flex; align-items: baseline; gap: 10px; }
   .sig-who { color: var(--fg); }
-  .sig-tier { font-size: 9.5px; letter-spacing: 1px; text-transform: uppercase;
+  .sig-tier { font-size: 9.5px; letter-spacing: .3px;
     color: var(--muted); }
   .sig-excerpt { color: var(--dim); margin: 5px 0 8px; line-height: 1.5; }
   .sig-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 9px; }
@@ -1318,8 +1328,8 @@
   .mention-row .mention-name { color: var(--fg); }
   .mention-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
     padding: 6px 16px 0; font-family: var(--font-mono); }
-  .mention-chips-label { font-size: 9.5px; letter-spacing: 1.2px;
-    text-transform: uppercase; color: var(--muted); }
+  .mention-chips-label { font-size: 9.5px; letter-spacing: .3px;
+    color: var(--muted); }
   .mention-chip { font-size: 11px; color: var(--accent);
     border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
     border-radius: 999px; padding: 1px 8px; }
@@ -1483,8 +1493,8 @@
      once. Anything unlisted falls through to the neutral chip rather than
      going uncoloured or, worse, unlabelled. */
   .pub-kind {
-    font-family: var(--font-mono); font-size: 10px; letter-spacing: .08em;
-    text-transform: uppercase; padding: 2px 8px; border-radius: 999px;
+    font-family: var(--font-mono); font-size: 10px; letter-spacing: .02em;
+    padding: 2px 8px; border-radius: 999px;
     color: var(--k-fg, var(--dim));
     background: color-mix(in srgb, var(--k-fg, var(--dim)) 14%, transparent);
     border: 1px solid color-mix(in srgb, var(--k-fg, var(--dim)) 35%, transparent);
@@ -1840,7 +1850,7 @@
      has to be grabbable, so in the editor it says its own name. */
   .comp-spacing { height: 34px; border: 1px dashed var(--line); border-radius: 8px;
     display: grid; place-items: center; color: var(--dim); font-size: 11px;
-    letter-spacing: .08em; text-transform: uppercase; opacity: .7; }
+    letter-spacing: .02em; opacity: .7; }
   /* And in the post itself it is nothing at all, which is the point. */
   .pub-spacing { height: 28px; }
   .comp-chip { background: var(--surface-raised); border: 0; color: var(--dim);
@@ -2163,8 +2173,8 @@
    reading this on a phone in sunlight should not have to see the difference
    between amber and red to know what is wrong. */
 .gw-section { margin-top: 1rem; border-top: 1px solid var(--line, #2a2a2a); padding-top: .6rem; }
-.gw-section h4 { margin: 0 0 .4rem; font-size: .8rem; letter-spacing: .08em;
-  text-transform: uppercase; opacity: .55; font-weight: 600; }
+.gw-section h4 { margin: 0 0 .4rem; font-size: .82rem; letter-spacing: .02em;
+  opacity: .6; font-weight: 600; }
 .gw-kv { display: flex; gap: .8rem; align-items: baseline; padding: .15rem 0;
   font-size: .88rem; }
 .gw-kv > span:first-child { flex: 0 0 7.5rem; font-size: .8rem; }
@@ -2370,7 +2380,7 @@ button:hover > .act-mark, button:focus-visible > .act-mark { opacity: 1; }
 .ql-row { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 3px 0; }
 .ql-note { color: var(--dim); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ql-state {
-  font-size: 10px; text-transform: uppercase; letter-spacing: .06em;
+  font-size: 10px; letter-spacing: .02em;
   padding: 1px 6px; border-radius: 3px; border: 1px solid var(--line);
 }
 .ql-state.live { color: #5bc292; border-color: #5bc29255; }
