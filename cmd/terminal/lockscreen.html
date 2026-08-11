@@ -262,11 +262,17 @@
       if (res.reason === 'locked_out') {
         say('Too many tries. The code is gone — use the passphrase.', 'bad');
         showPass();
-      } else if (typeof res.attempts_left === 'number' && res.attempts_left <= 3) {
-        say('Not that one — ' + res.attempts_left + ' tries left', 'bad');
-      } else {
-        say('Not that one', 'bad');
+        return;
       }
+      // The count is shown from the FIRST refusal, not once it is nearly
+      // spent. Somebody typing a code they believe in has no way to know
+      // the budget is finite, and finding out at "1 try left" is finding
+      // out too late — the shortcut erases itself at zero.
+      const left = typeof res.attempts_left === 'number' ? res.attempts_left : null;
+      say('Not that one' + (left !== null ? ' — ' + left + ' tries left' : ''), 'bad');
+      // And after the first miss, say where the way out is. The link at the
+      // bottom is easy to read past when you are sure you know your code.
+      document.getElementById('usePass').style.color = 'var(--acc)';
     } catch (e) {
       entry = ''; drawDots(); busy = false;
       say('Could not reach this device', 'bad');
