@@ -30,6 +30,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/drrainlab/quiet_places/kernel/assets"
@@ -164,6 +165,94 @@ func (r *Runtime) mirrorKeepalive(addr string, tid id.TerminalID) error {
 		_, err = client.Put(relay.HintPublicOutbox(tid, b), expires, wire)
 		return err
 	})
+}
+
+// followEvery paces the card walk. A catalogue's list changes when somebody
+// edits it, which is nothing like the two-second cadence of the loop this
+// runs inside — and each new card costs a network open.
+const followEvery = 5 * time.Minute
+
+// dueToFollow reports whether this directory's cards are worth walking again,
+// and records the attempt. First call for a space always says yes: a mirror
+// that has just started should not wait five minutes to discover what it is
+// mirroring.
+func (r *Runtime) dueToFollow(tid id.TerminalID) bool {
+	rs := r.relaySync
+	if rs == nil {
+		return false
+	}
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	if rs.lastFollow == nil {
+		rs.lastFollow = map[id.TerminalID]time.Time{}
+	}
+	if last, ok := rs.lastFollow[tid]; ok && time.Since(last) < followEvery {
+		return false
+	}
+	rs.lastFollow[tid] = time.Now()
+	return true
+}
+
+// mirrorFollowCards makes a mirrored DIRECTORY mean what it says.
+//
+// A directory is a space whose content is cards pointing at other spaces.
+// Mirroring one used to keep only the LIST reachable: the cards appeared, the
+// places they named did not, and every picture in them waited on the
+// catalogue owner's own machine being awake. Measured on the demo catalog —
+// the mirror's data directory held 44 KiB and no blobs at all, while the
+// screen it fed showed posts full of media nobody could load. A catalogue
+// whose entries are unreachable is not a catalogue that has been kept
+// reachable.
+//
+// ONLY SPACES THIS NODE DOES NOT ALREADY KNOW ARE TOUCHED, and that single
+// rule is what keeps the operator in charge. `mirror remove` clears the flags
+// and leaves the space; a space that is present is therefore never
+// re-decided here, so a deliberate removal stays removed without this needing
+// any memory of its own.
+//
+// Seeding is INHERITED rather than assumed: a mirror that answers requests
+// for the catalogue answers for what the catalogue lists, and one that
+// quietly holds without seeding goes on quietly holding.
+func (r *Runtime) mirrorFollowCards(tid id.TerminalID) {
+	// The links are read first and the lock let go: everything below dials.
+	var links []string
+	var seed bool
+	if err := r.withSpace(tid, func(st *spaceState) error {
+		seed = r.ks.Spaces[tid].Seed
+		for _, p := range st.space.State.Publications() {
+			if p.Document == nil || p.Document.Kind != "space" {
+				continue
+			}
+			if l := spaceCardTarget(p.Document); l != "" {
+				links = append(links, l)
+			}
+		}
+		return nil
+	}); err != nil {
+		return
+	}
+
+	for _, link := range links {
+		_, target, _, err := ParsePublicLink(strings.TrimPrefix(strings.TrimSpace(link), "qs:"))
+		if err != nil {
+			continue // a card this build cannot read is not a card to act on
+		}
+		r.mu.Lock()
+		_, known := r.spaces[target]
+		r.mu.Unlock()
+		if known {
+			continue
+		}
+		if _, err := r.OpenPublicLink(strings.TrimPrefix(strings.TrimSpace(link), "qs:")); err != nil {
+			continue // unreachable right now; the next pass tries again
+		}
+		if err := r.SetMirror(target, true); err != nil {
+			continue
+		}
+		if seed {
+			_ = r.SetSeed(target, true)
+		}
+	}
 }
 
 // mirrorAnswerWants serves media out of what this node already holds. It

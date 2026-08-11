@@ -950,6 +950,52 @@ func (r *Runtime) PullFromRelay(addr string) (applied int, err error) {
 	return applied, nil
 }
 
+// CollectReplyBoxesAt drains media answers for the given public spaces from
+// ONE relay — the space's own — rather than from this node's personal one.
+//
+// WHY THIS HAS TO EXIST. A public space carries its own relay in signed
+// policy, so a reader's media want travels to THAT relay (pushPublicIngress
+// uses the space's write address) and a holder answers into a reply box
+// there. The collect, meanwhile, has always run against the personal relay:
+// PullFromRelay asks one address for every space it knows.
+//
+// While every space in the world shared one relay those were the same
+// address and nothing was wrong. The moment a second official relay existed
+// they came apart — the answer is written to one machine and waited for on
+// another — and the symptom is a picture that never arrives from a mirror
+// that demonstrably holds it, with every diagnostic on both sides healthy.
+// Seen the day a second region was added.
+func (r *Runtime) CollectReplyBoxesAt(addr string, tids []id.TerminalID) (int, error) {
+	if addr == "" || len(tids) == 0 {
+		return 0, nil
+	}
+	if err := r.relayGate(); err != nil {
+		return 0, err
+	}
+	caps := r.replyBoxCaps(tids, relay.Bucket(uint64(time.Now().Unix())))
+	if len(caps) == 0 {
+		return 0, nil
+	}
+	if left, yes := r.relayThrottled(addr); yes {
+		return 0, relay.ErrRelay{Reason: relay.ReasonRateLimited, RetryAfter: left}
+	}
+	client, release, err := r.pool().Control(addr)
+	if err != nil {
+		return 0, err
+	}
+	var opErr error
+	defer func() { release(opErr) }()
+	outcome, chunkErr := r.collectInChunks(caps, maxCapsPerCollect, r.chunkCursor(addr),
+		client.Collect,
+		func(items [][]byte) (int, error) { return r.applyRelayItems(client, items) })
+	r.rememberChunkCursor(addr, outcome)
+	if chunkErr != nil {
+		opErr = chunkErr
+		r.noteRefusal(addr, chunkErr)
+	}
+	return outcome.Applied, chunkErr
+}
+
 // replyBoxCapLocked returns this space's current media reply capability,
 // minting or rotating it when the relay bucket turns. Caller holds r.mu.
 func (r *Runtime) replyBoxCapLocked(tid id.TerminalID, bucket uint64) []byte {

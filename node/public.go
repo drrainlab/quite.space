@@ -634,21 +634,59 @@ const maxIngressFrame = 256 << 10
 
 // requestIncompleteAssets starts background custody fetches for assets
 // referenced by the given frames that are not yet locally complete.
+//
+// TWO KINDS OF REFERENCE, AND A MIRROR NEEDS BOTH. ExtractAssetRefs reads
+// BLOCK schemas — the pictures, voice notes and video of a conversation. A
+// PUBLICATION references its media differently: a document names asset ids
+// inside its own structure (cover, images, audio, video, gallery items), and
+// no block schema mentions them at all.
+//
+// So a mirror used to take custody of a space's chat and none of its posts.
+// Measured on the demo catalog with the owner switched off: the mirror held
+// exactly the three visuals of the feed, while all three posts pointed at
+// cover ids it had never heard of — and every screen showed "no online
+// source" for the one thing a catalogue is made of.
 func (r *Runtime) requestIncompleteAssets(tid id.TerminalID, frames [][]byte) {
+	want := func(aid string) {
+		if aid == "" {
+			return
+		}
+		if st, err := r.AssetStatus(tid, aid); err == nil && st.State != assets.StateComplete {
+			_ = r.RequestAsset(tid, aid)
+		}
+	}
 	for _, f := range frames {
 		env, err := signal.Decode(f)
 		if err != nil || env.PayloadEncoding != signal.PayloadCBOR {
 			continue
 		}
 		for _, ref := range schemas.ExtractAssetRefs(env.Schema, env.Payload) {
-			if ref == nil {
-				continue
-			}
-			aid := ref.PublicIDHex()
-			if st, err := r.AssetStatus(tid, aid); err == nil && st.State != assets.StateComplete {
-				_ = r.RequestAsset(tid, aid)
+			if ref != nil {
+				want(ref.PublicIDHex())
 			}
 		}
+	}
+	// The documents, from the materialized state rather than from the frames:
+	// a publication arrives as revisions, and what matters is the CURRENT
+	// document — which is exactly what a reader will ask for.
+	//
+	// COLLECTED UNDER THE LOCK, ASKED FOR OUTSIDE IT. RequestAsset takes r.mu
+	// itself, so calling it from inside withSpace deadlocks the runtime — the
+	// same reason this whole function runs outside the lock in mirrorKeepalive.
+	var docAssets []string
+	_ = r.withSpace(tid, func(st *spaceState) error {
+		for _, p := range st.space.State.Publications() {
+			if p.Document == nil {
+				continue
+			}
+			for aid := range p.Document.LiveAssetIDs() {
+				docAssets = append(docAssets, aid)
+			}
+		}
+		return nil
+	})
+	for _, aid := range docAssets {
+		want(aid)
 	}
 }
 
