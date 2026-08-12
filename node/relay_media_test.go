@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/drrainlab/quiet_places/kernel/assets"
-	"github.com/drrainlab/quiet_places/transports/relay"
+	"github.com/drrainlab/quiet_places/transports/relayserver"
 )
 
 // Relay media fetch: with NO direct link, bob pulls an image's bytes purely
@@ -15,7 +15,7 @@ import (
 // (manifests-only), then "fetch original" rides a want-request to alice, who
 // answers the chunks into bob's inbox — media on-demand over the relay.
 func TestRelayMediaFetch(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestRelayMediaFetch(t *testing.T) {
 // the tail, not the chunks it already has. Regression for the multi-round
 // stall where a big asset re-requested satisfied chunks forever.
 func TestRelayMediaFetchMultiRound(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}

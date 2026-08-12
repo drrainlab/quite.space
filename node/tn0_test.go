@@ -6,13 +6,13 @@ import (
 	"time"
 
 	"github.com/drrainlab/quiet_places/protocol/claims"
-	"github.com/drrainlab/quiet_places/transports/relay"
+	"github.com/drrainlab/quiet_places/transports/relayserver"
 )
 
 // TN-0: presence is NoCustody + header-expiring — the relay push custody
 // filter excludes it, while ordinary messages ride the bundle.
 func TestRelayPushCustodyFilter(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}

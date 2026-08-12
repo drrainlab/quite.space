@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/drrainlab/quiet_places/transports/relay"
+	"github.com/drrainlab/quiet_places/transports/relayserver"
 )
 
 func TestDeviceSleptOnlyWhenTheClocksDisagree(t *testing.T) {
@@ -46,7 +47,7 @@ func TestDeviceSleptOnlyWhenTheClocksDisagree(t *testing.T) {
 }
 
 func TestWakeDropsTheSentenceAndTheDeadSocket(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}

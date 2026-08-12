@@ -15,7 +15,7 @@ import (
 	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/protocol/publication"
 	"github.com/drrainlab/quiet_places/terminals"
-	"github.com/drrainlab/quiet_places/transports/relay"
+	"github.com/drrainlab/quiet_places/transports/relayserver"
 )
 
 // publishSpaceCard puts a card into `dir` pointing at `link` — the shape a
@@ -40,7 +40,7 @@ func publishSpaceCard(t *testing.T, owner *Runtime, dir id.TerminalID, title, li
 }
 
 func TestAMirroredDirectoryFollowsWhatItLists(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +122,7 @@ func TestAMirroredDirectoryFollowsWhatItLists(t *testing.T) {
 // the space, so a space this node already knows is never re-decided here —
 // which is the whole mechanism by which a deliberate removal stays removed.
 func TestFollowingNeverOverridesAnOperatorsRemoval(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}

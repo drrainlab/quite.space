@@ -9,12 +9,13 @@ import (
 	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/protocol/quicklink"
 	"github.com/drrainlab/quiet_places/transports/relay"
+	"github.com/drrainlab/quiet_places/transports/relayserver"
 )
 
 // setUpRelay gives a runtime a relay and returns its address.
-func setUpRelay(t *testing.T, rts ...*Runtime) (*relay.Server, string) {
+func setUpRelay(t *testing.T, rts ...*Runtime) (*relayserver.Server, string) {
 	t.Helper()
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}

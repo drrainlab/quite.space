@@ -5,14 +5,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/drrainlab/quiet_places/transports/relay"
+	"github.com/drrainlab/quiet_places/transports/relayserver"
 )
 
 // Relay auto-sync: two LAN-less nodes converge purely through the
 // background relay loop (Settings.Relay) — no manual push/pull, no direct
 // link. Media stays on-demand (manifests-only push).
 func TestRelayAutoSync(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}

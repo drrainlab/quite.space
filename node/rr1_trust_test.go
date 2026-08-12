@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	"github.com/drrainlab/quiet_places/transports/relay"
+	"github.com/drrainlab/quiet_places/transports/relayserver"
 )
 
 // testIdentity builds a persistent-style relay identity and its pin.
@@ -40,10 +41,10 @@ func testIdentity(t *testing.T) (tls.Certificate, string) {
 		base64.StdEncoding.EncodeToString(sum[:])
 }
 
-func startPinnedRelay(t *testing.T) (addr, pin string, srv *relay.Server) {
+func startPinnedRelay(t *testing.T) (addr, pin string, srv *relayserver.Server) {
 	t.Helper()
 	cert, pin := testIdentity(t)
-	srv, port, err := relay.StartServerWithIdentity("127.0.0.1:0", relay.DefaultLimits(), &cert)
+	srv, port, err := relayserver.StartServerWithIdentity("127.0.0.1:0", relayserver.DefaultLimits(), &cert)
 	if err != nil {
 		t.Fatal(err)
 	}

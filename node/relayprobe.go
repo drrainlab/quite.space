@@ -108,7 +108,7 @@ func ewma(prev, sample float64) float64 {
 
 // probeOnce runs up to probeSamples probes over the pooled control lane
 // and returns the MEDIAN RTT with the last reply's facts. A legacy relay
-// (unknown msgProbe) falls back to the msgTime-only profile — allowed
+// (unknown MsgProbe) falls back to the MsgTime-only profile — allowed
 // for custom relays; official ones are required to speak probe.
 func (r *Runtime) probeOnce(addr string) (relay.ProbeResult, error) {
 	var rtts []time.Duration
@@ -121,7 +121,7 @@ func (r *Runtime) probeOnce(addr string) (relay.ProbeResult, error) {
 			if err != nil {
 				var re relay.ErrRelay
 				if errors.As(err, &re) && strings.Contains(re.Reason, "unknown message type") {
-					// Legacy profile: measure with msgTime alone.
+					// Legacy profile: measure with MsgTime alone.
 					now, rtt, terr := c.Time()
 					if terr != nil {
 						return terr

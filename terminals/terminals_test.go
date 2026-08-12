@@ -16,7 +16,7 @@ import (
 	"github.com/drrainlab/quiet_places/terminals/bot"
 	"github.com/drrainlab/quiet_places/terminals/human"
 	"github.com/drrainlab/quiet_places/terminals/sensor"
-	"github.com/drrainlab/quiet_places/transports/relay"
+	"github.com/drrainlab/quiet_places/transports/relayserver"
 )
 
 func newSpace(t *testing.T) *terminals.Space {
@@ -179,8 +179,8 @@ func TestPresenceHonestyEndToEnd(t *testing.T) {
 }
 
 func TestBlindRelayStoreAndForward(t *testing.T) {
-	store := relay.NewStore(16, 1<<16)
-	item := relay.Item{DestinationHint: "hint-rotating-abc", ExpiresAt: 2000,
+	store := relayserver.NewStore(16, 1<<16)
+	item := relayserver.Item{DestinationHint: "hint-rotating-abc", ExpiresAt: 2000,
 		Ciphertext: []byte{0xde, 0xad, 0xbe, 0xef}}
 	if !store.Put(item) {
 		t.Fatal("relay refused item")
@@ -189,9 +189,9 @@ func TestBlindRelayStoreAndForward(t *testing.T) {
 	// bytes are idempotent by design since PA-0 — they never consume a
 	// second slot, so the flood must vary.)
 	for i := 0; i < 16; i++ {
-		store.Put(relay.Item{DestinationHint: "flood", ExpiresAt: 2000, Ciphertext: []byte{1, byte(i)}})
+		store.Put(relayserver.Item{DestinationHint: "flood", ExpiresAt: 2000, Ciphertext: []byte{1, byte(i)}})
 	}
-	if store.Put(relay.Item{DestinationHint: "flood", ExpiresAt: 2000, Ciphertext: []byte{2, 0}}) {
+	if store.Put(relayserver.Item{DestinationHint: "flood", ExpiresAt: 2000, Ciphertext: []byte{2, 0}}) {
 		t.Fatal("quota not enforced")
 	}
 	// Collect before expiry: delivered once, then gone.
@@ -203,7 +203,7 @@ func TestBlindRelayStoreAndForward(t *testing.T) {
 		t.Fatal("item delivered twice")
 	}
 	// Expiry is unconditional: only the "late" item is past TTL at t=200.
-	store.Put(relay.Item{DestinationHint: "late", ExpiresAt: 100, Ciphertext: []byte{2}})
+	store.Put(relayserver.Item{DestinationHint: "late", ExpiresAt: 100, Ciphertext: []byte{2}})
 	if n := store.Expire(200); n != 1 {
 		t.Fatalf("expected 1 expired item, got %d", n)
 	}

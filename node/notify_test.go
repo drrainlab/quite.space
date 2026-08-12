@@ -27,7 +27,7 @@ import (
 
 	"github.com/drrainlab/quiet_places/kernel/eventlog"
 	"github.com/drrainlab/quiet_places/protocol/id"
-	"github.com/drrainlab/quiet_places/transports/relay"
+	"github.com/drrainlab/quiet_places/transports/relayserver"
 )
 
 func TestOpeningAJournalNotifiesNothingAndTheNextEventNotifiesOnce(t *testing.T) {
@@ -138,7 +138,7 @@ func TestDisarmingStopsCandidatesRatherThanLeavingTheHostToDropThem(t *testing.T
 // memory=everything on purpose: this is the configuration where history
 // actually travels, so it is the configuration where the hazard is real.
 func TestJoiningASpaceWithHistoryDoesNotNotifyForThatHistory(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -975,7 +975,7 @@ func TestASpaceThePlaneHasNeverSeenDoesNotReplayItsWholeLog(t *testing.T) {
 // test does what the gate does — rename, sync, then speak — and asserts on the
 // candidate the host would receive.
 func TestARenameReachesTheNextNotification(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -10,6 +10,7 @@ import (
 
 	"github.com/drrainlab/quiet_places/terminals"
 	"github.com/drrainlab/quiet_places/transports/relay"
+	"github.com/drrainlab/quiet_places/transports/relayserver"
 )
 
 // IC-1: an owner may tighten the per-contributor rate, and the promise the
@@ -19,7 +20,7 @@ import (
 // space that quietly drops what it will not take this second is
 // indistinguishable, from the contributor's side, from one that censors.
 func TestAnOwnerLimitDefersRatherThanDrops(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +140,7 @@ func TestAnOwnerLimitDefersRatherThanDrops(t *testing.T) {
 // on the claim, replaying somebody's own words would spend their allowance
 // and mute them with their own content.
 func TestReplayingAContributorsFramesDoesNotSpendTheirAllowance(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}

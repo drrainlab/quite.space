@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/drrainlab/quiet_places/protocol/id"
-	"github.com/drrainlab/quiet_places/transports/relay"
+	"github.com/drrainlab/quiet_places/transports/relayserver"
 )
 
 // A space keeps syncing after its log outgrows one relay item.
@@ -28,7 +28,7 @@ import (
 // bundle "would fail to decode at the relay (and the failure would be
 // silent)". Only the frame path was left whole.
 func TestASpaceKeepsSyncingPastOneRelayItem(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}

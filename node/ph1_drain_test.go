@@ -9,6 +9,7 @@ import (
 	"github.com/drrainlab/quiet_places/terminals"
 	"github.com/drrainlab/quiet_places/transports/bundle"
 	"github.com/drrainlab/quiet_places/transports/relay"
+	"github.com/drrainlab/quiet_places/transports/relayserver"
 )
 
 // PH-1's reason for existing, stated as a test.
@@ -22,7 +23,7 @@ import (
 // The test asserts the negative and the positive TOGETHER, because a drain
 // gate that also broke delivery would pass a negative-only test.
 func TestStrangerCannotDrainAnothersMailbox(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +103,7 @@ func TestStrangerCannotDrainAnothersMailbox(t *testing.T) {
 // A public request without a reply box gets no answer rather than an answer
 // posted to a mailbox everyone can empty. Silence is the honest outcome.
 func TestPublicWantWithoutAReplyBoxIsNotAnswered(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +148,7 @@ func TestPublicWantWithoutAReplyBoxIsNotAnswered(t *testing.T) {
 // DRAIN it is derived from the space key. A stranger holding the link — and
 // therefore holding the address itself — still cannot take a contribution.
 func TestStrangerCannotDrainIngressAfterCommitment(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}

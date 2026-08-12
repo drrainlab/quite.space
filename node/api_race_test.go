@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/drrainlab/quiet_places/transports/relay"
+	"github.com/drrainlab/quiet_places/transports/relayserver"
 )
 
 // The read side of the API and the relay-sync goroutine touch the same
@@ -25,7 +25,7 @@ import (
 //
 // Run it as: go test -race -run TestReadProjectionsDoNotRaceRelaySync ./node/
 func TestReadProjectionsDoNotRaceRelaySync(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}

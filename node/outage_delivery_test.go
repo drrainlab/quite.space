@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/drrainlab/quiet_places/transports/relay"
+	"github.com/drrainlab/quiet_places/transports/relayserver"
 )
 
 // The reported scenario, exactly: a post written while the relay was down.
@@ -16,7 +16,7 @@ import (
 // client, and the post must reach the other side without anybody doing
 // anything further.
 func TestAPostWrittenDuringAnOutageArrivesWhenTheRelayReturns(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestAPostWrittenDuringAnOutageArrivesWhenTheRelayReturns(t *testing.T) {
 	bob.PushToRelay(addr, tid)
 
 	// The relay returns on the same address, and bob restarts his client.
-	srv2, _, err := relay.StartServer(addr, relay.DefaultLimits())
+	srv2, _, err := relayserver.StartServer(addr, relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -8,7 +8,7 @@ import (
 
 	"github.com/drrainlab/quiet_places/kernel/assets"
 	"github.com/drrainlab/quiet_places/protocol/schemas"
-	"github.com/drrainlab/quiet_places/transports/relay"
+	"github.com/drrainlab/quiet_places/transports/relayserver"
 )
 
 // Mirrors the real listening-room path: an audio asset uploaded as
@@ -16,7 +16,7 @@ import (
 // relay-only joiner fetches the track's bytes. Proves the track ref indexes on
 // the joiner (same as a cover image) and the fetch completes over the relay.
 func TestRelayListeningTrackFetch(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}

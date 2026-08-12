@@ -24,11 +24,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/drrainlab/quiet_places/transports/relay"
+	"github.com/drrainlab/quiet_places/transports/relayserver"
 )
 
 func TestPresenceDoesNotSeverTheChainThroughARelay(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +112,7 @@ func TestPresenceDoesNotSeverTheChainThroughARelay(t *testing.T) {
 // A presence update with nothing after it is still withheld: that is the case
 // ADR-015 was written for, and it is where all the airtime actually goes.
 func TestPresenceAtTheTipIsStillNotRelayed(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}

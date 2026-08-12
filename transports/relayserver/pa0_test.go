@@ -1,11 +1,12 @@
 // PA-0.3 acceptance: the public-mailbox verbs. Fetch is non-destructive
 // (many readers), Replace is atomic (I5), Put is idempotent by content
 // within a hint, hint namespaces never collide, and the abuse bounds hold.
-package relay
+package relayserver
 
 import (
 	"bytes"
 	"fmt"
+	"github.com/drrainlab/quiet_places/transports/relay"
 	"testing"
 	"time"
 
@@ -126,15 +127,15 @@ func TestHintNamespacesDistinct(t *testing.T) {
 		}
 		seen[string(h)] = name
 	}
-	add("member", Hint(tid, 1))
-	add("inbox", HintFor(tid, dev, 1))
-	add("outbox", HintPublicOutbox(tid, 1))
-	for sh := byte(0); sh < IngressShards; sh++ {
-		add(fmt.Sprintf("ingress-%d", sh), HintPublicIngress(tid, 1, sh))
+	add("member", relay.Hint(tid, 1))
+	add("inbox", relay.HintFor(tid, dev, 1))
+	add("outbox", relay.HintPublicOutbox(tid, 1))
+	for sh := byte(0); sh < relay.IngressShards; sh++ {
+		add(fmt.Sprintf("ingress-%d", sh), relay.HintPublicIngress(tid, 1, sh))
 	}
 	// Same author always lands in the same shard (fresh copy of the id).
 	devCopy := dev
-	if IngressShard(dev) != IngressShard(devCopy) {
+	if relay.IngressShard(dev) != relay.IngressShard(devCopy) {
 		t.Fatal("shard not deterministic")
 	}
 }
@@ -148,7 +149,7 @@ func TestIngressShardingBeatsPerHintCap(t *testing.T) {
 	for i := 0; i < 200; i++ {
 		var dev id.DeviceID
 		dev[0], dev[1] = byte(i), byte(i>>8)
-		hint := HintPublicIngress(tid, 1, IngressShard(dev))
+		hint := relay.HintPublicIngress(tid, 1, relay.IngressShard(dev))
 		if s.Put(Item{DestinationHint: string(hint),
 			Ciphertext: []byte(fmt.Sprintf("bundle-from-%d", i))}) {
 			accepted++
@@ -160,7 +161,7 @@ func TestIngressShardingBeatsPerHintCap(t *testing.T) {
 }
 
 // End-to-end over the wire: Fetch/Replace verbs through a real server; two
-// clients both read the outbox; rate limit answers with msgError; a wiped
+// clients both read the outbox; rate limit answers with relay.MsgError; a wiped
 // mailbox is repaired by a later Replace (heartbeat path).
 func TestServerFetchReplaceEndToEnd(t *testing.T) {
 	limits := DefaultLimits()
@@ -174,9 +175,9 @@ func TestServerFetchReplaceEndToEnd(t *testing.T) {
 
 	var tid id.TerminalID
 	tid[3] = 3
-	outbox := HintPublicOutbox(tid, Bucket(uint64(time.Now().Unix())))
+	outbox := relay.HintPublicOutbox(tid, relay.Bucket(uint64(time.Now().Unix())))
 
-	owner, err := DialClient(addr)
+	owner, err := relay.DialClient(addr)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,17 +189,17 @@ func TestServerFetchReplaceEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	r1, err := DialClient(addr)
+	r1, err := relay.DialClient(addr)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer r1.Close()
-	r2, err := DialClient(addr)
+	r2, err := relay.DialClient(addr)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer r2.Close()
-	for i, rc := range []*Client{r1, r2} {
+	for i, rc := range []*relay.Client{r1, r2} {
 		items, err := rc.Fetch([][]byte{outbox})
 		if err != nil {
 			t.Fatalf("reader %d: %v", i, err)
@@ -218,7 +219,7 @@ func TestServerFetchReplaceEndToEnd(t *testing.T) {
 	}
 
 	// Rate limit: the 5/min budget is spent (r1 used 2 fetches) — burn the
-	// rest and expect msgError.
+	// rest and expect relay.MsgError.
 	var rateErr error
 	for i := 0; i < 6; i++ {
 		if _, err := r1.Fetch([][]byte{outbox}); err != nil {
@@ -230,9 +231,17 @@ func TestServerFetchReplaceEndToEnd(t *testing.T) {
 		t.Fatal("fetch rate limit never triggered")
 	}
 
-	// Old-client tolerance: unknown message type answered with msgError,
-	// nothing crashes (send a raw future-type message).
-	if _, err := r2.roundTrip(&Msg{Type: 99}, 3*time.Second); err == nil {
-		t.Fatal("unknown type must round-trip to an error")
+	// Old-client tolerance: an unknown message type is answered with
+	// relay.MsgError and nothing crashes.
+	//
+	// Asserted at the SERVER's own seam rather than by pushing a raw frame
+	// through a Client. The property belongs to the dispatcher — a relay from
+	// the future says something this build has no name for — and reaching
+	// through the client to prove it needed the client's unexported
+	// roundTrip, which the licence split put in another package. Testing it
+	// where it lives is the better shape anyway, and it is what ph0_test
+	// already does for every limit.
+	if r := srv.handle(&relay.Msg{Type: 99}, &connState{}); r.Type != relay.MsgError {
+		t.Fatalf("unknown type must be answered with an error, got %+v", r)
 	}
 }

@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/drrainlab/quiet_places/transports/relay"
+	"github.com/drrainlab/quiet_places/transports/relayserver"
 )
 
 // (a) UNAVAILABLE: the relay dies. Projection is a LOCAL act — mail keeps
@@ -56,7 +56,7 @@ func TestRelayOutageDoesNotDropOrDuplicateIngress(t *testing.T) {
 
 	// The relay returns at the same address; RT-0 re-offers; alice
 	// receives exactly once.
-	srv2, _, err := relay.StartServer(addr, relay.DefaultLimits())
+	srv2, _, err := relayserver.StartServer(addr, relayserver.DefaultLimits())
 	if err != nil {
 		t.Skipf("could not rebind %s: %v", addr, err)
 	}

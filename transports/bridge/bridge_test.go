@@ -17,6 +17,7 @@ import (
 	"github.com/drrainlab/quiet_places/transports/bundle"
 	"github.com/drrainlab/quiet_places/transports/loopback"
 	"github.com/drrainlab/quiet_places/transports/relay"
+	"github.com/drrainlab/quiet_places/transports/relayserver"
 )
 
 func mkFrame(t *testing.T, term id.TerminalID, seed byte, seq uint64,
@@ -83,7 +84,7 @@ func testBridge(t *testing.T, radio *loopback.End, relayAddr string,
 // The headline path: radio frames reach the relay; relay frames reach the
 // radio — and the bridge only ever handled headers.
 func TestTwoSegmentLoop(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +176,7 @@ func encodeBundle(t *testing.T, term id.TerminalID, frames ...[]byte) []byte {
 // Two bridges on one carrier + one relay: the storm is bounded — each
 // frame is forwarded a bounded number of times, dedup + split-horizon hold.
 func TestTwoBridgesBoundedStorm(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}

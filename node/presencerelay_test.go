@@ -19,11 +19,11 @@ import (
 
 	"github.com/drrainlab/quiet_places/kernel/trust"
 	"github.com/drrainlab/quiet_places/protocol/id"
-	"github.com/drrainlab/quiet_places/transports/relay"
+	"github.com/drrainlab/quiet_places/transports/relayserver"
 )
 
 func TestAStatusArrivesWithoutAMessageBehindIt(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestAStatusArrivesWithoutAMessageBehindIt(t *testing.T) {
 // the custody declaration is actually about, and the reason this could not
 // simply be handed over with everything else.
 func TestAStaleStatusIsNotLeftSittingOnTheRelay(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}

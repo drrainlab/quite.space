@@ -8,10 +8,11 @@ import (
 	"time"
 
 	"github.com/drrainlab/quiet_places/transports/relay"
+	"github.com/drrainlab/quiet_places/transports/relayserver"
 )
 
 func TestProbeRoundTripCarriesTheFacts(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,9 +42,9 @@ func TestProbeRoundTripCarriesTheFacts(t *testing.T) {
 }
 
 func TestProbeIsMetered(t *testing.T) {
-	lim := relay.DefaultLimits()
+	lim := relayserver.DefaultLimits()
 	lim.CollectRatePerMin = 3
-	srv, port, err := relay.StartServer("127.0.0.1:0", lim)
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", lim)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +131,7 @@ func TestAutoSelectionPicksAndPersists(t *testing.T) {
 	// probing its real address via the pool through runAutoSelection's
 	// machinery — the registry endpoint is fixed, so instead verify the
 	// probe/record/score path directly.
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}

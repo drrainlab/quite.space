@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
-// Copyright 2026 Gleb Bondarenko and the quite.space contributors
+// # Copyright 2026 Gleb Bondarenko and the quite.space contributors
 //
 // This is a NETWORK SERVICE, and it is licensed differently from the rest
 // of the repository: the protocol and everything a client needs is
@@ -23,13 +23,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/drrainlab/quiet_places/transports/relay"
+	"github.com/drrainlab/quiet_places/transports/relayserver"
 )
 
 func main() {
 	addr := ":7411"
 	dataDir := ""
-	limits := relay.DefaultLimits()
+	limits := relayserver.DefaultLimits()
 	var perHintBytes, totalBytes int64
 	intArg := func(args []string, i *int) int64 {
 		if *i+1 < len(args) {
@@ -82,7 +82,7 @@ func main() {
 	}
 	// A persistent identity (RR-1) only when asked for: a public relay
 	// pins its SPKI, a dev relay on loopback needs no name at all.
-	var srv *relay.Server
+	var srv *relayserver.Server
 	var port int
 	var err error
 	pin := ""
@@ -93,9 +93,9 @@ func main() {
 			os.Exit(1)
 		}
 		pin = p
-		srv, port, err = relay.StartServerWithIdentity(addr, limits, &cert)
+		srv, port, err = relayserver.StartServerWithIdentity(addr, limits, &cert)
 	} else {
-		srv, port, err = relay.StartServer(addr, limits)
+		srv, port, err = relayserver.StartServer(addr, limits)
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)

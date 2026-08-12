@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/drrainlab/quiet_places/transports/relay"
+	"github.com/drrainlab/quiet_places/transports/relayserver"
 )
 
 // The subject is THE SHIPPED REGISTRY, so it is the shipped one that is read:
@@ -196,11 +197,11 @@ func TestAFallenRelayIsReplacedWithoutARestart(t *testing.T) {
 	defer host.Close()
 	first, firstAddr := setUpRelay(t, host)
 	second, secondAddr := setUpRelay(t, host)
-	// Closed ONCE, whichever one the test kills: relay.Server panics on a
+	// Closed ONCE, whichever one the test kills: relayserver.Server panics on a
 	// second Close, so a plain defer beside an explicit kill made this test
 	// fail or pass depending on which relay measured faster.
 	var closeOnce [2]bool
-	shut := func(i int, s *relay.Server) {
+	shut := func(i int, s *relayserver.Server) {
 		if !closeOnce[i] {
 			closeOnce[i] = true
 			s.Close()

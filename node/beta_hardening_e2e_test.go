@@ -9,6 +9,7 @@ import (
 	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/protocol/projection"
 	"github.com/drrainlab/quiet_places/transports/relay"
+	"github.com/drrainlab/quiet_places/transports/relayserver"
 )
 
 // The PH wave in one test: the two sentences it exists for, asserted
@@ -21,7 +22,7 @@ import (
 // pass a negative-only test, and an availability mechanism that leaked
 // mailboxes would pass a positive-only one.
 func TestPublicHardeningEndToEnd(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}

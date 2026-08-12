@@ -8,14 +8,14 @@ import (
 
 	"github.com/drrainlab/quiet_places/protocol/projection"
 	"github.com/drrainlab/quiet_places/terminals"
-	"github.com/drrainlab/quiet_places/transports/relay"
+	"github.com/drrainlab/quiet_places/transports/relayserver"
 )
 
 // PA-1.1: the revision chain — bump + Previous hash-link; readers accept
 // newer revisions via the projection with anti-rollback; a NEW curator's
 // exact device activates and publishes after a curator-add revision.
 func TestPolicyRevisionCuratorAddViaProjection(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func manifestRevisionOf(t *testing.T, frame []byte) uint64 {
 // phase stays materialized on every replica, INCLUDING a fresh replay
 // (Authorized is permanently off after the first revision).
 func TestModeFlipKeepsCommunityContent(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +199,7 @@ func TestModeFlipKeepsCommunityContent(t *testing.T) {
 // pause client-side; ingress is not drained; unfreeze restores everything
 // including pending delivery.
 func TestTrueFreeze(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}

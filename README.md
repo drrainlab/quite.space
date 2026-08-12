@@ -1,111 +1,149 @@
-# Terminal Network
+# Quite Space
 
-*Working titles: Terminal Network, Quiet Spaces. Core: **Terminal Mesh Kernel**.*
+**A quiet place for the people you choose.** Your conversations live on your
+own devices, and they travel over whatever path is available — the internet, a
+local network, or a LoRa radio. There is no server holding your history,
+because there is nowhere for one to sit.
 
-A decentralized, local-first social environment where the basic entity is not a
-chat, channel, or profile, but a **Terminal** — a cryptographically addressable
-entity that can be a person, a shared living space, a bot, an AI agent, a
-sensor, an actuator, a gateway, a relay, or an archive.
-
-> Your social space lives on your devices, not in our database.
-> One social space. Any transport — from broadband internet to LoRa radio.
 > Install the client — become a node.
 
-## The formula
+Under it is the **Terminal Mesh Kernel**: the basic entity is not a chat, a
+channel or a profile but a **Terminal** — a cryptographically addressable
+thing that can be a person, a shared space, a bot, an AI agent, a sensor, a
+gateway, a relay or an archive. A space is one entity whether two people or
+twenty are in it; a direct message is a presentation mode, not a data type.
 
-```text
-Cryptographic Principal
-+ addressable Terminal
-+ signed Manifest
-+ explicit Capabilities
-+ typed Signals
-+ provenance
-+ append-only Event Log
-+ deterministic State
-+ transport-independent Sync
-+ honest Receipts
-+ optional Blind Relays
-```
+The rule everything else is measured against:
 
-Guiding principle:
-
-> A Terminal must never appear smarter, more reliable, more human, safer, or
+> A Terminal must never appear smarter, more reliable, more human, safer or
 > more available than it can prove.
 
-## Status
+## Download
 
-**M0 — Protocol Seed: complete.** ADR-001–010 accepted; Go kernel implements
-the deterministic CBOR codec with golden test vectors, identity (device
-certificates, revocation, recovery bundles), terminal registry with
-capability enforcement, the append-only event log (hash chains, fork
-quarantine, crash-safe segments), the truth & claims engine with honesty
-snapshot tests, sync v0 with fragmentation down to 64-byte MTUs, transports
-T0/T1/T3/T4 (loopback, bundle, blind relay, low-bandwidth simulator) with a
-conformance suite, and six headless terminals.
+**Public beta. The desktop builds are EXPERIMENTAL and are signed by no
+authority** — there is no Apple Developer membership and no Debian repository
+behind this — so each platform asks you to let the app through once. That is a
+deliberate trade, and it is said here rather than hidden.
 
-Try the Phase 0 proof (no server, no accounts):
+| | |
+|---|---|
+| **macOS** | [`quite-space-macos-universal.dmg`](../../releases/latest/download/quite-space-macos-universal.dmg) — Apple Silicon and Intel, macOS 13.3+ |
+| **Linux** | [`quite-space-linux-amd64.deb`](../../releases/latest/download/quite-space-linux-amd64.deb) — Debian 12+ / Ubuntu 22.04+, x86-64 |
+| **Android** | [`quite-space-android.apk`](../../releases/latest/download/quite-space-android.apk) — Android 7.0+, arm64 |
+
+**macOS.** Drag **Quite Space** to Applications, launch it once — macOS will
+refuse and say it cannot verify the developer, which is true — then
+**System Settings → Privacy & Security → Open Anyway**. Or
+`xattr -dr com.apple.quarantine "/Applications/Quite Space.app"`.
+
+**Linux.** Install with `apt`, not `dpkg -i` — apt resolves the GTK and WebKit
+runtimes: `sudo apt install ./quite-space-linux-amd64.deb`
+
+**Android.** Direct install; there is no Play Store listing. Your device will
+ask you to allow installing from this source. Every build is signed by the same
+key — if an update is ever refused because the signature changed, do not work
+around it, tell us instead.
+
+Verify a download against `SHA256SUMS` on the release:
+`shasum -a 256 -c SHA256SUMS`
+
+## What it does
+
+- **Spaces** — private by default, or public and readable by anyone with the
+  link. One entity behind a two-person line, a group and a project room.
+- **Invitations** that are five spoken words or a link, with an optional
+  approval step. No account, no phone number, no directory of people.
+- **Posts** — long-form documents with media, and an optional generative
+  **atmosphere** that plays behind the article.
+- **Discover** — catalogues are ordinary public spaces, so anybody can run one.
+  Looking inside a space never subscribes you to it.
+- **Any transport.** An internet relay, a direct LAN link, or a LoRa radio,
+  chosen automatically. A relay may introduce people; a LAN may speed them up;
+  a radio may keep them talking when the internet is gone. None of those
+  transitions creates a new contact or changes what is happening.
+- **A local AI terminal** that never leaves the device, when you configure a
+  provider for it.
+
+Encryption is end-to-end per space, with epoch keys rotated on membership
+change. Relays are blind and hold nothing: no accounts, no retention beyond a
+short TTL, and — for private spaces — no ability to read what passes through.
+The exact scope of that claim, including where it does **not** hold, is in
+[ADR-016](adr/ADR-016-public-access.md).
+
+## Running it from source
 
 ```sh
-go run ./cmd/terminal demo
+go run ./cmd/terminal ui --passphrase "a passphrase of your own"
 ```
 
-**M1 in progress.** Landed: group encryption per ADR-005 (epoch keys, HPKE
-key wrap, XChaCha20-Poly1305 payloads), private spaces with signed capability
-invites, epoch rotation on membership change — the demo's blind courier is
-now cryptographically blind, not just architecturally. Next: LAN transport
-(M1.1), encrypted local database + SQLite (M1.0), Reticulum sidecar (M1.6),
-desktop shell per ADR-011.
+That is the whole thing: one CGO-free binary that serves the interface on
+127.0.0.1 and opens a browser. `terminal node` is the same runtime headless —
+on a Raspberry Pi, say. The desktop application is the same node with a window
+in front of it:
+
+```sh
+cd cmd/desktop && go run .
+```
+
+Standing up your own relay, so that your people depend on nobody else's:
+
+```sh
+go run ./cmd/terminal-relay --listen :7411
+```
 
 ## Documents
 
-- [VISION_AND_ROADMAP.md](VISION_AND_ROADMAP.md) — concept, MVP specification,
-  global roadmap (Phase 0–7).
-- [ENGINEERING_PLAN_M0_M1.md](ENGINEERING_PLAN_M0_M1.md) — Terminal ontology,
-  architectural invariants, Truth Contract, Signal Envelope v0, crypto profile,
-  transports T0–T6, milestones M0.0–M0.8 and M1.0–M1.7, demos A–E, testing
-  strategy, definition of done.
-- [adr/](adr/README.md) — architecture decision records (ADR-001–010 planned).
-- [docs/guide/](docs/guide/README.md) — user guide: spaces and their kinds,
-  invitations, conversation, posts, post atmosphere, signals, the Navigator,
-  networking. Russian for now; an English version follows.
-- [docs/radio/en/](docs/radio/en/README.md) — talking over LoRa: which
-  carrier is proven, flashing an RNode board, attaching and using it, and
-  the radio command-line tools. Тот же раздел по-русски:
-  [docs/radio/](docs/radio/README.md).
+- [docs/guide/](docs/guide/README.md) — the user guide: spaces, invitations,
+  conversation, posts, atmosphere, signals, the Navigator, networking,
+  self-hosting. Russian; an English version follows.
+- [docs/radio/en/](docs/radio/en/README.md) — talking over LoRa: which carrier
+  is proven, flashing an RNode board, attaching one, and the radio tools.
+  [По-русски](docs/radio/README.md).
+- [adr/](adr/README.md) — 22 architecture decision records. The reasoning is
+  there rather than in commit messages.
+- [VISION_AND_ROADMAP.md](VISION_AND_ROADMAP.md) and
+  [ENGINEERING_PLAN_M0_M1.md](ENGINEERING_PLAN_M0_M1.md) — the original
+  concept and the first engineering plan, kept as written.
 
-## Layout
+## Status
 
-Directory structure follows engineering plan §22: `cmd/`, `protocol/`,
-`kernel/`, `transports/`, `terminals/`, `blocks/`, `clients/`, `specs/`,
-`adr/`, `testvectors/`, `simulations/`, `examples/`, `docs/`. Each directory
-has a one-line README describing its future contents.
+Public beta, and honest about the edges:
 
-## Next step
-
-First engineering cycle (engineering plan §28): write ADR-001–010, fix Go
-types without networking, implement the deterministic codec, publish test
-vectors — then identity, event log, sync over loopback.
-
-> Two headless nodes and a source-only Sensor must work before any pretty UI.
+- **Works, in daily use:** spaces, invitations, conversation, media, voice,
+  posts and atmosphere, public spaces and catalogues, relays with automatic
+  selection and failover, LAN, Android.
+- **Proven on hardware, still young:** LoRa radio. Two boards, no relay and no
+  internet: an introduction, a joined space, and text both ways. Media over
+  radio is not promised.
+- **Experimental:** the desktop shell, and both desktop packages are unsigned.
+- **Not built yet:** a wake plane for a sleeping phone, a general multi-hop
+  mesh, group calls.
 
 ## Licence
 
 Two licences, split by what a piece of code *does*:
 
-- **Apache-2.0** — the protocol, schemas, kernel, transports, SDKs and the
-  clients. Everything we want to see everywhere: run it, embed it, ship a
-  closed product on top of it, put Terminal Network on a device. The patent
-  grant is explicit.
+- **Apache-2.0** — the protocol, schemas, kernel, transports, the relay's wire
+  protocol and client, the SDKs and the clients. Everything we want to see
+  everywhere: run it, embed it, ship a closed product on top of it, put this on
+  a device. The patent grant is explicit.
 - **AGPL-3.0-only** — the components an operator stands up so that *other
-  people* can use them: today the relay server and the custody bridge. Free
-  to run, to modify and to charge for hosting — but offer a modified version
-  to users over a network and those users can have that version's source.
+  people* can use them: `transports/relayserver`, `cmd/terminal-relay` and
+  `cmd/quiet-bridge`. Free to run, to modify and to charge for hosting — but
+  offer a modified version to users over a network and those users can have
+  that version's source.
 
-Names, logos and the Official Relay / Verified Space marks are not granted
-by either licence: see [TRADEMARK_POLICY.md](TRADEMARK_POLICY.md). Fork
-freely, under your own name.
+The relay's server and client live in separate Go packages precisely so that
+line can hold; the reasoning, and the directory-by-directory map, is in
+[LICENSING.md](LICENSING.md).
 
-The reasoning, the directory-by-directory map, and **one prerequisite that
-must be done before the first public push**, are in
-[LICENSING.md](LICENSING.md). Contributing: [CONTRIBUTING.md](CONTRIBUTING.md).
+Names, logos and the Official Relay / Verified Space marks are granted by
+neither licence — see [TRADEMARK_POLICY.md](TRADEMARK_POLICY.md). Fork freely,
+under your own name.
+
+Contributing: [CONTRIBUTING.md](CONTRIBUTING.md).
 Reporting a vulnerability: [SECURITY.md](SECURITY.md).
+
+---
+
+*the space between us belongs to us*

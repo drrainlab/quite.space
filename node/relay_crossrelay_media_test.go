@@ -19,20 +19,20 @@ import (
 	"time"
 
 	"github.com/drrainlab/quiet_places/kernel/assets"
-	"github.com/drrainlab/quiet_places/transports/relay"
+	"github.com/drrainlab/quiet_places/transports/relayserver"
 )
 
 func TestMediaArrivesWhenTheSpacesRelayIsNotTheReadersOwn(t *testing.T) {
 	// Two relays: the space lives on one, the reader's personal inbox on the
 	// other. Nothing else differs.
-	spaceSrv, spacePort, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	spaceSrv, spacePort, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer spaceSrv.Close()
 	spaceAddr := fmt.Sprintf("127.0.0.1:%d", spacePort)
 
-	otherSrv, otherPort, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	otherSrv, otherPort, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}

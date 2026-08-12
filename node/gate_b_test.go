@@ -13,6 +13,7 @@ import (
 	"github.com/drrainlab/quiet_places/protocol/signal"
 	"github.com/drrainlab/quiet_places/transports/bundle"
 	"github.com/drrainlab/quiet_places/transports/relay"
+	"github.com/drrainlab/quiet_places/transports/relayserver"
 )
 
 // emitVisual posts a visual block with an ingested asset (Gate C's
@@ -167,7 +168,7 @@ func TestRestartRebuildsAssetIndexes(t *testing.T) {
 // Dead drop with media: the relay bundle carries encrypted blobs; the
 // offline peer pulls event + manifest + chunks in one collect.
 func TestRelayDeadDropCarriesAssets(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,7 +237,7 @@ func TestBundleBlobsAndUnknownKeySkip(t *testing.T) {
 // Asserted together with the delivery it must not break, because a gate
 // that also stopped real media would pass a refusal-only test.
 func TestUnreferencedBlobsAreRefusedWhileRealMediaStillArrives(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}

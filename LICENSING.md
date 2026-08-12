@@ -52,6 +52,7 @@ protocol/     the wire: codec, signal envelope, manifests, publications,
 kernel/       event log, storage, sync engine, reducers, assets, routing, trust
 terminals/    participants, policy, projection, human/agent/space templates
 transports/   lan, meshtastic, rnode, radiotransfer, compact, bundle, bridge
+              relay/  the relay WIRE PROTOCOL and CLIENT (see the split below)
 node/         the local-first node runtime
 clients/      the web UI
 attention/ blocks/ specs/ testvectors/ examples/ android/
@@ -63,7 +64,9 @@ cmd/          terminal, terminal-node, terminal-inspect, quiet-radio,
 it:
 
 ```
-cmd/terminal-relay/     the blind relay server
+transports/relayserver/ the relay SERVER — Store, Server, ServerLimits, the
+                        connection handler
+cmd/terminal-relay/     the blind relay server's main
 cmd/quiet-bridge/       the operator-provisioned custody bridge
 ```
 
@@ -73,47 +76,51 @@ bootstrap registry (today a compiled-in list on the client, not a
 service) and the public catalog (today an ordinary broadcast space, not a
 server). When either becomes something an operator runs, it is AGPL.
 
-## One prerequisite before any of this is published
+## The one prerequisite — done before the first push
 
-**The relay server and the relay client are currently the same Go
-package, and the licence split cannot hold until they are separated.**
+**The relay server and the relay client used to be the same Go package, and
+the licence split could not hold until they were separated.** They are now
+separated, and this section records what was done and why, because the
+reasoning is the part worth keeping.
 
-`transports/relay/` contains three files:
+A Go package compiles as a unit, so whichever licence covers a directory
+covers everything a consumer links. While `transports/relay` held both
+halves, either choice was wrong:
 
-| file | what it is | side |
-|---|---|---|
-| `wire.go` | the wire protocol and hint/capability derivation | Apache — a client needs it, and so does anyone writing a competing relay |
-| `relay.go` | `Store`, the in-memory item store | AGPL — server |
-| `server.go` | **both** `Server`/`StartServer`/`ServerLimits`/`connState` **and** `Client`/`DialClient`/`Put`/`Collect`/`Fetch`/`Probe` | straddles the line |
+- mark it **Apache** and the relay server is Apache, so a modified closed
+  public relay is permitted — the AGPL side would be a fiction;
+- mark it **AGPL** and `node/` becomes an AGPL derivative, which makes the
+  desktop and Android clients AGPL too — the opposite of the intent.
 
-A Go package is compiled as a unit. So today either choice is wrong:
-
-- mark the package **Apache** and the relay server is Apache, so a
-  modified closed public relay is permitted — the AGPL side is a fiction;
-- mark it **AGPL** and `node/` becomes an AGPL derivative, which makes
-  the desktop and Android clients AGPL too — the opposite of the intent.
-
-The seam is clean, which is the good news. Measured over non-test code:
+The seam was clean, so the fix was a package split rather than a redesign:
 
 ```
-server half   Server · StartServer · StartServerWithIdentity · ServerLimits
-              DefaultLimits · NewStore · Item
-  used by     cmd/terminal-relay/main.go, cmd/terminal/demo.go        (2 files)
+transports/relay        Apache-2.0
+  wire.go               the wire protocol, hint and capability derivation
+  client.go             Client · DialClient · DialClientPinned · Probe
+                        and the refusal vocabulary both sides share
 
-client half   Client · DialClient · DialClientPinned
-  used by     node/{relay,relaypool,relaytrust,relayprobe,pass,public,
-              quicklink,mirror,entry,materialize,preview_fetch}.go,
-              transports/bridge/bridge.go, cmd/relay-load/main.go    (13 files)
+transports/relayserver  AGPL-3.0-only
+  store.go              Store, the in-memory item store
+  server.go             Server · StartServer · ServerLimits · connState
+                        · serve · handle
 ```
 
-They do not overlap. The change is a package split, not a redesign:
-`Store`, `Server`, `ServerLimits`, `connState`, `serve` and `handle` move
-to a package of their own; `wire.go` and `Client` stay. Only two non-test
-files change their imports.
+Nothing about the wire format, the trust model or the behaviour changed.
+**Exactly two non-test files** changed an import — `cmd/terminal-relay/main.go`
+and `cmd/terminal/demo.go` — which is what "the seam is clean" meant. The
+message-type constants became exported in the same commit, and that is not
+incidental: they are the first thing an independent relay implementer needs,
+and Apache-2.0 on the wire package is precisely the promise that they may
+have them.
 
-**This has not been done here on purpose** — those files are being edited
-in another working session, and a split landing mid-flight would collide
-with it. It should be the last thing done before the first public push.
+**One consequence, stated rather than discovered later.** Test fixtures in
+Apache-licensed packages — `node/`, `terminals/`, `transports/bridge` — stand
+up a real relay, so they import the AGPL server. Running this repository's own
+test suite is not distribution of a modified relay, and a downstream that
+imports the library never links the server at all: `go build` of an Apache
+package pulls no test dependency. Anybody redistributing a modified
+`transports/relayserver` is in AGPL territory, which is the intent.
 
 ## Nothing has been granted yet
 

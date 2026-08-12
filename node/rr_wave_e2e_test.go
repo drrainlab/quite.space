@@ -16,7 +16,7 @@ import (
 	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/protocol/publication"
 	"github.com/drrainlab/quiet_places/terminals"
-	"github.com/drrainlab/quiet_places/transports/relay"
+	"github.com/drrainlab/quiet_places/transports/relayserver"
 )
 
 // postDoc is one minimal article.
@@ -36,9 +36,9 @@ func postDoc(t *testing.T, title string) *publication.Document {
 	}
 }
 
-func startRelay(t *testing.T) (*relay.Server, string) {
+func startRelay(t *testing.T) (*relayserver.Server, string) {
 	t.Helper()
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}

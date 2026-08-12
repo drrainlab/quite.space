@@ -7,7 +7,7 @@ import (
 	"github.com/drrainlab/quiet_places/kernel/eventlog"
 	"github.com/drrainlab/quiet_places/protocol/schemas"
 	"github.com/drrainlab/quiet_places/terminals"
-	"github.com/drrainlab/quiet_places/transports/relay"
+	"github.com/drrainlab/quiet_places/transports/relayserver"
 )
 
 // waitJoin polls a newcomer's join state until it reaches want or times out.
@@ -33,7 +33,7 @@ func waitJoin(t *testing.T, rt *Runtime, reqID string, want JoinState) string {
 // acceptance (ADR-012 invariant 5, amended — see TestPassHistoryPolicy for
 // the memory=everything path).
 func TestPassLifecycle(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestPassLifecycle(t *testing.T) {
 // sees the room's memory — the promise "this place remembers everything"
 // holds for pass joiners too (ADR-012 invariant 5, amended LR-4).
 func TestPassHistoryPolicy(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +184,7 @@ func TestPassHistoryPolicy(t *testing.T) {
 // TestPassSingleUse checks that a one-use pass admits exactly one device: a
 // second request for the same pass never gets confirmed.
 func TestPassSingleUse(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}

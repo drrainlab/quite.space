@@ -16,7 +16,7 @@ import (
 	"github.com/drrainlab/quiet_places/terminals/sensor"
 	"github.com/drrainlab/quiet_places/transports/bundle"
 	"github.com/drrainlab/quiet_places/transports/loopback"
-	"github.com/drrainlab/quiet_places/transports/relay"
+	"github.com/drrainlab/quiet_places/transports/relayserver"
 )
 
 // runDemo is the Phase 0 proof, end to end, with no network and no server:
@@ -152,8 +152,8 @@ func runDemo() error {
 	if err != nil {
 		return err
 	}
-	courier := relay.NewStore(64, 1<<20)
-	courier.Put(relay.Item{DestinationHint: "rotating-hint-7f3a", ExpiresAt: now + 86400, Ciphertext: raw})
+	courier := relayserver.NewStore(64, 1<<20)
+	courier.Put(relayserver.Item{DestinationHint: "rotating-hint-7f3a", ExpiresAt: now + 86400, Ciphertext: raw})
 	say("\n[relay] blind courier holds %d bytes for hint %q", len(raw), "rotating-hint-7f3a")
 
 	// Courier-eye view: a keyless replica of the same space can verify and

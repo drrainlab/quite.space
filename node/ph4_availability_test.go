@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/drrainlab/quiet_places/transports/relay"
+	"github.com/drrainlab/quiet_places/transports/relayserver"
 )
 
 // PH-4: "nobody online has this file" and "the network went quiet on us"
@@ -14,7 +14,7 @@ import (
 // deadline and is then told "timeout" — so the interface can only show a
 // spinner, and then a word that suggests something broke.
 func TestNoSourceIsDistinctFromTimeout(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}

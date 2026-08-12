@@ -7,6 +7,7 @@ import (
 
 	"github.com/drrainlab/quiet_places/terminals"
 	"github.com/drrainlab/quiet_places/transports/relay"
+	"github.com/drrainlab/quiet_places/transports/relayserver"
 )
 
 // PA-0.4B integration: an owner publishes a broadcast space through a blind
@@ -15,7 +16,7 @@ import (
 // ProjectionSeq survives an owner restart; a wiped mailbox is repaired by
 // the owner's next publish.
 func TestPublicProjectionEndToEnd(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +122,7 @@ func TestPublicProjectionEndToEnd(t *testing.T) {
 // with a configured relay auto-publishes; a reader with the same relay
 // auto-fetches — no manual publish/fetch calls.
 func TestPublicProjectionAutoSync(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}

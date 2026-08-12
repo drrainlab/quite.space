@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/drrainlab/quiet_places/kernel/assets"
-	"github.com/drrainlab/quiet_places/transports/relay"
+	"github.com/drrainlab/quiet_places/transports/relayserver"
 )
 
 // A follower's media after a RESTART.
@@ -19,7 +19,7 @@ import (
 // that has forgotten all of it can still recover by simply asking again,
 // which is what opening the post does.
 func TestAFollowerStillGetsMediaAfterARestart(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}

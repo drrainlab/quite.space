@@ -38,3 +38,6 @@ tmp/
 android/host/keystore.properties
 *.jks
 *.keystore
+
+# Machine-local, and it names somebody's home directory. Gradle writes it.
+android/host/local.properties

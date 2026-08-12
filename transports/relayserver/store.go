@@ -6,7 +6,7 @@
 // Honesty note (M0): envelope payloads are not yet encrypted (ADR-005 lands
 // in M1), so blindness is currently architectural (this code cannot parse
 // items) rather than cryptographic. Nothing here claims otherwise.
-package relay
+package relayserver
 
 import (
 	"bytes"

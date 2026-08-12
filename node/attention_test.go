@@ -6,7 +6,7 @@ import (
 
 	"github.com/drrainlab/quiet_places/attention"
 	"github.com/drrainlab/quiet_places/protocol/id"
-	"github.com/drrainlab/quiet_places/transports/relay"
+	"github.com/drrainlab/quiet_places/transports/relayserver"
 )
 
 // A direct question from someone else surfaces; the same words from yourself
@@ -174,7 +174,7 @@ func hasCode(rs []attention.Reason, code string) bool {
 // real path an event travels before it can ever become a signal.
 func pairWithHistory(t *testing.T, alice, bob *Runtime, title string, write func(tid id.TerminalID)) id.TerminalID {
 	t.Helper()
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}

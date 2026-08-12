@@ -6,7 +6,7 @@ import (
 
 	"github.com/drrainlab/quiet_places/kernel/reducers"
 	"github.com/drrainlab/quiet_places/terminals"
-	"github.com/drrainlab/quiet_places/transports/relay"
+	"github.com/drrainlab/quiet_places/transports/relayserver"
 )
 
 // PA-1.3: a single contributor flooding an open community is THROTTLED per
@@ -14,7 +14,7 @@ import (
 // pending set and arrive on later cycles. A second, quiet contributor is
 // unaffected by the flood.
 func TestIngressFloodThrottledNotLost(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}

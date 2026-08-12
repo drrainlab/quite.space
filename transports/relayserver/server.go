@@ -1,15 +1,41 @@
-// Networked blind relay (M1.5): serves the wire protocol over the framed
-// TLS connections from transports/lan. Anyone can run one; none is
-// mandatory (vision §5.4).
-package relay
+// Package relayserver is the relay SERVER: the process an operator stands up
+// so that other people's devices can leave sealed items for each other.
+//
+// IT LIVES IN ITS OWN PACKAGE FOR A LICENCE REASON, and the reason is the whole
+// point of the split. A Go package compiles as a unit, so whichever licence
+// covers a directory covers everything a consumer links. While the server and
+// the client shared one package there was no honest answer: mark it Apache and
+// the relay server becomes permanently forkable into a closed public service,
+// making the AGPL side of the project decorative; mark it AGPL and node/
+// becomes an AGPL derivative, and with it the desktop and Android clients —
+// the opposite of what the split is for.
+//
+//	transports/relay        Apache-2.0 — the wire protocol and the client.
+//	                        A client needs it, and so does anyone writing an
+//	                        independent relay.
+//	transports/relayserver  AGPL-3.0-only — this. Free to run, to modify and
+//	                        to charge for hosting; offer a modified version to
+//	                        users over a network and those users can have that
+//	                        version's source.
+//
+// Nothing about the wire format, the trust model or the behaviour changed when
+// this moved. The message-type constants became exported in the same commit,
+// which is not incidental: they are the first thing an independent relay
+// implementer needs, and Apache-2.0 on the wire package is exactly the promise
+// that they may have them.
+//
+// Networked blind relay (M1.5): serves the wire protocol over the framed TLS
+// connections from transports/lan. Anyone can run one; none is mandatory
+// (vision §5.4).
+package relayserver
 
 import (
 	"crypto/tls"
-	"errors"
 	"sync"
 	"time"
 
 	"github.com/drrainlab/quiet_places/transports/lan"
+	"github.com/drrainlab/quiet_places/transports/relay"
 )
 
 // ServerLimits bound what one relay accepts.
@@ -207,11 +233,11 @@ func (s *Server) loadClass() string {
 	fill := s.store.FillRatio()
 	switch {
 	case fill > 0.9:
-		return LoadOverloaded
+		return relay.LoadOverloaded
 	case fill > 0.7:
-		return LoadBusy
+		return relay.LoadBusy
 	}
-	return LoadNormal
+	return relay.LoadNormal
 }
 
 // WipeForTest drops a hint's items — simulates a squatter wipe / storage
@@ -293,7 +319,7 @@ func (s *Server) serve(c *lan.Conn) {
 		}
 		for _, pkt := range c.Poll() {
 			idle = time.Now()
-			msg, err := DecodeMsg(pkt)
+			msg, err := relay.DecodeMsg(pkt)
 			if err != nil {
 				continue
 			}
@@ -305,15 +331,15 @@ func (s *Server) serve(c *lan.Conn) {
 	}
 }
 
-func (s *Server) handle(m *Msg, cs *connState) *Msg {
+func (s *Server) handle(m *relay.Msg, cs *connState) *relay.Msg {
 	now := uint64(time.Now().Unix())
 	switch m.Type {
-	case msgPut:
-		if len(m.Hint) != HintLen || len(m.Body) == 0 {
-			return &Msg{Type: msgError, Reason: "malformed put"}
+	case relay.MsgPut:
+		if len(m.Hint) != relay.HintLen || len(m.Body) == 0 {
+			return &relay.Msg{Type: relay.MsgError, Reason: "malformed put"}
 		}
 		if !spend(&cs.writes, &cs.writeWindow, s.limits.writeRatePerMin()) {
-			return &Msg{Type: msgError, Reason: ReasonRateLimited,
+			return &relay.Msg{Type: relay.MsgError, Reason: relay.ReasonRateLimited,
 				RetryAfterMs: retryAfter(cs.writeWindow)}
 		}
 		expires := m.Expires
@@ -327,39 +353,39 @@ func (s *Server) handle(m *Msg, cs *connState) *Msg {
 			Ciphertext:      m.Body,
 		})
 		if !ok {
-			return &Msg{Type: msgError, Reason: ReasonQuotaExceeded}
+			return &relay.Msg{Type: relay.MsgError, Reason: relay.ReasonQuotaExceeded}
 		}
 		// The receipt proves exactly accepted_by_relay and nothing more
 		// (ADR-008): the expiry is echoed so the sender knows the deadline.
-		return &Msg{Type: msgPutOK, Expires: expires}
-	case msgCollect:
+		return &relay.Msg{Type: relay.MsgPutOK, Expires: expires}
+	case relay.MsgCollect:
 		// PH-1: knowing a hint is no longer enough to empty a mailbox. Refuse
 		// loudly rather than answering "nothing here" — an empty drain and a
 		// rejected drain must never look the same to an old client. Metered
 		// (RR-3): a dead verb must not be the cheapest thing to spin.
 		if !spend(&cs.collects, &cs.collectWindow, s.limits.collectRatePerMin()) {
-			return &Msg{Type: msgError, Reason: ReasonRateLimited,
+			return &relay.Msg{Type: relay.MsgError, Reason: relay.ReasonRateLimited,
 				RetryAfterMs: retryAfter(cs.collectWindow)}
 		}
-		return &Msg{Type: msgError, Reason: ReasonNoCapability}
-	case msgCollectCap:
+		return &relay.Msg{Type: relay.MsgError, Reason: relay.ReasonNoCapability}
+	case relay.MsgCollectCap:
 		// Draining is destructive, so it gets the same shape of bounds Fetch
 		// has had since PA-0: rate, hint count, reply bytes. Without the byte
 		// budget one collect could be asked to move the entire store.
 		if !spend(&cs.collects, &cs.collectWindow, s.limits.collectRatePerMin()) {
-			return &Msg{Type: msgError, Reason: ReasonRateLimited,
+			return &relay.Msg{Type: relay.MsgError, Reason: relay.ReasonRateLimited,
 				RetryAfterMs: retryAfter(cs.collectWindow)}
 		}
 		if len(m.Caps) > s.limits.collectMaxHints() {
-			return &Msg{Type: msgError, Reason: ReasonTooManyHints}
+			return &relay.Msg{Type: relay.MsgError, Reason: relay.ReasonTooManyHints}
 		}
 		budget := s.limits.collectMaxBytes()
 		var items [][]byte
 		for _, c := range m.Caps {
-			if len(c) != CapLen {
-				return &Msg{Type: msgError, Reason: "malformed capability"}
+			if len(c) != relay.CapLen {
+				return &relay.Msg{Type: relay.MsgError, Reason: "malformed capability"}
 			}
-			got := s.store.CollectBudget(string(CollectHint(c)), now, budget)
+			got := s.store.CollectBudget(string(relay.CollectHint(c)), now, budget)
 			for _, it := range got {
 				budget -= len(it)
 			}
@@ -371,36 +397,36 @@ func (s *Server) handle(m *Msg, cs *connState) *Msg {
 		if items == nil {
 			items = [][]byte{}
 		}
-		return &Msg{Type: msgItems, Items: items}
-	case msgTime:
+		return &relay.Msg{Type: relay.MsgItems, Items: items}
+	case relay.MsgTime:
 		// LR-2 calibration source: this clock's only property is that every
 		// participant asking THIS relay gets the same one. Metered (RR-3):
 		// an unmetered echo is a free amplification target.
 		if !spend(&cs.collects, &cs.collectWindow, s.limits.collectRatePerMin()) {
-			return &Msg{Type: msgError, Reason: ReasonRateLimited,
+			return &relay.Msg{Type: relay.MsgError, Reason: relay.ReasonRateLimited,
 				RetryAfterMs: retryAfter(cs.collectWindow)}
 		}
-		return &Msg{Type: msgTimeOK, Now: uint64(time.Now().UnixMilli())}
-	case msgProbe:
+		return &relay.Msg{Type: relay.MsgTimeOK, Now: uint64(time.Now().UnixMilli())}
+	case relay.MsgProbe:
 		// RR-3: the selection probe — protocol range, load class, accepting,
 		// wall clock, nonce echoed. No durable state; metered like a collect
 		// so a probe storm pays the same rail as any other read.
 		if !spend(&cs.collects, &cs.collectWindow, s.limits.collectRatePerMin()) {
-			return &Msg{Type: msgError, Reason: ReasonRateLimited,
+			return &relay.Msg{Type: relay.MsgError, Reason: relay.ReasonRateLimited,
 				RetryAfterMs: retryAfter(cs.collectWindow)}
 		}
-		return &Msg{
-			Type: msgProbeOK, Nonce: m.Nonce,
-			ProtoMin: RelayProtocolVersion, ProtoMax: RelayProtocolVersion,
+		return &relay.Msg{
+			Type: relay.MsgProbeOK, Nonce: m.Nonce,
+			ProtoMin: relay.RelayProtocolVersion, ProtoMax: relay.RelayProtocolVersion,
 			Load: s.loadClass(), Accepting: 1,
 			Now: uint64(time.Now().UnixMilli()),
 		}
-	case msgReplace:
-		if len(m.Hint) != HintLen || len(m.Body) == 0 {
-			return &Msg{Type: msgError, Reason: "malformed replace"}
+	case relay.MsgReplace:
+		if len(m.Hint) != relay.HintLen || len(m.Body) == 0 {
+			return &relay.Msg{Type: relay.MsgError, Reason: "malformed replace"}
 		}
 		if !spend(&cs.writes, &cs.writeWindow, s.limits.writeRatePerMin()) {
-			return &Msg{Type: msgError, Reason: ReasonRateLimited,
+			return &relay.Msg{Type: relay.MsgError, Reason: relay.ReasonRateLimited,
 				RetryAfterMs: retryAfter(cs.writeWindow)}
 		}
 		expires := m.Expires
@@ -413,19 +439,19 @@ func (s *Server) handle(m *Msg, cs *connState) *Msg {
 			ExpiresAt:       expires,
 			Ciphertext:      m.Body,
 		}) {
-			return &Msg{Type: msgError, Reason: ReasonQuotaExceeded}
+			return &relay.Msg{Type: relay.MsgError, Reason: relay.ReasonQuotaExceeded}
 		}
-		return &Msg{Type: msgPutOK, Expires: expires}
-	case msgFetch:
+		return &relay.Msg{Type: relay.MsgPutOK, Expires: expires}
+	case relay.MsgFetch:
 		// Non-destructive read for public mailboxes: rate-limited per
 		// connection, hint- and byte-capped per request. Validation runs
 		// BEFORE the budget is spent (RR-3 consistency fix — a rejected
 		// oversize request used to charge the window anyway).
 		if len(m.Hints) > s.limits.fetchMaxHints() {
-			return &Msg{Type: msgError, Reason: ReasonTooManyHints}
+			return &relay.Msg{Type: relay.MsgError, Reason: relay.ReasonTooManyHints}
 		}
 		if !spend(&cs.fetches, &cs.fetchWindow, s.limits.fetchRatePerMin()) {
-			return &Msg{Type: msgError, Reason: ReasonRateLimited,
+			return &relay.Msg{Type: relay.MsgError, Reason: relay.ReasonRateLimited,
 				RetryAfterMs: retryAfter(cs.fetchWindow)}
 		}
 		budget := s.limits.fetchMaxBytes()
@@ -443,247 +469,10 @@ func (s *Server) handle(m *Msg, cs *connState) *Msg {
 		if items == nil {
 			items = [][]byte{}
 		}
-		return &Msg{Type: msgFetchItems, Items: items}
+		return &relay.Msg{Type: relay.MsgFetchItems, Items: items}
 	default:
-		return &Msg{Type: msgError, Reason: "unknown message type"}
+		return &relay.Msg{Type: relay.MsgError, Reason: "unknown message type"}
 	}
 }
 
 // ---- Client ----
-
-// The reasons a relay refuses, as CONSTANTS the server sends and the client
-// classifies by. Two private copies of one string is how a classification
-// drifts from what is actually sent — this codebase has already paid for that
-// once, when a pool looked for "use of closed" while the transport said
-// "lan: connection closed" and a dead connection was never retired.
-const (
-	ReasonRateLimited   = "rate limited"
-	ReasonTooManyHints  = "too many hints"
-	ReasonNoCapability  = "collect requires a capability"
-	ReasonQuotaExceeded = "quota exceeded or item too large"
-)
-
-// RefusalKind says what a relay's refusal MEANS, because "the relay said no"
-// covers three situations that call for three different responses.
-type RefusalKind int
-
-const (
-	// RefusalUnknown — an older or newer relay refusing for a reason this
-	// build does not recognise. Treated as retryable-but-unhelpful: the
-	// connection is fine, and guessing harder would be inventing semantics.
-	RefusalUnknown RefusalKind = iota
-	// RefusalThrottled — asking again later will work. The connection is
-	// HEALTHY: a rate limit is a schedule, not a broken socket, and throwing
-	// the connection away makes the next attempt more expensive for exactly
-	// the reason it was refused.
-	RefusalThrottled
-	// RefusalRequestShape — this request was malformed or too big for this
-	// relay. Asking again identically will fail identically, so it is a bug
-	// or a version mismatch and belongs in a diagnostic, not in a retry loop.
-	// The connection is healthy.
-	RefusalRequestShape
-)
-
-// ErrRelay wraps a relay-reported error.
-//
-// It is a REFUSAL, never a dead connection: the relay answered. Callers ask
-// Kind rather than reading Reason, so the classification lives in one place
-// beside the constants the server sends.
-type ErrRelay struct {
-	Reason string
-	// RetryAfter is how long the relay asked the caller to wait. Zero means it
-	// did not say — an older relay, or a refusal that waiting will not fix —
-	// and a caller must NOT read zero as "immediately".
-	RetryAfter time.Duration
-}
-
-func (e ErrRelay) Error() string {
-	if e.RetryAfter > 0 {
-		return "relay: " + e.Reason + " (retry after " + e.RetryAfter.String() + ")"
-	}
-	return "relay: " + e.Reason
-}
-
-// Kind classifies the refusal. Matched against the constants above rather
-// than by substring: a message that changes wording must break a compile or a
-// test, not silently change a policy.
-func (e ErrRelay) Kind() RefusalKind {
-	switch e.Reason {
-	case ReasonRateLimited:
-		return RefusalThrottled
-	case ReasonTooManyHints, ReasonQuotaExceeded, ReasonNoCapability:
-		return RefusalRequestShape
-	default:
-		return RefusalUnknown
-	}
-}
-
-// Throttled reports whether waiting is the right response.
-func (e ErrRelay) Throttled() bool { return e.Kind() == RefusalThrottled }
-
-// Client is one connection to a relay.
-type Client struct {
-	conn *lan.Conn
-}
-
-// DialClient connects to a relay with NO identity check — the local-lan
-// trust profile (loopback and LAN, where identity lives in event
-// signatures). Public relays are dialed through DialClientPinned.
-func DialClient(addr string) (*Client, error) {
-	node, err := lan.NewNodeWithMaxPacket(lan.RelayMaxPacket)
-	if err != nil {
-		return nil, err
-	}
-	c, err := node.Dial(addr)
-	if err != nil {
-		return nil, err
-	}
-	return &Client{conn: c}, nil
-}
-
-// DialClientPinned connects with SPKI verification (RR-1): verify gets the
-// peer's pin during the handshake; returning an error aborts the
-// connection before any protocol byte flows.
-func DialClientPinned(addr string, verify func(pin string) error) (*Client, error) {
-	node, err := lan.NewNodeWithMaxPacket(lan.RelayMaxPacket)
-	if err != nil {
-		return nil, err
-	}
-	c, err := node.DialPinned(addr, verify)
-	if err != nil {
-		return nil, err
-	}
-	return &Client{conn: c}, nil
-}
-
-// Close disconnects.
-func (c *Client) Close() { c.conn.Close() }
-
-// ProbeResult is one measured exchange with a relay (RR-3).
-type ProbeResult struct {
-	RTT       time.Duration
-	NowMS     uint64 // the relay's wall clock — clock calibration for free
-	ProtoMin  uint64
-	ProtoMax  uint64
-	Load      string
-	Accepting bool
-}
-
-// Probe runs one msgProbe round trip. The nonce binds the reply to this
-// request; a legacy relay answers "unknown message type" (an ErrRelay),
-// which the caller may treat as "fall back to the msgTime-only profile".
-func (c *Client) Probe(nonce []byte) (ProbeResult, error) {
-	start := time.Now()
-	reply, err := c.roundTrip(&Msg{Type: msgProbe, Nonce: nonce}, 5*time.Second)
-	if err != nil {
-		return ProbeResult{}, err
-	}
-	if reply.Type != msgProbeOK {
-		return ProbeResult{}, errors.New("relay: unexpected probe reply")
-	}
-	if len(nonce) > 0 && string(reply.Nonce) != string(nonce) {
-		return ProbeResult{}, errors.New("relay: probe nonce mismatch")
-	}
-	return ProbeResult{
-		RTT: time.Since(start), NowMS: reply.Now,
-		ProtoMin: reply.ProtoMin, ProtoMax: reply.ProtoMax,
-		Load: reply.Load, Accepting: reply.Accepting == 1,
-	}, nil
-}
-
-func (c *Client) roundTrip(m *Msg, timeout time.Duration) (*Msg, error) {
-	if err := c.conn.Send(m.Encode()); err != nil {
-		return nil, err
-	}
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		for _, pkt := range c.conn.Poll() {
-			reply, err := DecodeMsg(pkt)
-			if err != nil {
-				continue
-			}
-			if reply.Type == msgError {
-				return nil, ErrRelay{
-					Reason:     reply.Reason,
-					RetryAfter: time.Duration(reply.RetryAfterMs) * time.Millisecond,
-				}
-			}
-			return reply, nil
-		}
-		if closed, err := c.conn.Closed(); closed {
-			return nil, err
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	return nil, errors.New("relay: timed out waiting for reply")
-}
-
-// Put stores one opaque item; returns the relay's accepted deadline. This
-// is a transport receipt: it proves accepted_by_relay, never delivery.
-func (c *Client) Put(hint []byte, expiresAt uint64, body []byte) (uint64, error) {
-	reply, err := c.roundTrip(&Msg{Type: msgPut, Hint: hint, Expires: expiresAt, Body: body}, 10*time.Second)
-	if err != nil {
-		return 0, err
-	}
-	if reply.Type != msgPutOK {
-		return 0, errors.New("relay: unexpected reply")
-	}
-	return reply.Expires, nil
-}
-
-// Time asks the relay for its wall clock (unix ms) and reports the local
-// monotonic round-trip. The caller derives offset = relay_now + rtt/2 - local
-// and keeps the sample with the smallest RTT.
-func (c *Client) Time() (nowMS uint64, rtt time.Duration, err error) {
-	start := time.Now() // monotonic
-	reply, err := c.roundTrip(&Msg{Type: msgTime}, 5*time.Second)
-	if err != nil {
-		return 0, 0, err
-	}
-	if reply.Type != msgTimeOK || reply.Now == 0 {
-		return 0, 0, errors.New("relay: unexpected time reply")
-	}
-	return reply.Now, time.Since(start), nil
-}
-
-// Collect fetches (and removes) everything stored under the given hints.
-// Collect drains the mailboxes these CAPABILITIES address (PH-1). The
-// caller proves it may empty a box by holding the preimage of the box's
-// address; hints alone no longer open anything.
-func (c *Client) Collect(caps [][]byte) ([][]byte, error) {
-	reply, err := c.roundTrip(&Msg{Type: msgCollectCap, Caps: caps}, 10*time.Second)
-	if err != nil {
-		return nil, err
-	}
-	if reply.Type != msgItems {
-		return nil, errors.New("relay: unexpected reply")
-	}
-	return reply.Items, nil
-}
-
-// Fetch reads the given hints WITHOUT removing anything — the many-reader
-// verb for public mailboxes (PA-0). Server-side budgets bound the reply.
-func (c *Client) Fetch(hints [][]byte) ([][]byte, error) {
-	reply, err := c.roundTrip(&Msg{Type: msgFetch, Hints: hints}, 10*time.Second)
-	if err != nil {
-		return nil, err
-	}
-	if reply.Type != msgFetchItems {
-		return nil, errors.New("relay: unexpected reply")
-	}
-	return reply.Items, nil
-}
-
-// Replace atomically swaps a hint's contents with one item (the public
-// projection mailbox). Same receipt semantics as Put: accepted, not
-// delivered.
-func (c *Client) Replace(hint []byte, expiresAt uint64, body []byte) (uint64, error) {
-	reply, err := c.roundTrip(&Msg{Type: msgReplace, Hint: hint, Expires: expiresAt, Body: body}, 10*time.Second)
-	if err != nil {
-		return 0, err
-	}
-	if reply.Type != msgPutOK {
-		return 0, errors.New("relay: unexpected reply")
-	}
-	return reply.Expires, nil
-}

@@ -13,6 +13,7 @@ import (
 	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/transports/loopback"
 	"github.com/drrainlab/quiet_places/transports/relay"
+	"github.com/drrainlab/quiet_places/transports/relayserver"
 )
 
 // readReceipts pulls every custody receipt off a carrier end.
@@ -238,7 +239,7 @@ func TestUnairableFrameIsReleased(t *testing.T) {
 // One undeliverable destination must not stall the others. Before the
 // batch drain, a single stuck record could stop an entire pass.
 func TestOneBadDestinationDoesNotStallTheRest(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -723,7 +724,7 @@ func TestLeaseSurvivesRestartAndCompaction(t *testing.T) {
 // on one segment each would do it to the other's broadcasts, and the
 // segment would never go quiet.
 func TestOwnDownlinkHeardBackIsNotAHandOff(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}

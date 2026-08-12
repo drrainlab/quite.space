@@ -21,6 +21,7 @@ import (
 	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/protocol/schemas"
 	"github.com/drrainlab/quiet_places/transports/relay"
+	"github.com/drrainlab/quiet_places/transports/relayserver"
 )
 
 // RR — the soaks. Fifty spaces, pulled at a person's cadence, for long enough
@@ -75,9 +76,9 @@ type soakFixture struct {
 	watched []id.TerminalID // first, middle and last IN THE ORDER THAT IS CHUNKED
 }
 
-func newSoakFixture(t *testing.T, limits relay.ServerLimits) *soakFixture {
+func newSoakFixture(t *testing.T, limits relayserver.ServerLimits) *soakFixture {
 	t.Helper()
-	srv, port, err := relay.StartServer("127.0.0.1:0", limits)
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", limits)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +219,7 @@ func (f *soakFixture) drain(t *testing.T, sent int, deadline time.Time) int {
 // and the two are indistinguishable at t=1s.
 func TestSoakFiftySpacesStayCurrentUnderASustainedPull(t *testing.T) {
 	run := soakDuration(t)
-	f := newSoakFixture(t, relay.DefaultLimits())
+	f := newSoakFixture(t, relayserver.DefaultLimits())
 
 	end := time.Now().Add(run)
 	report := time.Now().Add(30 * time.Second)
@@ -283,7 +284,7 @@ func TestSoakFiftySpacesStayCurrentUnderASustainedPull(t *testing.T) {
 // chunk exist nowhere at all.
 func TestSoakFiftySpacesRecoverFromRepeatedThrottling(t *testing.T) {
 	run := soakDuration(t)
-	limits := relay.DefaultLimits()
+	limits := relayserver.DefaultLimits()
 	// Well under one pull per two seconds, so the window runs out mid-run and
 	// keeps running out.
 	limits.CollectRatePerMin = 10
@@ -362,7 +363,7 @@ func TestSoakBackgroundSyncKeepsDeliveringAfterAQuietSpell(t *testing.T) {
 	if os.Getenv("QUIET_RELAY_SOAK") != "1" {
 		t.Skip("set QUIET_RELAY_SOAK=1 (this one waits out a quiet window)")
 	}
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -476,7 +477,7 @@ func TestSoakARelayThatComesBackIsFoundAgain(t *testing.T) {
 	// address — a new address would be an ordinary reconnection somewhere
 	// else, which nobody doubts.
 	const addr = "127.0.0.1:37411"
-	srv, _, err := relay.StartServer(addr, relay.DefaultLimits())
+	srv, _, err := relayserver.StartServer(addr, relayserver.DefaultLimits())
 	if err != nil {
 		t.Skipf("cannot bind %s: %v", addr, err)
 	}
@@ -541,7 +542,7 @@ func TestSoakARelayThatComesBackIsFoundAgain(t *testing.T) {
 	// does not exist.
 	srv.Close()
 	time.Sleep(3 * time.Second)
-	again, _, err := relay.StartServer(addr, relay.DefaultLimits())
+	again, _, err := relayserver.StartServer(addr, relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatalf("the relay could not come back: %v", err)
 	}
@@ -582,8 +583,8 @@ func TestSoakAPinnedRelayThatComesBackIsFoundAgain(t *testing.T) {
 	addr := fmt.Sprintf("%s:%d", host, port)
 
 	cert, pin := fixedRelayIdentity(t)
-	srv, _, err := relay.StartServerWithIdentity(fmt.Sprintf("0.0.0.0:%d", port),
-		relay.DefaultLimits(), cert)
+	srv, _, err := relayserver.StartServerWithIdentity(fmt.Sprintf("0.0.0.0:%d", port),
+		relayserver.DefaultLimits(), cert)
 	if err != nil {
 		t.Skipf("cannot bind %d: %v", port, err)
 	}
@@ -648,8 +649,8 @@ func TestSoakAPinnedRelayThatComesBackIsFoundAgain(t *testing.T) {
 
 	srv.Close()
 	time.Sleep(3 * time.Second)
-	again, _, err := relay.StartServerWithIdentity(fmt.Sprintf("0.0.0.0:%d", port),
-		relay.DefaultLimits(), cert)
+	again, _, err := relayserver.StartServerWithIdentity(fmt.Sprintf("0.0.0.0:%d", port),
+		relayserver.DefaultLimits(), cert)
 	if err != nil {
 		t.Fatalf("the relay could not come back: %v", err)
 	}

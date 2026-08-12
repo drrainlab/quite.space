@@ -9,6 +9,7 @@ import (
 	"github.com/drrainlab/quiet_places/protocol/projection"
 	"github.com/drrainlab/quiet_places/terminals"
 	"github.com/drrainlab/quiet_places/transports/relay"
+	"github.com/drrainlab/quiet_places/transports/relayserver"
 )
 
 func openPublicSpaceForMirror(t *testing.T, owner *Runtime, title string) id.TerminalID {
@@ -31,7 +32,7 @@ func openPublicSpaceForMirror(t *testing.T, owner *Runtime, title string) id.Ter
 // so a space with an offline owner ceased to exist for anyone who had not
 // already read it.
 func TestMirrorKeepsASpaceReadableAfterTheOwnerLeaves(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +121,7 @@ func TestMirrorKeepsASpaceReadableAfterTheOwnerLeaves(t *testing.T) {
 // A mirror holding an older envelope must never shadow a fresher one. This
 // is why keepalive uses Put and the owner uses Replace.
 func TestStaleMirrorCannotShadowTheOwner(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +186,7 @@ func TestStaleMirrorCannotShadowTheOwner(t *testing.T) {
 // A mirror cannot write, cannot re-sign, and cannot drain the owner's
 // ingress. These are the promises that make the role safe to offer.
 func TestMirrorHasNoAuthority(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,7 +266,7 @@ func TestOwnCannotBeMirrored(t *testing.T) {
 // The mirror and seed flags survive a restart — a volunteer should not have
 // to re-volunteer every time the process starts.
 func TestMirrorFlagsSurviveRestart(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,7 +314,7 @@ func TestMirrorFlagsSurviveRestart(t *testing.T) {
 // order to be able to answer. That distinction is the whole difference
 // between volunteering bandwidth and volunteering storage.
 func TestSeedingAnswersOnlyWhatItHolds(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}

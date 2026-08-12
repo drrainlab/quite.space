@@ -11,7 +11,7 @@ import (
 	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/transports/bridge"
 	"github.com/drrainlab/quiet_places/transports/meshtastic"
-	"github.com/drrainlab/quiet_places/transports/relay"
+	"github.com/drrainlab/quiet_places/transports/relayserver"
 )
 
 // RB-0B: the custody ACK, end to end, on the carrier.
@@ -28,7 +28,7 @@ func TestCustodyAckOverRadioMovesTheLadder(t *testing.T) {
 	meshPumpEvery, meshSummaryEvery = 30*time.Millisecond, 200*time.Millisecond
 	defer func() { meshPumpEvery, meshSummaryEvery = oldPump, oldSummary }()
 
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}

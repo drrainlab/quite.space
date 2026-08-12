@@ -6,6 +6,7 @@ import (
 
 	"github.com/drrainlab/quiet_places/protocol/claims"
 	"github.com/drrainlab/quiet_places/transports/relay"
+	"github.com/drrainlab/quiet_places/transports/relayserver"
 )
 
 // M1.5 acceptance: two nodes that NEVER connect to each other converge
@@ -13,7 +14,7 @@ import (
 // accepted_by_relay — the ladder does not move without the recipient's own
 // signed receipt.
 func TestStoreAndForwardThroughBlindRelay(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,8 +89,8 @@ func TestStoreAndForwardThroughBlindRelay(t *testing.T) {
 }
 
 func TestRelayQuotaRefusesFlood(t *testing.T) {
-	limits := relay.ServerLimits{MaxItemBytes: 1024, PerHint: 2, MaxTTL: time.Hour}
-	srv, port, err := relay.StartServer("127.0.0.1:0", limits)
+	limits := relayserver.ServerLimits{MaxItemBytes: 1024, PerHint: 2, MaxTTL: time.Hour}
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", limits)
 	if err != nil {
 		t.Fatal(err)
 	}

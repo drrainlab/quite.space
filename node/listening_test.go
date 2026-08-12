@@ -8,7 +8,7 @@ import (
 
 	"github.com/drrainlab/quiet_places/protocol/listening"
 	"github.com/drrainlab/quiet_places/terminals"
-	"github.com/drrainlab/quiet_places/transports/relay"
+	"github.com/drrainlab/quiet_places/transports/relayserver"
 )
 
 func mustIID(t *testing.T, s string) [16]byte {
@@ -139,7 +139,7 @@ func TestListeningFollowerRefused(t *testing.T) {
 // as THE source (correction 4: one common source, node proxies, never
 // substitutes).
 func TestRelayTimeCalibration(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}

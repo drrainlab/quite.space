@@ -7,7 +7,7 @@ import (
 
 	"github.com/drrainlab/quiet_places/kernel/assets"
 	"github.com/drrainlab/quiet_places/terminals"
-	"github.com/drrainlab/quiet_places/transports/relay"
+	"github.com/drrainlab/quiet_places/transports/relayserver"
 )
 
 // PA-0.4C cold start: reader and owner have NEVER met. The reader joins an
@@ -16,7 +16,7 @@ import (
 // the next projection carries it to a third stranger. All hands-free via
 // the relay-sync loops.
 func TestCommunityColdStartJoinAndPublish(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +105,7 @@ func TestCommunityColdStartJoinAndPublish(t *testing.T) {
 // opening the public link is recognized from the VERIFIED signed policy and
 // auto-activated; an ordinary reader on the same path stays read-only.
 func TestCuratorActivationByPublicLink(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +177,7 @@ func TestCuratorActivationByPublicLink(t *testing.T) {
 // OUT of the projection until the owner holds the verified blob, then
 // appears. Wants ride the ingress; the answer lands in the requester inbox.
 func TestCommunityMediaCustody(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}

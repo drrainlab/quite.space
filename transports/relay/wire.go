@@ -190,36 +190,36 @@ func CapPublicIngressLegacy(space id.TerminalID, bucket uint64, shard byte) []by
 
 // Message types.
 const (
-	msgPut     = 1
-	msgPutOK   = 2
-	msgCollect = 3
-	msgItems   = 4
-	msgError   = 5
+	MsgPut     = 1
+	MsgPutOK   = 2
+	MsgCollect = 3
+	MsgItems   = 4
+	MsgError   = 5
 	// LR-2: relay time — the common calibration source for listening
 	// sessions. The relay's clock carries no authority beyond being SHARED.
-	msgTime   = 6
-	msgTimeOK = 7
+	MsgTime   = 6
+	MsgTimeOK = 7
 	// PA-0 public mailboxes (append-only table, ADR-009):
-	// msgFetch reads WITHOUT removing (public outbox has many readers);
-	// msgFetchItems is its reply, distinct from msgItems so a client can
+	// MsgFetch reads WITHOUT removing (public outbox has many readers);
+	// MsgFetchItems is its reply, distinct from MsgItems so a client can
 	// never confuse a destructive collect with a fetch;
-	// msgReplace atomically swaps a hint's contents with one item (the
+	// MsgReplace atomically swaps a hint's contents with one item (the
 	// projection mailbox holds exactly the latest projection).
-	msgFetch      = 8
-	msgFetchItems = 9
-	msgReplace    = 10
+	MsgFetch      = 8
+	MsgFetchItems = 9
+	MsgReplace    = 10
 	// PH-1: draining requires a CAPABILITY, not merely knowledge of a hint.
-	// msgCollect (3) is refused outright rather than silently answering with
+	// MsgCollect (3) is refused outright rather than silently answering with
 	// an empty mailbox — an old client deserves a diagnosable error, and a
 	// silent empty drain is indistinguishable from "nothing was waiting".
-	msgCollectCap = 11
+	MsgCollectCap = 11
 	// RR-3: the measured-selection probe. One cheap round trip carrying a
 	// client nonce; the reply names the relay's protocol range, load class
 	// and whether it accepts new sessions, PLUS the wall clock (keyNow) —
 	// so selection and clock calibration share one benchmark instead of
 	// two. Writes no durable state; metered like a collect.
-	msgProbe   = 12
-	msgProbeOK = 13
+	MsgProbe   = 12
+	MsgProbeOK = 13
 )
 
 // RelayProtocolVersion is this build's wire protocol generation. Bumped
@@ -280,8 +280,8 @@ type Msg struct {
 	// RetryAfterMs accompanies a refusal that waiting will fix. Zero means the
 	// relay did not say, not that the answer is "immediately".
 	RetryAfterMs uint64
-	Now     uint64   // unix ms (msgTimeOK / msgProbeOK)
-	Caps    [][]byte // PH-1: collect capabilities (msgCollectCap)
+	Now          uint64   // unix ms (MsgTimeOK / MsgProbeOK)
+	Caps         [][]byte // PH-1: collect capabilities (MsgCollectCap)
 	// RR-3 probe fields.
 	Nonce     []byte
 	ProtoMin  uint64

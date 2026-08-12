@@ -9,10 +9,11 @@
 // The tests drive the REAL server rather than constructing errors by hand, so
 // a reason that changes wording fails here instead of silently changing a
 // policy somewhere else.
-package relay
+package relayserver
 
 import (
 	"errors"
+	"github.com/drrainlab/quiet_places/transports/relay"
 	"strconv"
 	"testing"
 	"time"
@@ -29,13 +30,13 @@ func TestARateLimitIsAScheduleNotABrokenConnection(t *testing.T) {
 	}
 	defer srv.Close()
 
-	c, err := DialClient(addrOf(port))
+	c, err := relay.DialClient(addrOf(port))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer c.Close()
 
-	cap1 := make([]byte, CapLen)
+	cap1 := make([]byte, relay.CapLen)
 	if _, err := c.Collect([][]byte{cap1}); err != nil {
 		t.Fatalf("the first collect should be within budget: %v", err)
 	}
@@ -44,9 +45,9 @@ func TestARateLimitIsAScheduleNotABrokenConnection(t *testing.T) {
 	if err == nil {
 		t.Fatal("the second collect should have been refused")
 	}
-	var re ErrRelay
+	var re relay.ErrRelay
 	if !errors.As(err, &re) {
-		t.Fatalf("a refusal must arrive as ErrRelay, got %T: %v", err, err)
+		t.Fatalf("a refusal must arrive as relay.ErrRelay, got %T: %v", err, err)
 	}
 	if !re.Throttled() {
 		t.Fatalf("reason %q classified as %v, want throttled — a rate limit is "+
@@ -63,7 +64,7 @@ func TestTooManyHintsIsARequestShapeProblemNotSomethingToRetry(t *testing.T) {
 	}
 	defer srv.Close()
 
-	c, err := DialClient(addrOf(port))
+	c, err := relay.DialClient(addrOf(port))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,17 +72,17 @@ func TestTooManyHintsIsARequestShapeProblemNotSomethingToRetry(t *testing.T) {
 
 	caps := make([][]byte, DefaultLimits().CollectMaxHints+1)
 	for i := range caps {
-		caps[i] = make([]byte, CapLen)
+		caps[i] = make([]byte, relay.CapLen)
 	}
 	_, err = c.Collect(caps)
 	if err == nil {
 		t.Fatal("a request past the hint ceiling should have been refused")
 	}
-	var re ErrRelay
+	var re relay.ErrRelay
 	if !errors.As(err, &re) {
 		t.Fatalf("got %T: %v", err, err)
 	}
-	if re.Kind() != RefusalRequestShape {
+	if re.Kind() != relay.RefusalRequestShape {
 		t.Fatalf("reason %q classified as %v, want a request-shape problem — "+
 			"asking again identically will fail identically, so it belongs in a "+
 			"diagnostic rather than in a retry loop", re.Reason, re.Kind())
@@ -96,8 +97,8 @@ func TestTooManyHintsIsARequestShapeProblemNotSomethingToRetry(t *testing.T) {
 // retry forever against a refusal that will never change, or discard a healthy
 // connection over a message nobody here wrote.
 func TestAnUnknownRefusalIsNotGuessedAt(t *testing.T) {
-	re := ErrRelay{Reason: "something a newer relay says"}
-	if re.Kind() != RefusalUnknown {
+	re := relay.ErrRelay{Reason: "something a newer relay says"}
+	if re.Kind() != relay.RefusalUnknown {
 		t.Fatalf("classified as %v — an unrecognised reason must stay unknown", re.Kind())
 	}
 	if re.Throttled() {
@@ -123,19 +124,19 @@ func TestARateLimitSaysHowLongToWait(t *testing.T) {
 	}
 	defer srv.Close()
 
-	c, err := DialClient(addrOf(port))
+	c, err := relay.DialClient(addrOf(port))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer c.Close()
 
-	cap1 := make([]byte, CapLen)
+	cap1 := make([]byte, relay.CapLen)
 	if _, err := c.Collect([][]byte{cap1}); err != nil {
 		t.Fatal(err)
 	}
 	_, err = c.Collect([][]byte{cap1})
 
-	var re ErrRelay
+	var re relay.ErrRelay
 	if !errors.As(err, &re) {
 		t.Fatalf("got %T: %v", err, err)
 	}
@@ -163,7 +164,7 @@ func TestARequestShapeRefusalCarriesNoWait(t *testing.T) {
 	}
 	defer srv.Close()
 
-	c, err := DialClient(addrOf(port))
+	c, err := relay.DialClient(addrOf(port))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,11 +172,11 @@ func TestARequestShapeRefusalCarriesNoWait(t *testing.T) {
 
 	caps := make([][]byte, DefaultLimits().CollectMaxHints+1)
 	for i := range caps {
-		caps[i] = make([]byte, CapLen)
+		caps[i] = make([]byte, relay.CapLen)
 	}
 	_, err = c.Collect(caps)
 
-	var re ErrRelay
+	var re relay.ErrRelay
 	if !errors.As(err, &re) {
 		t.Fatalf("got %T: %v", err, err)
 	}

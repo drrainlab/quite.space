@@ -29,10 +29,11 @@ import (
 	"github.com/drrainlab/quiet_places/protocol/schemas"
 	"github.com/drrainlab/quiet_places/transports/lan"
 	"github.com/drrainlab/quiet_places/transports/relay"
+	"github.com/drrainlab/quiet_places/transports/relayserver"
 )
 
 func TestManySpacesDoNotOverflowOneCollect(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +62,7 @@ func TestManySpacesDoNotOverflowOneCollect(t *testing.T) {
 			"two per space. Past the ceiling every tick is refused, for as long "+
 			"as the person holds that many spaces — and from the interface it "+
 			"looks like messages have simply stopped.",
-			spaces, err, relay.DefaultLimits().CollectMaxHints)
+			spaces, err, relayserver.DefaultLimits().CollectMaxHints)
 	}
 }
 
@@ -138,7 +139,7 @@ func TestCollectChunksAreBoundedAndLoseNothing(t *testing.T) {
 // stopped would look identical to one that worked, right up until somebody
 // noticed their oldest conversation had gone quiet.
 func TestFiftySpacesAreAllServedByOnePull(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -473,9 +474,9 @@ func TestARelayRefusalDoesNotKillAHealthyConnection(t *testing.T) {
 // spending a minute proving the same point to each other — and it is why one
 // never recovers on its own.
 func TestANodeWaitsAsLongAsTheRelayAsked(t *testing.T) {
-	limits := relay.DefaultLimits()
+	limits := relayserver.DefaultLimits()
 	limits.CollectRatePerMin = 1
-	srv, port, err := relay.StartServer("127.0.0.1:0", limits)
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", limits)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -547,7 +548,7 @@ func TestANodeWaitsAsLongAsTheRelayAsked(t *testing.T) {
 // goes quiet with no error anywhere) or a harness artifact, and guessing
 // between those is how a real one gets dismissed.
 func TestBothJoinedSpacesKeepReceiving(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}

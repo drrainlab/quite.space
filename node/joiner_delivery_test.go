@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/drrainlab/quiet_places/transports/relay"
+	"github.com/drrainlab/quiet_places/transports/relayserver"
 )
 
 // Somebody who JOINED is heard before the other side has spoken.
@@ -23,7 +23,7 @@ import (
 // would replace is silent — frames prepared every cycle and delivered to no
 // one, with no error anywhere.
 func TestAJoinerIsHeardBeforeTheOtherSideSpeaks(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}

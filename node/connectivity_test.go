@@ -10,7 +10,7 @@ import (
 	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/transports"
 	"github.com/drrainlab/quiet_places/transports/loopback"
-	"github.com/drrainlab/quiet_places/transports/relay"
+	"github.com/drrainlab/quiet_places/transports/relayserver"
 )
 
 // setMode installs a connectivity policy.
@@ -286,7 +286,7 @@ func TestUnknownModeIsRefusedAndNeverWidens(t *testing.T) {
 // CONNECTION, the per-space gate governs routing and which mailboxes are
 // polled at all.
 func TestPerSpaceIsolationOnASharedRelay(t *testing.T) {
-	srv, port, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	srv, port, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}

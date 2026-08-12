@@ -22,7 +22,7 @@ import (
 
 	"github.com/drrainlab/quiet_places/kernel/storage"
 	"github.com/drrainlab/quiet_places/protocol/id"
-	"github.com/drrainlab/quiet_places/transports/relay"
+	"github.com/drrainlab/quiet_places/transports/relayserver"
 )
 
 func countMsg(t *testing.T, rt *Runtime, tid id.TerminalID, text string) int {
@@ -48,12 +48,12 @@ func TestInvitationRouteNeverFallsBackToMyOwnRelay(t *testing.T) {
 	bob := openRuntime(t, t.TempDir(), "bob")
 	defer bob.Close()
 
-	r1, port1, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	r1, port1, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
 	addr1 := fmt.Sprintf("127.0.0.1:%d", port1)
-	rC, portC, err := relay.StartServer("127.0.0.1:0", relay.DefaultLimits())
+	rC, portC, err := relayserver.StartServer("127.0.0.1:0", relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func TestInvitationRouteNeverFallsBackToMyOwnRelay(t *testing.T) {
 	// still pulls A (advertised ingress, pre-T4 fence), the breaker heals on
 	// the first successful touch, and the held frames go where bob SAID he
 	// listens. Bob resumes at A and receives everything exactly once.
-	r1b, _, err := relay.StartServer(addr1, relay.DefaultLimits())
+	r1b, _, err := relayserver.StartServer(addr1, relayserver.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
