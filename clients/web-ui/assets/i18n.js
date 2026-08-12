@@ -402,6 +402,8 @@ const I18N = {
     'conv.replying_to': ({ name }) => `replying to ${name}`,
     'conv.cancel_reply': 'cancel reply',
     'conv.edited': 'edited',
+    'conv.replyTo': 'replying to',
+    'conv.replyGone': 'a message above',
     'entry.unsupported': 'unsupported content',
 
     // system events (human)
@@ -1273,6 +1275,8 @@ const I18N = {
     'conv.replying_to': ({ name }) => `отвечаете ${name}`,
     'conv.cancel_reply': 'отменить ответ',
     'conv.edited': 'изменено',
+    'conv.replyTo': 'в ответ',
+    'conv.replyGone': 'на сообщение выше',
     'entry.unsupported': 'содержимое, которое здесь не показать',
     'sys.joined_with_pass': ({ who, owner }) => `${who} теперь здесь — по пропуску от ${owner}`,
     'sys.joined': ({ who }) => `${who} теперь здесь`,

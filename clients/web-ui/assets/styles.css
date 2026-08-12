@@ -3288,3 +3288,45 @@ button:hover > .act-mark, button:focus-visible > .act-mark { opacity: 1; }
   margin-bottom: 6px;
   line-height: 1.35;
 }
+
+/* ---- layers: the feed is one layer, the input panels sit above it ----
+   THE BUG THIS FIXES, measured rather than guessed: `.sc-appearance > *`
+   gives EVERY child of #content position:relative and z-index:1 — the feed
+   and the composer alike. It was written to lift content above a space's
+   background, and it accidentally made them peers, so which one wins is
+   decided by DOM order alone. That is the most fragile arrangement there is,
+   and it is the first thing to diverge between engines: every .bubble
+   carries backdrop-filter, which promotes it to a compositing layer of its
+   own, and a popup opening upward out of the composer — z-index 40, but
+   sealed inside the composer's own stacking context — ended up underneath
+   the messages.
+
+   Two rules, each saying one thing. The feed is ISOLATED, so nothing inside
+   it, however composited, can rise past it. The input panels get a level of
+   their own, so the answer stops depending on the order somebody happened to
+   write the markup in. */
+#log { isolation: isolate; }
+#composer, #replyBar, #mentionChips, #aiBar, #recBar, #readerBar { z-index: 2; }
+
+/* ---- a reply says that it is one ---- */
+.reply-to {
+  display: flex; flex-direction: column; gap: 1px; width: 100%;
+  margin: 0 0 6px; padding: 4px 8px; text-align: left;
+  font: inherit; font-size: 11.5px; line-height: 1.35;
+  color: var(--dim); cursor: pointer;
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  border: 0; border-left: 2px solid var(--acc); border-radius: 4px;
+}
+div.reply-to { cursor: default; }
+.reply-to:hover { background: color-mix(in srgb, var(--fg) 9%, transparent); }
+.reply-who { color: var(--acc); }
+.reply-text { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Arriving at the original should be visible, and then stop being visible. */
+.entry.flash .bubble { animation: replyFlash 1.2s ease-out; }
+@keyframes replyFlash {
+  0%, 40% { box-shadow: 0 0 0 2px var(--acc); }
+  100%    { box-shadow: 0 0 0 2px transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .entry.flash .bubble { animation: none; box-shadow: 0 0 0 2px var(--acc); }
+}
