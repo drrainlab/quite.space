@@ -82,7 +82,13 @@ bundled runtime. Install one (brew install openjdk) or point JAVA_HOME at it."
 fi
 
 say "building the release apk…"
-ANDROID_HOME="$SDK" gradle -p "$HOST" :app:assembleRelease -q || die "the build failed"
+# GRADLE_ARGS is how the release workflow passes the version from the tag
+# (-PquietVersionName / -PquietVersionCode). Deliberately unquoted so several
+# properties arrive as several arguments; nothing else is expected to use it,
+# and a local build passes none.
+# shellcheck disable=SC2086
+ANDROID_HOME="$SDK" gradle -p "$HOST" :app:assembleRelease -q ${GRADLE_ARGS:-} \
+	|| die "the build failed"
 
 APK=$(ls "$OUT"/*.apk 2>/dev/null | head -1)
 [ -n "$APK" ] || die "no apk was produced"

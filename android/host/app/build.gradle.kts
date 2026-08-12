@@ -31,8 +31,16 @@ android {
         // BUMP versionCode FOR EVERY BUILD THAT LEAVES THIS MACHINE. Android
         // refuses to install an apk whose code is not higher than the one on
         // the phone, and the failure reads as a corrupt download.
-        versionCode = 8
-        versionName = "0.1.0-beta.8"
+        //
+        // A tagged release overrides both from the tag, because the release
+        // workflow is exactly the case where "leaves this machine" is
+        // certain and remembering to bump by hand is exactly what nobody
+        // does. The code it passes is derived arithmetically from the
+        // version (major*10000 + minor*100 + patch), which is monotonic for
+        // as long as tags are — and 0.1.0 gives 100, comfortably past the
+        // hand-bumped 8 these local builds have reached.
+        versionCode = (project.findProperty("quietVersionCode") as String?)?.toInt() ?: 8
+        versionName = (project.findProperty("quietVersionName") as String?) ?: "0.1.0-beta.8"
         ndk { abiFilters += "arm64-v8a" }
 
         // AR-1b.6b.5. The structural notification tests are INSTRUMENTED

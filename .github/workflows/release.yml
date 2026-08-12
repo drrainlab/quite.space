@@ -1,0 +1,271 @@
+# One tag, four assets.
+#
+# GitHub Releases is the ONLY binary distribution backend: no S3, no CDN, no
+# Firebase, no Play Store, no Mac App Store. quite.space serves /download/macos
+# and /download/android as 302 redirects to
+# https://github.com/<owner>/<repo>/releases/latest/download/<asset>, which is
+# why every asset name here carries NO VERSION — a version in the file name
+# breaks that permanent URL on every single release.
+#
+# THE RELEASE IS NOT MARKED PRE-RELEASE, and that is deliberate rather than an
+# oversight: GitHub excludes pre-releases from /releases/latest, so marking one
+# would silently break every download link on the site. "Public Beta" is said
+# loudly in the release notes and in the app itself, which is where a person
+# actually reads it.
+#
+# Android signing lives in Actions Secrets and nowhere else. The keystore is
+# not in this repository and never will be — see android/host/app/build.gradle.kts
+# for the seam Gradle already provides, which this workflow feeds through the
+# environment rather than by writing a properties file.
+#
+#   QUITE_SPACE_ACTION_KEY         base64 of quiet-release.jks
+#   QUITE_SPACE_KEYSTORE_PASSWORD
+#   QUITE_SPACE_KEY_ALIAS
+#   QUITE_SPACE_KEY_PASSWORD
+#
+# An apk signed by a different key is a DIFFERENT APP to Android: it cannot
+# update an existing install, and the node inside the old one — its identity,
+# its spaces, its history — becomes unreachable. So the android job refuses to
+# run at all when a secret is missing, rather than falling back to anything.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  # A dry run builds and uploads the artifacts to the workflow WITHOUT
+  # publishing a release, so the whole pipeline can be exercised before a tag
+  # exists. There is no way to publish from here.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      name: ${{ steps.v.outputs.name }}
+      code: ${{ steps.v.outputs.code }}
+      tag: ${{ steps.v.outputs.tag }}
+    steps:
+      - id: v
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            TAG="${GITHUB_REF_NAME}"
+          else
+            TAG="v0.0.0-dryrun"
+          fi
+          NAME="${TAG#v}"
+          # versionCode must increase monotonically forever, and Android's
+          # failure when it does not reads to a person as a corrupt download.
+          # Deriving it arithmetically from the tag is monotonic for as long
+          # as the tags are, which is a property a human bump does not have.
+          BASE="${NAME%%-*}"
+          MAJ="$(echo "$BASE" | cut -d. -f1)"
+          MIN="$(echo "$BASE" | cut -d. -f2)"
+          PAT="$(echo "$BASE" | cut -d. -f3)"
+          CODE=$(( ${MAJ:-0} * 10000 + ${MIN:-0} * 100 + ${PAT:-0} ))
+          if [ "$CODE" -le 0 ]; then CODE=1; fi
+          echo "tag=$TAG"   >> "$GITHUB_OUTPUT"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+          echo "releasing $TAG — versionName $NAME, versionCode $CODE"
+
+  macos:
+    needs: version
+    runs-on: macos-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+          cache-dependency-path: cmd/desktop/go.sum
+      - name: build the universal .app and .dmg
+        working-directory: cmd/desktop
+        run: ARCH=universal VERSION="${{ needs.version.outputs.name }}" ./bundle-macos.sh
+      # Proof rather than trust: a "universal" dmg carrying one slice fails on
+      # an Intel Mac in a way nobody can diagnose from the outside, and the
+      # bundle script's fallback is allowed to produce exactly that.
+      - name: both architectures are really in there
+        working-directory: cmd/desktop
+        run: |
+          set -euo pipefail
+          lipo -info "dist/Quiet Spaces.app/Contents/MacOS/quiet-spaces"
+          lipo -info "dist/Quiet Spaces.app/Contents/MacOS/quiet-spaces" | grep -q x86_64
+          lipo -info "dist/Quiet Spaces.app/Contents/MacOS/quiet-spaces" | grep -q arm64
+          codesign --verify --verbose=1 "dist/Quiet Spaces.app"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: cmd/desktop/dist/quite-space-macos-universal.dmg
+          if-no-files-found: error
+
+  linux:
+    needs: version
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+          cache-dependency-path: cmd/desktop/go.sum
+      - name: gtk3 build dependencies
+        run: |
+          sudo apt-get update -qq
+          # GTK3 + webkit2gtk-4.1 on purpose: this Wails alpha's default Linux
+          # path needs GTK >= 4.10, newer than Debian 12 ships, and the .deb
+          # is meant to install on Debian 12+ / Ubuntu 22.04+.
+          sudo apt-get install -qq -y --no-install-recommends \
+            libgtk-3-dev libwebkit2gtk-4.1-dev dpkg-dev
+      - name: build the .deb
+        working-directory: cmd/desktop
+        run: ARCH=amd64 VERSION="${{ needs.version.outputs.name }}" ./bundle-linux.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: cmd/desktop/dist/quite-space-linux-amd64.deb
+          if-no-files-found: error
+
+  android:
+    needs: version
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # Refused up front, and by name. Producing an unsigned apk — or worse,
+      # one signed by some other key — is not a degraded release, it is an
+      # app that can never update the one testers already have.
+      - name: the signing key must be present
+        env:
+          KEY: ${{ secrets.QUITE_SPACE_ACTION_KEY }}
+          PW: ${{ secrets.QUITE_SPACE_KEYSTORE_PASSWORD }}
+          ALIAS: ${{ secrets.QUITE_SPACE_KEY_ALIAS }}
+          KEYPW: ${{ secrets.QUITE_SPACE_KEY_PASSWORD }}
+        run: |
+          missing=""
+          [ -n "$KEY" ]   || missing="$missing QUITE_SPACE_ACTION_KEY"
+          [ -n "$PW" ]    || missing="$missing QUITE_SPACE_KEYSTORE_PASSWORD"
+          [ -n "$ALIAS" ] || missing="$missing QUITE_SPACE_KEY_ALIAS"
+          [ -n "$KEYPW" ] || missing="$missing QUITE_SPACE_KEY_PASSWORD"
+          if [ -n "$missing" ]; then
+            echo "::error::missing Actions secrets:$missing"
+            echo "The Android release key is four values, not one: the keystore"
+            echo "itself (base64 of quiet-release.jks) and its three passwords."
+            exit 1
+          fi
+
+      - name: gomobile
+        run: |
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          echo "$HOME/go/bin" >> "$GITHUB_PATH"
+
+      - name: build, verify and sign the beta apk
+        env:
+          # The same script the maintainer runs by hand, so there is ONE
+          # definition of a correct beta apk: it rebuilds the .aar (an apk
+          # against a stale binding ships yesterday's interface), then refuses
+          # the result if the measurement rig is in any dex, if the manifest
+          # is debuggable, or if it is unsigned.
+          GRADLE_ARGS: >-
+            -PquietVersionName=${{ needs.version.outputs.name }}
+            -PquietVersionCode=${{ needs.version.outputs.code }}
+          QUIET_KEYSTORE: ${{ github.workspace }}/quiet-release.jks
+          QUIET_KEYSTORE_PASSWORD: ${{ secrets.QUITE_SPACE_KEYSTORE_PASSWORD }}
+          QUIET_KEY_ALIAS: ${{ secrets.QUITE_SPACE_KEY_ALIAS }}
+          QUIET_KEY_PASSWORD: ${{ secrets.QUITE_SPACE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          # The keystore exists only inside this runner, only for this job.
+          echo "${{ secrets.QUITE_SPACE_ACTION_KEY }}" | base64 -d > "$QUIET_KEYSTORE"
+          trap 'shred -u "$QUIET_KEYSTORE" 2>/dev/null || rm -f "$QUIET_KEYSTORE"' EXIT
+          ./scripts/android/beta-apk.sh
+          mkdir -p dist
+          cp android/host/app/build/outputs/apk/release/*.apk dist/quite-space-android.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: dist/quite-space-android.apk
+          if-no-files-found: error
+
+  publish:
+    needs: [version, macos, linux, android]
+    # A dry run stops here: it has proved the pipeline builds, which is the
+    # only thing it was asked to prove.
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: incoming
+      - name: gather and checksum
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          find incoming -type f -exec cp {} dist/ \;
+          cd dist
+          ls -la
+          # One file, so a person can verify a download with one command:
+          #   shasum -a 256 -c SHA256SUMS
+          sha256sum quite-space-* > SHA256SUMS
+          cat SHA256SUMS
+      - name: publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.version.outputs.tag }}
+          NAME: ${{ needs.version.outputs.name }}
+        run: |
+          set -euo pipefail
+          cat > notes.md <<'NOTES'
+          ## Public Beta
+
+          Quiet Spaces keeps your conversations on your own devices and carries
+          them over whatever path is available — the internet, a local network,
+          or a LoRa radio. Nothing here is a server holding your history.
+
+          **These desktop builds are EXPERIMENTAL and are not signed by Apple or
+          by any Linux distribution.** That is a deliberate trade for a beta,
+          and it means each platform asks you to let the app through once.
+
+          ### macOS — `quite-space-macos-universal.dmg`
+          Apple Silicon and Intel in one file, macOS 13.3+.
+          Open the disk image, drag **Quiet Spaces** to Applications, launch it
+          once — macOS will refuse and say it cannot verify the developer — then
+          **System Settings → Privacy & Security → Open Anyway**.
+          Or, if you prefer a command:
+          `xattr -dr com.apple.quarantine "/Applications/Quiet Spaces.app"`
+
+          ### Linux — `quite-space-linux-amd64.deb`
+          Debian 12+ and Ubuntu 22.04+, x86-64.
+          Install with apt so the GTK and WebKit runtimes resolve:
+          `sudo apt install ./quite-space-linux-amd64.deb`
+          (`dpkg -i` alone will leave the dependencies unmet.)
+
+          ### Android — `quite-space-android.apk`
+          Android 7.0+, arm64. Direct install; there is no Play Store listing.
+          Your device will ask you to allow installing from this source.
+
+          ### Verifying what you downloaded
+          `shasum -a 256 -c SHA256SUMS`
+
+          Every future build is signed by the same keys as this one. If your
+          device ever refuses an update because the signature changed, do not
+          work around it — tell us instead.
+          NOTES
+          gh release create "$TAG" dist/* \
+            --title "$NAME — Public Beta" \
+            --notes-file notes.md \
+            --latest
