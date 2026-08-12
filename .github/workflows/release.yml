@@ -93,10 +93,10 @@ jobs:
         working-directory: cmd/desktop
         run: |
           set -euo pipefail
-          lipo -info "dist/Quiet Spaces.app/Contents/MacOS/quiet-spaces"
-          lipo -info "dist/Quiet Spaces.app/Contents/MacOS/quiet-spaces" | grep -q x86_64
-          lipo -info "dist/Quiet Spaces.app/Contents/MacOS/quiet-spaces" | grep -q arm64
-          codesign --verify --verbose=1 "dist/Quiet Spaces.app"
+          lipo -info "dist/Quite Space.app/Contents/MacOS/quite-space"
+          lipo -info "dist/Quite Space.app/Contents/MacOS/quite-space" | grep -q x86_64
+          lipo -info "dist/Quite Space.app/Contents/MacOS/quite-space" | grep -q arm64
+          codesign --verify --verbose=1 "dist/Quite Space.app"
       - uses: actions/upload-artifact@v4
         with:
           name: macos
@@ -232,7 +232,7 @@ jobs:
           cat > notes.md <<'NOTES'
           ## Public Beta
 
-          Quiet Spaces keeps your conversations on your own devices and carries
+          Quite Space keeps your conversations on your own devices and carries
           them over whatever path is available — the internet, a local network,
           or a LoRa radio. Nothing here is a server holding your history.
 
@@ -242,11 +242,11 @@ jobs:
 
           ### macOS — `quite-space-macos-universal.dmg`
           Apple Silicon and Intel in one file, macOS 13.3+.
-          Open the disk image, drag **Quiet Spaces** to Applications, launch it
+          Open the disk image, drag **Quite Space** to Applications, launch it
           once — macOS will refuse and say it cannot verify the developer — then
           **System Settings → Privacy & Security → Open Anyway**.
           Or, if you prefer a command:
-          `xattr -dr com.apple.quarantine "/Applications/Quiet Spaces.app"`
+          `xattr -dr com.apple.quarantine "/Applications/Quite Space.app"`
 
           ### Linux — `quite-space-linux-amd64.deb`
           Debian 12+ and Ubuntu 22.04+, x86-64.

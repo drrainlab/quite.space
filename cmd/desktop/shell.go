@@ -33,6 +33,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/drrainlab/quiet_places/clients/lockgate"
 	"github.com/drrainlab/quiet_places/node"
@@ -210,7 +211,7 @@ func failedHandler(err error) http.Handler {
 	msg := "Could not open this device."
 	switch {
 	case errors.Is(err, node.ErrAlreadyRunning):
-		msg = "Another Quiet Spaces window already has this device open. " +
+		msg = "Another Quite Space window already has this device open. " +
 			"Use that one, or quit it and start again."
 	case errors.Is(err, node.ErrWrongPassphrase):
 		msg = "That passphrase did not open this device. Quit and try again."
@@ -225,6 +226,59 @@ func failedHandler(err error) http.Handler {
 		}
 		servePage(w, page)
 	})
+}
+
+// withRequestLog prints one line per request, and it exists because a WebView
+// has no console anybody can see from outside it.
+//
+// A request that fails inside the page — a throw before fetch, a CSP refusal —
+// produces NO line at all, and that absence is the most useful reading of the
+// three: it separates "the page never sent it" from "it arrived empty" (a
+// body the scheme handler dropped, which is finding №1's whole shape) from
+// "it arrived and the node refused it", which the status says.
+//
+// Only under --debug. A permanent log of every request, with paths carrying
+// space and asset ids, is a diary of what somebody read and when.
+func withRequestLog(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rec, r)
+		ct := r.Header.Get("Content-Type")
+		if ct == "" {
+			ct = "-"
+		}
+		fmt.Printf("REQ %-6s %-46s ct=%-46.46s len=%-9d -> %d  %s\n",
+			r.Method, r.URL.Path, ct, r.ContentLength, rec.status,
+			time.Since(start).Round(time.Millisecond))
+	})
+}
+
+type statusRecorder struct {
+	http.ResponseWriter
+	status  int
+	written bool
+}
+
+func (s *statusRecorder) WriteHeader(code int) {
+	if !s.written {
+		s.status, s.written = code, true
+	}
+	s.ResponseWriter.WriteHeader(code)
+}
+
+func (s *statusRecorder) Write(b []byte) (int, error) {
+	s.written = true
+	return s.ResponseWriter.Write(b)
+}
+
+// Flush is forwarded rather than dropped. A diagnostic that quietly changes
+// what it observes is worse than none, and this one is switched on precisely
+// while somebody is testing media — the responses most likely to be streamed.
+func (s *statusRecorder) Flush() {
+	if f, ok := s.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 func servePage(w http.ResponseWriter, page []byte) {

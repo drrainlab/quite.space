@@ -1,5 +1,5 @@
 #!/bin/sh
-# Build Quiet Spaces as a macOS .app and wrap it in a .dmg.
+# Build Quite Space as a macOS .app and wrap it in a .dmg.
 #
 # THE SIGNATURE IS AD-HOC, AND THAT IS A DECISION RATHER THAN AN OMISSION.
 # There is no Apple Developer Program membership behind this beta, so there is
@@ -24,8 +24,8 @@ cd "$(dirname "$0")"
 
 ARCH=${ARCH:-universal}
 VERSION=${VERSION:-0.1.0-beta}
-NAME="Quiet Spaces"
-BIN="quiet-spaces"
+NAME="Quite Space"
+BIN="quite-space"
 # FROZEN FROM THE FIRST RELEASE. macOS keys preferences, keychain items and
 # the TCC permission grants (microphone, most importantly) on this string —
 # changing it later silently orphans all of them, exactly the way changing an
@@ -84,7 +84,7 @@ for sz in 16 32 128 256 512; do
 	dbl=$((sz * 2))
 	sips -z $dbl $dbl assets/app-icon.png --out "$ICONSET/icon_${sz}x${sz}@2x.png" >/dev/null
 done
-iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/quiet-spaces.icns"
+iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/quite-space.icns"
 rm -rf "$ICONSET"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
@@ -101,11 +101,11 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleInfoDictionaryVersion</key> <string>6.0</string>
   <key>CFBundleShortVersionString</key>    <string>$VERSION</string>
   <key>CFBundleVersion</key>               <string>$VERSION</string>
-  <key>CFBundleIconFile</key>        <string>quiet-spaces</string>
+  <key>CFBundleIconFile</key>        <string>quite-space</string>
   <key>LSMinimumSystemVersion</key>  <string>13.3</string>
   <key>NSHighResolutionCapable</key> <true/>
   <key>NSMicrophoneUsageDescription</key>
-  <string>Quiet Spaces records voice messages only while you hold the record button, and they never leave the people you send them to.</string>
+  <string>Quite Space records voice messages only while you hold the record button, and they never leave the people you send them to.</string>
 </dict>
 </plist>
 PLIST
@@ -139,7 +139,7 @@ echo "This build is EXPERIMENTAL and signed ad-hoc — there is no Apple"
 echo "Developer certificate behind it. Opening it after a download takes one"
 echo "deliberate step, and the download page must say so:"
 echo
-echo "  1. open the .dmg and drag Quiet Spaces to Applications"
+echo "  1. open the .dmg and drag Quite Space to Applications"
 echo "  2. launch it once — macOS will refuse and say it cannot verify it"
 echo "  3. System Settings -> Privacy & Security -> Open Anyway"
 echo

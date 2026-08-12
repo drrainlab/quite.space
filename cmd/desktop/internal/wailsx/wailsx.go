@@ -50,6 +50,13 @@ type Options struct {
 	ShowLabel string
 	QuitLabel string
 
+	// DevTools opens the web inspector on the window. A WebView has no
+	// console anybody can reach from outside it, so without this a page-side
+	// failure — a throw before fetch, a CSP refusal — is completely invisible.
+	// Off by default: an inspector on a shipped build is a surface nobody
+	// asked for.
+	DevTools bool
+
 	// OnQuit runs before the process ends. It is called on the tray's Quit
 	// AND after the run loop returns for any other reason, so it MUST be
 	// idempotent — which is why the shell's Shutdown is a sync.Once.
@@ -70,6 +77,8 @@ func Run(o Options) error {
 		Width:  o.Width,
 		Height: o.Height,
 		URL:    o.URL,
+
+		DevToolsEnabled: o.DevTools,
 	})
 
 	// The window is not the node. Closing it hides it — the node keeps

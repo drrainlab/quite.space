@@ -1,5 +1,5 @@
 #!/bin/sh
-# Build Quiet Spaces as a Debian package into dist/.
+# Build Quite Space as a Debian package into dist/.
 #
 # On Linux it builds where it stands. Anywhere else it rents a Linux userland
 # from Docker, because Wails needs CGO against GTK and WebKitGTK and there is
@@ -46,7 +46,7 @@ BUILD='
 	cat > "$ROOT/usr/share/applications/space.quite.desktop.desktop" <<DESKTOP
 [Desktop Entry]
 Type=Application
-Name=Quiet Spaces
+Name=Quite Space
 Comment=A quiet place for the people you choose
 Exec=$PKG
 Icon=$PKG
@@ -58,12 +58,12 @@ DESKTOP
 Package: $PKG
 Version: $VERSION
 Architecture: $ARCH
-Maintainer: Quiet Spaces <beta@quite.space>
+Maintainer: Quite Space <beta@quite.space>
 Depends: libgtk-3-0, libwebkit2gtk-4.1-0
 Section: net
 Priority: optional
-Description: Quiet Spaces — a local-first, end-to-end encrypted place
- Quiet Spaces keeps your conversations on your own devices and carries them
+Description: Quite Space — a local-first, end-to-end encrypted place
+ Quite Space keeps your conversations on your own devices and carries them
  over whatever path is available: the internet, a local network, or a LoRa
  radio. This is an EXPERIMENTAL beta build. It is unsigned and served from
  no repository.

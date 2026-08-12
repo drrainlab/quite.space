@@ -1,4 +1,4 @@
-// Quiet Spaces, as an application (DS-3).
+// Quite Space, as an application (DS-3).
 //
 // One process holding one node, with a window in front of it. The node is the
 // same one `terminal ui` runs — same runtime, same 57-route API, same embedded
@@ -20,6 +20,7 @@ import (
 	"embed"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 
 	webui "github.com/drrainlab/quiet_places/clients/web-ui"
@@ -39,27 +40,41 @@ func main() {
 	log.SetFlags(0)
 
 	dataDir := node.DefaultDataDir()
-	// --data is here for the one case that needs it: running a second node on
-	// the same machine to test two people talking. It is not a general
-	// configuration surface, and there is no other flag.
+	debug := false
+	// Two flags, and both earn their place. --data is for running a second
+	// node on the same machine to test two people talking; --debug opens the
+	// web inspector and prints one line per request, which is the only way to
+	// see inside a WebView from outside it. There is no other configuration
+	// surface here.
 	for i, a := range os.Args {
-		if a == "--data" && i+1 < len(os.Args) {
-			dataDir = os.Args[i+1]
+		switch a {
+		case "--data":
+			if i+1 < len(os.Args) {
+				dataDir = os.Args[i+1]
+			}
+		case "--debug":
+			debug = true
 		}
 	}
 
 	shell, err := NewShell(dataDir, webui.FS())
 	if err != nil {
-		log.Fatalf("quiet spaces: %v", err)
+		log.Fatalf("quite space: %v", err)
 	}
 	fmt.Println("data root:", dataDir)
+
+	var handler http.Handler = shell
+	if debug {
+		handler = withRequestLog(shell)
+		fmt.Println("debug: web inspector enabled, logging every request")
+	}
 
 	// OFF the UI thread, deliberately. node.Open is a scrypt derivation plus a
 	// replay of every space's log — seconds on a large node — and a window
 	// frozen for that long reads as a crash rather than as work.
 	go func() {
 		if err := shell.Await(context.Background()); err != nil {
-			log.Printf("quiet spaces: %v", err)
+			log.Printf("quite space: %v", err)
 			return
 		}
 		fmt.Println("node open")
@@ -69,17 +84,18 @@ func main() {
 	trayIcon, _ := brand.ReadFile("assets/tray-template.png")
 
 	err = wailsx.Run(wailsx.Options{
-		Name:        "Quiet Spaces",
+		Name:        "Quite Space",
 		Description: "A quiet place for the people you choose",
-		Title:       "Quiet Spaces",
+		Title:       "Quite Space",
 		Width:       1240,
 		Height:      840,
 		URL:         shell.StartURL(),
-		Handler:     shell,
+		Handler:     handler,
 		Icon:        icon,
 		TrayIcon:    trayIcon,
-		ShowLabel:   "Show Quiet Spaces",
+		ShowLabel:   "Show Quite Space",
 		QuitLabel:   "Quit",
+		DevTools:    debug,
 		OnQuit:      shell.Shutdown,
 	})
 	// Belt and braces: OnQuit already ran, and Shutdown is a sync.Once, so
@@ -87,6 +103,6 @@ func main() {
 	// ever reaching its own exit path.
 	shell.Shutdown()
 	if err != nil {
-		log.Fatalf("quiet spaces: %v", err)
+		log.Fatalf("quite space: %v", err)
 	}
 }

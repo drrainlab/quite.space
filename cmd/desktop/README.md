@@ -1,4 +1,4 @@
-# Quiet Spaces — the desktop application (DS-3)
+# Quite Space — the desktop application (DS-3)
 
 One process holding one node, with a window in front of it. The node is the
 same one `terminal ui` runs — same runtime, same API, same embedded interface
@@ -6,6 +6,15 @@ same one `terminal ui` runs — same runtime, same API, same embedded interface
 
     cd cmd/desktop && go run .            # a window, on your real data
     go run . --data /tmp/qs-bob           # a second node, to talk to yourself
+    go run . --debug                      # web inspector + one line per request
+
+`--debug` is the only way to see inside a WebView from outside it. It opens the
+inspector (right-click → Inspect Element) and prints a `REQ` line per request
+with the method, path, request Content-Type, body length and status. The most
+useful reading is often the ABSENCE of a line: it separates *the page never
+sent it* — a throw before `fetch`, a CSP refusal — from *it arrived empty*,
+which is the shape of the WKWebView blob-body defect, from *it arrived and the
+node refused it*, which the status names.
 
 This is a **NESTED Go module**, and the nesting is the point: Wails needs CGO,
 ADR-011 mandates `CGO_ENABLED=0` for the main binary, and Go excludes
@@ -63,11 +72,11 @@ does not satisfy Gatekeeper — a `.dmg` that arrived through a browser carries
 `com.apple.quarantine` and macOS will say it cannot verify the developer,
 which is true. The remedy is deliberate and belongs on the download page:
 
-1. open the `.dmg`, drag **Quiet Spaces** to Applications
+1. open the `.dmg`, drag **Quite Space** to Applications
 2. launch it once — macOS refuses
 3. System Settings → Privacy & Security → **Open Anyway**
 
-or `xattr -dr com.apple.quarantine "/Applications/Quiet Spaces.app"`.
+or `xattr -dr com.apple.quarantine "/Applications/Quite Space.app"`.
 
 The bundle identifier `space.quite.desktop` is **frozen from the first
 release**: macOS keys preferences, keychain items and the TCC permission
