@@ -1432,6 +1432,19 @@
     #dlgPass, #dlgJoin { width: 100%; max-width: 100%; height: 100%;
       border-radius: 0; }
     .ic { min-width: 40px; min-height: 40px; }
+
+    /* A BUBBLE GIVES BACK THE MARGIN IT CANNOT AFFORD. 78% is a desktop
+       proportion: on a wide screen the empty fifth is what stops a line
+       running too long to track back, and it costs nothing. On a phone the
+       line is already short, so that same fifth is pure loss — it turns a
+       sentence into a column of three or four words, and a pasted document
+       into a ladder.
+       94% keeps the asymmetry that says which side a message is on, and
+       returns the rest to the words. The padding narrows with it: 15px of
+       inner margin is another 30px of a 360px screen. */
+    .msg { max-width: 94%; }
+    .bubble { padding: 10px 12px; }
+
     /* The header carries the actions now, so on a phone it gives back
        every millimetre it can — the four still need to fit on one line. */
     header { gap: 6px; padding: 8px 12px; }
@@ -2092,21 +2105,28 @@
      distinguishable from the paragraph beside it or rendering it bought
      nothing. */
   .txt h1, .txt h2, .txt h3 {
-    font-size: 1.04em; font-weight: 600; margin: .55em 0 .25em; line-height: 1.35;
+    font-size: 1.04em; font-weight: 600; margin: 1em 0 .3em; line-height: 1.35;
   }
   .txt h1:first-child, .txt h2:first-child, .txt h3:first-child { margin-top: 0; }
-  .txt p { margin: .35em 0; }
+  /* THE PARAGRAPH GAP IS WHAT MAKES A PASTED DOCUMENT READABLE, and the
+     first version got it wrong: adjacent margins COLLAPSE, so .35em each
+     bought ~4px between paragraphs — fine for the two-line message this was
+     first tried on, and a solid wall for anything with sections in it. The
+     blank line an author typed is structure; it has to survive as space.
+     A short message is unaffected: :first-child and :last-child zero the
+     outer edges, so one paragraph still sits flush in its bubble. */
+  .txt p { margin: .95em 0; }
   .txt p:first-child { margin-top: 0; }
   .txt p:last-child { margin-bottom: 0; }
-  .txt ul, .txt ol { margin: .35em 0; padding-left: 1.25em; }
-  .txt li { margin: .12em 0; }
+  .txt ul, .txt ol { margin: .6em 0; padding-left: 1.25em; }
+  .txt li { margin: .16em 0; }
   .txt blockquote {
-    margin: .45em 0; padding: .1em 0 .1em .7em;
+    margin: .8em 0; padding: .1em 0 .1em .7em;
     border-left: 2px solid color-mix(in srgb, var(--acc) 45%, transparent);
     color: var(--dim);
   }
   .txt pre {
-    margin: .45em 0; padding: .5em .6em; overflow-x: auto;
+    margin: .8em 0; padding: .5em .6em; overflow-x: auto;
     background: rgba(0, 0, 0, .28); border-radius: 8px;
   }
   .txt code {
@@ -2114,7 +2134,7 @@
     background: rgba(255, 255, 255, .07); border-radius: 4px; padding: .05em .3em;
   }
   .txt pre code { background: none; padding: 0; }
-  .txt hr { border: 0; border-top: 1px solid var(--line); margin: .6em 0; }
+  .txt hr { border: 0; border-top: 1px solid var(--line); margin: 1em 0; }
 
   /* --- Resonant Surfaces (RP-2A) ---
      .fx-layer is an absolutely-positioned overlay INSIDE the target:

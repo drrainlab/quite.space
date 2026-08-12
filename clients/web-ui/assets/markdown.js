@@ -174,12 +174,25 @@ const MD = (() => {
     const flush = () => {
       if (!para.length) return;
       const p = el('p');
-      // A single newline inside a paragraph is a line break, not a new
-      // paragraph — people write addresses and verse that way and expect
-      // them to hold their shape.
+      // A SINGLE NEWLINE INSIDE A PARAGRAPH IS A SOFT BREAK — a space, and
+      // the text reflows to whatever width it is read at. CommonMark's rule,
+      // and it was worth adopting: this renderer exists for text people
+      // PASTE, and a pasted document is hard-wrapped for the editor it was
+      // written in, never for the bubble it lands in. Honouring those wraps
+      // literally is what produced ragged half-lines — "pasted text / is /
+      // left alone" — measured on a real 76-column note.
+      //
+      // A HARD break is still available and now has to be asked for: two
+      // trailing spaces, or a trailing backslash. So an address or a verse
+      // keeps its shape when somebody means it to, and a blank line starts a
+      // new paragraph as it always did.
       para.forEach((line, k) => {
-        if (k) p.appendChild(el('br'));
-        p.append(...inline(line));
+        const hard = /(\s\s|\\)$/.test(line);
+        p.append(...inline(line.replace(/\s+$/, '').replace(/\\$/, '')));
+        if (k === para.length - 1) return;
+        // A literal space, not a newline: .txt is white-space: pre-wrap, so
+        // a newline here would survive and undo the join it is part of.
+        p.appendChild(hard ? el('br') : document.createTextNode(' '));
       });
       frag.appendChild(p);
       para = [];

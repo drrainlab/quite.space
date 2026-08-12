@@ -391,14 +391,21 @@ func (c *client) PollOnce(ctx context.Context, sink Sink) error {
 	if err != nil {
 		return err
 	}
+	var firstErr error
 	for i := range list {
 		env, ok := Gate(&list[i])
 		if !ok {
 			continue // no acceptable text; the poller has nothing to say yet
 		}
-		_ = sink(env)
+		// THE LAST PLACE AN ERROR COULD HIDE. A gated envelope the node
+		// refuses is not a nothing: the letter exists, the person expects
+		// it, and a silent drop here would look exactly like an empty
+		// mailbox. Reported upward so Run logs it once per reason.
+		if err := sink(env); err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("ingest %s: %w", env.ExternalID, err)
+		}
 	}
-	return nil
+	return firstErr
 }
 
 func extractEmailList(resp jmapResponse) ([]jmapEmail, error) {

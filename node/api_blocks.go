@@ -421,7 +421,12 @@ type entryResp struct {
 	// sender — the original's signature does not travel — and the renderer
 	// says so beside it (SHARE-1).
 	Shared *sharedResp `json:"shared,omitempty"`
-	Clock  uint64      `json:"clock"`
+	// External is who the GATEWAY says a letter came from (TR-0, key 7).
+	// Set only under imported authorship: the payload can carry this
+	// structure from anybody, the signature cannot, so trusting the
+	// payload alone would hand every member a stencil for forging mail.
+	External *externalResp `json:"external,omitempty"`
+	Clock    uint64        `json:"clock"`
 	// CreatedAt is the AUTHOR's wall clock from the signed envelope —
 	// advisory, it can lie. Display only; never trust it for local policy.
 	CreatedAt uint64 `json:"created_at,omitempty"`
@@ -607,6 +612,14 @@ func (a *APIServer) projectEntry(tid id.TerminalID, sp *terminals.Space,
 		// beside a human's words would be a claim about them.
 		if e.ProducedBy != signal.AuthorshipHuman {
 			resp.Model = e.Content.Text.Model
+		}
+		// Same rule, one wave later: foreign provenance rides the envelope's
+		// authorship, never the payload's word for itself.
+		if x := e.Content.Text.External; x != nil && e.ProducedBy == signal.AuthorshipImported {
+			resp.External = &externalResp{
+				Connector: x.ConnectorKind, Address: x.Address,
+				LossFlags: x.LossFlags,
+			}
 		}
 		resp.Revised = e.Content.Text.Revised
 		resp.Fallback = e.Content.Text.Text
