@@ -166,10 +166,32 @@ jobs:
             exit 1
           fi
 
+      # gomobile AND gobind. `gomobile bind` shells out to gobind as a separate
+      # binary, and installing gomobile alone does not place it on PATH — which
+      # is invisible on a machine where somebody installed both once, years ago,
+      # and fatal on a fresh runner:
+      #
+      #   gomobile: gobind was not found. Please run gomobile init
+      #
+      # init then verifies the toolchain against the NDK. The runner ships one
+      # under $ANDROID_HOME/ndk/<version>; the same lookup beta-apk.sh does, so
+      # the two cannot pick different NDKs.
       - name: gomobile
         run: |
+          set -euo pipefail
           go install golang.org/x/mobile/cmd/gomobile@latest
+          go install golang.org/x/mobile/cmd/gobind@latest
           echo "$HOME/go/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/go/bin:$PATH"
+          NDK="$(ls -d "$ANDROID_HOME"/ndk/* 2>/dev/null | tail -1)"
+          if [ -z "$NDK" ]; then
+            echo "::error::no NDK under $ANDROID_HOME/ndk — gomobile cannot bind without one"
+            exit 1
+          fi
+          echo "ANDROID_NDK_HOME=$NDK" >> "$GITHUB_ENV"
+          echo "using NDK $NDK"
+          ANDROID_NDK_HOME="$NDK" gomobile init
+          gomobile version
 
       - name: build, verify and sign the beta apk
         env:
