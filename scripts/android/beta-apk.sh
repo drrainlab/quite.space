@@ -35,6 +35,14 @@ die()  { printf 'REFUSED: %s\n' "$*" >&2; exit 1; }
 # That has happened twice in one day; it is cheap to make impossible.
 if [ "${SKIP_AAR:-0}" != "1" ]; then
   say "rebuilding the core binding (SKIP_AAR=1 to skip)…"
+  # The output directory holds nothing but gomobile's own products, so
+  # android/.gitignore excludes all of them — and git does not track an empty
+  # directory, which means a FRESH CLONE has no libs/ at all. gomobile does not
+  # create its output's parent, so it fails with a bare
+  #   open ../host/app/libs/quietcore.aar: no such file or directory
+  # A machine that has ever built this once never sees it; a clean runner sees
+  # nothing else.
+  mkdir -p android/host/app/libs
   ( cd android/quietcore && \
     PATH="$HOME/go/bin:$PATH" ANDROID_HOME="$SDK" \
     ANDROID_NDK_HOME="$(ls -d "$SDK"/ndk/* 2>/dev/null | tail -1)" \
