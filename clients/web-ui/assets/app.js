@@ -4103,9 +4103,12 @@ async function onFilePicked(file) {
   } else if (isImage) {
     const { blob, dataURL } = await makeThumb(file);
     pendingPreview = blob;
-    const img = document.createElement('img'); img.src = dataURL;
-    img.style.maxWidth = '240px'; img.style.borderRadius = '8px';
-    prev.appendChild(img);
+    // No thumbnail is an ordinary outcome — the picture still goes.
+    if (dataURL) {
+      const img = document.createElement('img'); img.src = dataURL;
+      img.style.maxWidth = '240px'; img.style.borderRadius = '8px';
+      prev.appendChild(img);
+    }
     document.getElementById('attachWarn').textContent =
       'note: the original may carry EXIF/GPS metadata; the thumbnail is re-encoded and stripped.';
   } else if (isVideo) {
@@ -4113,9 +4116,11 @@ async function onFilePicked(file) {
     if (cap) {
       pendingPreview = cap.blob;
       pendingVideoMeta = { duration_ms: cap.duration_ms, width: cap.width, height: cap.height };
-      const img = document.createElement('img'); img.src = cap.dataURL;
-      img.style.maxWidth = '240px'; img.style.borderRadius = '8px';
-      prev.appendChild(img);
+      if (cap.dataURL) {
+        const img = document.createElement('img'); img.src = cap.dataURL;
+        img.style.maxWidth = '240px'; img.style.borderRadius = '8px';
+        prev.appendChild(img);
+      }
       const meta = document.createElement('div');
       meta.className = 'hint';
       meta.textContent = `${file.name} · ${fmtBytes(file.size)} · ${fmtDur(cap.duration_ms)}`;
@@ -4135,16 +4140,40 @@ function blobToDataURL(blob) {
   return new Promise((res) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.readAsDataURL(blob); });
 }
 
-// encodeThumbUnder re-encodes a canvas to webp under maxBytes: it lowers
-// quality, then downscales, until it fits. The inline preview is a hard cap
-// (schemas.MaxInlinePreview = 40 KiB) that a detailed frame at fixed quality
-// can blow past ("preview too large") — this guarantees it never does.
+// encodeThumbUnder re-encodes a canvas UNDER maxBytes — and returns nothing at
+// all rather than something too big. It lowers quality, then downscales, until
+// it fits the inline-preview cap (schemas.MaxInlinePreview = 40 KiB).
+//
+// TWO THINGS IT LEARNED THE HARD WAY, and both only show on WebKit.
+//
+// canvas.toBlob falls back to image/png for a type the engine cannot encode,
+// and WebKit cannot encode webp — DS-0 recorded exactly that, as an expected
+// difference, without noticing what it did here. PNG ignores the quality
+// argument, so the ladder below became twenty attempts at the same oversized
+// PNG, and the last one was sent regardless: the node refused the whole
+// message with "preview too large". Every attachment from the desktop shell
+// failed, while identical code was fine in Chrome and on Android.
+//
+// So the format is DISCOVERED rather than assumed — the produced blob's own
+// type is the only honest answer — and JPEG is the fallback, because it is
+// universal and it actually honours quality.
+//
+// And a preview is a NICETY. If nothing fits, this returns null and the
+// message goes without a thumbnail; the original is uploaded either way.
+// Failing an upload over its decoration is the wrong trade, and it is the
+// trade the old last line silently made.
 async function encodeThumbUnder(canvas, maxBytes) {
-  const toBlob = (c, q) => new Promise((r) => c.toBlob(r, 'image/webp', q));
+  const encode = (c, type, q) => new Promise((r) => c.toBlob(r, type, q));
+  // One probe settles the format: ask for webp and look at what came back.
+  let type = 'image/webp';
+  const probe = await encode(canvas, type, 0.8);
+  if (!probe || probe.type !== type) type = 'image/jpeg';
+  else if (probe.size <= maxBytes) return { blob: probe, dataURL: await blobToDataURL(probe) };
+
   let c = canvas;
   for (let round = 0; round < 4; round++) {
     for (const q of [0.8, 0.6, 0.45, 0.3, 0.2]) {
-      const blob = await toBlob(c, q);
+      const blob = await encode(c, type, q);
       if (blob && blob.size <= maxBytes) return { blob, dataURL: await blobToDataURL(blob) };
     }
     const nc = document.createElement('canvas');
@@ -4153,8 +4182,7 @@ async function encodeThumbUnder(canvas, maxBytes) {
     nc.getContext('2d').drawImage(c, 0, 0, nc.width, nc.height);
     c = nc;
   }
-  const blob = await toBlob(c, 0.2);
-  return { blob, dataURL: await blobToDataURL(blob) };
+  return { blob: null, dataURL: '' };
 }
 
 function makeThumb(file) {
@@ -4181,7 +4209,10 @@ async function sendAttachment() {
     if (!alt) { alert('alt text is required — it is how the media reaches text terminals'); return; }
     meta.alt = alt;
     meta.caption = document.getElementById('attachCaption').value.trim();
-    if (pendingPreview) meta.preview_mime = 'image/webp';
+    // The blob's OWN type, never the one we asked for: an engine that cannot
+    // encode the requested format quietly hands back another, and a preview
+    // labelled with a wish is a thumbnail nobody can decode.
+    if (pendingPreview) meta.preview_mime = pendingPreview.type || 'image/jpeg';
     if (pendingKind === 'video' && pendingVideoMeta) {
       meta.duration_ms = pendingVideoMeta.duration_ms;
       meta.width = pendingVideoMeta.width;
@@ -4386,7 +4417,12 @@ async function sendVoice() {
   const durMs = Date.now() - voiceStart;
   const wave = compactWave();
   const meta = {
-    kind: 'audio', size: voiceBlob.size, media_type: voiceMIME.split(';')[0],
+    kind: 'audio', size: voiceBlob.size,
+    // What the recorder PRODUCED, not what it was asked for. WebKit answers
+    // isTypeSupported('audio/webm;codecs=opus') with yes and then records
+    // audio/mp4 (DS-0 recorded this); a clip labelled with the request plays
+    // for nobody.
+    media_type: (voiceBlob.type || voiceMIME).split(';')[0],
     title: 'voice message', duration_ms: durMs,
     waveform: btoa(String.fromCharCode(...wave)),
     transcript: document.getElementById('voiceTranscript').value.trim(),

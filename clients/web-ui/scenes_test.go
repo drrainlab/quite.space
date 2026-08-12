@@ -247,3 +247,45 @@ func TestTheConnectionChipSaysWhatIsCarrying(t *testing.T) {
 	}
 	t.Logf("%s", out)
 }
+
+// TestAnInlinePreviewFitsOrDoesNotExist runs scripts/webui/thumbnail.cjs.
+//
+// The defect it pins was invisible to every test the project had, because it
+// only appears on an engine that cannot encode webp: canvas.toBlob falls back
+// to png, png ignores the quality argument, and the whole ladder returned the
+// same oversized image — which the node then refused, taking the entire
+// message with it. Chrome and Android were fine the whole time.
+func TestAnInlinePreviewFitsOrDoesNotExist(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not available")
+	}
+	script := filepath.Join("..", "..", "scripts", "webui", "thumbnail.cjs")
+	if _, err := os.Stat(script); err != nil {
+		t.Fatalf("the thumbnail harness is missing: %v", err)
+	}
+	out, err := exec.Command(node, script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("a preview would be refused by the node: %v\n%s", err, out)
+	}
+	t.Logf("%s", out)
+}
+
+// TestNoRemoteValueReachesAJavaScriptContext runs scripts/webui/injection.cjs,
+// which the security wave wrote and then left unwired — a check nobody runs is
+// a check that has already stopped holding.
+func TestNoRemoteValueReachesAJavaScriptContext(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not available")
+	}
+	script := filepath.Join("..", "..", "scripts", "webui", "injection.cjs")
+	if _, err := os.Stat(script); err != nil {
+		t.Fatalf("the injection harness is missing: %v", err)
+	}
+	out, err := exec.Command(node, script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("an escaping contract is broken: %v\n%s", err, out)
+	}
+	t.Logf("%s", out)
+}
