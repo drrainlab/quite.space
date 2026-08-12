@@ -3017,6 +3017,15 @@ function authorLabel(e) {
   return e.author_name || t('conv.member');
 }
 
+// cssId makes an event id safe to put inside an attribute selector. Ids are
+// hex today, so this changes nothing — which is exactly why it is here: the
+// day one is not, a selector built by concatenation is an injection rather
+// than a lookup that quietly finds nothing.
+function cssId(v) {
+  const s = String(v ?? '');
+  return window.CSS && CSS.escape ? CSS.escape(s) : s.replace(/[^a-zA-Z0-9_-]/g, '');
+}
+
 function renderEntry(log, e, fresh, grouped) {
   const d = document.createElement('div');
   const own = !!e.mine;
@@ -3061,7 +3070,55 @@ function renderEntry(log, e, fresh, grouped) {
     said.textContent = t('conv.ext.claim');
     bubble.appendChild(said);
   }
-  bubble.appendChild(renderBody(e));
+  // A REPLY SAYS THAT IT IS ONE, AND SAYS TO WHAT.
+  //
+  // The edge has been real since AT-0A: it is signed on message.text.v1, the
+  // reducer keeps it, and the API has been returning it as `reply_to` all
+  // along. The client simply never drew it — so the composer showed "replying
+  // to X" while you typed, and the moment you pressed send that context
+  // vanished and the answer was indistinguishable from an ordinary message.
+  //
+  // The quoted line is read from the ORIGINAL ALREADY ON SCREEN rather than
+  // from a second lookup: entries are rendered in chronological order, so the
+  // message being answered is always drawn before its answer. When it is not
+  // there — an answer to something far above, or to a message this device
+  // never received — the row still says a reply happened and says only what
+  // it can support, instead of guessing at the words.
+  if (e.reply_to) {
+    const src = log.querySelector('.entry[data-eid="' + cssId(e.reply_to) + '"]');
+    const q = document.createElement(src ? 'button' : 'div');
+    q.className = 'reply-to';
+    const who = document.createElement('span');
+    who.className = 'reply-who';
+    who.textContent = '↵ ' +
+      (src ? (src.querySelector('.who span:last-child')?.textContent || '').split(' · ')[0]
+           : t('conv.replyGone'));
+    q.title = t('conv.replyTo');
+    q.appendChild(who);
+    if (src) {
+      const body = src.querySelector('.bubble > .body');
+      const text = (body?.textContent || '').trim().replace(/\s+/g, ' ');
+      if (text) {
+        const line = document.createElement('span');
+        line.className = 'reply-text';
+        line.textContent = text.slice(0, 90);
+        q.appendChild(line);
+      }
+      // Going to the original is the whole point of showing it.
+      q.addEventListener('click', () => {
+        src.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        src.classList.add('flash');
+        setTimeout(() => src.classList.remove('flash'), 1200);
+      });
+    }
+    bubble.appendChild(q);
+  }
+  // The body gets a stable class. It arrives from FEED_RENDERERS, whose
+  // shape depends on the kind, so without one there is no way to quote a
+  // message without also quoting its resonance row.
+  const bodyEl = renderBody(e);
+  bodyEl.classList.add('body');
+  bubble.appendChild(bodyEl);
   bubble.appendChild(renderResonanceRow(e.resonance, e.id));
   d.appendChild(bubble);
   d.dataset.eid = e.id;
@@ -4046,6 +4103,70 @@ function initDropZone() {
   });
 }
 
+/**
+ * PASTE, AND IT IS THE SAME DOOR AS THE OTHER TWO.
+ *
+ * A file can already arrive by the picker or by being dropped, and both end
+ * in onFilePicked — which sizes it, refuses it if it is too big, builds the
+ * preview and asks for an alt. Paste is a third way IN, not a third
+ * mechanism: it works out what is on the clipboard and hands it to the same
+ * function. Everything downstream is untouched.
+ *
+ * ONLY FILES ARE INTERCEPTED, and that is a narrowing of what this was
+ * first sketched as. Pasted TEXT is left completely alone, because the
+ * renderer already does the right thing with it: markdown.js turns a bare
+ * address into a link precisely because "people paste addresses; they do
+ * not write link syntax in a chat message". Catching a pasted URL to open a
+ * link dialog would take away the ability to put an address in the middle
+ * of a sentence, and would break behaviour somebody deliberately built. A
+ * qs: link is the same story — pasting one to SHOW it to a friend is as
+ * ordinary as pasting one to follow it, and only the person knows which.
+ *
+ * NOTHING IS FETCHED. A clipboard from a browser also carries text/html
+ * with remote <img src>, and rendering that as a preview would tell a third
+ * party you had pasted something before you sent anything. Only bytes that
+ * are ALREADY on the clipboard are ever shown — the same rule that made the
+ * catalog's "Look up" an explicit press rather than a paste handler.
+ */
+function initClipboardPaste() {
+  if (window._pasteInit) return;
+  window._pasteInit = true;
+  document.addEventListener('paste', async (e) => {
+    // The same guard the drop zone uses, for the same reason: a dialog with
+    // its own fields owns what is pasted into it.
+    if (dropBelongsElsewhere(e)) return;
+    if (!current) return;
+    const files = clipboardFiles(e.clipboardData);
+    if (!files.length) return;
+    e.preventDefault();
+    const file = files[0];
+    attachMode = file.type.startsWith('image/') ? 'photo'
+      : file.type.startsWith('video/') ? 'video'
+      : file.type.startsWith('audio/') ? 'audio' : 'doc';
+    await onFilePicked(file, { fromPaste: true, skipped: files.length - 1 });
+  });
+}
+
+/**
+ * What the clipboard actually holds, as files.
+ *
+ * Two readings, because engines disagree: .files is populated for a copied
+ * file, while a SCREENSHOT — the case this whole feature exists for — often
+ * arrives only as an item of kind "file". Reading one and not the other
+ * works on exactly half the machines it is tried on.
+ */
+function clipboardFiles(dt) {
+  if (!dt) return [];
+  if (dt.files && dt.files.length) return Array.from(dt.files);
+  const out = [];
+  for (const it of Array.from(dt.items || [])) {
+    if (it.kind !== 'file') continue;
+    const f = it.getAsFile();
+    if (f) out.push(f);
+  }
+  return out;
+}
+
 // captureVideoPoster grabs a frame + duration/dimensions from a local file.
 function captureVideoPoster(file) {
   return new Promise((resolve) => {
@@ -4079,7 +4200,7 @@ function captureVideoPoster(file) {
 // known, in which case nothing is refused here.
 let maxAssetBytes = 0;
 
-async function onFilePicked(file) {
+async function onFilePicked(file, opts = {}) {
   if (!file) return;
   // REFUSED AT THE MOMENT IT IS CHOSEN. This used to travel: the composer
   // opened, a person wrote a caption and an alt text, pressed send, and got
@@ -4135,7 +4256,14 @@ async function onFilePicked(file) {
   altField.value = isVideo ? file.name.replace(/\.[^/.]+$/, '') : '';
   if (isAudio) {
     pendingVideoMeta = { duration_ms: (typeof audioDurationMs === 'function' ? await audioDurationMs(file) : 0) };
-    prev.appendChild(makeAudioPlayer(URL.createObjectURL(file), null, pendingVideoMeta.duration_ms));
+    // A PASTED SOUND IS NOT AUDITIONED. Every other kind can be judged at a
+    // glance, so its preview costs a look; a player costs a listen, and
+    // somebody who pasted a file already knows what it is. Name and size
+    // are the whole useful answer — the one-line difference below is the
+    // switch if that turns out to be wrong.
+    if (!opts.fromPaste) {
+      prev.appendChild(makeAudioPlayer(URL.createObjectURL(file), null, pendingVideoMeta.duration_ms));
+    }
     const meta = document.createElement('div');
     meta.className = 'hint';
     meta.textContent = `${file.name} · ${fmtBytes(file.size)}` +
@@ -4171,6 +4299,13 @@ async function onFilePicked(file) {
     }
   } else {
     prev.textContent = `${file.name} · ${fmtBytes(file.size)}`;
+  }
+  // A CLIPBOARD CAN HOLD SEVERAL AND THIS DIALOG SENDS ONE. Saying so beats
+  // sending the first silently, which reads as the other two having failed.
+  if (opts.skipped > 0) {
+    const warn = document.getElementById('attachWarn');
+    const note = `sending the first of ${opts.skipped + 1} — paste the rest one at a time.`;
+    warn.textContent = warn.textContent ? warn.textContent + ' ' + note : note;
   }
   dlgAttach.showModal();
   fileInput.value = '';
@@ -4757,3 +4892,4 @@ if (typeof qrRefreshBadge === 'function') {
   setInterval(qrRefreshBadge, 8000);
 }
 initDropZone();
+initClipboardPaste();
