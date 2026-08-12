@@ -43,6 +43,12 @@ func main() {
 		err = runRestore(os.Args[2:])
 	case "passcode":
 		err = runPasscode(os.Args[2:])
+	case "join":
+		err = runJoin(os.Args[2:])
+	case "say":
+		err = runSay(os.Args[2:])
+	case "status":
+		err = runStatus(os.Args[2:])
 	default:
 		usage()
 		os.Exit(2)
@@ -68,6 +74,17 @@ usage:
                                          See docs/radio/
   terminal node --passphrase P [--data DIR]
                                          run headless (API only, no UI assets)
+  terminal join   --link L [--wait SEC] [--data DIR]
+                                         join a space by pass/quick link and
+                                         wait for the host (TR-0a; passphrase
+                                         via --passphrase or QP_PASSPHRASE)
+  terminal say    --space HEX --text T [--data DIR]
+                                         publish one message headlessly and
+                                         report the relay hand-off honestly
+  terminal status [--data DIR]           identity, spaces, relay, holds — the
+                                         diagnostics page without HTTP
+                                         (refuses while 'terminal node' runs:
+                                         the data dir is single-instance)
   terminal demo                          run the reproducible two-node demo
   terminal backup  --out FILE --passphrase P [--data DIR]
                                          encrypted copy of EVERYTHING:
