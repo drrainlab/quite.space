@@ -2196,6 +2196,26 @@ function renderReplyBar() {
  */
 const MAX_MESSAGE_CHARS = 4000;
 
+/**
+ * The composer grows to fit what is in it, and stops.
+ *
+ * Measured rather than counted: scrollHeight is the only thing that knows
+ * what wrapping actually did, and a character count would be wrong the
+ * moment somebody pastes a long unbroken line. Reset to auto first or the
+ * box can only ever get taller — scrollHeight of an element with an
+ * explicit height is that height.
+ *
+ * The cap is in the CSS as max-height, so this sets a number and the
+ * stylesheet decides where growing turns into scrolling. Both halves in
+ * one place would mean two numbers to keep agreeing.
+ */
+function growComposer(el) {
+  const box = el || document.getElementById('text');
+  if (!box || box.tagName !== 'TEXTAREA') return;
+  box.style.height = 'auto';
+  box.style.height = box.scrollHeight + 'px';
+}
+
 async function say(e) {
   e.preventDefault();
   const inp = document.getElementById('text');
@@ -2225,6 +2245,7 @@ async function say(e) {
       body: JSON.stringify(body),
     });
     inp.value = '';
+    growComposer(inp);
     cancelReply();
     if (typeof mentionsReset === 'function') mentionsReset();
     await refreshSpace();

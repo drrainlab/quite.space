@@ -342,10 +342,14 @@
   .card.done { color: var(--dim); text-decoration: line-through; }
   #composer { display: flex;
     background: var(--glass); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); }
-  #composer input {
-    /* min-width:0 because an <input> carries a default intrinsic width that
-       flex will not shrink below without being told. Without it the row
-       overflows on a narrow screen and pushes `send` off the edge. */
+  #composer input, #composer textarea {
+    /* min-width:0 because a text control carries a default intrinsic width
+       that flex will not shrink below without being told. Without it the row
+       overflows on a narrow screen and pushes `send` off the edge.
+
+       The textarea is named here rather than left to inherit: the message
+       box became one, and a rule written for `input` alone gave it the
+       browser's default white field in the middle of a dark room. */
     flex: 1; min-width: 0; background: transparent; color: var(--fg);
     border: 0; padding: 12px 16px; font: inherit; outline: none;
   }
@@ -2050,6 +2054,34 @@
     font-size: 12px; color: var(--dim); }
   .res-pal-row { display: grid; grid-template-columns: 2fr 3fr 1fr; gap: 6px; }
   .res-pal-row input { margin: 3px 0; }
+
+  /* The composer is a textarea that behaves like a line until it needs to
+     be a paragraph. The height is set in JS from scrollHeight; the CEILING
+     lives here, so the stylesheet is what decides when growing becomes
+     scrolling. ~7 lines is a comfortable glance — beyond that a person is
+     writing a document, and the page limit will say so at 4000 characters.
+
+     The transition is on height alone. Animating a textarea's height is
+     cheap (no layout thrash beyond this element), and without it the row
+     jumps a line at a time, which reads as the interface flinching. */
+  #composer #text {
+    resize: none; overflow-y: auto; max-height: 10.5em; line-height: 1.45;
+    font-family: inherit; font-size: inherit;
+    /* Restated rather than inherited. A <textarea> brings a default width
+       from its cols attribute, and flex-basis:auto then honours it — so the
+       box that used to fill the row collapsed to about twenty characters
+       the moment the tag changed. min-width:0 is the other half: without
+       it a flex item refuses to shrink below its content. */
+    flex: 1 1 auto; min-width: 0;
+    /* The row's other controls sit on the FIRST line as it grows, rather
+       than floating in the middle of a tall box. */
+    align-self: flex-end;
+    transition: height .14s cubic-bezier(.4, 0, .2, 1);
+  }
+  #composer { align-items: flex-end; }
+  @media (prefers-reduced-motion: reduce) {
+    #composer #text { transition: none; }
+  }
 
   /* --- markdown inside a chat message ---
      A pasted README or a chunk of assistant output now renders, so the
