@@ -33,14 +33,15 @@ var (
 	// source where it can be read and reviewed, and it is overridable with
 	// -ldflags for a build that should point somewhere else — or nowhere.
 	//
-	// Today it is the demo catalog, kept reachable by the mirror on the
-	// project's own relay.
-	DefaultDirectoryLink = "OTEuMjAxLjExNC43MTo3NDExCnNwYWNlOmIzMDIwNjhlNDU5OWQwODJjMjM5ODJhYjE0MTA4Y2FkYWZlN2EyZDI0MGE2MzdiZjE2MTcyYzM0NjgxZmVmMGU"
+	// The official quite.space directory, on the catalog-1 relay and kept
+	// reachable by the mirror running beside it — so a first press of
+	// Discover works even while the owner's laptop is shut.
+	DefaultDirectoryLink = "MTk1LjYzLjE2MC4yMzc6NzQxMQpzcGFjZTpmZTA0NjNkYzE4MjVkNDNlODM0MTdiNDRiMmQzOWVjNWQ1ZjBjM2EzNzQyYjdmYTM4NGMwODE0ODcxMTEzMGVj"
 	// DefaultDirectoryTitle names it for a person, before they open it.
-	DefaultDirectoryTitle = "Demo spaces"
+	DefaultDirectoryTitle = "quite.space"
 	// DefaultDirectoryNote says in one sentence what is behind the link, so
 	// the choice to press is made with something in hand.
-	DefaultDirectoryNote = "a few places to look at while this is new"
+	DefaultDirectoryNote = "the places this build knows about"
 )
 
 // SuggestedDirectory is what this build would like to offer, and whether it

@@ -226,6 +226,37 @@ var shippedBuiltinRegistry = RelayRegistry{
 			// rotation ships as [current, next] → [next].
 			SPKIPins: []string{"gk0X84yjjmahVYaUO7snq/a/BecbtX4deDFp7hGkC/c="},
 		},
+		{
+			// THE DIRECTORY'S HOME. This is the relay the official catalog
+			// lives on, and that makes it different from the two above in a
+			// way worth writing down: a share link is relay-bound and
+			// irrevocable, so the address in this entry is baked into every
+			// catalog link ever handed out. It can gain a backup pin; it
+			// cannot move.
+			//
+			// It is an ORDINARY relay in every other respect — same roles,
+			// same priority, blind like the rest, and no device is obliged to
+			// use it for anything of its own. Hosting the catalog is not a
+			// privilege the protocol knows about.
+			ID:          "catalog-1",
+			Endpoint:    "195.63.160.237:7411",
+			Label:       "Catalog",
+			Region:      "eu",
+			Priority:    50,
+			ProtocolMin: 1,
+			ProtocolMax: 1,
+			Roles: []string{
+				RelayRoleBootstrap, RelayRolePersonalInbox,
+				RelayRoleSpaceRendezvous, RelayRolePublicHost,
+			},
+			Official: true,
+			// Printed by the process at startup AND fetched back over the
+			// internet from a second machine with `terminal relay
+			// show-identity` before it was written here — the log says what
+			// the process believes, the handshake says what a client is
+			// actually offered, and only the second one is evidence.
+			SPKIPins: []string{"nPKCFXxKyvcwaUcNVB1Ibn7xalO1aNRiHfMNXueQgD4="},
+		},
 	},
 }
 
