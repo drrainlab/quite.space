@@ -3272,3 +3272,19 @@ button:hover > .act-mark, button:focus-visible > .act-mark { opacity: 1; }
     background: color-mix(in srgb, var(--acc) 12%, transparent); }
   #newPostBtn .act-mark { width: 18px; height: 18px; }
 }
+
+/* Foreign provenance (TR-0): a letter that came from outside says so
+   above its own text, and says whose claim that is underneath. Quiet, not
+   decorative — this is a fact about trust, not a badge. */
+.ext-from {
+  font-size: 12px;
+  opacity: .85;
+  margin-bottom: 2px;
+  letter-spacing: .01em;
+}
+.ext-note {
+  font-size: 11px;
+  opacity: .55;
+  margin-bottom: 6px;
+  line-height: 1.35;
+}

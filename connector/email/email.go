@@ -26,7 +26,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -76,13 +78,37 @@ func Run(ctx context.Context, cfg Config, sink Sink, outbox Outbox, settle Settl
 	c := &client{cfg: cfg, http: &http.Client{Timeout: 30 * time.Second}}
 	t := time.NewTicker(every)
 	defer t.Stop()
+	var lastErr, lastSendErr string
 	for {
-		_ = c.PollOnce(ctx, sink) // journal dedups; errors retry next tick
+		// A REFUSAL MUST NEVER BE A SILENCE. The journal makes retries free,
+		// so an error here is not fatal — but a poller that cannot reach its
+		// mailbox and says nothing is indistinguishable from a quiet inbox,
+		// which is exactly the failure this project keeps removing. Logged
+		// once per DISTINCT reason, so a server that is down for an hour
+		// costs one line rather than two hundred and forty.
+		if err := c.PollOnce(ctx, sink); err != nil {
+			if msg := err.Error(); msg != lastErr {
+				lastErr = msg
+				log.Printf("connector email: cannot read %s: %v", cfg.Account, err)
+			}
+		} else if lastErr != "" {
+			lastErr = ""
+			log.Printf("connector email: reading %s again", cfg.Account)
+		}
 		if outbox != nil {
 			for _, out := range outbox() {
 				if err := c.SubmitReply(ctx, out); err != nil {
-					continue // stays in-flight; the resume list retries it
+					// In flight, not lost: the journal's resume list offers
+					// it again. Said out loud once per distinct reason —
+					// a reply that never leaves must not be silent either.
+					if msg := err.Error(); msg != lastSendErr {
+						lastSendErr = msg
+						log.Printf("connector email: reply to %s not sent: %v", out.To, err)
+					}
+					continue
 				}
+				lastSendErr = ""
+				log.Printf("connector email: replied to %s", out.To)
 				settle(out.EventID, true, "")
 			}
 		}
@@ -104,6 +130,7 @@ type client struct {
 	accountID  string
 	identityID string
 	draftsID   string
+	inboxID    string
 }
 
 type jmapRequest struct {
@@ -120,7 +147,7 @@ func (c *client) authGet(ctx context.Context, url string, out any) error {
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.cfg.Token)
+	c.authorize(req)
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return err
@@ -130,6 +157,21 @@ func (c *client) authGet(ctx context.Context, url string, out any) error {
 		return fmt.Errorf("email: %s → %s", url, resp.Status)
 	}
 	return json.NewDecoder(io.LimitReader(resp.Body, maxJMAPResponse)).Decode(out)
+}
+
+// authorize picks the credential shape from what the operator configured.
+//
+// An ACCOUNT plus a secret is a mailbox login — RFC 8620 says JMAP servers
+// accept it as HTTP Basic, and that is what every mail server means by "the
+// account's password". A bare secret with no account is an OAuth bearer
+// token. Sending the wrong one produces a 401 that looks exactly like a bad
+// password, which is what the first live deployment spent its time on.
+func (c *client) authorize(req *http.Request) {
+	if c.cfg.Account != "" {
+		req.SetBasicAuth(c.cfg.Account, c.cfg.Token)
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+c.cfg.Token)
 }
 
 // session resolves the API url and the mail account id, once.
@@ -148,6 +190,19 @@ func (c *client) session(ctx context.Context) error {
 	if sess.APIURL == "" {
 		return errors.New("email: session carries no apiUrl")
 	}
+	// THE SESSION'S apiUrl IS A PATH, NOT A DESTINATION. A mail server
+	// publishes the address its OUTSIDE clients should use — Stalwart
+	// returns https://mx1.example/jmap/ once a hostname is configured — and
+	// a connector that followed it would leave the machine, cross the
+	// internet, and arrive at whatever answers 443 on that name. Measured
+	// on the first live deployment: the poller silently talked to the
+	// public web server instead of the mailbox one metre away.
+	//
+	// It is also the SSRF shape: a compromised or misconfigured server
+	// could redirect an authenticated poller — Bearer token and all — at
+	// any host it likes. So we keep the origin WE dialled and take only
+	// the path the server named.
+	c.apiURL = resolveAgainst(c.cfg.URL, sess.APIURL)
 	acc := sess.PrimaryAccounts["urn:ietf:params:jmap:mail"]
 	if acc == "" {
 		for id := range sess.Accounts {
@@ -158,13 +213,41 @@ func (c *client) session(ctx context.Context) error {
 	if acc == "" {
 		return errors.New("email: session names no mail account")
 	}
-	c.apiURL, c.accountID = sess.APIURL, acc
+	c.accountID = acc
 	return nil
 }
 
+// resolveAgainst keeps base's scheme and host and adopts ref's path — for a
+// relative ref the ordinary join, for an absolute one a deliberate refusal
+// to be redirected off the host we authenticated to.
+func resolveAgainst(base, ref string) string {
+	b, err := url.Parse(base)
+	if err != nil {
+		return ref
+	}
+	r, err := url.Parse(ref)
+	if err != nil {
+		return ref
+	}
+	out := *b
+	out.Path = r.Path
+	out.RawQuery = r.RawQuery
+	out.Fragment = ""
+	return out.String()
+}
+
 func (c *client) call(ctx context.Context, calls []any, out *jmapResponse) error {
+	// EVERY capability this connector's methods belong to, declared up
+	// front. A JMAP server refuses a method whose capability is missing
+	// from `using` — and the refusal names the capability, not the call,
+	// so a submission that never left looked like a broken mailbox on the
+	// first live deployment.
 	body, err := json.Marshal(jmapRequest{
-		Using:       []string{"urn:ietf:params:jmap:core", "urn:ietf:params:jmap:mail"},
+		Using: []string{
+			"urn:ietf:params:jmap:core",
+			"urn:ietf:params:jmap:mail",
+			"urn:ietf:params:jmap:submission",
+		},
 		MethodCalls: calls,
 	})
 	if err != nil {
@@ -174,7 +257,7 @@ func (c *client) call(ctx context.Context, calls []any, out *jmapResponse) error
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.cfg.Token)
+	c.authorize(req)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -219,6 +302,44 @@ type jmapBody struct {
 	IsTruncated bool   `json:"isTruncated"`
 }
 
+// inbox resolves the INBOX mailbox id, once.
+func (c *client) inbox(ctx context.Context) error {
+	if c.inboxID != "" {
+		return nil
+	}
+	if err := c.session(ctx); err != nil {
+		return err
+	}
+	var resp jmapResponse
+	if err := c.call(ctx, []any{
+		[]any{"Mailbox/query", map[string]any{
+			"accountId": c.accountID,
+			"filter":    map[string]any{"role": "inbox"},
+		}, "m"},
+	}, &resp); err != nil {
+		return err
+	}
+	for _, raw := range resp.MethodResponses {
+		var probe []json.RawMessage
+		if err := json.Unmarshal(raw, &probe); err != nil || len(probe) < 2 {
+			continue
+		}
+		var name string
+		_ = json.Unmarshal(probe[0], &name)
+		if name != "Mailbox/query" {
+			continue
+		}
+		var body struct {
+			IDs []string `json:"ids"`
+		}
+		if err := json.Unmarshal(probe[1], &body); err == nil && len(body.IDs) > 0 {
+			c.inboxID = body.IDs[0]
+			return nil
+		}
+	}
+	return errors.New("email: the account has no inbox")
+}
+
 // PollOnce fetches the recent window and hands every message through the
 // gate to the sink. Overlap between polls is free: the journal dedups on
 // the JMAP id.
@@ -230,10 +351,19 @@ func (c *client) PollOnce(ctx context.Context, sink Sink) error {
 	if window <= 0 {
 		window = 20
 	}
+	// READ THE INBOX, NOT THE ACCOUNT. An account holds Sent and Drafts
+	// too, and querying all of it makes the connector import its own
+	// replies back into the space as fresh mail — an echo that arrives
+	// with foreign provenance and looks, to a person, exactly like the
+	// correspondent writing again. Measured on the first live reply.
+	if err := c.inbox(ctx); err != nil {
+		return err
+	}
 	var resp jmapResponse
 	err := c.call(ctx, []any{
 		[]any{"Email/query", map[string]any{
 			"accountId": c.accountID,
+			"filter":    map[string]any{"inMailbox": c.inboxID},
 			"sort":      []map[string]any{{"property": "receivedAt", "isAscending": false}},
 			"limit":     window,
 		}, "q"},

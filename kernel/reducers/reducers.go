@@ -466,6 +466,10 @@ type Message struct {
 	Clock      uint64
 	ProducedBy signal.Authorship
 	Revised    bool
+	// External is foreign provenance (TR-0). Carried here so a renderer
+	// can name the sender — and gated on imported authorship at the point
+	// of display, because the payload can lie and the envelope cannot.
+	External *schemas.ExternalOrigin
 }
 
 func (s *State) Messages() []Message {
@@ -478,6 +482,7 @@ func (s *State) Messages() []Message {
 			ID: e.ID, Author: e.Author, Text: e.Content.Text.Text,
 			ReplyTo: e.Content.Text.ReplyTo, Mentions: e.Content.Text.Mentions,
 			Clock: e.Clock, ProducedBy: e.ProducedBy, Revised: e.Content.Text.Revised,
+			External: e.Content.Text.External,
 		})
 	}
 	return out

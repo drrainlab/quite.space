@@ -34,38 +34,80 @@ func newFakeJMAP(t *testing.T, emails []map[string]any) *fakeJMAP {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/jmap", func(w http.ResponseWriter, r *http.Request) {
 		f.note("", r.URL.Path)
+		if !f.requireAuth(w, r) {
+			return
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"apiUrl":          f.srv.URL + "/api",
 			"primaryAccounts": map[string]string{"urn:ietf:params:jmap:mail": "acc1"},
 		})
 	})
 	mux.HandleFunc("/api", func(w http.ResponseWriter, r *http.Request) {
+		if !f.requireAuth(w, r) {
+			return
+		}
 		var req struct {
+			Using       []string             `json:"using"`
 			MethodCalls [][3]json.RawMessage `json:"methodCalls"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&req)
+		// A real server refuses a method whose capability was not declared.
+		declared := map[string]bool{}
+		for _, u := range req.Using {
+			declared[u] = true
+		}
 		var responses []any
 		for _, call := range req.MethodCalls {
 			var name string
 			_ = json.Unmarshal(call[0], &name)
 			f.note(name, r.URL.Path)
 			switch name {
+			case "Mailbox/query":
+				var args struct {
+					Filter struct {
+						Role string `json:"role"`
+					} `json:"filter"`
+				}
+				_ = json.Unmarshal(call[1], &args)
+				box := "inbox1"
+				if args.Filter.Role == "drafts" {
+					box = "drafts1"
+				}
+				responses = append(responses, []any{"Mailbox/query", map[string]any{
+					"ids": []string{box},
+				}, "m"})
 			case "Email/query":
+				// A real server honours inMailbox. Messages the fake marks
+				// as living elsewhere (Sent) must not come back — that is
+				// the echo the live deployment produced.
+				var args struct {
+					Filter struct {
+						InMailbox string `json:"inMailbox"`
+					} `json:"filter"`
+				}
+				_ = json.Unmarshal(call[1], &args)
 				ids := []string{}
 				for _, e := range f.emails {
+					if box, ok := e["_mailbox"].(string); ok && args.Filter.InMailbox != "" &&
+						box != args.Filter.InMailbox {
+						continue
+					}
 					ids = append(ids, e["id"].(string))
 				}
 				responses = append(responses, []any{"Email/query", map[string]any{"ids": ids}, "q"})
 			case "Email/get":
-				responses = append(responses, []any{"Email/get", map[string]any{"list": f.emails}, "g"})
+				var got []map[string]any
+				for _, e := range f.emails {
+					if box, ok := e["_mailbox"].(string); ok && box != "inbox1" {
+						continue
+					}
+					got = append(got, e)
+				}
+				responses = append(responses, []any{"Email/get", map[string]any{"list": got}, "g"})
 			case "Identity/get":
 				responses = append(responses, []any{"Identity/get", map[string]any{
 					"list": []map[string]any{{"id": "ident1", "email": "hello@quite.space"}},
 				}, "i"})
-			case "Mailbox/query":
-				responses = append(responses, []any{"Mailbox/query", map[string]any{
-					"ids": []string{"drafts1"},
-				}, "m"})
 			case "Email/set":
 				var args struct {
 					Create map[string]map[string]any `json:"create"`
@@ -80,6 +122,12 @@ func newFakeJMAP(t *testing.T, emails []map[string]any) *fakeJMAP {
 					"created": map[string]any{"e1": map[string]any{"id": "sent-1"}},
 				}, "e"})
 			case "EmailSubmission/set":
+				if !declared["urn:ietf:params:jmap:submission"] {
+					responses = append(responses, []any{"error", map[string]any{
+						"type": "unknownMethod", "description": "capability not in using",
+					}, "s"})
+					break
+				}
 				responses = append(responses, []any{"EmailSubmission/set", map[string]any{
 					"created": map[string]any{"s1": map[string]any{"id": "sub-1"}},
 				}, "s"})
@@ -97,6 +145,19 @@ func newFakeJMAP(t *testing.T, emails []map[string]any) *fakeJMAP {
 	f.srv = httptest.NewServer(mux)
 	t.Cleanup(f.srv.Close)
 	return f
+}
+
+// requireAuth mirrors a real mail server: no credential, no answer. Before
+// this, the suite proved the protocol and left authentication untested —
+// which is how a Bearer-instead-of-Basic bug reached a live server.
+func (f *fakeJMAP) requireAuth(w http.ResponseWriter, r *http.Request) bool {
+	user, pass, ok := r.BasicAuth()
+	if !ok || user != "hello@quite.space" || pass != "t" {
+		w.Header().Set("WWW-Authenticate", `Basic realm="jmap"`)
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return false
+	}
+	return true
 }
 
 func (f *fakeJMAP) note(method, path string) {
@@ -157,8 +218,11 @@ func TestTextOnlyProfileNeverFetchesAttachmentParts(t *testing.T) {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	// Mailbox/query is how the connector finds the INBOX; everything else
+	// must stay within reading messages. Any blob or download call fails
+	// the test below on the path list.
 	for _, m := range f.methods {
-		if m != "Email/query" && m != "Email/get" {
+		if m != "Email/query" && m != "Email/get" && m != "Mailbox/query" {
 			t.Fatalf("the profile called %q", m)
 		}
 	}

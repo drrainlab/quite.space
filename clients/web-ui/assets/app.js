@@ -3042,6 +3042,25 @@ function renderEntry(log, e, fresh, grouped) {
 
   const bubble = document.createElement('div');
   bubble.className = 'bubble';
+  // WHAT CAME FROM OUTSIDE SAYS SO, IN THE GATEWAY'S OWN VOICE (TR-0).
+  // The API attaches `external` only under imported authorship — the
+  // payload could carry that structure from anybody, the signature could
+  // not — so this line is a claim by the signing gateway and is worded as
+  // one. Same register as a quotation: whose word this is, and that the
+  // sender's own signature did not travel.
+  if (e.external && e.external.address) {
+    const from = document.createElement('div');
+    from.className = 'ext-from';
+    from.textContent = '✉ ' + e.external.address;
+    if (e.external.loss_flags && e.external.loss_flags.length) {
+      from.title = t('conv.ext.losses') + ': ' + e.external.loss_flags.join(', ');
+    }
+    bubble.appendChild(from);
+    const said = document.createElement('div');
+    said.className = 'ext-note';
+    said.textContent = t('conv.ext.claim');
+    bubble.appendChild(said);
+  }
   bubble.appendChild(renderBody(e));
   bubble.appendChild(renderResonanceRow(e.resonance, e.id));
   d.appendChild(bubble);

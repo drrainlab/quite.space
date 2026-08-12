@@ -22,6 +22,7 @@ import (
 
 	"github.com/drrainlab/quiet_places/kernel/assets"
 	"github.com/drrainlab/quiet_places/protocol/id"
+	"github.com/drrainlab/quiet_places/protocol/signal"
 	"github.com/drrainlab/quiet_places/terminals"
 	qrcode "github.com/skip2/go-qrcode"
 )
@@ -795,6 +796,19 @@ type messageResp struct {
 	Revised    bool   `json:"revised"`
 	Clock      uint64 `json:"clock"`
 	Mine       bool   `json:"mine"`
+	// External is who the GATEWAY says this came from (TR-0, key 7).
+	// Present only when the envelope's authorship is imported: the payload
+	// can carry this structure from anybody, the signature cannot, and a
+	// renderer that trusted the payload alone would hand every member a
+	// stencil for forging somebody's email.
+	External *externalResp `json:"external,omitempty"`
+}
+
+type externalResp struct {
+	Connector string   `json:"connector,omitempty"`
+	Address   string   `json:"address,omitempty"`
+	Subject   string   `json:"subject,omitempty"`
+	LossFlags []string `json:"loss_flags,omitempty"`
 }
 
 func (a *APIServer) handleMessages(w http.ResponseWriter, r *http.Request) {
@@ -808,11 +822,19 @@ func (a *APIServer) handleMessages(w http.ResponseWriter, r *http.Request) {
 		msgs := st.space.State.Messages()
 		out = make([]messageResp, 0, len(msgs))
 		for _, m := range msgs {
-			out = append(out, messageResp{
+			row := messageResp{
 				ID: m.ID.Hex(), Author: m.Author.String(), Text: m.Text,
 				ProducedBy: m.ProducedBy.String(), Revised: m.Revised,
 				Clock: m.Clock, Mine: m.Author == a.rt.Principal.ID,
-			})
+			}
+			if m.External != nil && m.ProducedBy == signal.AuthorshipImported {
+				row.External = &externalResp{
+					Connector: m.External.ConnectorKind,
+					Address:   m.External.Address,
+					LossFlags: m.External.LossFlags,
+				}
+			}
+			out = append(out, row)
 		}
 		return nil
 	}); err != nil {

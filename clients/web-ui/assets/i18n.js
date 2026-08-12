@@ -392,6 +392,8 @@ const I18N = {
     // conversation
     'conv.member': 'member',
     'conv.you': 'You',
+    'conv.ext.claim': 'Arrived from outside. The sender\u2019s signature did not travel \u2014 this is the gateway\u2019s word for it.',
+    'conv.ext.losses': 'The boundary dropped or changed',
     'conv.write': 'write into the space…',
     'conv.write_short': 'write…',
     'conv.send': 'send',
@@ -1261,6 +1263,8 @@ const I18N = {
       'Нажмите «оставаться на связи», чтобы попробовать снова.',
     'conv.member': 'участник',
     'conv.you': 'вы',
+    'conv.ext.claim': 'Пришло снаружи. Подпись отправителя не путешествовала \u2014 это слово шлюза.',
+    'conv.ext.losses': 'Граница отрезала или изменила',
     'conv.write': 'написать в пространство…',
     'conv.write_short': 'написать…',
     'conv.send': 'отправить',
