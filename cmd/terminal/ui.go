@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"syscall"
 
+	"github.com/drrainlab/quiet_places/clients/lockgate"
 	webui "github.com/drrainlab/quiet_places/clients/web-ui"
 	"github.com/drrainlab/quiet_places/kernel/passcode"
 	"github.com/drrainlab/quiet_places/node"
@@ -43,13 +44,13 @@ func runUI(args []string, withUI bool) error {
 	gateToken, gatePort := flags["token"], -1
 	if pass == "" {
 		if st, err := passcode.Info(dataDir); err == nil && st.Bound {
-			l, gateAddr, p, err := bindPort(parsePort(flags["port"]))
+			l, gateAddr, p, err := lockgate.BindPort(parsePort(flags["port"]))
 			if err != nil {
 				return err
 			}
 			gatePort = p
 			if gateToken == "" {
-				if gateToken, err = newToken(); err != nil {
+				if gateToken, err = lockgate.NewToken(); err != nil {
 					return err
 				}
 			}
@@ -58,11 +59,15 @@ func runUI(args []string, withUI bool) error {
 			if withUI && flags["no-browser"] == "" {
 				openBrowser(url)
 			}
-			unwrapped, err := lockGate(l, dataDir, gateToken)
+			// The CLI enters the gate only for a bound code, so what comes
+			// back is always an existing identity — the gate's first-run and
+			// passphrase modes belong to the desktop shell, which has no
+			// command line to pass a passphrase on.
+			creds, err := lockgate.Unlock(l, dataDir, gateToken)
 			if err != nil {
 				return err
 			}
-			pass = string(unwrapped)
+			pass = string(creds.Passphrase)
 		}
 	}
 

@@ -120,6 +120,25 @@
     font-size:14px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
   .pass input:focus{outline:none; border-color:var(--acc)}
 
+  /* First run. The same card, one more decision — and the decision is not
+     "pick a password", it is "there is nobody to recover this from", so the
+     warning is part of the form rather than a line somebody may scroll past. */
+  .make{display:none; margin-top:14px; text-align:left}
+  .make label{display:block; font-size:12px; color:var(--dim); margin:10px 2px 5px}
+  .make input{width:100%; padding:12px 14px; border-radius:12px;
+    background:rgba(0,0,0,.35); border:1px solid var(--line); color:var(--fg);
+    font-size:14px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .make input:focus{outline:none; border-color:var(--acc)}
+  .make .row{display:flex; justify-content:space-between; align-items:baseline; gap:10px}
+  .make .row label{margin-bottom:0}
+  .make .row a{font-size:12px; color:var(--acc); cursor:pointer; white-space:nowrap}
+  .warn{margin:12px 2px 0; font-size:12px; line-height:1.55; color:var(--warm)}
+  .go{width:100%; margin-top:16px; padding:13px; border-radius:12px; cursor:pointer;
+    border:1px solid var(--line); background:var(--panel); color:var(--fg);
+    font:inherit; font-size:14px}
+  .go:hover{border-color:var(--acc)}
+  .go[disabled]{opacity:.45; cursor:default}
+
   /* The project's floor: nothing moves for somebody who asked for that.
      The sky stays — it is a picture, not an animation. */
   @media (prefers-reduced-motion:reduce){
@@ -178,7 +197,25 @@
              placeholder="your passphrase" spellcheck="false">
     </div>
 
-    <p class="foot">
+    <div class="make" id="makeBox">
+      <label for="makeName">What should people call you?</label>
+      <input id="makeName" type="text" autocomplete="nickname"
+             placeholder="your name" spellcheck="false">
+      <div class="row">
+        <label for="makePass">A passphrase for this device</label>
+        <a id="makeGen" tabindex="0" role="button">suggest one</a>
+      </div>
+      <input id="makePass" type="text" autocomplete="new-password"
+             placeholder="at least 8 characters" spellcheck="false">
+      <p class="warn">
+        This passphrase encrypts everything this device holds, and nobody —
+        including us — can reset it or read past it. Write it down somewhere
+        that is not this computer before you go on.
+      </p>
+      <button class="go" id="makeGo">Create</button>
+    </div>
+
+    <p class="foot" id="foot">
       Four digits keep out somebody who picked up this device. They are not a
       password: a copy of the file falls to guessing in about an hour, which is
       why the passphrase is still the real key.
@@ -194,8 +231,18 @@
   const padEl  = document.getElementById('pad');
   const passBox = document.getElementById('passBox');
   const passInput = document.getElementById('passInput');
+  const footEl = document.getElementById('foot');
+  const makeBox = document.getElementById('makeBox');
+  const makeName = document.getElementById('makeName');
+  const makePass = document.getElementById('makePass');
+  const makeGo = document.getElementById('makeGo');
+  const makeGen = document.getElementById('makeGen');
 
-  let digits = 4, entry = '', busy = false, passMode = false;
+  // Four situations, not four degrees of one. The keypad exists only in
+  // 'passcode'; everything else has to be able to turn it off, which is why
+  // this is a mode rather than the boolean it started as.
+  let mode = 'passcode';
+  let digits = 4, minPass = 8, entry = '', busy = false;
 
   function drawDots() {
     dotsEl.innerHTML = '';
@@ -211,20 +258,61 @@
     msgEl.className = 'msg' + (kind ? ' ' + kind : '');
   }
 
-  fetch('/state').then(r => r.json()).then(s => {
+  function applyState(s) {
+    mode = s.mode || 'passcode';
+    if (s.min_passphrase) minPass = s.min_passphrase;
     if (s.digits) { digits = s.digits; drawDots(); }
+
+    if (mode === 'in_use') {
+      // Not a failure and not a wrong answer — the same directory is already
+      // open somewhere else, and the only useful instruction is to go there.
+      padEl.style.display = 'none';
+      dotsEl.style.display = 'none';
+      footEl.style.display = 'none';
+      subEl.textContent = 'Already open';
+      say('Another Quiet Spaces window has this device open. Use that one.', 'bad');
+      return;
+    }
+    if (mode === 'create') {
+      padEl.style.display = 'none';
+      dotsEl.style.display = 'none';
+      footEl.style.display = 'none';
+      makeBox.style.display = 'block';
+      makePass.placeholder = 'at least ' + minPass + ' characters';
+      subEl.textContent = 'Make this device yours';
+      makeName.focus();
+      return;
+    }
+    if (mode === 'passphrase') {
+      // A keystore with no code bound: there is no shortcut to offer, so the
+      // real key is the first thing asked for rather than a fallback link.
+      showPass();
+      footEl.style.display = 'none';
+      return;
+    }
     // The count is shown only once it is worth knowing. Announcing "10 left"
     // to somebody who has typed nothing is noise; announcing "2 left" is a
     // warning they can act on.
     if (s.attempts_left <= 3) {
       say(s.attempts_left + ' of ' + s.max_attempts + ' tries left', 'bad');
     }
-  }).catch(() => {});
+  }
+
+  fetch('/state').then(r => r.json()).then(applyState).catch(() => {});
 
   drawDots();
 
+  // The token arrives exactly once, in the reply that let us in, and the node
+  // is starting on this very surface. One place to go from all three ways in.
+  function arrive(token) {
+    say('open', 'good');
+    setTimeout(() => {
+      location.href = '/?token=' + encodeURIComponent(token);
+    }, 700);
+  }
+
   function push(k) {
-    if (busy || passMode) return;
+    if (busy || mode !== 'passcode') return;
     if (k === 'del')   { entry = entry.slice(0, -1); drawDots(); return; }
     if (k === 'clear') { entry = ''; drawDots(); say(''); return; }
     if (entry.length >= digits) return;
@@ -251,11 +339,8 @@
       });
       const res = await r.json();
       if (res.ok) {
-        say('open', 'good');
         subEl.textContent = 'Welcome back';
-        // The node is starting on this very port; give it a moment, then
-        // arrive with the token the reply just handed us.
-        setTimeout(() => { location.href = '/?token=' + encodeURIComponent(res.token); }, 700);
+        arrive(res.token);
         return;
       }
       entry = ''; drawDots(); shake(); busy = false;
@@ -280,7 +365,7 @@
   }
 
   function showPass() {
-    passMode = true;
+    mode = 'passphrase';
     padEl.style.display = 'none';
     dotsEl.style.display = 'none';
     passBox.style.display = 'block';
@@ -297,14 +382,55 @@
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ code: passInput.value })
     }).then(x => x.json()).catch(() => ({ ok: false }));
-    if (r.ok) {
-      say('open', 'good');
-      setTimeout(() => { location.href = '/?token=' + encodeURIComponent(r.token); }, 700);
-      return;
-    }
+    if (r.ok) { arrive(r.token); return; }
     busy = false; passInput.value = '';
     say('That passphrase did not open this device', 'bad');
   });
+
+  // ---- first run -----------------------------------------------------------
+
+  makeGen.onclick = async () => {
+    const r = await fetch('/suggest').then(x => x.json()).catch(() => null);
+    if (!r || !r.passphrase) { say('Could not suggest one — type your own', 'bad'); return; }
+    makePass.value = r.passphrase;
+    makePass.focus();
+    makePass.select();
+    say('Copy it somewhere safe before you continue');
+  };
+
+  async function create() {
+    if (busy) return;
+    if (makePass.value.length < minPass) {
+      say('At least ' + minPass + ' characters — this is the key to everything here', 'bad');
+      makePass.focus();
+      return;
+    }
+    busy = true; makeGo.disabled = true;
+    // The KDF is deliberately slow; naming the wait beats a spinner that
+    // suggests something has gone wrong.
+    say('making your keys…');
+    try {
+      const r = await fetch('/create', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ name: makeName.value, passphrase: makePass.value })
+      });
+      const res = await r.json();
+      if (res.ok) { subEl.textContent = 'Welcome'; arrive(res.token); return; }
+      busy = false; makeGo.disabled = false;
+      say(res.reason === 'too_short'
+        ? 'At least ' + (res.min_passphrase || minPass) + ' characters'
+        : res.reason === 'exists'
+          ? 'This device already has an identity — reload'
+          : 'Could not create an identity here', 'bad');
+    } catch (e) {
+      busy = false; makeGo.disabled = false;
+      say('Could not reach this device', 'bad');
+    }
+  }
+
+  makeGo.onclick = create;
+  makePass.addEventListener('keydown', e => { if (e.key === 'Enter') create(); });
+  makeName.addEventListener('keydown', e => { if (e.key === 'Enter') makePass.focus(); });
 
   padEl.addEventListener('click', e => {
     const k = e.target.closest('.key'); if (k) push(k.dataset.k);
@@ -316,7 +442,7 @@
     }
   });
   window.addEventListener('keydown', e => {
-    if (passMode) return;
+    if (mode !== 'passcode') return;
     if (e.key >= '0' && e.key <= '9') push(e.key);
     else if (e.key === 'Backspace') push('del');
     else if (e.key === 'Escape') push('clear');
