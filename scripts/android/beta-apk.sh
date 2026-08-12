@@ -90,12 +90,24 @@ bundled runtime. Install one (brew install openjdk) or point JAVA_HOME at it."
 fi
 
 say "building the release apk…"
+# THE WRAPPER, NOT WHATEVER gradle IS ON PATH.
+#
+# This used to invoke a bare `gradle`, which meant the build depended on
+# whichever version the machine happened to have. That worked for as long as
+# only one machine ever ran it. On a clean runner it met Gradle 9.6.1 and AGP
+# 8.13 died on the spot — "relies on org.gradle.api.problems.internal.Internal-
+# Problems, a Gradle internal API that was removed in Gradle 9.6.0" — a failure
+# no change of ours had caused and no local run could reproduce.
+#
+# gradle/wrapper/gradle-wrapper.properties pins 9.2.1: the version this beta
+# was actually built and tested with. Whoever clones this gets that version,
+# downloaded once, whatever they have installed.
+#
 # GRADLE_ARGS is how the release workflow passes the version from the tag
 # (-PquietVersionName / -PquietVersionCode). Deliberately unquoted so several
-# properties arrive as several arguments; nothing else is expected to use it,
-# and a local build passes none.
+# properties arrive as several arguments; a local build passes none.
 # shellcheck disable=SC2086
-ANDROID_HOME="$SDK" gradle -p "$HOST" :app:assembleRelease -q ${GRADLE_ARGS:-} \
+ANDROID_HOME="$SDK" "$HOST/gradlew" -p "$HOST" :app:assembleRelease -q ${GRADLE_ARGS:-} \
 	|| die "the build failed"
 
 APK=$(ls "$OUT"/*.apk 2>/dev/null | head -1)
