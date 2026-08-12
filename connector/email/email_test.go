@@ -18,11 +18,15 @@ import (
 // fakeJMAP serves a session and a fixed mailbox, and remembers every JMAP
 // method name and every URL path it was asked for.
 type fakeJMAP struct {
-	mu      sync.Mutex
-	methods []string
-	paths   []string
-	emails  []map[string]any
-	srv     *httptest.Server
+	mu           sync.Mutex
+	methods      []string
+	paths        []string
+	emails       []map[string]any
+	submissionOK bool
+	// submitted records every Email/set creation that a submission then
+	// referenced — the outbound assertions read it.
+	submitted []map[string]any
+	srv       *httptest.Server
 }
 
 func newFakeJMAP(t *testing.T, emails []map[string]any) *fakeJMAP {
@@ -54,6 +58,31 @@ func newFakeJMAP(t *testing.T, emails []map[string]any) *fakeJMAP {
 				responses = append(responses, []any{"Email/query", map[string]any{"ids": ids}, "q"})
 			case "Email/get":
 				responses = append(responses, []any{"Email/get", map[string]any{"list": f.emails}, "g"})
+			case "Identity/get":
+				responses = append(responses, []any{"Identity/get", map[string]any{
+					"list": []map[string]any{{"id": "ident1", "email": "hello@quite.space"}},
+				}, "i"})
+			case "Mailbox/query":
+				responses = append(responses, []any{"Mailbox/query", map[string]any{
+					"ids": []string{"drafts1"},
+				}, "m"})
+			case "Email/set":
+				var args struct {
+					Create map[string]map[string]any `json:"create"`
+				}
+				_ = json.Unmarshal(call[1], &args)
+				f.mu.Lock()
+				for _, created := range args.Create {
+					f.submitted = append(f.submitted, created)
+				}
+				f.mu.Unlock()
+				responses = append(responses, []any{"Email/set", map[string]any{
+					"created": map[string]any{"e1": map[string]any{"id": "sent-1"}},
+				}, "e"})
+			case "EmailSubmission/set":
+				responses = append(responses, []any{"EmailSubmission/set", map[string]any{
+					"created": map[string]any{"s1": map[string]any{"id": "sub-1"}},
+				}, "s"})
 			default:
 				responses = append(responses, []any{"error", map[string]any{"type": "unknownMethod"}, "x"})
 			}
@@ -145,8 +174,8 @@ func TestTextOnlyProfileNeverFetchesAttachmentParts(t *testing.T) {
 func TestHTMLBecomesBareTextWithNamedLoss(t *testing.T) {
 	f := newFakeJMAP(t, []map[string]any{{
 		"id": "jmap-2", "messageId": []string{"<m2@x>"},
-		"from":       []map[string]any{{"email": "bob@example.org"}},
-		"subject":    "Новости", "receivedAt": "2026-08-12T10:01:00Z",
+		"from":    []map[string]any{{"email": "bob@example.org"}},
+		"subject": "Новости", "receivedAt": "2026-08-12T10:01:00Z",
 		"htmlBody":   []map[string]any{{"partId": "h1", "type": "text/html"}},
 		"bodyValues": map[string]any{"h1": map[string]any{"value": `<html><head><style>x{}</style><script>evil()</script></head><body><p>Привет!</p><img src="https://tracker.example/p.gif"><p>Вот &amp; новости.</p></body></html>`}},
 	}})

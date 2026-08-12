@@ -15,6 +15,7 @@ import (
 	"github.com/drrainlab/quiet_places/connector/email"
 	"github.com/drrainlab/quiet_places/kernel/passcode"
 	"github.com/drrainlab/quiet_places/node"
+	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/transports/lan"
 	"github.com/drrainlab/quiet_places/transports/meshtastic"
 	"github.com/drrainlab/quiet_places/transports/radiotransfer"
@@ -256,6 +257,14 @@ func runUI(args []string, withUI bool) error {
 			PollSeconds: ac.PollSeconds,
 		}, func(env node.ExternalEnvelope) error {
 			return rt.ConnectorIngest(cid, env)
+		}, func() []node.OutboundEnvelope {
+			// Unsettled sends from before a restart first, then the fresh
+			// authority-checked candidates.
+			resume, _ := rt.ConnectorOutboundResume(cid)
+			fresh, _ := rt.ConnectorOutbox(cid)
+			return append(resume, fresh...)
+		}, func(eid id.EventID, sent bool, outcome string) {
+			_ = rt.ConnectorOutboundResult(cid, eid, sent, outcome)
 		})
 		fmt.Printf("connector %s: email poller running for %s\n", cid, ac.Account)
 	}

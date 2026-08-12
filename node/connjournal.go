@@ -19,6 +19,7 @@
 package node
 
 import (
+	"crypto/sha256"
 	"encoding/binary"
 	"hash/crc32"
 	"io"
@@ -70,6 +71,10 @@ type IngressRecord struct {
 	ThreadHash [32]byte
 	ReceivedAt int64
 	UpdatedAt  int64
+	// Out marks an OUTBOUND record: a reply leaving through this binding.
+	// Same file, same states (Received→Emitting→Published ≙ sent), same
+	// temporal boundary — a closed binding's replies never egress.
+	Out bool
 }
 
 type connBindKey struct {
@@ -104,6 +109,7 @@ const (
 	cjKeyReceived   = 10
 	cjKeyUpdated    = 11
 	cjKeyTarget     = 12
+	cjKeyOut        = 13
 
 	cjRecIngress = 1
 	cjRecBinding = 2
@@ -170,6 +176,7 @@ func (j *connJournal) apply(body []byte) {
 		return
 	}
 	var kind, binding, state, received, updated uint64
+	var out bool
 	var outcome string
 	var key, refHash, threadHash [32]byte
 	var eid id.EventID
@@ -215,6 +222,10 @@ func (j *connJournal) apply(body []byte) {
 			updated, er = d.ReadUint()
 		case cjKeyTarget:
 			er = read32(target[:])
+		case cjKeyOut:
+			var v uint64
+			v, er = d.ReadUint()
+			out = v != 0
 		default:
 			er = d.SkipItem()
 		}
@@ -235,6 +246,7 @@ func (j *connJournal) apply(body []byte) {
 			Outcome: outcome, EventID: eid, BodyBlob: blob,
 			RefHash: refHash, ThreadHash: threadHash,
 			ReceivedAt: int64(received), UpdatedAt: int64(updated),
+			Out: out,
 		}
 		bk := connBindKey{gen: binding, key: key}
 		if _, existed := j.live[bk]; existed {
@@ -245,7 +257,11 @@ func (j *connJournal) apply(body []byte) {
 }
 
 func encodeIngress(rec *IngressRecord) []byte {
-	buf := codec.AppendMap(nil, 11)
+	n := 11
+	if rec.Out {
+		n++
+	}
+	buf := codec.AppendMap(nil, n)
 	buf = codec.AppendUint(buf, cjKeyKind)
 	buf = codec.AppendUint(buf, cjRecIngress)
 	buf = codec.AppendUint(buf, cjKeyRecKey)
@@ -268,6 +284,10 @@ func encodeIngress(rec *IngressRecord) []byte {
 	buf = codec.AppendUint(buf, uint64(max(rec.ReceivedAt, 0)))
 	buf = codec.AppendUint(buf, cjKeyUpdated)
 	buf = codec.AppendUint(buf, uint64(max(rec.UpdatedAt, 0)))
+	if rec.Out {
+		buf = codec.AppendUint(buf, cjKeyOut)
+		buf = codec.AppendUint(buf, 1)
+	}
 	return buf
 }
 
@@ -396,7 +416,7 @@ func (j *connJournal) Pending() []IngressRecord {
 	}
 	var out []IngressRecord
 	for bk, rec := range j.live {
-		if bk.gen != j.gen {
+		if bk.gen != j.gen || rec.Out {
 			continue
 		}
 		if rec.State == ConnReceived || rec.State == ConnEmitting {
@@ -405,6 +425,100 @@ func (j *connJournal) Pending() []IngressRecord {
 	}
 	sortIngress(out)
 	return out
+}
+
+// OutboundClaim journals the intent to send one reply — idempotent per
+// event: a claim that already exists (whatever its state) returns
+// taken=false, so a re-scan can never double-claim. The claim is fsynced
+// BEFORE any external side effect; a crash mid-send is retried on resume,
+// which for outbound mail honestly means AT-LEAST-ONCE — the external
+// world has no log to reconcile against, and a rare duplicate email is the
+// truthful trade (every MTA makes the same one).
+func (j *connJournal) OutboundClaim(eid id.EventID, now int64) (bool, error) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if !j.hasTarget {
+		return false, nil
+	}
+	key := outboundKey(eid)
+	bk := connBindKey{gen: j.gen, key: key}
+	if _, exists := j.live[bk]; exists {
+		return false, nil
+	}
+	rec := &IngressRecord{
+		Key: key, Binding: j.gen, State: ConnEmitting, Out: true,
+		EventID: eid, ReceivedAt: now, UpdatedAt: now,
+	}
+	if err := j.appendRecord(encodeIngress(rec)); err != nil {
+		return false, err
+	}
+	j.live[bk] = rec
+	return true, nil
+}
+
+// OutboundSettle records a send's fate; terminal states stay settled.
+func (j *connJournal) OutboundSettle(eid id.EventID, sent bool, outcome string, now int64) error {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	rec, ok := j.live[connBindKey{gen: j.gen, key: outboundKey(eid)}]
+	if !ok || !rec.Out || rec.State != ConnEmitting {
+		return nil
+	}
+	before := *rec
+	if sent {
+		rec.State = ConnPublished
+	} else {
+		rec.State = ConnRefused
+		rec.Outcome = outcome
+	}
+	rec.UpdatedAt = now
+	if err := j.appendRecord(encodeIngress(rec)); err != nil {
+		*rec = before
+		return err
+	}
+	j.dead++
+	return nil
+}
+
+// OutboundInFlight lists claims whose send never settled — the resume list
+// after a crash, current generation only.
+func (j *connJournal) OutboundInFlight() []id.EventID {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	var out []id.EventID
+	for bk, rec := range j.live {
+		if bk.gen == j.gen && rec.Out && rec.State == ConnEmitting {
+			out = append(out, rec.EventID)
+		}
+	}
+	return out
+}
+
+// OutboundHandled reports whether this event's egress is already claimed or
+// settled under the CURRENT generation.
+func (j *connJournal) OutboundHandled(eid id.EventID) bool {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	_, ok := j.live[connBindKey{gen: j.gen, key: outboundKey(eid)}]
+	return ok
+}
+
+// PublishedRecordByEvent resolves an imported event back to its ingress
+// record — the reply chain's authority lookup.
+func (j *connJournal) PublishedRecordByEvent(eid id.EventID) (IngressRecord, bool) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	for _, rec := range j.live {
+		if !rec.Out && rec.State == ConnPublished && rec.EventID == eid {
+			return *rec, true
+		}
+	}
+	return IngressRecord{}, false
+}
+
+func outboundKey(eid id.EventID) [32]byte {
+	h := sha256.Sum256(append([]byte("out\x00"), eid[:]...))
+	return h
 }
 
 // Published resolves an already-projected ingress by its ref hash — the

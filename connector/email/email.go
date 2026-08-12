@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/drrainlab/quiet_places/node"
+	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/protocol/schemas"
 )
 
@@ -57,9 +58,17 @@ const maxJMAPResponse = 4 << 20
 // with the connector id.
 type Sink func(node.ExternalEnvelope) error
 
-// Run polls until ctx ends. Errors are counted and paced, never fatal: a
-// mail server rebooting must not take the poller with it.
-func Run(ctx context.Context, cfg Config, sink Sink) {
+// Outbox hands back the replies authorized to leave right now (already
+// claimed in the journal), and Settle records each send's fate. Both are
+// the node's methods, curried with the connector id.
+type Outbox func() []node.OutboundEnvelope
+type Settle func(eid id.EventID, sent bool, outcome string)
+
+// Run polls until ctx ends — inbound and outbound on one cadence. Errors
+// are paced, never fatal: a mail server rebooting must not take the
+// poller with it, and an unsettled send is retried by the journal's own
+// resume list (at-least-once for outbound, stated honestly).
+func Run(ctx context.Context, cfg Config, sink Sink, outbox Outbox, settle Settle) {
 	every := time.Duration(cfg.PollSeconds) * time.Second
 	if every <= 0 {
 		every = 15 * time.Second
@@ -69,6 +78,14 @@ func Run(ctx context.Context, cfg Config, sink Sink) {
 	defer t.Stop()
 	for {
 		_ = c.PollOnce(ctx, sink) // journal dedups; errors retry next tick
+		if outbox != nil {
+			for _, out := range outbox() {
+				if err := c.SubmitReply(ctx, out); err != nil {
+					continue // stays in-flight; the resume list retries it
+				}
+				settle(out.EventID, true, "")
+			}
+		}
 		select {
 		case <-ctx.Done():
 			return
@@ -83,8 +100,10 @@ type client struct {
 	cfg  Config
 	http *http.Client
 
-	apiURL    string
-	accountID string
+	apiURL     string
+	accountID  string
+	identityID string
+	draftsID   string
 }
 
 type jmapRequest struct {
@@ -330,6 +349,7 @@ func Gate(m *jmapEmail) (node.ExternalEnvelope, bool) {
 		Address:     addr,
 		ExternalRef: ref,
 		ThreadRef:   thread,
+		Subject:     m.Subject,
 		Text:        text,
 		LossFlags:   loss,
 		ObservedAt:  observed,

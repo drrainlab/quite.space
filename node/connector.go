@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/drrainlab/quiet_places/kernel/identity"
@@ -47,6 +48,9 @@ type ExternalEnvelope struct {
 	ExternalRef string `json:"external_ref,omitempty"`
 	// ThreadRef is the external parent's reference, when one was declared.
 	ThreadRef string `json:"thread_ref,omitempty"`
+	// Subject is the external subject line, kept separate so a reply can
+	// say "Re:" honestly; the projection folds it into the text.
+	Subject string `json:"subject,omitempty"`
 	// Text is the normalized body — already through the connector's policy
 	// gate (text-only profile, bounded readers).
 	Text string `json:"text"`
@@ -175,6 +179,155 @@ func (r *Runtime) ConnectorStatus(connID string) (ConnectorStatus, error) {
 	}
 	st.Pending, st.Published, st.Refused, st.Orphaned = cs.journal.Counts()
 	return st, nil
+}
+
+// OutboundEnvelope is one reply leaving the space through the connector —
+// everything the adapter needs to compose an RFC message, nothing more.
+type OutboundEnvelope struct {
+	EventID   id.EventID
+	To        string // the imported parent's observed sender
+	Subject   string // "Re: …" from the parent's own subject
+	InReplyTo string // the parent's external ref (Message-ID)
+	Text      string
+}
+
+// ConnectorOutbox lists replies AUTHORIZED to egress right now, claiming
+// each one in the journal as it is handed out (fsync before any side
+// effect; at-least-once across a crash, which is email's own honesty).
+//
+// THE AUTHORITY CHAIN IS THE WHOLE POINT (plan rev 3): an event may egress
+// only when its ReplyTo names an event that THIS connector imported, under
+// the CURRENTLY ACTIVE binding, into that binding's own target — which is
+// also the only space scanned. A reply written in a space this connector
+// no longer serves is not a candidate, by construction; a closed binding
+// keeps its history and loses its authority. And an event that is itself
+// an import never re-egresses: the gateway does not mail people their own
+// letters back.
+func (r *Runtime) ConnectorOutbox(connID string) ([]OutboundEnvelope, error) {
+	cs, err := r.connector(connID)
+	if err != nil {
+		return nil, err
+	}
+	gen, target, ok := cs.journal.Binding()
+	if !ok {
+		return nil, nil
+	}
+	type cand struct {
+		eid     id.EventID
+		text    string
+		replyTo id.EventID
+	}
+	var cands []cand
+	_ = r.withSpace(target, func(st *spaceState) error {
+		for _, e := range st.space.State.Entries() {
+			if e.Content.Text == nil || e.Content.Text.ReplyTo == nil {
+				continue
+			}
+			if e.Content.Text.External != nil {
+				continue // an import replying upstream is inbound threading, not egress
+			}
+			cands = append(cands, cand{
+				eid: e.ID, text: e.Content.Text.Text, replyTo: *e.Content.Text.ReplyTo,
+			})
+		}
+		return nil
+	})
+	now := time.Now().Unix()
+	var out []OutboundEnvelope
+	for _, c := range cands {
+		if cs.journal.OutboundHandled(c.eid) {
+			continue
+		}
+		parent, ok := cs.journal.PublishedRecordByEvent(c.replyTo)
+		if !ok || parent.Binding != gen {
+			continue // not our import, or an older generation's: no authority
+		}
+		raw, err := r.root.LoadSealed(connSealedName(parent.Key))
+		if err != nil {
+			continue
+		}
+		var penv ExternalEnvelope
+		if err := json.Unmarshal(raw, &penv); err != nil || penv.Address == "" {
+			continue
+		}
+		taken, err := cs.journal.OutboundClaim(c.eid, now)
+		if err != nil || !taken {
+			continue
+		}
+		subject := penv.Subject
+		if subject != "" && !strings.HasPrefix(strings.ToLower(subject), "re:") {
+			subject = "Re: " + subject
+		}
+		out = append(out, OutboundEnvelope{
+			EventID: c.eid, To: penv.Address, Subject: subject,
+			InReplyTo: penv.ExternalRef, Text: c.text,
+		})
+	}
+	return out, nil
+}
+
+// ConnectorOutboundResult settles one claimed send.
+func (r *Runtime) ConnectorOutboundResult(connID string, eid id.EventID, sent bool, outcome string) error {
+	cs, err := r.connector(connID)
+	if err != nil {
+		return err
+	}
+	return cs.journal.OutboundSettle(eid, sent, outcome, time.Now().Unix())
+}
+
+// ConnectorOutboundResume returns claims whose send never settled — after
+// a restart the adapter retries them (at-least-once, stated honestly).
+func (r *Runtime) ConnectorOutboundResume(connID string) ([]OutboundEnvelope, error) {
+	cs, err := r.connector(connID)
+	if err != nil {
+		return nil, err
+	}
+	gen, target, ok := cs.journal.Binding()
+	if !ok {
+		return nil, nil
+	}
+	_ = gen
+	var out []OutboundEnvelope
+	for _, eid := range cs.journal.OutboundInFlight() {
+		var text string
+		var replyTo *id.EventID
+		_ = r.withSpace(target, func(st *spaceState) error {
+			for _, e := range st.space.State.Entries() {
+				if e.ID == eid && e.Content.Text != nil {
+					text, replyTo = e.Content.Text.Text, e.Content.Text.ReplyTo
+				}
+			}
+			return nil
+		})
+		if text == "" || replyTo == nil {
+			_ = cs.journal.OutboundSettle(eid, false, "reply_lost", time.Now().Unix())
+			continue
+		}
+		parent, ok := cs.journal.PublishedRecordByEvent(*replyTo)
+		if !ok {
+			_ = cs.journal.OutboundSettle(eid, false, "parent_lost", time.Now().Unix())
+			continue
+		}
+		raw, err := r.root.LoadSealed(connSealedName(parent.Key))
+		if err != nil {
+			_ = cs.journal.OutboundSettle(eid, false, "parent_lost", time.Now().Unix())
+			continue
+		}
+		var penv ExternalEnvelope
+		if err := json.Unmarshal(raw, &penv); err != nil || penv.Address == "" {
+			_ = cs.journal.OutboundSettle(eid, false, "parent_lost", time.Now().Unix())
+			continue
+		}
+		subject := penv.Subject
+		if subject != "" && !strings.HasPrefix(strings.ToLower(subject), "re:") {
+			subject = "Re: " + subject
+		}
+		out = append(out, OutboundEnvelope{
+			EventID: eid, To: penv.Address, Subject: subject,
+			InReplyTo: penv.ExternalRef, Text: text,
+		})
+	}
+	return out, nil
 }
 
 // SpaceMessages returns a space's message projection — the same rows the
