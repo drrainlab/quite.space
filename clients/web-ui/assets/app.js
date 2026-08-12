@@ -4118,6 +4118,21 @@ async function onFilePicked(file) {
     capField.value = '';
     capField.placeholder = 'caption (optional)';
   }
+  // ALT FOR A VIDEO STARTS AS THE FILE'S NAME.
+  //
+  // Alt is required because it is how media reaches a text terminal, and
+  // that rule is not moving. But a picture can be looked at and described
+  // in four words, while a video cannot — the person is asked to summarise
+  // something they may not have watched to the end, and what they actually
+  // do is type a character to get past the field. A filename is a weak
+  // description and an honest one, and it is EDITABLE: it is a starting
+  // point in the box, not a value written behind somebody's back.
+  //
+  // Images are left blank on purpose. A photo's filename is usually
+  // IMG_4821, which describes nothing and would only teach people that the
+  // field fills itself.
+  const altField = document.getElementById('attachAlt');
+  altField.value = isVideo ? file.name.replace(/\.[^/.]+$/, '') : '';
   if (isAudio) {
     pendingVideoMeta = { duration_ms: (typeof audioDurationMs === 'function' ? await audioDurationMs(file) : 0) };
     prev.appendChild(makeAudioPlayer(URL.createObjectURL(file), null, pendingVideoMeta.duration_ms));
