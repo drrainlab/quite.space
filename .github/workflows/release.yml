@@ -288,6 +288,6 @@ jobs:
           work around it — tell us instead.
           NOTES
           gh release create "$TAG" dist/* \
-            --title "$NAME — Public Beta" \
+            --title "$NAME — the space between us belongs to us" \
             --notes-file notes.md \
             --latest
