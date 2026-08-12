@@ -14,6 +14,9 @@
 package node
 
 import (
+	"encoding/base64"
+	"encoding/json"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -297,5 +300,60 @@ func TestTheSettingsScreenSaysWhichModeIsActuallyInEffect(t *testing.T) {
 		if got := settingsJSON(c.s)["relay_mode"]; got != c.wants {
 			t.Errorf("%s: screen says %q, node does %q", c.name, got, c.wants)
 		}
+	}
+}
+
+// A pass is the SEVENTH place this defect was found, and the first where
+// the refusal happened OUTSIDE the Go call sites: the browser read
+// Settings.Relay, found the empty string that automatic mode puts there BY
+// DESIGN, and refused to mint before the node was ever asked. A device that
+// had measured three relays and chosen one was told to "set a relay in
+// Settings first".
+//
+// Driven through the HANDLER, because that is where the rule lives now and
+// where the fix had to go. Through the runtime alone it would prove
+// nothing: MintPass has always worked when handed an address, and the
+// question is what happens when nobody hands it one.
+func TestMintingAPassInAutomaticModeNeedsNoRelayFromTheCaller(t *testing.T) {
+	rt := autoModeRuntime(t)
+	api := &APIServer{rt: rt}
+
+	if got := rt.GetSettings().Relay; got != "" {
+		t.Fatalf("premise: Settings.Relay is empty in automatic mode, got %q", got)
+	}
+	resolved := rt.ResolvePersonalRelay()
+	if resolved == "" {
+		t.Fatal("premise: the node should have resolved a relay")
+	}
+
+	tid, err := rt.CreateSpace("pass test")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The fixed client's request: no relay field at all.
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/api/spaces/"+tid.Hex()+"/passes",
+		strings.NewReader(`{"max_uses":1,"ttl_hours":24}`))
+	r.SetPathValue("id", tid.Hex())
+	api.handleMintPass(w, r)
+
+	if w.Code != 200 {
+		t.Fatalf("minting without a relay returned %d: %s", w.Code, w.Body.String())
+	}
+	var out struct{ Link string }
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Link == "" {
+		t.Fatal("no link in the reply")
+	}
+	// And the link must carry the relay the NODE chose.
+	raw, err := base64.RawURLEncoding.DecodeString(out.Link)
+	if err != nil {
+		t.Fatalf("link is not base64url: %v", err)
+	}
+	if first, _, _ := strings.Cut(string(raw), "\n"); first != resolved {
+		t.Fatalf("link carries %q, want the resolved relay %q", first, resolved)
 	}
 }

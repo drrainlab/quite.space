@@ -1169,11 +1169,31 @@ func (a *APIServer) handleMintPass(w http.ResponseWriter, r *http.Request) {
 		TTLHours uint64 `json:"ttl_hours"`
 		Relay    string `json:"relay"`
 	}](r)
-	if err != nil || body.Relay == "" {
+	if err != nil {
 		httpErr(w, http.StatusBadRequest, errors.New("relay required"))
 		return
 	}
-	info, err := a.rt.MintPass(tid, body.MaxUses, body.TTLHours, body.Relay)
+	// AN EMPTY RELAY IS THE ORDINARY CASE, NOT A MISSING ARGUMENT. In
+	// automatic mode Settings.Relay is empty BY DESIGN — the node measures
+	// the real paths and keeps its choice in runtime state — so a caller
+	// that reads settings and finds nothing has learned nothing about
+	// whether this device can reach a relay.
+	//
+	// This is the same defect RR-tail removed from six other call sites, and
+	// it survived here because the pass flow asks the CLIENT to supply the
+	// address. It should never have: resolving a relay is the node's job,
+	// and the resolver is one line away.
+	relay := body.Relay
+	if relay == "" {
+		relay = a.rt.ResolvePersonalRelay()
+	}
+	if relay == "" {
+		httpErr(w, http.StatusBadRequest, errors.New(
+			"no relay is reachable right now — a pass needs somewhere for the "+
+				"entry request to wait"))
+		return
+	}
+	info, err := a.rt.MintPass(tid, body.MaxUses, body.TTLHours, relay)
 	if err != nil {
 		httpErr(w, http.StatusForbidden, err)
 		return

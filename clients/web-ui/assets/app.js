@@ -2643,17 +2643,24 @@ function passMsg(text, warn) {
 }
 
 async function mintPass() {
-  // The rendezvous relay is the one configured in Settings — no separate field.
-  let relay = '';
-  try { relay = ((await api('/api/settings')).relay || '').trim(); } catch (_) {}
-  if (!relay) { passMsg(t('pass.need_relay'), true); return; }
+  // THE CLIENT DOES NOT PICK THE RELAY, and used to. It read
+  // settings.relay and refused when it was empty — but empty is the
+  // ORDINARY state in automatic mode, where the node measures the real
+  // paths and keeps its choice in runtime state rather than in settings.
+  // So a node that was perfectly well connected was told to "set a relay
+  // in Settings first", and the only devices that worked were the ones
+  // somebody had configured by hand.
+  //
+  // The node resolves it now. An empty relay here means "you choose", and
+  // the only refusal left is the honest one: nothing reachable at all,
+  // which the node is the only thing in a position to know.
   const maxUses = parseInt(document.getElementById('passUses').value, 10);
   const ttlHours = parseInt(document.getElementById('passTtl').value, 10);
   document.getElementById('passCreateBtn').disabled = true;
   try {
     const r = await api(`/api/spaces/${passSpace}/passes`, {
       method: 'POST',
-      body: JSON.stringify({ max_uses: maxUses, ttl_hours: ttlHours, relay }),
+      body: JSON.stringify({ max_uses: maxUses, ttl_hours: ttlHours }),
     });
     mintedPass = r;
     document.getElementById('passPhrase').textContent = verificationPhrase(r.pass_id, 3);
