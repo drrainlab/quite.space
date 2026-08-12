@@ -186,6 +186,13 @@ type Keystore struct {
 	Navigator NavState
 	// Agent is the local assistant's own identity and its space (AI-0).
 	Agent AgentRecord
+	// Gateway is the external-boundary participant (TR-0): same shape as
+	// the assistant and for the same reasons — its own device seed (its own
+	// chain) and its own terminal seed (its own manifest, KindGateway), the
+	// operator's principal as controller, no principal of its own. Its
+	// Space field stays zero: which space a connector feeds is a BINDING in
+	// the connector journal, deliberately not an identity fact.
+	Gateway AgentRecord
 
 	// Radio is the radio this device brings up on start, and the segment seed
 	// it derives its frame key from. Zero means none, which is ordinary.
@@ -311,6 +318,7 @@ const (
 	ksKeyRadio     = 16 // the radio this device attaches, and its segment seed
 	ksKeyForgotten = 17 // SD-0 spaces this device was told to forget
 	ksKeyRoutes    = 18 // RT-0 the route book: self ingress + per-peer delivery
+	ksKeyGateway   = 19 // TR-0 the external-boundary participant
 )
 
 // ksMapArity is how many top-level pairs encode() writes, and it MUST equal
@@ -318,7 +326,7 @@ const (
 // which is a poor place for a number that bricks every keystore when it is
 // wrong: too few and the trailing pair goes unread, so Done() fails and
 // nobody can open their data again. Named here, next to the keys it counts.
-const ksMapArity = 18
+const ksMapArity = 19
 
 func (k *Keystore) encode() []byte {
 	buf := codec.AppendMap(nil, ksMapArity)
@@ -408,6 +416,8 @@ func (k *Keystore) encode() []byte {
 	}
 	buf = codec.AppendUint(buf, ksKeyRoutes)
 	buf = appendRouteBook(buf, k.SelfIngress, k.PeerRoutes)
+	buf = codec.AppendUint(buf, ksKeyGateway)
+	buf = appendAgentRecord(buf, k.Gateway)
 	return buf
 }
 
@@ -789,6 +799,8 @@ func decodeKeystore(data []byte) (*Keystore, error) {
 			k.Navigator, er = readNavState(d)
 		case ksKeyAgent:
 			k.Agent, er = readAgentRecord(d)
+		case ksKeyGateway:
+			k.Gateway, er = readAgentRecord(d)
 		case ksKeyRadio:
 			k.Radio, er = readRadioRecord(d)
 		case ksKeyForgotten:

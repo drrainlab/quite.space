@@ -70,6 +70,13 @@ type Runtime struct {
 	// agent is the local assistant's participant (AI-0). Its own terminal
 	// and device keys, the person's principal as controller.
 	agent *terminals.Participant
+	// gateway is the external-boundary participant (TR-0); nil until the
+	// first connector projection mints it. gatewayShown tracks which spaces
+	// already carry its manifest this process. connectors holds each
+	// connector's journal + projector latch, keyed by connector id.
+	gateway      *terminals.Participant
+	gatewayShown map[id.TerminalID]bool
+	connectors   map[string]*connState
 	// aiPending and aiError are DEVICE-LOCAL. A provider failure is a
 	// diagnostic like a delivery state, not something that happened
 	// between participants, so it never becomes an event.
@@ -412,6 +419,9 @@ func Open(dataDir string, passphrase []byte, displayName string) (rt *Runtime, e
 	}
 	// The assistant, if this device has one. Before the spaces are opened,
 	// so its chain is resumed with the person's (AI-0).
+	if err := r.loadGatewayLocked(); err != nil {
+		return nil, fmt.Errorf("node: loading gateway terminal: %w", err)
+	}
 	if err := r.loadAgentLocked(); err != nil {
 		return nil, err
 	}
@@ -463,6 +473,10 @@ func Open(dataDir string, passphrase []byte, displayName string) (rt *Runtime, e
 			if r.agent != nil {
 				r.agent.ResumeChain(s)
 			}
+			// The gateway is a third writer with the same obligation.
+			if r.gateway != nil {
+				r.gateway.ResumeChain(s)
+			}
 		}
 		r.attach(tid, s)
 		if !reader {
@@ -500,6 +514,9 @@ func Open(dataDir string, passphrase []byte, displayName string) (rt *Runtime, e
 	}
 	r.ensurePassPolling()
 	r.resumeJoinPolling()
+	// Connector journals restore their intent to act the same way the join
+	// saga does: reopened and re-driven, never merely present on disk.
+	r.resumeConnectors()
 	// The radio this device was last attached to, brought back on its own.
 	// Best effort by design — see restoreRadio: a radio that is unplugged, or
 	// that came back under a different serial path, must never stop somebody
@@ -671,6 +688,7 @@ func (r *Runtime) Close() {
 	if p := r.relayPoolV.Load(); p != nil {
 		p.closeAll()
 	}
+
 	if r.lanNode != nil {
 		r.lanNode.Close()
 	}
@@ -698,6 +716,8 @@ func (r *Runtime) Close() {
 		_ = r.ledger.Close()
 	}
 	r.mu.Unlock()
+	// Journals close only after every projector goroutine has stopped.
+	r.closeConnectors()
 
 	// The notification watermark is written back here rather than on every
 	// acknowledgement: acks arrive as often as events during a catch-up, and

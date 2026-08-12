@@ -178,5 +178,55 @@ func runStatus(args []string) error {
 	for _, h := range sync.Held {
 		fmt.Printf("Held       %s — %s (%d frames)\n", h.Title, h.Reason, h.Frames)
 	}
+
+	if conns := rt.ConnectorIDs(); len(conns) > 0 {
+		fmt.Printf("\nConnectors\n")
+		for _, cid := range conns {
+			st, err := rt.ConnectorStatus(cid)
+			if err != nil {
+				fmt.Printf("  %s  (unreadable: %v)\n", cid, err)
+				continue
+			}
+			target := st.Target
+			if target == "" {
+				target = "— no route"
+			} else {
+				target = target[:16]
+			}
+			fmt.Printf("  %s → %s  gen %d  pending %d  published %d  refused %d  orphaned %d\n",
+				cid, target, st.Binding, st.Pending, st.Published, st.Refused, st.Orphaned)
+		}
+	}
+	return nil
+}
+
+// runRoute rebinds a connector: `terminal route set --connector C --space
+// HEX`. A temporal boundary, said plainly — the old space keeps what it
+// received and loses the connector; pending never crosses.
+func runRoute(args []string) error {
+	if len(args) == 0 || args[0] != "set" {
+		return errors.New("route: usage: terminal route set --connector C --space HEX")
+	}
+	flags := parseKV(args[1:])
+	conn := strings.TrimSpace(flags["connector"])
+	spaceHex := strings.TrimSpace(flags["space"])
+	if conn == "" || spaceHex == "" {
+		return errors.New("route set: --connector and --space are required")
+	}
+	tid, err := id.ParseTerminalID(spaceHex)
+	if err != nil {
+		return fmt.Errorf("route set: bad space id: %w", err)
+	}
+	rt, err := openForCLI(flags, "route")
+	if err != nil {
+		return err
+	}
+	defer rt.Close()
+	gen, err := rt.ConnectorRoute(conn, tid)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("binding %d: %s → %s\n", gen, conn, spaceHex[:16])
+	fmt.Println("from this moment; earlier and pending ingress stays with its own binding")
 	return nil
 }

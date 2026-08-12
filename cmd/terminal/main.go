@@ -49,6 +49,8 @@ func main() {
 		err = runSay(os.Args[2:])
 	case "status":
 		err = runStatus(os.Args[2:])
+	case "route":
+		err = runRoute(os.Args[2:])
 	default:
 		usage()
 		os.Exit(2)
@@ -81,10 +83,14 @@ usage:
   terminal say    --space HEX --text T [--data DIR]
                                          publish one message headlessly and
                                          report the relay hand-off honestly
-  terminal status [--data DIR]           identity, spaces, relay, holds — the
-                                         diagnostics page without HTTP
+  terminal status [--data DIR]           identity, spaces, relay, holds,
+                                         connectors — diagnostics without HTTP
                                          (refuses while 'terminal node' runs:
                                          the data dir is single-instance)
+  terminal route set --connector C --space HEX
+                                         bind a connector to a space FROM NOW
+                                         ON (TR-0c: earlier and pending
+                                         ingress stays with its old binding)
   terminal demo                          run the reproducible two-node demo
   terminal backup  --out FILE --passphrase P [--data DIR]
                                          encrypted copy of EVERYTHING:
