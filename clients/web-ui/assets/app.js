@@ -2179,10 +2179,31 @@ function renderReplyBar() {
   bar.appendChild(x);
 }
 
+/**
+ * A MESSAGE IS ABOUT A PAGE, and the protocol's own ceiling is not the
+ * number to enforce here.
+ *
+ * schemas.MaxTextLen is 16 KiB — a bound on what the wire will carry, and
+ * the right one there. It is the wrong one for a person: sixteen kilobytes
+ * of pasted text is a document arriving as a chat message, and it lands in
+ * everybody's log, over every transport, including the radio where a
+ * message that size is minutes of air nobody agreed to spend.
+ *
+ * 4000 characters is a dense printed page. Above it the honest advice is
+ * the two things that actually work — split it, or send it as a file,
+ * which is a document travelling as a document and fetched only by
+ * somebody who wants it.
+ */
+const MAX_MESSAGE_CHARS = 4000;
+
 async function say(e) {
   e.preventDefault();
   const inp = document.getElementById('text');
   if (!inp.value.trim() || !current) return false;
+  if (inp.value.length > MAX_MESSAGE_CHARS) {
+    alert(t('conv.too_long', { n: inp.value.length, max: MAX_MESSAGE_CHARS }));
+    return false;
+  }
   // Mentions travel as a signed structural field, not as text markup.
   const mentions = typeof mentionsPayload === 'function' ? mentionsPayload(inp.value) : [];
   const body = { text: inp.value, mentions };
@@ -3192,6 +3213,11 @@ function textNode(cls, s) {
   el.className = cls;
   // An address somebody pasted is a thing to follow, not a string to squint
   // at and retype. Built as nodes, never as HTML — see MD.linkifyInto.
+  //
+  // Captions, fallbacks and notices stay LINKIFY-ONLY. Markdown belongs to
+  // the message body, which is rendered by mentionText; a caption that
+  // suddenly grew a heading because it began with a hash would be a
+  // surprise nobody asked for.
   if (typeof MD !== 'undefined' && MD.linkifyInto) MD.linkifyInto(el, s);
   else el.textContent = s;
   return el;
@@ -4239,21 +4265,12 @@ async function onFilePicked(file, opts = {}) {
     capField.value = '';
     capField.placeholder = 'caption (optional)';
   }
-  // ALT FOR A VIDEO STARTS AS THE FILE'S NAME.
-  //
-  // Alt is required because it is how media reaches a text terminal, and
-  // that rule is not moving. But a picture can be looked at and described
-  // in four words, while a video cannot — the person is asked to summarise
-  // something they may not have watched to the end, and what they actually
-  // do is type a character to get past the field. A filename is a weak
-  // description and an honest one, and it is EDITABLE: it is a starting
-  // point in the box, not a value written behind somebody's back.
-  //
-  // Images are left blank on purpose. A photo's filename is usually
-  // IMG_4821, which describes nothing and would only teach people that the
-  // field fills itself.
-  const altField = document.getElementById('attachAlt');
-  altField.value = isVideo ? file.name.replace(/\.[^/.]+$/, '') : '';
+  // The alt box always starts EMPTY. It used to prefill a video's filename;
+  // it no longer does, because a fallback now exists at send time and a
+  // prefilled value would be worse than either honest option — it looks
+  // like somebody's description while being a machine's, and it invites
+  // being left alone precisely where a human sentence was wanted.
+  document.getElementById('attachAlt').value = '';
   if (isAudio) {
     pendingVideoMeta = { duration_ms: (typeof audioDurationMs === 'function' ? await audioDurationMs(file) : 0) };
     // A PASTED SOUND IS NOT AUDITIONED. Every other kind can be judged at a
@@ -4309,6 +4326,26 @@ async function onFilePicked(file, opts = {}) {
   }
   dlgAttach.showModal();
   fileInput.value = '';
+}
+
+/**
+ * What a file is, for somebody who cannot see it.
+ *
+ * The fallback alt: kind, name, size — "photo · sunset.jpg · 2.4 MB". Not a
+ * description of the CONTENT and never pretending to be one; it is what
+ * this device actually knows, which on a text terminal beats both silence
+ * and the single character a required field was answered with.
+ *
+ * The size is dropped when it is unknown rather than printed as 0 B.
+ */
+function describeMedia(kind, file) {
+  const name = (file && file.name) ? file.name : 'file';
+  const label = kind === 'visual' ? 'photo'
+    : kind === 'video' ? 'video'
+      : kind === 'audio' ? 'audio' : 'file';
+  const parts = [label, name];
+  if (file && file.size > 0) parts.push(fmtBytes(file.size));
+  return parts.join(' · ');
 }
 
 // Downscale + re-encode through a canvas: strips metadata, bounds size.
@@ -4381,9 +4418,18 @@ async function sendAttachment() {
     kind: pendingKind, size: pendingFile.size, media_type: pendingFile.type || 'application/octet-stream',
   };
   if (pendingKind === 'visual' || pendingKind === 'video') {
+    // ALT IS NO LONGER A GATE, because a gate produced worse alt text than
+    // no gate did. Required, it was answered with "." and "a" and "img" —
+    // a character typed to get past a field, which reaches a text terminal
+    // as nothing at all. What goes now when nobody typed anything is a
+    // description the machine can actually stand behind: what kind of thing
+    // it is, what it is called, and how big it is.
+    //
+    // A typed sentence still wins, always, and that is the whole point of
+    // leaving the box there. The fallback is not shown in it beforehand —
+    // seeing a filled field is what stops people writing something better.
     const alt = document.getElementById('attachAlt').value.trim();
-    if (!alt) { alert('alt text is required — it is how the media reaches text terminals'); return; }
-    meta.alt = alt;
+    meta.alt = alt || describeMedia(pendingKind, pendingFile);
     meta.caption = document.getElementById('attachCaption').value.trim();
     // The blob's OWN type, never the one we asked for: an engine that cannot
     // encode the requested format quietly hands back another, and a preview

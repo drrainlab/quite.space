@@ -327,6 +327,10 @@ const I18N = {
 
     // Forwarding, seen (SHARE-1). The claim line is the sentence the whole
     // wave turns on and it is never softened.
+    'conv.too_long': ({ n, max }) =>
+      `That is ${n} characters, and a message holds about ${max} — a page. ` +
+      `Send it in pieces, or attach it as a file so it travels as a document ` +
+      `and only reaches somebody who opens it.`,
     'conv.forward': 'forward',
     'share.quote.anon': 'somebody wrote',
     'share.quote.claim': ({ sender, author }) =>
@@ -539,7 +543,7 @@ const I18N = {
     'ui.addSpace.title': 'Add a space',
     'ui.appblk.add': 'Add',
     'ui.appblk.cancel': 'Cancel',
-    'ui.attach.altPh': 'alt text — what\'s in the image (required, honest for text terminals)',
+    'ui.attach.altPh': 'describe it for somebody who cannot see it (optional)',
     'ui.attach.cancel': 'cancel',
     'ui.attach.capPh': 'caption (optional)',
     'ui.attach.send': 'send',
@@ -1250,6 +1254,10 @@ const I18N = {
     'ai.unconfigured': 'Подключите провайдера AI в настройках — этому пространству пока некуда отправить вопрос.',
     'ai.thinking': 'Спросили. Ждём провайдера…',
     'ai.failed': ({ why }) => `Ответа нет: ${why}. Спросите ещё раз, когда захотите.`,
+    'conv.too_long': ({ n, max }) =>
+      `Здесь ${n} символов, а в сообщение помещается около ${max} — страница. ` +
+      `Отправьте частями или вложите файлом: тогда это поедет как документ и ` +
+      `дойдёт только до того, кто его откроет.`,
     'conv.forward': 'переслать',
     'pane.close': 'Закрыть',
     'notif.hidden': 'Уведомление говорит только, что что-то пришло. Ни пространства, ни отправителя, ни текста.',
@@ -1353,7 +1361,7 @@ const I18N = {
     'ui.addSpace.title': 'Добавить пространство',
     'ui.appblk.add': 'Добавить',
     'ui.appblk.cancel': 'Отмена',
-    'ui.attach.altPh': 'альт-текст — что на изображении (обязательно, честно для текстовых терминалов)',
+    'ui.attach.altPh': 'опишите для того, кто не видит (необязательно)',
     'ui.attach.cancel': 'отмена',
     'ui.attach.capPh': 'подпись (необязательно)',
     'ui.attach.send': 'отправить',

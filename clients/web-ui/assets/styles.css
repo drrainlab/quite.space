@@ -2051,6 +2051,39 @@
   .res-pal-row { display: grid; grid-template-columns: 2fr 3fr 1fr; gap: 6px; }
   .res-pal-row input { margin: 3px 0; }
 
+  /* --- markdown inside a chat message ---
+     A pasted README or a chunk of assistant output now renders, so the
+     elements it brings need to look like themselves INSIDE a bubble —
+     without turning a message into an article. Everything here is tighter
+     than the post styles on purpose: a heading in a chat is a line that
+     stands out, not a title with a page around it, and a quote must be
+     distinguishable from the paragraph beside it or rendering it bought
+     nothing. */
+  .txt h1, .txt h2, .txt h3 {
+    font-size: 1.04em; font-weight: 600; margin: .55em 0 .25em; line-height: 1.35;
+  }
+  .txt h1:first-child, .txt h2:first-child, .txt h3:first-child { margin-top: 0; }
+  .txt p { margin: .35em 0; }
+  .txt p:first-child { margin-top: 0; }
+  .txt p:last-child { margin-bottom: 0; }
+  .txt ul, .txt ol { margin: .35em 0; padding-left: 1.25em; }
+  .txt li { margin: .12em 0; }
+  .txt blockquote {
+    margin: .45em 0; padding: .1em 0 .1em .7em;
+    border-left: 2px solid color-mix(in srgb, var(--acc) 45%, transparent);
+    color: var(--dim);
+  }
+  .txt pre {
+    margin: .45em 0; padding: .5em .6em; overflow-x: auto;
+    background: rgba(0, 0, 0, .28); border-radius: 8px;
+  }
+  .txt code {
+    font-family: var(--font-mono); font-size: .92em;
+    background: rgba(255, 255, 255, .07); border-radius: 4px; padding: .05em .3em;
+  }
+  .txt pre code { background: none; padding: 0; }
+  .txt hr { border: 0; border-top: 1px solid var(--line); margin: .6em 0; }
+
   /* --- Resonant Surfaces (RP-2A) ---
      .fx-layer is an absolutely-positioned overlay INSIDE the target:
      zero layout shift by construction, never painted over media. Arrival

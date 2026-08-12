@@ -205,7 +205,29 @@ function mentionText(e) {
     if (typeof MD !== 'undefined' && MD.linkifyInto) MD.linkifyInto(el, s);
     else el.appendChild(document.createTextNode(s));
   };
-  if (!names.length) { plain(e.text); return el; }
+  // A MESSAGE WITH NO MENTIONS IS RENDERED AS MARKDOWN.
+  //
+  // The reasoning that made this linkify-only held for text somebody TYPES
+  // — nobody writes markdown in a chat — and missed the text people PASTE.
+  // Output from an assistant, a chunk of a README, a snippet of notes: all
+  // arrive already marked up, and showing literal asterisks made the app
+  // the only thing on the machine that could not read its own format.
+  //
+  // Safe on somebody else's text because render() builds a NODE TREE and
+  // never assigns innerHTML — there is no parser here for a payload to
+  // escape from — and every href goes through the scheme allowlist.
+  //
+  // ONLY when there are no mentions, and that is not a shortcut. The loop
+  // below splices @names into the text and calls plain() on the pieces
+  // BETWEEN them; a heading or a list rendered per-piece would be cut in
+  // half by a name in the middle of it. Where the two want the same text,
+  // mentions win — they are structural and signed, and markdown is
+  // presentation.
+  if (!names.length) {
+    if (typeof MD !== 'undefined' && MD.into) MD.into(el, e.text);
+    else plain(e.text);
+    return el;
+  }
   // Longest first so "@ann" inside "@anna" cannot win.
   const sorted = [...names].sort((a, b) => b.length - a.length);
   let rest = e.text;
