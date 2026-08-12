@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/drrainlab/quiet_places/clients/lockgate"
 	webui "github.com/drrainlab/quiet_places/clients/web-ui"
+	"github.com/drrainlab/quiet_places/connector/email"
 	"github.com/drrainlab/quiet_places/kernel/passcode"
 	"github.com/drrainlab/quiet_places/node"
 	"github.com/drrainlab/quiet_places/transports/lan"
@@ -237,6 +239,25 @@ func runUI(args []string, withUI bool) error {
 
 	if withUI && flags["no-browser"] == "" {
 		openBrowser(url)
+	}
+
+	// External connectors (TR-0d): every configured email adapter polls in
+	// its own goroutine for the life of the process. The journal makes the
+	// poller crash-safe, so process exit is an acceptable stop.
+	connCtx, connCancel := context.WithCancel(context.Background())
+	defer connCancel()
+	for cid, ac := range rt.GetSettings().Adapters {
+		if ac.Type != "email" {
+			continue
+		}
+		cid, ac := cid, ac
+		go email.Run(connCtx, email.Config{
+			URL: ac.JMAPURL, Account: ac.Account, Token: ac.Token,
+			PollSeconds: ac.PollSeconds,
+		}, func(env node.ExternalEnvelope) error {
+			return rt.ConnectorIngest(cid, env)
+		})
+		fmt.Printf("connector %s: email poller running for %s\n", cid, ac.Account)
 	}
 
 	sig := make(chan os.Signal, 1)

@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/drrainlab/quiet_places/kernel/identity"
+	"github.com/drrainlab/quiet_places/kernel/reducers"
 	"github.com/drrainlab/quiet_places/kernel/storage"
 	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/protocol/schemas"
@@ -174,6 +175,18 @@ func (r *Runtime) ConnectorStatus(connID string) (ConnectorStatus, error) {
 	}
 	st.Pending, st.Published, st.Refused, st.Orphaned = cs.journal.Counts()
 	return st, nil
+}
+
+// SpaceMessages returns a space's message projection — the same rows the
+// API's messages endpoint serves, exported so adapters and their tests can
+// verify what actually landed without reaching into the runtime.
+func (r *Runtime) SpaceMessages(tid id.TerminalID) []reducers.Message {
+	var out []reducers.Message
+	_ = r.withSpace(tid, func(st *spaceState) error {
+		out = append(out, st.space.State.Messages()...)
+		return nil
+	})
+	return out
 }
 
 // ConnectorIDs lists the connectors present on disk, sorted — the status

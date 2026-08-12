@@ -51,6 +51,8 @@ func main() {
 		err = runStatus(os.Args[2:])
 	case "route":
 		err = runRoute(os.Args[2:])
+	case "connector":
+		err = runConnector(os.Args[2:])
 	default:
 		usage()
 		os.Exit(2)
@@ -87,6 +89,11 @@ usage:
                                          connectors — diagnostics without HTTP
                                          (refuses while 'terminal node' runs:
                                          the data dir is single-instance)
+  terminal connector add --id C --type email --jmap URL --account A
+                                         configure the mail adapter (token
+                                         from QP_JMAP_TOKEN; text-only
+                                         profile: attachments never fetched)
+  terminal connector list                configured connectors
   terminal route set --connector C --space HEX
                                          bind a connector to a space FROM NOW
                                          ON (TR-0c: earlier and pending

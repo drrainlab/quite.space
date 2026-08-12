@@ -40,6 +40,24 @@ type Settings struct {
 	// Attention is the QuietRank policy. It lives in this device-local blob
 	// and is never emitted, bundled, or relayed.
 	Attention *attention.Policy `json:"attention,omitempty"`
+	// Adapters configures external connectors (TR-0d), keyed by connector
+	// id. Tokens live here BECAUSE this blob is encrypted at rest (the
+	// LLM.APIKey precedent) — and therefore ride `terminal backup`, which
+	// the security notes say out loud. They are never projected by the
+	// settings API.
+	Adapters map[string]AdapterConfig `json:"adapters,omitempty"`
+}
+
+// AdapterConfig is one connector's configuration. The zero Profile is the
+// STRICT one: text-only, attachments never fetched — opting into more is a
+// deliberate act (plan rev 4).
+type AdapterConfig struct {
+	Type        string `json:"type"` // "email"
+	JMAPURL     string `json:"jmap_url,omitempty"`
+	Account     string `json:"account,omitempty"`
+	Token       string `json:"token,omitempty"`
+	PollSeconds int    `json:"poll_seconds,omitempty"`
+	Profile     string `json:"profile,omitempty"` // "" == "text-only"
 }
 
 // relayInterval clamps the configured cadence to a sane range (default 2s).
@@ -129,6 +147,11 @@ func (r *Runtime) SetSettings(s Settings) error {
 	// silently erased the trained policy (RR-0 hygiene fix).
 	if s.Attention == nil {
 		s.Attention = cur.Attention
+	}
+	// Adapters follow the same rule: a settings write from a screen without
+	// connector controls must not erase a JMAP token.
+	if s.Adapters == nil {
+		s.Adapters = cur.Adapters
 	}
 	b, err := json.Marshal(s)
 	if err != nil {

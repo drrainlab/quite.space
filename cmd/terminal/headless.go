@@ -200,6 +200,81 @@ func runStatus(args []string) error {
 	return nil
 }
 
+// runConnector manages connector configurations: `terminal connector add
+// --id C --type email --jmap URL --account A [--poll SEC]`. The JMAP token
+// comes from QP_JMAP_TOKEN — never argv (the mirror's rule: /proc and
+// systemctl status read command lines). It lands in the encrypted settings
+// blob (the LLM.APIKey precedent), which also means `terminal backup`
+// carries it — said here because nowhere else says it out loud.
+func runConnector(args []string) error {
+	if len(args) == 0 {
+		return errors.New("connector: usage: terminal connector add|list ...")
+	}
+	sub, rest := args[0], args[1:]
+	flags := parseKV(rest)
+	rt, err := openForCLI(flags, "connector")
+	if err != nil {
+		return err
+	}
+	defer rt.Close()
+
+	switch sub {
+	case "add":
+		cid := strings.TrimSpace(flags["id"])
+		typ := strings.TrimSpace(flags["type"])
+		if cid == "" || typ != "email" {
+			return errors.New("connector add: --id and --type email are required")
+		}
+		jmap := strings.TrimSpace(flags["jmap"])
+		account := strings.TrimSpace(flags["account"])
+		if jmap == "" || account == "" {
+			return errors.New("connector add: --jmap URL and --account are required")
+		}
+		token := os.Getenv("QP_JMAP_TOKEN")
+		if token == "" {
+			return errors.New("connector add: set QP_JMAP_TOKEN (never on argv)")
+		}
+		poll := 0
+		if p := flags["poll"]; p != "" {
+			if poll, err = strconv.Atoi(p); err != nil || poll < 1 {
+				return errors.New("connector add: --poll wants seconds")
+			}
+		}
+		s := rt.GetSettings()
+		if s.Adapters == nil {
+			s.Adapters = map[string]node.AdapterConfig{}
+		}
+		s.Adapters[cid] = node.AdapterConfig{
+			Type: "email", JMAPURL: jmap, Account: account,
+			Token: token, PollSeconds: poll,
+		}
+		if err := rt.SetSettings(s); err != nil {
+			return err
+		}
+		fmt.Printf("connector %s: email via %s as %s (profile: text-only)\n", cid, jmap, account)
+		fmt.Println("bind it with `terminal route set`, then run `terminal node`")
+		return nil
+
+	case "list":
+		s := rt.GetSettings()
+		if len(s.Adapters) == 0 {
+			fmt.Println("no connectors configured")
+			return nil
+		}
+		ids := make([]string, 0, len(s.Adapters))
+		for cid := range s.Adapters {
+			ids = append(ids, cid)
+		}
+		sort.Strings(ids)
+		for _, cid := range ids {
+			ac := s.Adapters[cid]
+			fmt.Printf("  %s  %s  %s  (token stored: %v)\n", cid, ac.Type, ac.Account, ac.Token != "")
+		}
+		return nil
+	}
+	return fmt.Errorf("connector: unknown subcommand %q", sub)
+}
+
 // runRoute rebinds a connector: `terminal route set --connector C --space
 // HEX`. A temporal boundary, said plainly — the old space keeps what it
 // received and loses the connector; pending never crosses.
