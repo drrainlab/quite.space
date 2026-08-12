@@ -72,7 +72,7 @@ func TestTextMessageWithoutMentionsUnchanged(t *testing.T) {
 // unknown-to-it key does not break parsing — the shipped decoder's
 // `default: SkipItem` arm is the same mechanism key 4+ would hit.
 func TestUnknownKeySkippedLikeOldDecoder(t *testing.T) {
-	// {1: text, 3: mentions, 7: <future field>} — key 7 is unknown today.
+	// {1: text, 3: mentions, 7: <future field>} — key 9 is unknown today.
 	buf := codec.AppendMap(nil, 3)
 	buf = codec.AppendUint(buf, 1)
 	buf = codec.AppendText(buf, "future-proof")
@@ -80,7 +80,7 @@ func TestUnknownKeySkippedLikeOldDecoder(t *testing.T) {
 	buf = codec.AppendArray(buf, 1)
 	p := principal(5)
 	buf = codec.AppendBytes(buf, p[:])
-	buf = codec.AppendUint(buf, 7)
+	buf = codec.AppendUint(buf, 9)
 	buf = codec.AppendText(buf, "a field from a later version")
 
 	got, err := DecodeTextMessage(buf)

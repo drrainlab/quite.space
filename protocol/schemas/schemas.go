@@ -109,7 +109,45 @@ type TextMessage struct {
 	// this, where and when; the card says what OBJECT this points at.
 	// Different concerns, and a message share never carries a card.
 	Card *SharedPublication
+	// External says this message was IMPORTED from an external system by a
+	// gateway terminal (TR-0, key 7). Like ShareOrigin three keys over,
+	// every field is a claim by the SIGNER: the gateway observed these
+	// facts at its boundary, and nothing in them is checkable inside the
+	// space — external authentication never becomes Quiet identity. The
+	// renderer speaks in ADR-019's voice: "{gateway} says this came from
+	// {address}. Their signature did not travel."
+	External *ExternalOrigin
 }
+
+// ExternalOrigin is the foreign provenance of an imported message.
+type ExternalOrigin struct {
+	// ConnectorKind names the boundary protocol ("email").
+	ConnectorKind string
+	// Address is the external sender exactly as the gateway observed it.
+	Address string
+	// ExternalRef is the external system's own identity for this message —
+	// for email the RFC 5322 Message-ID. Provenance and threading metadata,
+	// NEVER the dedup key: idempotency belongs to the connector journal's
+	// transport-level id, because the Internet is not obliged to send a
+	// well-formed Message-ID.
+	ExternalRef string
+	// ThreadRef is the external parent this message answered, when the
+	// gateway could resolve one (the References chain flattens here).
+	ThreadRef string
+	// LossFlags name what the boundary honestly dropped or changed:
+	// "attachments_omitted", "text_truncated", "html_extracted", …
+	LossFlags []string
+}
+
+// External-origin bounds. The address bound follows RFC 5321's outer limit
+// with headroom; the ref bound covers real-world Message-ID practice.
+const (
+	MaxExternalKind    = 32
+	MaxExternalAddress = 320
+	MaxExternalRef     = 256
+	MaxLossFlags       = 8
+	MaxLossFlagLen     = 32
+)
 
 // SharedPublication is a post card: a snapshot of a publication's face,
 // taken by the SENDER at send time. Like everything in a share it is a
@@ -232,6 +270,26 @@ func (t *TextMessage) Encode() ([]byte, error) {
 			return nil, errors.New("schemas: card reference too long")
 		}
 	}
+	if x := t.External; x != nil {
+		n++
+		if len(x.ConnectorKind) > MaxExternalKind {
+			return nil, errors.New("schemas: connector kind too long")
+		}
+		if len(x.Address) > MaxExternalAddress {
+			return nil, errors.New("schemas: external address too long")
+		}
+		if len(x.ExternalRef) > MaxExternalRef || len(x.ThreadRef) > MaxExternalRef {
+			return nil, errors.New("schemas: external ref too long")
+		}
+		if len(x.LossFlags) > MaxLossFlags {
+			return nil, errors.New("schemas: too many loss flags")
+		}
+		for _, f := range x.LossFlags {
+			if len(f) > MaxLossFlagLen {
+				return nil, errors.New("schemas: loss flag too long")
+			}
+		}
+	}
 	buf := codec.AppendMap(nil, n)
 	buf = codec.AppendUint(buf, 1)
 	buf = codec.AppendText(buf, t.Text)
@@ -281,7 +339,57 @@ func (t *TextMessage) Encode() ([]byte, error) {
 			buf = codec.AppendText(buf, t.Card.Reference)
 		}
 	}
+	// Key 7 is foreign provenance (TR-0), computed arity like the card —
+	// only what the gateway actually observed is written.
+	if x := t.External; x != nil {
+		buf = codec.AppendUint(buf, 7)
+		buf = codec.AppendMap(buf, externalKeyCount(x))
+		if x.ConnectorKind != "" {
+			buf = codec.AppendUint(buf, 1)
+			buf = codec.AppendText(buf, x.ConnectorKind)
+		}
+		if x.Address != "" {
+			buf = codec.AppendUint(buf, 2)
+			buf = codec.AppendText(buf, x.Address)
+		}
+		if x.ExternalRef != "" {
+			buf = codec.AppendUint(buf, 3)
+			buf = codec.AppendText(buf, x.ExternalRef)
+		}
+		if x.ThreadRef != "" {
+			buf = codec.AppendUint(buf, 4)
+			buf = codec.AppendText(buf, x.ThreadRef)
+		}
+		if len(x.LossFlags) > 0 {
+			buf = codec.AppendUint(buf, 5)
+			buf = codec.AppendArray(buf, len(x.LossFlags))
+			for _, f := range x.LossFlags {
+				buf = codec.AppendText(buf, f)
+			}
+		}
+	}
 	return buf, nil
+}
+
+// externalKeyCount is the computed arity of key 7's inner map.
+func externalKeyCount(x *ExternalOrigin) int {
+	n := 0
+	if x.ConnectorKind != "" {
+		n++
+	}
+	if x.Address != "" {
+		n++
+	}
+	if x.ExternalRef != "" {
+		n++
+	}
+	if x.ThreadRef != "" {
+		n++
+	}
+	if len(x.LossFlags) > 0 {
+		n++
+	}
+	return n
 }
 
 func DecodeTextMessage(payload []byte) (*TextMessage, error) {
@@ -408,6 +516,62 @@ func DecodeTextMessage(payload []byte) (*TextMessage, error) {
 				return nil, errors.New("schemas: card reference too long")
 			}
 			t.Card = &c
+		case 7:
+			var x ExternalOrigin
+			m2, er := d.ReadMapHeader()
+			if er != nil {
+				return nil, er
+			}
+			for {
+				k2, ok2, e2 := m2.Next()
+				if e2 != nil {
+					return nil, e2
+				}
+				if !ok2 {
+					break
+				}
+				switch k2 {
+				case 1:
+					x.ConnectorKind, e2 = d.ReadText()
+				case 2:
+					x.Address, e2 = d.ReadText()
+				case 3:
+					x.ExternalRef, e2 = d.ReadText()
+				case 4:
+					x.ThreadRef, e2 = d.ReadText()
+				case 5:
+					var cnt int
+					cnt, e2 = d.ReadArray()
+					if e2 != nil {
+						return nil, e2
+					}
+					if cnt > MaxLossFlags {
+						return nil, errors.New("schemas: too many loss flags")
+					}
+					for range cnt {
+						f, ef := d.ReadText()
+						if ef != nil {
+							return nil, ef
+						}
+						if len(f) > MaxLossFlagLen {
+							return nil, errors.New("schemas: loss flag too long")
+						}
+						x.LossFlags = append(x.LossFlags, f)
+					}
+				default:
+					e2 = d.SkipItem()
+				}
+				if e2 != nil {
+					return nil, e2
+				}
+			}
+			if len(x.ConnectorKind) > MaxExternalKind ||
+				len(x.Address) > MaxExternalAddress ||
+				len(x.ExternalRef) > MaxExternalRef ||
+				len(x.ThreadRef) > MaxExternalRef {
+				return nil, errors.New("schemas: external origin field too long")
+			}
+			t.External = &x
 		default:
 			err = d.SkipItem()
 		}

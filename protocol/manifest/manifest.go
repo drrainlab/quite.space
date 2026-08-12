@@ -71,10 +71,17 @@ const (
 	AgencyHuman
 	AgencyDeterministic
 	AgencyAIAgent
+	// AgencyGateway drives a boundary terminal (TR-0): it imports content
+	// observed in an external system and signs it AuthorshipImported —
+	// the one honest mark for words the signer carried but did not write.
+	// Wire-safe append: an older decoder keeps the number, renders
+	// "unknown", and its allowedAuthorship refuses everything — fail
+	// closed, never fail dishonest.
+	AgencyGateway
 )
 
 func (a AgencyMode) String() string {
-	names := []string{"unknown", "human", "deterministic", "ai_agent"}
+	names := []string{"unknown", "human", "deterministic", "ai_agent", "gateway"}
 	if int(a) < len(names) {
 		return names[a]
 	}

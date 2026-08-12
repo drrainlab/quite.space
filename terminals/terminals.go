@@ -267,6 +267,11 @@ func (p *Participant) allowedAuthorship(a signal.Authorship) bool {
 		return a == signal.AuthorshipDeterministicBot || a == signal.AuthorshipSensor
 	case manifest.AgencyAIAgent:
 		return a == signal.AuthorshipAIAgent
+	case manifest.AgencyGateway:
+		// The one honest mark for words the signer carried but did not
+		// write (TR-0). A gateway can say NOTHING else: not human, not
+		// bot — either would pass observed content off as its own.
+		return a == signal.AuthorshipImported
 	default:
 		return false
 	}

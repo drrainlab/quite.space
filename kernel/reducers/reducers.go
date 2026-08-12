@@ -75,6 +75,12 @@ type TextContent struct {
 	// answers from three models is unattributable — the member card cannot
 	// help, because a v0 manifest declares no model and honestly says so.
 	Model string
+	// External is the foreign provenance of an imported message (TR-0,
+	// key 7). Sender-authored like Origin and exactly as unverifiable —
+	// and renderers must show it ONLY when the envelope's authorship is
+	// imported, or any member could dress its own words as somebody's
+	// email.
+	External *schemas.ExternalOrigin
 }
 
 // UnknownContent keeps a future block visible and honest.
@@ -232,7 +238,10 @@ func (s *State) Apply(env *signal.Envelope, eid id.EventID) {
 		}
 		s.installEntry(eid, env, KindText, EntryContent{Text: &TextContent{
 			Text: m.Text, ReplyTo: m.ReplyTo, Mentions: m.Mentions,
-			Model: m.ProducedModel, Origin: m.Origin, Card: m.Card}})
+			Model: m.ProducedModel, Origin: m.Origin, Card: m.Card,
+			// The imported-authorship gate lives at the RENDERER (it has
+			// the envelope); the reducer carries what was said.
+			External: m.External}})
 	case schemas.MessageRevised:
 		m, err := schemas.DecodeTextMessage(env.Payload)
 		if err != nil || m.ReplyTo == nil {

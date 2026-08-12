@@ -93,7 +93,7 @@ func TestMessageWithoutCardIsByteIdenticalToOldWire(t *testing.T) {
 // later key) skips it and keeps the text. This is the property that made
 // key 4 safe and it must keep holding as keys are appended.
 func TestCardIsSkippedByAnOlderDecoder(t *testing.T) {
-	// Hand-build a message carrying key 6 AND an unknown key 7, then
+	// Hand-build a message carrying key 6 AND an unknown key 9, then
 	// decode with the current decoder — which handles 6 but not 7. Key 7
 	// surviving proves the tail; the same tail is what a pre-card build
 	// runs when it meets key 6.
@@ -104,7 +104,7 @@ func TestCardIsSkippedByAnOlderDecoder(t *testing.T) {
 	buf = codec.AppendMap(buf, 1)
 	buf = codec.AppendUint(buf, 1)
 	buf = codec.AppendText(buf, "a title")
-	buf = codec.AppendUint(buf, 7)
+	buf = codec.AppendUint(buf, 9)
 	buf = codec.AppendText(buf, "from the future")
 	got, err := DecodeTextMessage(buf)
 	if err != nil {
