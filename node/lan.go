@@ -33,6 +33,14 @@ type LANStatus struct {
 	Bound int
 }
 
+// DefaultLANMulticast is the announce address production uses.
+//
+// Re-exported so an entry point need not import a transport package to start
+// the ordinary local network. The desktop shell keeps its imports down to
+// node and the lock gate deliberately — ADR-011 puts the UI boundary at the
+// local HTTP API, and a shell that reaches past it stops being a host.
+const DefaultLANMulticast = lan.MulticastAddr
+
 // StartLAN begins listening, announcing, and discovering. announceAddr is
 // the UDP address for beacons (lan.MulticastAddr in production, a localhost
 // address in tests). listenAddr is the TCP bind ("" ⇒ all interfaces).
