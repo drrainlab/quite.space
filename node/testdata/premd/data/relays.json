@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "network_fingerprint": "/Voxn+lZ4sM=",
+  "selected_primary": "official:catalog-1",
+  "selected_backup": "official:ru-1",
+  "last_selection_unix": 1786990450,
+  "stats": {
+    "official:catalog-1": {
+      "rtt_ewma_ms": 57.467542,
+      "last_rtt_ms": 57.467542,
+      "success_count": 1,
+      "last_success_unix": 1786990450,
+      "load_class": "normal"
+    },
+    "official:ru-1": {
+      "rtt_ewma_ms": 79.386541,
+      "last_rtt_ms": 79.386541,
+      "success_count": 1,
+      "last_success_unix": 1786990450,
+      "load_class": "normal"
+    },
+    "official:staging-1": {
+      "rtt_ewma_ms": 62.3715,
+      "last_rtt_ms": 62.3715,
+      "success_count": 1,
+      "last_success_unix": 1786990450,
+      "load_class": "normal"
+    }
+  }
+}
