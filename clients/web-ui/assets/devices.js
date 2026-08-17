@@ -10,8 +10,7 @@ async function loadDevices() {
   const box = document.getElementById('devList');
   if (!box) return;
   try {
-    const r = await api('/api/devices');
-    const { devices } = await r.json();
+    const { devices } = await api('/api/devices');
     box.innerHTML = '';
     for (const d of devices) {
       const row = document.createElement('div');
@@ -50,8 +49,7 @@ function offerToUrlB64(std) {
 
 async function beginPairingUI() {
   try {
-    const r = await api('/api/pairing', { method: 'POST' });
-    const { offer } = await r.json();
+    const { offer } = await api('/api/pairing', { method: 'POST' });
     const panel = document.getElementById('pairPanel');
     const out = /** @type {HTMLTextAreaElement} */ (document.getElementById('pairOffer'));
     if (panel) panel.style.display = '';
@@ -70,8 +68,7 @@ function armPairPoll() {
   if (pairPollTimer) clearInterval(pairPollTimer);
   pairPollTimer = setInterval(async () => {
     try {
-      const r = await api('/api/pairing');
-      const st = await r.json();
+      const st = await api('/api/pairing');
       const digitsEl = document.getElementById('pairDigits');
       const approveBtn = document.getElementById('pairApprove');
       if (st.stage === 'digits') {
