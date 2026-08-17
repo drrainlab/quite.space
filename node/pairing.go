@@ -38,6 +38,7 @@ import (
 	"github.com/drrainlab/quiet_places/protocol/codec"
 	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/protocol/pairing"
+	"github.com/drrainlab/quiet_places/terminals"
 	"github.com/drrainlab/quiet_places/transports/lan"
 )
 
@@ -354,6 +355,22 @@ func (a *PairingAttempt) Approve(nowUnix uint64) error {
 			return fmt.Errorf("node: rotating %s for the new device: %w", tid, err)
 		}
 		r.persistEpochsLocked(tid, st.space)
+		// A CURATED space keys its writers on (principal, DEVICE), so the
+		// person's new device must be written into its own owned rooms or it
+		// arrives able to read and forbidden to speak — the first paired
+		// phone measured exactly that. Content, not administration: MD-2's
+		// line (a secondary cannot administer) is about what the CHILD may
+		// do, and this is the AUTHORITY doing it.
+		if pol := st.space.Policy(); pol.Publish == terminals.PublishCurated {
+			title, character := st.space.Character()
+			next := pol
+			next.Writers = append(append([]terminals.WriterBinding(nil), pol.Writers...),
+				terminals.WriterBinding{Principal: r.PrincipalID, Device: childDev})
+			if err := st.space.ReviseManifest(title, character, next); err == nil {
+				meta.ManifestFrame = st.space.ManifestFrame
+				r.ks.Spaces[tid] = meta
+			}
+		}
 		// The certificate travels in the log too (its second role): peers
 		// learn the new device the ordinary way.
 		r.publishCertLocked(st.space)

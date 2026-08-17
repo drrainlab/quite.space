@@ -577,8 +577,22 @@ func Open(dataDir string, passphrase []byte, displayName string) (rt *Runtime, e
 		if !reader {
 			// Idempotent: publishes only if the registry lacks our revision
 			// (spaces created before manifests traveled, or a bumped manifest).
+			//
+			// A HOLD-CLASS REFUSAL DOES NOT STOP THE OPEN. Measured on the
+			// first paired phone: a curated space keys its writers on the
+			// (principal, DEVICE) pair, a fresh secondary is not in that list
+			// yet, and one such space bricked the whole device at its first
+			// open. Not being allowed to WRITE somewhere is an ordinary state
+			// for a device — reading works, and the authorising revision
+			// arrives like any other — so it is a diagnostic here, never a
+			// refusal to start.
 			if _, _, err := r.Self.PublishManifest(s); err != nil {
-				return nil, fmt.Errorf("node: publishing manifest into %s: %w", tid, err)
+				if !holdClassRefusal(err) {
+					return nil, fmt.Errorf("node: publishing manifest into %s: %w", tid, err)
+				}
+				r.noteIngressRefusal(IngressRefusal{
+					Space: tid, Reason: "self_manifest_deferred", Detail: err.Error(),
+				})
 			}
 			r.publishCertLocked(s)
 		}
