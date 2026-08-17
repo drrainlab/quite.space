@@ -22,15 +22,30 @@ async function loadDevices() {
       row.appendChild(label);
       // The one revocation that is always a mistake is not offered at all.
       if (!d.this && !d.revoked) {
+        // TWO CLICKS, IN THE PAGE. The first arms the button and says the
+        // cost out loud; the second, within five seconds, acts. No native
+        // confirm() — the desktop WebView swallows those silently, which a
+        // live tester measured as "Revoke does nothing".
         const btn = document.createElement('button');
         btn.className = 'btn-plain';
         btn.textContent = 'Revoke';
+        let armed = null;
         btn.addEventListener('click', async () => {
-          if (!confirm('Revoke this device? It stops speaking at once and ' +
-            'loses your owned spaces at the next message. This cannot be undone.')) return;
+          if (!armed) {
+            btn.textContent = 'Revoke — forever. Sure?';
+            label.textContent = 'It stops speaking at once and loses your owned spaces. Click again to revoke.';
+            armed = setTimeout(() => {
+              armed = null;
+              btn.textContent = 'Revoke';
+              loadDevices();
+            }, 5000);
+            return;
+          }
+          clearTimeout(armed);
+          btn.disabled = true;
           try {
             await api('/api/devices/' + d.device + '/revoke', { method: 'POST' });
-          } catch (e) { alert(String(e.message || e)); }
+          } catch (e) { label.textContent = 'Revoke failed: ' + String(e.message || e); }
           loadDevices();
         });
         row.appendChild(btn);
