@@ -853,7 +853,13 @@ class QuietActivity : ComponentActivity() {
             pairBtn.setOnClickListener {
                 val offer = offerField.text.toString().trim()
                 if (offer.isEmpty()) { pairNote.text = "Paste the code first."; return@setOnClickListener }
-                val pass = passOrComplain() ?: return@setOnClickListener
+                val pass = passOrComplain()
+                if (pass == null) {
+                    // The complaint lives under the passphrase fields — echo it
+                    // HERE too, where the finger just was.
+                    pairNote.text = note.text
+                    return@setOnClickListener
+                }
                 if (controller.hasIdentity() || controller.dataDir().listFiles()?.isNotEmpty() == true) {
                     // The dir is somebody's. Pairing writes an identity, and
                     // identities are never written over each other — so the
