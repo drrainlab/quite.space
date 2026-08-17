@@ -438,6 +438,21 @@ class RuntimeController private constructor(appContext: Context) {
      */
     fun dataDir(): File = File(app.filesDir, "node").apply { mkdirs() }
 
+    // ---- pairing, the child half (MD-1): strictly BEFORE the first start,
+    // against an empty data dir. The Activity drives the screens; this owns
+    // the directory, like everywhere else.
+
+    fun hasIdentity(): Boolean = Quietcore.hasIdentity(dataDir().absolutePath)
+
+    /** Starts the ceremony; returns null on success or the refusal's text. */
+    fun pairStart(passphrase: String, offer: String): String? = try {
+        Quietcore.pairStart(dataDir().absolutePath, passphrase, offer); null
+    } catch (t: Throwable) { t.message ?: "could not start pairing" }
+
+    fun pairState(): JSONObject = JSONObject(Quietcore.pairState())
+
+    fun pairApprove() { Quietcore.pairApprove() }
+
     fun addListener(l: Listener) {
         listeners.add(l)
         l.onRuntimeState(state())   // a new client is told where things stand

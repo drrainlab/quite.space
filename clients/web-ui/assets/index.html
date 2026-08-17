@@ -673,6 +673,7 @@
          no system notifications to have a policy about. -->
     <button data-cat="notifications" id="setTabNotifications" data-i18n="ui.set.tab.device" style="display:none"
             data-on-click="122">This device</button>
+    <button data-cat="devices" data-i18n="ui.set.tab.devices" data-on-click="230">Devices</button>
   </div>
   <!-- The Radio tab IS the radio screen. It used to be a paragraph and a
        button that closed Settings and opened a second dialog holding the
@@ -683,6 +684,31 @@
        directly and measured everything on, so what a person meets first is
        the scan that finds one. The Meshtastic address box sits at the
        bottom, where a second option belongs. -->
+  <div class="settings-cat" data-cat="devices">
+    <!-- One person, several devices (MD-1/MD-2). The list is the certified
+         set; revoke is never offered for the device underfoot. Pairing is
+         the parent's half only — the new device pairs from its own first
+         screen, before any of this interface exists for it. -->
+    <div class="settings-sec">
+      <p class="sec-label" data-i18n="ui.dev.listLabel">Your devices</p>
+      <div id="devList" class="list"></div>
+    </div>
+    <div class="settings-sec">
+      <div class="row"><button class="btn-tinted" data-on-click="231" data-i18n="ui.dev.pair">Pair a new device</button></div>
+      <div id="pairPanel" style="display:none">
+        <p class="hint" data-i18n="ui.dev.offerHint">Give this code to the new device — paste it there, or play it as sound in the room. It lives for sixty seconds.</p>
+        <textarea id="pairOffer" readonly rows="3" style="width:100%"></textarea>
+        <div class="row">
+          <button class="btn-plain" data-on-click="232" data-i18n="ui.dev.copy">Copy</button>
+          <button class="btn-plain" data-on-click="233" data-i18n="ui.dev.play">Play as sound</button>
+          <button class="btn-plain" data-on-click="235" data-i18n="ui.dev.cancel">Cancel</button>
+        </div>
+        <p class="hint" id="pairStage"></p>
+        <p id="pairDigits" style="font-size:2em;letter-spacing:.3em;text-align:center"></p>
+        <div class="row"><button class="btn-filled" id="pairApprove" style="display:none" data-on-click="234" data-i18n="ui.dev.approve">The digits match — approve</button></div>
+      </div>
+    </div>
+  </div>
   <div class="settings-cat" data-cat="radio">
     <div class="row">
       <button class="btn-tinted" data-i18n="ui.set.radio.meet" data-on-click="123">meet over the radio</button>
@@ -1323,6 +1349,7 @@
 <script src="catalog.js"></script>
 <script src="share.js"></script>
 <script src="app.js"></script>
+<script src="devices.js"></script>
 <script src="handlers.js"></script>
 <!-- LAST, and after app.js on purpose: quietOpen reaches into the shell's
      own `current` and `refresh`, and a host may call it the moment the page

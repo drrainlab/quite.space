@@ -45,8 +45,10 @@ import (
 	"sync"
 	"time"
 
+	"encoding/base64"
 	"github.com/drrainlab/quiet_places/kernel/passcode"
 	"github.com/drrainlab/quiet_places/node"
+	"github.com/drrainlab/quiet_places/transports/lan"
 )
 
 //go:embed lockscreen.html
@@ -82,6 +84,10 @@ type Gate struct {
 
 	once   sync.Once
 	opened chan Credentials
+
+	// mu guards the one pairing flow a gate may run (MD-1 child half).
+	mu   sync.Mutex
+	pair *pairFlow
 }
 
 // New reads the screen and prepares the gate. The token is NOT handed out
@@ -120,6 +126,9 @@ func (g *Gate) Handler() http.Handler {
 	mux.HandleFunc("/suggest", g.suggest)
 	mux.HandleFunc("/unlock", g.unlock)
 	mux.HandleFunc("/create", g.create)
+	mux.HandleFunc("/pair/start", g.pairStart)
+	mux.HandleFunc("/pair/state", g.pairState)
+	mux.HandleFunc("/pair/approve", g.pairApprove)
 	// Everything that is not one of the above is the screen itself.
 	mux.HandleFunc("/", g.screen)
 	return mux
@@ -328,4 +337,144 @@ func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// ---- pairing onboarding (MD-1/MD-2): the child's half, which by its nature
+// runs HERE — before any identity exists to unlock. The person pastes the
+// offer their other device shows, this gate runs the ceremony, both screens
+// show six digits, and a "yes" here writes the keystore the caller's
+// node.Open then opens as a secondary.
+
+type pairFlow struct {
+	mu      sync.Mutex
+	stage   string // running | digits | done | failed
+	digits  string
+	fail    string
+	approve chan struct{}
+}
+
+func (g *Gate) pairStart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "post only", http.StatusMethodNotAllowed)
+		return
+	}
+	if st := node.Inspect(g.dataDir); st.HasIdentity {
+		writeJSON(w, map[string]any{"ok": false, "reason": "exists"})
+		return
+	}
+	var body struct {
+		Passphrase string `json:"passphrase"`
+		Offer      string `json:"offer"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&body); err != nil {
+		writeJSON(w, map[string]any{"ok": false, "reason": "malformed"})
+		return
+	}
+	if len(body.Passphrase) < MinPassphrase {
+		writeJSON(w, map[string]any{"ok": false, "reason": "too_short",
+			"min_passphrase": MinPassphrase})
+		return
+	}
+	offer, err := decodeOfferLoose(body.Offer)
+	if err != nil {
+		writeJSON(w, map[string]any{"ok": false, "reason": "bad_offer"})
+		return
+	}
+	g.mu.Lock()
+	if g.pair != nil {
+		g.mu.Unlock()
+		writeJSON(w, map[string]any{"ok": false, "reason": "in_progress"})
+		return
+	}
+	flow := &pairFlow{stage: "running", approve: make(chan struct{})}
+	g.pair = flow
+	g.mu.Unlock()
+
+	pass := body.Passphrase
+	go func() {
+		err := node.JoinAsPairedDeviceVia(g.dataDir, []byte(pass), offer,
+			lan.MulticastAddr, func(digits string) bool {
+				flow.mu.Lock()
+				flow.stage, flow.digits = "digits", digits
+				flow.mu.Unlock()
+				// The human's yes arrives via /pair/approve; a closed gate
+				// window abandons the ceremony, which costs the offer nothing.
+				<-flow.approve
+				return true
+			}, uint64(time.Now().Unix()))
+		flow.mu.Lock()
+		if err != nil {
+			flow.stage, flow.fail = "failed", err.Error()
+		} else {
+			flow.stage = "done"
+		}
+		flow.mu.Unlock()
+		if err == nil {
+			// The keystore exists now; the caller's node.Open makes it real.
+			g.deliver(Credentials{Passphrase: []byte(pass)})
+		} else {
+			g.mu.Lock()
+			g.pair = nil // a failed ceremony frees the screen to try again
+			g.mu.Unlock()
+		}
+	}()
+	writeJSON(w, map[string]any{"ok": true})
+}
+
+func (g *Gate) pairState(w http.ResponseWriter, r *http.Request) {
+	g.mu.Lock()
+	flow := g.pair
+	g.mu.Unlock()
+	if flow == nil {
+		writeJSON(w, map[string]any{"stage": "idle"})
+		return
+	}
+	flow.mu.Lock()
+	defer flow.mu.Unlock()
+	writeJSON(w, map[string]any{"stage": flow.stage, "digits": flow.digits, "error": flow.fail})
+}
+
+func (g *Gate) pairApprove(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "post only", http.StatusMethodNotAllowed)
+		return
+	}
+	g.mu.Lock()
+	flow := g.pair
+	g.mu.Unlock()
+	if flow == nil {
+		writeJSON(w, map[string]any{"ok": false})
+		return
+	}
+	flow.mu.Lock()
+	ok := flow.stage == "digits"
+	if ok {
+		flow.stage = "running"
+		close(flow.approve)
+	}
+	flow.mu.Unlock()
+	writeJSON(w, map[string]any{"ok": ok})
+}
+
+// decodeOfferLoose accepts the offer however a human got it here: standard
+// or URL base64, padded or not, with the whitespace a copy-paste collects.
+func decodeOfferLoose(s string) ([]byte, error) {
+	s = strings.TrimSpace(strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\r' || r == ' ' || r == '\t' {
+			return -1
+		}
+		return r
+	}, s))
+	if s == "" {
+		return nil, errors.New("empty offer")
+	}
+	for _, enc := range []*base64.Encoding{
+		base64.StdEncoding, base64.RawStdEncoding,
+		base64.URLEncoding, base64.RawURLEncoding,
+	} {
+		if b, err := enc.DecodeString(s); err == nil {
+			return b, nil
+		}
+	}
+	return nil, errors.New("not base64")
 }

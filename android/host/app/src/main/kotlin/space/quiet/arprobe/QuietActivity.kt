@@ -725,6 +725,75 @@ class QuietActivity : ComponentActivity() {
                 gravity = Gravity.CENTER
             }
             panel.addView(note)
+            // THE OTHER FIRST RUN (MD-1): a phone is usually somebody's
+            // SECOND device. Offered only while no identity exists here —
+            // afterwards this panel is an unlock, not a fork in the road.
+            if (!controller.hasIdentity()) {
+                val offerField = EditText(this).apply {
+                    setHint("Pairing code from your other device (optional)")
+                    inputType = InputType.TYPE_CLASS_TEXT
+                }
+                panel.addView(offerField)
+                val pairNote = TextView(this).apply { gravity = Gravity.CENTER }
+                panel.addView(pairNote)
+                val pairDigits = TextView(this).apply {
+                    gravity = Gravity.CENTER
+                    textSize = 34f
+                    letterSpacing = 0.3f
+                }
+                panel.addView(pairDigits)
+                val approveBtn = Button(this).apply {
+                    setText("The digits match")
+                    visibility = View.GONE
+                }
+                panel.addView(approveBtn)
+                val pairBtn = Button(this).apply { setText("Pair with my other device") }
+                panel.addView(pairBtn)
+                val poll = object : Runnable {
+                    override fun run() {
+                        val st = controller.pairState()
+                        when (st.optString("stage")) {
+                            "digits" -> {
+                                pairDigits.text = st.optString("digits")
+                                approveBtn.visibility = View.VISIBLE
+                                pairNote.text = "Compare with the other screen. Continue only if the digits match."
+                                web.postDelayed(this, 400)
+                            }
+                            "done" -> {
+                                pairNote.text = "Paired — opening…"
+                                pendingPassphrase = lastTyped
+                                controller.ensureStarted(lastTyped, null, true)
+                            }
+                            "failed" -> {
+                                pairNote.text = "Failed: " + st.optString("error")
+                                pairBtn.isEnabled = true
+                                approveBtn.visibility = View.GONE
+                                pairDigits.text = ""
+                            }
+                            else -> web.postDelayed(this, 400)
+                        }
+                    }
+                }
+                approveBtn.setOnClickListener {
+                    approveBtn.visibility = View.GONE
+                    pairNote.text = "Waiting for the other device to approve too…"
+                    controller.pairApprove()
+                }
+                pairBtn.setOnClickListener {
+                    val offer = offerField.text.toString().trim()
+                    val pass = field.text.toString()
+                    if (offer.isEmpty()) { pairNote.text = "Paste the code first."; return@setOnClickListener }
+                    if (pass.length < MIN_PASSPHRASE) {
+                        pairNote.text = "Set the passphrase above first — it encrypts this device."
+                        return@setOnClickListener
+                    }
+                    val refusal = controller.pairStart(pass, offer)
+                    if (refusal != null) { pairNote.text = refusal; return@setOnClickListener }
+                    pairBtn.isEnabled = false
+                    pairNote.text = "Reaching your other device…"
+                    web.postDelayed(poll, 400)
+                }
+            }
             panel.addView(Button(this).apply {
                 setText("Open")
                 setOnClickListener {

@@ -270,6 +270,22 @@
         that is not this computer before you go on.
       </p>
       <button class="go" id="makeGo">Create</button>
+
+      <!-- THE OTHER FIRST RUN (MD-1): this device is not a new person — it
+           is the same person's next device. The offer comes from the other
+           device's Settings → Devices → Pair; the six digits must match on
+           both screens before anything is written here. -->
+      <div class="pairbox" id="pairBox">
+        <p class="warn" id="pairIntro">Already using Quiet Spaces on another device?
+          Paste the pairing code it shows, and this device becomes yours too.</p>
+        <label for="pairOffer">Pairing code from your other device</label>
+        <input id="pairOffer" type="text" spellcheck="false" autocomplete="off"
+               placeholder="the code from Settings → Devices">
+        <p class="match" id="pairSay" role="status"></p>
+        <p class="digits" id="pairDigits" style="font-size:2em;letter-spacing:.3em;text-align:center"></p>
+        <button class="go" id="pairGo">Pair this device</button>
+        <button class="go" id="pairYes" style="display:none">The digits match</button>
+      </div>
     </div>
 
     <p class="foot" id="foot">
@@ -544,6 +560,64 @@
   }
 
   makeGo.onclick = create;
+
+  // ---- pairing (the child half, before any identity exists) ----
+  const pairGo = document.getElementById('pairGo');
+  const pairYes = document.getElementById('pairYes');
+  const pairSay = document.getElementById('pairSay');
+  const pairDigits = document.getElementById('pairDigits');
+  let pairTimer = null;
+  async function pairStart() {
+    const offer = document.getElementById('pairOffer').value.trim();
+    const pass = makePass.value;
+    if (!offer) { pairSay.textContent = 'Paste the code first.'; return; }
+    if (pass.length < minPass) {
+      pairSay.textContent = 'Set the passphrase above first — it encrypts this device.'; return;
+    }
+    if (makePass2.value !== pass) {
+      pairSay.textContent = 'The two passphrase fields differ.'; return;
+    }
+    pairGo.disabled = true;
+    const r = await fetch('/pair/start', { method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ passphrase: pass, offer }) });
+    const j = await r.json();
+    if (!j.ok) {
+      pairGo.disabled = false;
+      pairSay.textContent = j.reason === 'bad_offer' ? 'That code does not read as an offer.'
+        : j.reason === 'too_short' ? 'The passphrase is too short.'
+        : 'Could not start: ' + (j.reason || 'unknown');
+      return;
+    }
+    pairSay.textContent = 'Reaching your other device…';
+    pairTimer = setInterval(pairPoll, 400);
+  }
+  async function pairPoll() {
+    const r = await fetch('/pair/state');
+    const st = await r.json();
+    if (st.stage === 'digits') {
+      pairDigits.textContent = st.digits;
+      pairYes.style.display = '';
+      pairSay.textContent = 'Compare with the other screen. Continue only if the digits match.';
+    } else if (st.stage === 'done') {
+      clearInterval(pairTimer);
+      pairSay.textContent = 'Paired — opening…';
+      // The gate delivers the credentials itself; the page just waits to be
+      // replaced by the real interface.
+    } else if (st.stage === 'failed') {
+      clearInterval(pairTimer);
+      pairGo.disabled = false;
+      pairYes.style.display = 'none';
+      pairDigits.textContent = '';
+      pairSay.textContent = 'Failed: ' + (st.error || 'unknown');
+    }
+  }
+  pairYes.onclick = async () => {
+    pairYes.style.display = 'none';
+    await fetch('/pair/approve', { method: 'POST' });
+    pairSay.textContent = 'Waiting for the other device to approve too…';
+  };
+  pairGo.onclick = pairStart;
   makePass.addEventListener('keydown', e => { if (e.key === 'Enter') makePass2.focus(); });
   makePass2.addEventListener('keydown', e => { if (e.key === 'Enter') create(); });
   makeName.addEventListener('keydown', e => { if (e.key === 'Enter') makePass.focus(); });

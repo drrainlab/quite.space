@@ -274,6 +274,12 @@ const UI_HANDLERS = [
   /* 227 click    */ (event, el) => { dlgListenRoom.close(); },
   /* 228 click    */ (event, el) => { confirmKeep(); },
   /* 229 click    */ (event, el) => { dlgKeep.close(); },
+  /* 230 click    */ (event, el) => { showSettingsCat('devices'); loadDevices(); },
+  /* 231 click    */ (event, el) => { beginPairingUI(); },
+  /* 232 click    */ (event, el) => { copyPairOffer(); },
+  /* 233 click    */ (event, el) => { playPairOffer(); },
+  /* 234 click    */ (event, el) => { approvePairingUI(); },
+  /* 235 click    */ (event, el) => { cancelPairingUI(); },
 ];
 
 /** Attach every handler declared in the markup.
