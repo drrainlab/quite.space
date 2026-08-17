@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/drrainlab/quiet_places/kernel/passcode"
 	"github.com/drrainlab/quiet_places/node"
 	"github.com/drrainlab/quiet_places/transports/lan"
 )
@@ -149,4 +150,15 @@ func StartOver(dir string) error {
 		}
 	}
 	return nil
+}
+
+// SuggestPassphrase offers one from the project's frozen wordlist — the
+// same words the desktop's lock screen suggests, chosen to be read down a
+// telephone and typed off paper years later. It only ever OFFERS.
+func SuggestPassphrase() string {
+	p, err := passcode.Generate()
+	if err != nil {
+		return ""
+	}
+	return p
 }

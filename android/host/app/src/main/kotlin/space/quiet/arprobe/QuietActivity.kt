@@ -702,6 +702,22 @@ class QuietActivity : ComponentActivity() {
             })
         }
         if (unlockable) {
+            val fresh = !controller.hasIdentity()
+            fun sectionLabel(text: String) = TextView(this).apply {
+                setText(text)
+                textSize = 13f
+                alpha = 0.6f
+                gravity = Gravity.START
+                setPadding(0, 40, 0, 8)
+            }
+            fun hintView(text: String) = TextView(this).apply {
+                setText(text)
+                textSize = 13f
+                alpha = 0.7f
+                gravity = Gravity.CENTER
+            }
+
+            if (fresh) panel.addView(sectionLabel("A passphrase for this phone"))
             val field = EditText(this).apply {
                 setHint("Passphrase")
                 inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
@@ -718,120 +734,152 @@ class QuietActivity : ComponentActivity() {
                 })
             }
             panel.addView(field)
-            // THE RULE, BEFORE IT IS BROKEN. Said up front rather than only
-            // after a refusal: a requirement a person meets on the first try
-            // costs them nothing to have been told.
+
+            // TYPED TWICE ON A FIRST RUN, because there is no second chance:
+            // nobody can reset it and nobody can read past it, so a typo
+            // silently encrypts everything to a key its owner never knew.
+            // An unlock of an existing keystore stays one field — the second
+            // chance there is simply typing again.
+            var field2: EditText? = null
+            if (fresh) {
+                field2 = EditText(this).apply {
+                    setHint("Type it again")
+                    inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+                }
+                panel.addView(field2)
+            }
+
             val note = TextView(this).apply {
-                setText(unlockMessage ?: "At least 8 characters. This is what encrypts everything on this device.")
+                setText(unlockMessage ?: (if (fresh)
+                    "At least 8 characters. It encrypts everything on THIS phone — " +
+                    "you may reuse the passphrase from your other device, or make a new one."
+                else
+                    "At least 8 characters. This is what encrypts everything on this device."))
+                textSize = 13f
+                alpha = 0.8f
                 gravity = Gravity.CENTER
+                setPadding(0, 8, 0, 8)
             }
             panel.addView(note)
-            // THE OTHER FIRST RUN (MD-1): a phone is usually somebody's
-            // SECOND device. Offered on every not-running panel — a tester's
-            // phone that already holds an identity is exactly who needs this
-            // door — and anything standing in the dir is erased only through
-            // the confirm dialog below, never silently.
-            run {
-                val offerField = EditText(this).apply {
-                    setHint("Pairing code from your other device (optional)")
-                    inputType = InputType.TYPE_CLASS_TEXT
-                }
-                panel.addView(offerField)
-                val pairNote = TextView(this).apply { gravity = Gravity.CENTER }
-                panel.addView(pairNote)
-                val pairDigits = TextView(this).apply {
-                    gravity = Gravity.CENTER
-                    textSize = 34f
-                    letterSpacing = 0.3f
-                }
-                panel.addView(pairDigits)
-                val approveBtn = Button(this).apply {
-                    setText("The digits match")
-                    visibility = View.GONE
-                }
-                panel.addView(approveBtn)
-                val pairBtn = Button(this).apply { setText("Pair with my other device") }
-                panel.addView(pairBtn)
-                val poll = object : Runnable {
-                    override fun run() {
-                        val st = controller.pairState()
-                        when (st.optString("stage")) {
-                            "digits" -> {
-                                pairDigits.text = st.optString("digits")
-                                approveBtn.visibility = View.VISIBLE
-                                pairNote.text = "Compare with the other screen. Continue only if the digits match."
-                                web.postDelayed(this, 400)
-                            }
-                            "done" -> {
-                                pairNote.text = "Paired — opening…"
-                                pendingPassphrase = lastTyped
-                                controller.ensureStarted(lastTyped, null, true)
-                            }
-                            "failed" -> {
-                                pairNote.text = "Failed: " + st.optString("error")
-                                pairBtn.isEnabled = true
-                                approveBtn.visibility = View.GONE
-                                pairDigits.text = ""
-                            }
-                            else -> web.postDelayed(this, 400)
+
+            if (fresh) {
+                panel.addView(Button(this).apply {
+                    setText("Suggest a passphrase")
+                    setOnClickListener {
+                        val p = space.quiet.quietcore.Quietcore.suggestPassphrase()
+                        if (p.isNotEmpty()) {
+                            field.setText(p); field2?.setText(p)
+                            field.inputType = InputType.TYPE_CLASS_TEXT
+                            field2?.inputType = InputType.TYPE_CLASS_TEXT
+                            note.text = "Write these words down somewhere that is not this phone."
                         }
                     }
+                })
+            }
+
+            fun passOrComplain(): String? {
+                val pass = field.text.toString()
+                if (pass.length < MIN_PASSPHRASE) {
+                    note.text = "Too short — a passphrase needs at least $MIN_PASSPHRASE characters."
+                    return null
                 }
-                approveBtn.setOnClickListener {
-                    approveBtn.visibility = View.GONE
-                    pairNote.text = "Waiting for the other device to approve too…"
-                    controller.pairApprove()
+                if (fresh && field2?.text.toString() != pass) {
+                    note.text = "The two passphrase fields differ — a typo here would lock you out forever."
+                    return null
                 }
-                fun beginPair(offer: String, pass: String) {
-                    val refusal = controller.pairStart(pass, offer)
-                    if (refusal != null) { pairNote.text = refusal; return }
-                    pairBtn.isEnabled = false
-                    pairNote.text = "Reaching your other device…"
-                    web.postDelayed(poll, 400)
-                }
-                pairBtn.setOnClickListener {
-                    val offer = offerField.text.toString().trim()
-                    val pass = field.text.toString()
-                    if (offer.isEmpty()) { pairNote.text = "Paste the code first."; return@setOnClickListener }
-                    if (pass.length < MIN_PASSPHRASE) {
-                        pairNote.text = "Set the passphrase above first — it encrypts this device."
-                        return@setOnClickListener
+                return pass
+            }
+
+            // ---- pairing: its own section, not part of the pile ----
+            panel.addView(sectionLabel(if (fresh)
+                "Or: this is my second device" else "Pair as a second device instead"))
+            val offerField = EditText(this).apply {
+                setHint("Pairing code from the other device")
+                inputType = InputType.TYPE_CLASS_TEXT
+            }
+            panel.addView(offerField)
+            val pairNote = hintView("On the other device: Settings → Devices → Pair a new device.")
+            panel.addView(pairNote)
+            val pairDigits = TextView(this).apply {
+                gravity = Gravity.CENTER
+                textSize = 34f
+                letterSpacing = 0.3f
+            }
+            panel.addView(pairDigits)
+            val approveBtn = Button(this).apply {
+                setText("The digits match")
+                visibility = View.GONE
+            }
+            panel.addView(approveBtn)
+            val pairBtn = Button(this).apply { setText("Pair with my other device") }
+            panel.addView(pairBtn)
+            val poll = object : Runnable {
+                override fun run() {
+                    val st = controller.pairState()
+                    when (st.optString("stage")) {
+                        "digits" -> {
+                            pairDigits.text = st.optString("digits")
+                            approveBtn.visibility = View.VISIBLE
+                            pairNote.text = "Compare with the other screen. Continue only if the digits match."
+                            web.postDelayed(this, 400)
+                        }
+                        "done" -> {
+                            pairNote.text = "Paired — opening…"
+                            pendingPassphrase = lastTyped
+                            controller.ensureStarted(lastTyped, null, true)
+                        }
+                        "failed" -> {
+                            pairNote.text = "Failed: " + st.optString("error")
+                            pairBtn.isEnabled = true
+                            approveBtn.visibility = View.GONE
+                            pairDigits.text = ""
+                        }
+                        else -> web.postDelayed(this, 400)
                     }
-                    if (controller.hasIdentity() || controller.dataDir().listFiles()?.isNotEmpty() == true) {
-                        // The dir is somebody's. Pairing writes an identity, and
-                        // identities are never written over each other — so the
-                        // fork is the PERSON'S to take, with its cost spelled out.
-                        AlertDialog.Builder(this@QuietActivity)
-                            .setTitle("This phone already holds Quiet data")
-                            .setMessage("To pair as your other device, everything Quiet " +
-                                "keeps on this phone must be erased first: its identity, " +
-                                "its spaces' local history, its remembered code. " +
-                                "This cannot be undone. Erase and pair?")
-                            .setPositiveButton("Erase and pair") { _, _ ->
-                                val err = controller.startOver()
-                                if (err != null) { pairNote.text = err } else { beginPair(offer, pass) }
-                            }
-                            .setNegativeButton("Keep it", null)
-                            .show()
-                        return@setOnClickListener
-                    }
-                    beginPair(offer, pass)
                 }
             }
+            approveBtn.setOnClickListener {
+                approveBtn.visibility = View.GONE
+                pairNote.text = "Waiting for the other device to approve too…"
+                controller.pairApprove()
+            }
+            fun beginPair(offer: String, pass: String) {
+                val refusal = controller.pairStart(pass, offer)
+                if (refusal != null) { pairNote.text = refusal; return }
+                pairBtn.isEnabled = false
+                pairNote.text = "Reaching your other device…"
+                web.postDelayed(poll, 400)
+            }
+            pairBtn.setOnClickListener {
+                val offer = offerField.text.toString().trim()
+                if (offer.isEmpty()) { pairNote.text = "Paste the code first."; return@setOnClickListener }
+                val pass = passOrComplain() ?: return@setOnClickListener
+                if (controller.hasIdentity() || controller.dataDir().listFiles()?.isNotEmpty() == true) {
+                    // The dir is somebody's. Pairing writes an identity, and
+                    // identities are never written over each other — so the
+                    // fork is the PERSON'S to take, with its cost spelled out.
+                    AlertDialog.Builder(this@QuietActivity)
+                        .setTitle("This phone already holds Quiet data")
+                        .setMessage("To pair as your other device, everything Quiet " +
+                            "keeps on this phone must be erased first: its identity, " +
+                            "its spaces' local history, its remembered code. " +
+                            "This cannot be undone. Erase and pair?")
+                        .setPositiveButton("Erase and pair") { _, _ ->
+                            val err = controller.startOver()
+                            if (err != null) { pairNote.text = err } else { beginPair(offer, pass) }
+                        }
+                        .setNegativeButton("Keep it", null)
+                        .show()
+                    return@setOnClickListener
+                }
+                beginPair(offer, pass)
+            }
+
+            panel.addView(sectionLabel(if (fresh) "Or: start fresh on this phone" else ""))
             panel.addView(Button(this).apply {
-                setText("Open")
+                setText(if (fresh) "Create and open" else "Open")
                 setOnClickListener {
-                    val pass = field.text.toString()
-                    // Checked HERE as well as in the core, because a round
-                    // trip through a failed open to learn a length rule is a
-                    // second of nothing and then a sentence — and the sentence
-                    // is the whole answer.
-                    if (pass.length < MIN_PASSPHRASE) {
-                        note.setText(
-                            "Too short — a passphrase needs at least $MIN_PASSPHRASE characters."
-                        )
-                        return@setOnClickListener
-                    }
+                    val pass = passOrComplain() ?: return@setOnClickListener
                     pendingPassphrase = pass
                     // The CONTROLLER opens the node. This Activity never calls
                     // the binding's Start and never resolves a data directory
