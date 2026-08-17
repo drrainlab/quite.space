@@ -396,6 +396,30 @@ const I18N = {
     // conversation
     'conv.member': 'member',
     'conv.you': 'You',
+    // RESONANCE VOCABULARY (RP). The protocol owns the KEYS; this table is
+    // presentation only, and it covers just the core registry a client can
+    // be sure about. A space's own palette keeps its author's words —
+    // translating somebody else's vocabulary would be putting words in
+    // their mouth.
+    //
+    // The second line of each pair is USAGE, not definition: people learn
+    // a new vocabulary from how it is used, and a beta tester who said the
+    // set was "not quite clear, and unfamiliar" was telling us the labels
+    // alone were doing no work.
+    'res.k.resonates': 'Resonates',
+    'res.u.resonates': 'same here',
+    'res.k.warmth': 'Warmth',
+    'res.u.warmth': 'kindly',
+    'res.k.spark': 'Spark',
+    'res.u.spark': 'this lit me up',
+    'res.k.support': 'With you',
+    'res.u.support': 'I am here',
+    'res.k.curious': 'Curious',
+    'res.u.curious': 'tell me more',
+    'res.k.join': 'Count me in',
+    'res.u.join': 'I am in',
+    'res.k.weight': 'This is heavy',
+    'res.u.weight': 'hard to read',
     'conv.ext.claim': 'Arrived from outside. The sender\u2019s signature did not travel \u2014 this is the gateway\u2019s word for it.',
     'conv.ext.losses': 'The boundary dropped or changed',
     'conv.write': 'write into the space…',
@@ -1273,6 +1297,23 @@ const I18N = {
       'Нажмите «оставаться на связи», чтобы попробовать снова.',
     'conv.member': 'участник',
     'conv.you': 'вы',
+    // Не кальки, а то, как это звучит по-русски: «отзывается», а не
+    // «резонирует». Вторая строка каждой пары — УПОТРЕБЛЕНИЕ, не
+    // определение.
+    'res.k.resonates': 'отзывается',
+    'res.u.resonates': 'у меня так же',
+    'res.k.warmth': 'тепло',
+    'res.u.warmth': 'по-доброму',
+    'res.k.spark': 'искра',
+    'res.u.spark': 'зажгло',
+    'res.k.support': 'я рядом',
+    'res.u.support': 'поддерживаю',
+    'res.k.curious': 'любопытно',
+    'res.u.curious': 'расскажи ещё',
+    'res.k.join': 'я в деле',
+    'res.u.join': 'участвую',
+    'res.k.weight': 'тяжёлое',
+    'res.u.weight': 'непросто читать',
     'conv.ext.claim': 'Пришло снаружи. Подпись отправителя не путешествовала \u2014 это слово шлюза.',
     'conv.ext.losses': 'Граница отрезала или изменила',
     'conv.write': 'написать в пространство…',

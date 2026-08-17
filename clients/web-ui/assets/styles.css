@@ -2046,11 +2046,28 @@
     text-shadow: 2.2px .5px 0 rgba(255, 62, 205, .7),
                 -2.2px -.5px 0 rgba(56, 240, 255, .62); }
   .res-slot .res-lbl { font-size: 10.5px; color: var(--dim); }
+  /* Usage, not definition — smaller and dimmer than the name, because it
+     is a hint at how the word is said, not a second label competing with
+     it. Hidden on very narrow grids rather than wrapping into a wall. */
+  .res-slot .res-use { font-size: 9px; color: var(--dim); opacity: .62;
+    line-height: 1.15; text-align: center; margin-top: 1px; }
+  /* A PALETTE YOU CAN FEEL. The slot lifts a little toward the pointer —
+     four degrees, nothing more — so the grid has depth without becoming a
+     toy. Perspective lives on the container so the tilt reads as one
+     surface rather than seven independent cards. */
+  .res-picker-slots { perspective: 620px; }
+  .res-slot { transform-style: preserve-3d; }
+  .res-slot:hover { transform: translateY(-1px) scale(1.06) rotateX(4deg); }
+  .res-slot:active { transform: translateY(0) scale(.99) rotateX(0deg);
+    transition-duration: .07s; }
   @media (prefers-reduced-motion: reduce) {
     .res-picker { animation: none; }
     .res-slot .res-sym { animation: none; }
     .res-slot, .res-add { transition: none; }
-    .res-slot:hover, .res-add:hover { transform: none; }
+    /* The tilt goes with the rest of the motion: somebody who asked the
+       system for stillness gets stillness, not a smaller wobble. */
+    .res-slot:hover, .res-add:hover, .res-slot:active { transform: none; }
+    .res-picker-slots { perspective: none; }
   }
   .res-picker-actions { display: flex; gap: 8px; justify-content: flex-end;
     margin-top: 6px; }

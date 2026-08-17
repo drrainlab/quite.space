@@ -175,8 +175,33 @@ function renderResonanceRow(res, targetId, onChange) {
   return row;
 }
 
+// THE PROTOCOL OWNS THE KEYS; THIS OWNS THE WORDS FOR THEM.
+//
+// CoreRegistry is the one source of truth and is deliberately never
+// mirrored in JS — so this does not mirror it. It translates a key the
+// node already sent, and only for the core vocabulary every client can be
+// sure about. A space's own palette keeps its author's label untouched:
+// translating somebody else's words would be putting words in their mouth.
+function resLabel(slotOrGroup) {
+  const key = slotOrGroup.key;
+  if (key) {
+    const k = t('res.k.' + key);
+    if (k && k !== 'res.k.' + key) return k;
+  }
+  return slotOrGroup.label || key || slotOrGroup.value || 'reaction';
+}
+
+// resUsage is how the word is USED, not what it means. A beta tester read
+// the palette as "not quite clear, and unfamiliar" — a definition would
+// have answered neither, and an example answers both.
+function resUsage(key) {
+  if (!key) return '';
+  const u = t('res.u.' + key);
+  return u && u !== 'res.u.' + key ? u : '';
+}
+
 function resChipTitle(g) {
-  const label = g.label || g.key || g.value || 'reaction';
+  const label = resLabel(g);
   return g.count === 1 ? `${label} · one of us` : `${label} · ${g.count} of us`;
 }
 
@@ -208,8 +233,25 @@ function openResPicker(targetId, anchor, res, onChange) {
     const sym = document.createElement('span');
     sym.className = 'res-sym'; sym.textContent = s.fallback;
     const lbl = document.createElement('span');
-    lbl.className = 'res-lbl'; lbl.textContent = s.label;
+    lbl.className = 'res-lbl'; lbl.textContent = resLabel(s);
     b.append(sym, lbl);
+    const usage = resUsage(s.key);
+    if (usage) {
+      const use = document.createElement('span');
+      use.className = 'res-use'; use.textContent = usage;
+      b.appendChild(use);
+    }
+    // SHOW WHAT IT DOES, NOT ONLY WHAT IT IS CALLED. Every meaning already
+    // owns a surface effect — a heartbeat, a golden wash, rising sparks,
+    // a settling weight — and until now a person met it only AFTER
+    // choosing blind. Hovering plays that same effect on the slot itself,
+    // so the vocabulary explains itself the way it was designed to: by
+    // behaving. Nothing new is invented here; RESFX is reused as-is, and
+    // it refuses on its own when effects are off or motion is reduced.
+    b.onmouseenter = () => {
+      if (typeof RESFX?.fireArrival !== 'function') return;
+      RESFX.fireArrival(b, { kind: 'semantic', key: s.key, fallback: s.fallback }, 1);
+    };
     b.onclick = () => { closeResPicker(); setSemantic(targetId, s.key, onChange); };
     slotRow.appendChild(b);
   }
@@ -296,7 +338,7 @@ async function openResActors(targetId, anchor) {
     const who = document.createElement('span');
     who.className = 'res-actor-names';
     const names = (g.actors || []).map(a => a.mine ? 'you' : (a.name || 'member'));
-    const label = g.label || g.key || g.value || 'reaction';
+    const label = resLabel(g);
     who.textContent = names.length === 1
       ? `${label} · ${names[0]}`
       : `${label} · ${names.join(', ')}`;
