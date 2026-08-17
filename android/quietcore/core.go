@@ -194,7 +194,10 @@ func Start(dir, passphrase, name string, withLAN bool) error {
 	ok = true
 	runtimeEpoch = hex.EncodeToString(epoch[:])
 	dataDir, apiPort, apiToken = dir, port, api.Token()
-	fingerprint = r.Principal.Fingerprint()
+	// From the PUBLIC id: a paired phone is a secondary and holds no root
+	// keypair — the fourth Principal.Fingerprint() call in the tree, and the
+	// one the first live secondary actually walked into (SIGABRT at Open).
+	fingerprint = r.Fingerprint()
 	startedAt = time.Now().UTC()
 	lastError = ""
 	stateMu.Unlock()
