@@ -221,9 +221,16 @@ func (r *Runtime) BeginPairing(bind string, nowUnix uint64) (*PairingHost, error
 		node.Close()
 		return nil, err
 	}
+	// THE BIND AND THE ADVERTISEMENT ARE TWO DIFFERENT QUESTIONS, and
+	// conflating them was measured on a live pairing: the guessed address
+	// followed the default route onto a VPN's utun, the listener bound to
+	// THAT address alone, and no packet from the room could ever land —
+	// whatever the offer said, whatever the firewall allowed. A wildcard
+	// bind listens wherever the child manages to arrive; the host in the
+	// offer is only the first guess, and the beacon corrects it.
 	host, _, _ := net.SplitHostPort(bind)
-	if host == "" {
-		host = "127.0.0.1"
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = advertiseHost()
 	}
 	offer, err := pairing.NewOffer(identity.NewRand(),
 		net.JoinHostPort(host, fmt.Sprint(port)), nowUnix)
@@ -579,4 +586,46 @@ func awaitPairingBeacon(udpAddr string, beacon [32]byte) (string, error) {
 	case <-time.After(10 * time.Second):
 		return "", errors.New("node: no pairing beacon within ten seconds")
 	}
+}
+
+// advertiseHost picks the address the offer names: a private IPv4 on a real
+// interface, never a tunnel. 198.18.0.0/15 is excluded by name — it is the
+// benchmarking range VPNs squat on, and an offer advertising it sends the
+// child into a wall (measured). The UDP-dial trick is only the LAST resort,
+// because it follows the default route — which is exactly what a VPN owns.
+func advertiseHost() string {
+	ifaces, err := net.Interfaces()
+	if err == nil {
+		for _, ifc := range ifaces {
+			if ifc.Flags&net.FlagUp == 0 || ifc.Flags&net.FlagLoopback != 0 ||
+				ifc.Flags&net.FlagPointToPoint != 0 {
+				continue // tunnels are point-to-point; rooms are not
+			}
+			addrs, err := ifc.Addrs()
+			if err != nil {
+				continue
+			}
+			for _, a := range addrs {
+				ipn, ok := a.(*net.IPNet)
+				if !ok {
+					continue
+				}
+				ip4 := ipn.IP.To4()
+				if ip4 == nil || !ip4.IsPrivate() {
+					continue
+				}
+				if ip4[0] == 198 && (ip4[1] == 18 || ip4[1] == 19) {
+					continue // the VPN squat range, excluded by name
+				}
+				return ip4.String()
+			}
+		}
+	}
+	if c, err := net.Dial("udp", "192.0.2.1:1"); err == nil {
+		defer c.Close()
+		if h, _, err := net.SplitHostPort(c.LocalAddr().String()); err == nil {
+			return h
+		}
+	}
+	return "127.0.0.1"
 }

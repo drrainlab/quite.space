@@ -18,7 +18,6 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
-	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -181,15 +180,8 @@ func (p *pairingUI) close() {
 // at its LAN-reachable address, so the offer's fast path is dialable from
 // the room. The guess can be wrong or go stale — that is exactly what the
 // beacon exists for.
-var pairingBind = func() string {
-	// The UDP-dial trick reads the interface a default route would use; no
-	// packet leaves. Offline, the answer is loopback and the beacon does
-	// all the work.
-	c, err := net.Dial("udp", "192.0.2.1:1")
-	if err != nil {
-		return "127.0.0.1:0"
-	}
-	defer c.Close()
-	host, _, _ := net.SplitHostPort(c.LocalAddr().String())
-	return net.JoinHostPort(host, "0")
-}
+// pairingBind is where the ceremony listener binds: EVERY interface, an
+// ephemeral port. Which address the offer advertises is a separate question
+// (advertiseHost), answered inside BeginPairing — binding to a guessed
+// address was the bug a live pairing found, with a VPN owning the guess.
+var pairingBind = func() string { return "0.0.0.0:0" }
