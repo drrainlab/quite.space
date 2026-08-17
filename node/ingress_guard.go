@@ -1,10 +1,12 @@
 package node
 
 import (
+	"errors"
 	"sync"
 	"time"
 
 	"github.com/drrainlab/quiet_places/protocol/id"
+	"github.com/drrainlab/quiet_places/terminals"
 )
 
 // Owner-side ingress abuse limits (PA-1.3). A public community owner drains
@@ -54,8 +56,42 @@ func (r *rejectedRing) has(eid id.EventID, now time.Time) bool {
 	return true
 }
 
+// holdClassRefusal is the ONE predicate for "this refusal is a delay". Three
+// refusals are hold-class, each measured rather than assumed (MD-0b): an
+// unknown certificate (one cycle behind its bearer), a frozen space
+// (unfreezing admits the same bytes), and an unauthorised writer (the
+// authorising revision admits them) — ingress_policy_probe_test.go holds the
+// proofs.
+func holdClassRefusal(err error) bool {
+	return errors.Is(err, ErrAdmissionHold) ||
+		errors.Is(err, terminals.ErrSpaceFrozen) ||
+		errors.Is(err, terminals.ErrNotAuthorized)
+}
+
+// rememberRefusal memoizes a refusal ONLY when it is terminal. This is the
+// structural form of MD-0b's invariant — cacheability follows from the
+// verdict, never from the caller's judgement:
+//
+//	ADMIT
+//	HOLD          ← never memoized as bad
+//	REJECT
+//	   └── terminal only → may enter this ring
+//
+// It exists so that `if err != nil { remember() }` cannot be written again:
+// the raw remember is not exported from the ring's API surface, and every
+// caller goes through the verdict.
+func (r *rejectedRing) rememberRefusal(eid id.EventID, err error, now time.Time) {
+	if holdClassRefusal(err) {
+		// A temporary admission failure must never be converted by
+		// transport, deduplication, or caching into permanent refusal.
+		return
+	}
+	r.remember(eid, now)
+}
+
 // remember records eid as rejected until now+TTL, evicting the oldest entry
-// if the ring is full.
+// if the ring is full. Callers use rememberRefusal; this is the ring's
+// internal write.
 func (r *rejectedRing) remember(eid id.EventID, now time.Time) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

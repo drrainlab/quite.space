@@ -63,6 +63,15 @@ type Space struct {
 	// delivery ladder (ADR-015 §5); it must not re-enter the space.
 	OnAbsorb func(a eventlog.Applied)
 
+	// OnPolicyChanged fires when the ACCESS POLICY has been re-derived from a
+	// manifest — whoever installed it and however it arrived: an owner's local
+	// revision, a manifest that came over a relay, a controller restored at
+	// open. It exists because a policy revision is a SIGNED FRAME rather than
+	// a log event on the local path, so a caller watching OnAbsorb would see
+	// the remote path and silently miss the local one (MD-0b). Must not
+	// re-enter the space.
+	OnPolicyChanged func()
+
 	// ProjectionFrames counts events applied via public projections (the
 	// reader replica's honest "how much I hold" — its canonical log is
 	// empty by design).
@@ -341,7 +350,19 @@ func (p *Participant) Emit(s *Space, schema string, payload []byte,
 	}
 	// Epoch distribution stays plaintext (its wraps are already encrypted
 	// per device); everything else in a private space gets sealed.
-	if s.Private && schema != schemas.MembershipEpoch {
+	//
+	// CERTIFICATES AND REVOCATIONS ARE PLAINTEXT FOR THE SAME CLASS OF
+	// REASON (MD-0b, decision C). A device certificate is a root-signed
+	// public binding — proof, not content — and it exists precisely so the
+	// ADMISSION layer of a peer can verify a device before granting anything.
+	// Sealing it was measured to hide the proof from the very check that
+	// needs it, and the result was a deadlock inside one chain: the epoch at
+	// seq 1 refused for want of a certificate that sat sealed at seq 3.
+	// What a relay learns from the plaintext is nothing it could not already
+	// read off every envelope header (principal, device — the bundle adds
+	// integrity, not confidentiality).
+	if s.Private && schema != schemas.MembershipEpoch &&
+		schema != schemas.DeviceCertified && schema != schemas.DeviceRevoked {
 		sealed, err := s.sealForEmit(schema, payload)
 		if err != nil {
 			return eventlog.Applied{}, err

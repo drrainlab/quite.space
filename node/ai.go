@@ -78,6 +78,9 @@ func (r *Runtime) loadAgentLocked() error {
 		return err
 	}
 	r.agent = p
+	// MD-0: an owned device is certified as soon as it exists, restore
+	// included — a device the person owns must never be the one refused.
+	r.certifyOwnedDeviceLocked(dev)
 	return nil
 }
 
@@ -108,6 +111,7 @@ func (r *Runtime) EnsureAISpace() (id.TerminalID, error) {
 		}
 		r.mu.Lock()
 		r.agent = p
+		r.certifyOwnedDeviceLocked(dev)
 		r.ks.Agent = storage.AgentRecord{
 			DeviceSeed: dev.Seed(), DeviceX25519: dev.X25519Priv(),
 			TerminalSeed: seed, ManifestFrame: p.ManifestFrame,

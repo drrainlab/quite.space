@@ -466,7 +466,6 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 	bucket := relay.Bucket(now)
 	expires := now + uint64(DefaultRelayTTL/time.Second)
 
-
 	var deadline uint64
 	biggest := 0
 	for _, b := range bodies {
@@ -854,125 +853,178 @@ const maxCapsPerCollect = 64
 
 // applyRelayItems is the durable half of one chunk: everything collected is
 // ingested and applied before the next request goes out.
+// applyRelayItems is the two-phase custody chain (MD-0b): the WHOLE
+// destructive response becomes durably ours before any of it is judged, and a
+// held item is released only once the journal owns its frames or nothing ever
+// will. See ingress_custody.go for why the boundary is the response and not
+// the frame.
 func (r *Runtime) applyRelayItems(client *relay.Client, items [][]byte) (int, error) {
+	held, err := r.takeIngressCustody(items, storage.IngressRelay)
+	if err != nil {
+		// Custody was lost or could not be taken. What was persisted before
+		// the failure stays held; nothing here pretends it was applied.
+		return 0, err
+	}
 	applied := 0
-	for _, item := range items {
-		parts, err := bundle.DecodeParts(item)
-		if err != nil {
-			continue // not a bundle we understand; ignore quietly
+	for _, h := range held {
+		n, release := r.applyHeldRelayItem(client, h)
+		applied += n
+		if release {
+			r.releaseIngress(h.ID)
 		}
-		terminal, frames, blobs := parts.Terminal, parts.Frames, parts.Blobs
-		r.mu.Lock()
-		_, known := r.spaces[terminal]
-		r.mu.Unlock()
-		if !known {
-			continue // not our space; also nothing to answer with
-		}
-		// A relay media request rode along: answer with any wanted blobs we
-		// hold, pushed into the requester's inbox (the response half of
-		// on-demand media over the relay). Runs without r.mu — it does network
-		// I/O.
-		//
-		// ROUTED TO THE WANTER (RT-0). This used to answer on `client` — the
-		// connection the want arrived through, which is OUR ingress — and
-		// while everybody shared one relay that was also the asker's relay.
-		// The moment it was not, the answer landed in a mailbox on a machine
-		// the asker never reads: the last cross-relay gap the T0 media test
-		// caught after messages already crossed. A reply box still answers
-		// in place — the asker minted it for THIS relay on purpose.
-		if len(parts.Wants) > 0 {
-			if len(parts.ReplyBox) > 0 {
-				r.answerWants(client, terminal, parts.Wanter, parts.Wants, parts.ReplyBox, false)
-			} else {
-				r.answerWantsRouted(terminal, parts.Wanter, parts.Wants)
-			}
-		}
-		r.mu.Lock()
-		st, ok := r.spaces[terminal]
-		if !ok {
-			r.mu.Unlock()
-			continue
-		}
-		for _, f := range frames {
-			as, err := st.space.Log.Ingest(f)
-			if err != nil {
-				continue
-			}
-			for _, a := range as {
-				st.space.AttachSyncApply(a)
-				applied++
-			}
-		}
-		// Carried blobs: verify-by-hash happens inside PutBlob addressing
-		// (content-addressed store recomputes the id); possession proves
-		// nothing about access — decryption still needs the block's key.
-		//
-		// EXPECTED-ONLY, like every other blob ingest. This loop used to
-		// store whatever a bundle carried, and it was the one path that
-		// did not gate: kernel/sync's acceptBlob refuses anything outside
-		// e.pending, and swarmCollect drops an unexpected hash before it
-		// costs anything. Nobody can forge a blob's identity — the store
-		// is content-addressed — but the ingress hint for a space's inbox
-		// is derivable by any member, so an unfiltered loop let one member
-		// write unbounded padding into every other member's blob store,
-		// permanently: nothing references those bytes and there is no GC.
-		//
-		// "Expected" here is wider than the want set, and it has to be.
-		// A relay bundle carries blobs PROACTIVELY — that is the whole
-		// dead drop: an offline peer collects the event, the manifest and
-		// the chunks in one pull, having asked for nothing. So a blob is
-		// admitted when the space's own asset graph references it
-		// (assetIdx.allowed, the same question serveBlobs asks on the peer
-		// path) or when this node asked for it outright. Frames are
-		// ingested above, so a ref that arrived in THIS bundle already
-		// counts. What is refused is the thing that was never referenced
-		// by anything and never requested: padding.
-		store := func(b []byte) bool {
-			h := id.HashOf(b)
-			if !r.assetIdx.allowed(h, terminal) && !r.wantsBlobLocked(terminal, h) {
-				return false
-			}
-			_, _ = r.root.PutBlob(b)
-			return true
-		}
-		var deferred [][]byte
-		for _, b := range blobs {
-			if !store(b) {
-				deferred = append(deferred, b)
-			}
-		}
-		// A delivered manifest may unlock chunk indexing.
-		for h := range r.assetIdx.manifestOwner {
-			if r.root.HasBlob(h) {
-				r.onBlobStored(h)
-			}
-		}
-		// Second pass, for the bundle that carried a manifest AND its
-		// chunks together: until that manifest was stored and indexed just
-		// above, its chunk ids were referenced by nothing this node knew
-		// about, so the first pass could not tell them from padding. One
-		// retry resolves it without a second round trip — and a blob that
-		// is still unreferenced after the manifest landed is refused for
-		// good, which is the case the gate exists for.
-		if len(deferred) > 0 {
-			again := false
-			for _, b := range deferred {
-				if store(b) {
-					again = true
-				}
-			}
-			if again {
-				for h := range r.assetIdx.manifestOwner {
-					if r.root.HasBlob(h) {
-						r.onBlobStored(h)
-					}
-				}
-			}
-		}
-		r.persistEpochsLocked(terminal, st.space)
-		r.mu.Unlock()
 	}
 	return applied, nil
+}
+
+// applyHeldRelayItem judges ONE held item. It returns how much was applied and
+// whether the hold may be released — which is true only when every frame in it
+// has reached a terminal state: durably in the journal, or refused for good.
+func (r *Runtime) applyHeldRelayItem(client *relay.Client, heldItem storage.HeldIngress) (int, bool) {
+	applied := 0
+	release := true
+	item := heldItem.Raw
+	parts, err := bundle.DecodeParts(item)
+	if err != nil {
+		// Not a bundle we understand, and no future state changes that.
+		r.noteIngressRefusal(IngressRefusal{
+			Hold: heldItem.ID, Reason: "malformed_bundle", Detail: err.Error(), Source: heldItem.Meta.Source,
+		})
+		return 0, true
+	}
+	terminal, frames, blobs := parts.Terminal, parts.Frames, parts.Blobs
+	r.mu.Lock()
+	_, known := r.spaces[terminal]
+	r.mu.Unlock()
+	if !known {
+		// NOT OUR SPACE — AND THAT IS TRANSIENT, measured rather than assumed
+		// (ingress_membership_probe_test.go). The question asked here is
+		// `r.spaces[terminal]`, a map that GAINS entries: joining, creating, or
+		// a join saga completing one tick after the bundle arrived all change
+		// the answer, and the same bytes stop being refused. It is knowledge
+		// about OUR membership, never proof about the frame — so the bytes stay
+		// ours, and nothing is answered for a room we are not in.
+		return 0, false
+	}
+	// A relay media request rode along: answer with any wanted blobs we
+	// hold, pushed into the requester's inbox (the response half of
+	// on-demand media over the relay). Runs without r.mu — it does network
+	// I/O.
+	//
+	// ROUTED TO THE WANTER (RT-0). This used to answer on `client` — the
+	// connection the want arrived through, which is OUR ingress — and
+	// while everybody shared one relay that was also the asker's relay.
+	// The moment it was not, the answer landed in a mailbox on a machine
+	// the asker never reads: the last cross-relay gap the T0 media test
+	// caught after messages already crossed. A reply box still answers
+	// in place — the asker minted it for THIS relay on purpose.
+	//
+	// A NIL CLIENT MEANS THIS IS A REPLAY from the ingress hold (MD-0b), and a
+	// want is answered exactly once: the bundle asked when it first arrived,
+	// and re-answering on every reconsideration would push the same blobs into
+	// somebody's inbox each time an unrelated certificate landed.
+	if client != nil && len(parts.Wants) > 0 {
+		if len(parts.ReplyBox) > 0 {
+			r.answerWants(client, terminal, parts.Wanter, parts.Wants, parts.ReplyBox, false)
+		} else {
+			r.answerWantsRouted(terminal, parts.Wanter, parts.Wants)
+		}
+	}
+	r.mu.Lock()
+	st, ok := r.spaces[terminal]
+	if !ok {
+		// The space closed between the two locks. Nothing was applied and
+		// nothing was judged, so custody STAYS: this is transient by
+		// construction — reopening the space makes it admissible again.
+		r.mu.Unlock()
+		return 0, false
+	}
+	// Decision C's pre-pass: the item's own proofs become trust before any
+	// of its frames are judged, so a bundle whose data rides ahead of its
+	// certificate in chain order admits in ONE pass — blobs stored while
+	// their referencing frames apply, nothing leaking into an asynchronous
+	// reconsideration the caller cannot see.
+	r.learnBundleProofs(frames)
+	// EVERY FRAME MUST REACH A TERMINAL STATE before the bytes go. One
+	// frame still awaiting its predecessor keeps the whole item, and the
+	// frames beside it that already landed are harmless on the replay:
+	// EventID dedup answers them, which is exactly why no transaction
+	// between the two stores is needed.
+	for _, f := range frames {
+		custody, n := r.judgeFrame(st, terminal, heldItem.ID, f)
+		applied += n
+		if custody == custodyStillOurs {
+			release = false
+		}
+	}
+	// Carried blobs: verify-by-hash happens inside PutBlob addressing
+	// (content-addressed store recomputes the id); possession proves
+	// nothing about access — decryption still needs the block's key.
+	//
+	// EXPECTED-ONLY, like every other blob ingest. This loop used to
+	// store whatever a bundle carried, and it was the one path that
+	// did not gate: kernel/sync's acceptBlob refuses anything outside
+	// e.pending, and swarmCollect drops an unexpected hash before it
+	// costs anything. Nobody can forge a blob's identity — the store
+	// is content-addressed — but the ingress hint for a space's inbox
+	// is derivable by any member, so an unfiltered loop let one member
+	// write unbounded padding into every other member's blob store,
+	// permanently: nothing references those bytes and there is no GC.
+	//
+	// "Expected" here is wider than the want set, and it has to be.
+	// A relay bundle carries blobs PROACTIVELY — that is the whole
+	// dead drop: an offline peer collects the event, the manifest and
+	// the chunks in one pull, having asked for nothing. So a blob is
+	// admitted when the space's own asset graph references it
+	// (assetIdx.allowed, the same question serveBlobs asks on the peer
+	// path) or when this node asked for it outright. Frames are
+	// ingested above, so a ref that arrived in THIS bundle already
+	// counts. What is refused is the thing that was never referenced
+	// by anything and never requested: padding.
+	store := func(b []byte) bool {
+		h := id.HashOf(b)
+		if !r.assetIdx.allowed(h, terminal) && !r.wantsBlobLocked(terminal, h) {
+			return false
+		}
+		_, _ = r.root.PutBlob(b)
+		return true
+	}
+	var deferred [][]byte
+	for _, b := range blobs {
+		if !store(b) {
+			deferred = append(deferred, b)
+		}
+	}
+	// A delivered manifest may unlock chunk indexing.
+	for h := range r.assetIdx.manifestOwner {
+		if r.root.HasBlob(h) {
+			r.onBlobStored(h)
+		}
+	}
+	// Second pass, for the bundle that carried a manifest AND its
+	// chunks together: until that manifest was stored and indexed just
+	// above, its chunk ids were referenced by nothing this node knew
+	// about, so the first pass could not tell them from padding. One
+	// retry resolves it without a second round trip — and a blob that
+	// is still unreferenced after the manifest landed is refused for
+	// good, which is the case the gate exists for.
+	if len(deferred) > 0 {
+		again := false
+		for _, b := range deferred {
+			if store(b) {
+				again = true
+			}
+		}
+		if again {
+			for h := range r.assetIdx.manifestOwner {
+				if r.root.HasBlob(h) {
+					r.onBlobStored(h)
+				}
+			}
+		}
+	}
+	r.persistEpochsLocked(terminal, st.space)
+	r.mu.Unlock()
+	return applied, release
 }
 
 // collectOutcome is what a drain actually did, as a value rather than a pair.
@@ -1229,7 +1281,7 @@ func (r *Runtime) PullFromRelay(addr string) (applied int, err error) {
 	}
 
 	outcome, chunkErr := r.collectInChunks(caps, maxCapsPerCollect, r.chunkCursor(addr),
-		client.Collect,
+		r.guardedCollect(client.Collect),
 		func(items [][]byte) (int, error) { return r.applyRelayItems(client, items) })
 	applied += outcome.Applied
 	if chunkErr != nil {
@@ -1284,7 +1336,7 @@ func (r *Runtime) CollectReplyBoxesAt(addr string, tids []id.TerminalID) (int, e
 	var opErr error
 	defer func() { release(opErr) }()
 	outcome, chunkErr := r.collectInChunks(caps, maxCapsPerCollect, r.chunkCursor(addr),
-		client.Collect,
+		r.guardedCollect(client.Collect),
 		func(items [][]byte) (int, error) { return r.applyRelayItems(client, items) })
 	r.rememberChunkCursor(addr, outcome)
 	if chunkErr != nil {

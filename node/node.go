@@ -26,9 +26,11 @@ import (
 	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/protocol/manifest"
 	"github.com/drrainlab/quiet_places/protocol/schemas"
+	"github.com/drrainlab/quiet_places/protocol/signal"
 	"github.com/drrainlab/quiet_places/terminals"
 	"github.com/drrainlab/quiet_places/terminals/human"
 	"github.com/drrainlab/quiet_places/transports"
+	"github.com/drrainlab/quiet_places/transports/bundle"
 	"github.com/drrainlab/quiet_places/transports/lan"
 	"github.com/drrainlab/quiet_places/transports/meshtastic"
 	"github.com/drrainlab/quiet_places/transports/radiotransfer"
@@ -70,10 +72,38 @@ type Runtime struct {
 	// ident is the device-certification gate (MD-0). Built in one scan
 	// across every local log before any admission decision is taken.
 	ident *identityState
-	// selfCert is this device's own certificate, and certPublished is
-	// which spaces already carry it (MD-0).
+	// selfCert is this device's own certificate; certPublished records, per
+	// space, WHICH owned devices' certificates that log already carries
+	// (MD-0). Keyed by the CERTIFIED device rather than a bool, because this
+	// node can own several writers — the person's device, the assistant, the
+	// gateway — and each needs its proof in every space it speaks in.
 	selfCert      []byte
-	certPublished map[id.TerminalID]bool
+	certPublished map[id.TerminalID]map[id.DeviceID]bool
+
+	// identityGate arms the certification check (MD-0b). OFF until the hold
+	// can act on a Hold verdict, because a gate that precedes what makes it
+	// satisfiable refuses every peer — measured, not feared.
+	identityGate bool
+
+	// hold is local durable custody for destructively collected ingress
+	// (MD-0b). holdMu guards it and the two records beside it rather than
+	// r.mu, because the custody phase must not be serialised behind the
+	// space map it does not touch.
+	holdMu          sync.Mutex
+	hold            *storage.IngressHold
+	custodyLost     bool
+	ingressRefusals []IngressRefusal
+	// Reconsideration is COALESCED, never recursive: a held frame may itself
+	// be the control event that changes admission state again.
+	// ingressArmed stays false throughout Open, so every change applied
+	// during replay collapses into the one startup pass.
+	reconsiderDirty   bool
+	reconsiderRunning bool
+	// lastPassReleased is what earns one overshooting drain when the hold is
+	// full: progress, and nothing else, keeps a destructive collect allowed.
+	lastPassReleased    bool
+	ingressArmed        bool
+	startupReconsidered chan struct{}
 
 	spaces    map[id.TerminalID]*spaceState
 	assetIdx  *assetIndex
@@ -365,7 +395,8 @@ func Open(dataDir string, passphrase []byte, displayName string) (rt *Runtime, e
 		notifyLedger: newNotifyLedger(dataDir),
 		assetIdx:     newAssetIndex(), passes: newPassRegistry(),
 		joins: map[string]*joinAttempt{}, stop: make(chan struct{}),
-		relayWants: map[id.TerminalID]map[id.Hash]struct{}{},
+		startupReconsidered: make(chan struct{}),
+		relayWants:          map[id.TerminalID]map[id.Hash]struct{}{},
 		// Radios ask for retransmission unless told otherwise. See
 		// SetMeshReliable: without it, nothing arrived at all on a shared
 		// channel, and a person should not have to find a setting before
@@ -420,9 +451,8 @@ func Open(dataDir string, passphrase []byte, displayName string) (rt *Runtime, e
 	}
 	_ = selfCertNew
 	r.selfCert = selfCert
-	r.certPublished = map[id.TerminalID]bool{}
+	r.certPublished = map[id.TerminalID]map[id.DeviceID]bool{}
 	identSeen := map[storage.LegacyBinding]bool{}
-	certHere := map[id.TerminalID]bool{}
 	var identLogs []*eventlog.Log
 
 	// Self participant. A persisted manifest frame (rev chain intact) is
@@ -518,9 +548,14 @@ func Open(dataDir string, passphrase []byte, displayName string) (rt *Runtime, e
 			identSeen[storage.LegacyBinding{
 				Principal: a.Env.Principal, Device: a.Env.Device,
 			}] = true
-			if a.Env.Schema == schemas.DeviceCertified && a.Env.Device == r.Device.ID {
-				certHere[tid] = true
-				r.certPublished[tid] = true
+			if a.Env.Schema == schemas.DeviceCertified {
+				// Mark by the CERTIFIED device, read from the payload. An
+				// older sealed certificate does not decode here and counts
+				// as absent — re-published once, in plaintext, which is the
+				// migration this wants anyway.
+				if c, er := identity.DecodeCertificate(a.Env.Payload); er == nil {
+					r.markCertPublished(tid, c.Device)
+				}
 			}
 		}
 		identLogs = append(identLogs, log)
@@ -546,17 +581,6 @@ func Open(dataDir string, passphrase []byte, displayName string) (rt *Runtime, e
 				return nil, fmt.Errorf("node: publishing manifest into %s: %w", tid, err)
 			}
 			r.publishCertLocked(s)
-			// ADR-002:36-37 — "certificates travel in the event log so peers can
-			// verify any device's authority offline". Once per space, and only
-			// where this log does not already carry ours: a certificate re-emitted
-			// every restart would grow an append-only log forever to say a thing
-			// that has not changed.
-			if !certHere[tid] && len(selfCert) > 0 {
-				if _, err := r.Self.Emit(s, schemas.DeviceCertified, selfCert,
-					r.Self.DefaultAuthorship(), 0); err != nil {
-					return nil, fmt.Errorf("node: publishing device certificate into %s: %w", tid, err)
-				}
-			}
 		}
 		// Repair the visibility cache from the verified manifest.
 		if manifestKnown {
@@ -575,25 +599,36 @@ func Open(dataDir string, passphrase []byte, displayName string) (rt *Runtime, e
 	} else {
 		r.ident.loadLegacy(r.ks.LegacyBindings)
 	}
-	// The gate goes on HERE, and only here: the scan is complete, the
-	// authority has certified itself, and every space this node writes to
-	// now carries that certificate. Enforcement never precedes the thing
-	// that makes it satisfiable — measured the hard way, see the git history
-	// of this line.
-	// STILL OFF. Five of the six things the gate needs are now in place and
-	// each was a failing test first: the authority and its sibling devices
-	// certify themselves, certificates ride the log and are admitted on their
-	// own proof, spaces joined at runtime publish one, and an ARRIVING
-	// certificate becomes trust rather than mere storage.
+	// THE GATE GOES ON HERE, and only here: the scan is complete, the legacy
+	// allowlist is frozen, the authority has certified itself, and every space
+	// this node writes to carries that certificate. Enforcement never precedes
+	// the thing that makes it satisfiable — measured the hard way, see the git
+	// history of this line.
 	//
-	// The sixth is not, and it is the one the plan already named as a risk:
-	// nothing orders a peer's certificate before its first message. TR-0's
-	// headless terminal still fails — it joins, publishes, restarts, speaks,
-	// and the message does not arrive. The remaining hypothesis, and it is
-	// only that: a frame refused here is DROPPED, and the sync engine does
-	// not re-offer it, so the refusal is permanent rather than a delay. If
-	// that is so, hold-and-replay is not an optimisation but the requirement,
-	// and it must land before this line is uncommented.
+	// The sixth precondition, the one that kept this off, is now met too:
+	// nothing ORDERS a peer's certificate before its first message, and a
+	// refused frame used to be lost rather than delayed because the relay's
+	// Collect is destructive. MD-0b closed that — local durable custody holds
+	// the bytes and re-judges them when the prerequisite is applied — so the
+	// refusal is a delay on every path again, which is the condition this line
+	// was waiting for.
+	//
+	// It is a FLAG rather than an install because the log gate is wired at
+	// attach, long before this point, and must stay open through the replay
+	// above: PASS 2 replays local history whose allowlist is only frozen a few
+	// lines up.
+	//
+	// The seventh precondition was found BY the sixth, and it is why this
+	// line stayed off for one more round: a deadlock inside one chain. A
+	// device's certificate used to ride sealed at seq 3, behind the epoch at
+	// seq 1 that needed it — held forever, because nothing else was ever
+	// going to arrive. Decision C resolved it: the certificate is one object
+	// in two roles. As ADMISSION PROOF it travels plaintext (sealForEmit) and
+	// is learned at the log's door the moment it arrives, free of chain
+	// ordering; as a LOG RECORD it still applies in ordinary order for
+	// convergence and audit. Chain position is now canonical tidiness, never
+	// the thing holding the security model up.
+	r.identityGate = true
 	_ = identLogs
 	// SD-0: finish any deletion the last process did not live to finish.
 	// Before the saga is restored and before anything is served: events on
@@ -623,6 +658,14 @@ func Open(dataDir string, passphrase []byte, displayName string) (rt *Runtime, e
 	// that came back under a different serial path, must never stop somebody
 	// opening their own data.
 	r.restoreRadio()
+	// MD-0b STARTUP RECONSIDER, and its position is the whole point: identity
+	// is built, every space is replayed and attached, membership and policy
+	// projections are all reconstructed — and no destructive collection has
+	// started yet. Running it any earlier would judge a held frame against
+	// half a world (its space not replayed yet) and there would be no later
+	// trigger, because the prerequisite it waits for is already in the log
+	// rather than still on its way.
+	r.armIngressReconsider()
 	// Resume background relay sync. Automatic mode (RR-3) resolves its
 	// primary from measurements in the background — unlock never waits on
 	// a probe; custom mode uses exactly the configured address.
@@ -697,6 +740,15 @@ func (r *Runtime) attach(tid id.TerminalID, s *terminals.Space) {
 		// Found by TR-0's headless terminal: it joined, published its
 		// certificate, restarted, spoke — and the message never arrived.
 		r.ident.observe(a.Env)
+		// MD-0b: the state has now actually CHANGED, so whatever waits in the
+		// ingress hold may have become admissible. Hooked HERE rather than in
+		// RevisePolicy or Certify because this funnel sees the REMOTE path too
+		// — a revision arriving over a relay calls no local authoring
+		// function, and that is exactly the reorder that puts a message ahead
+		// of the event authorising it.
+		if admissionRelevantSchema(a.Env.Schema) {
+			r.admissionStateChanged()
+		}
 		// AR-1b: the notification plane, and it is DISARMED during Open's
 		// replays — a host cannot arm it until Open has returned, so history
 		// is unable to notify by construction rather than by a filter.
@@ -741,12 +793,91 @@ func (r *Runtime) attach(tid id.TerminalID, s *terminals.Space) {
 	// Bridge custody ACKs: honored only under a pinned custodian key for
 	// the ingress link (custodian.go).
 	st.eng.OnCustodyReceipt = func(raw []byte) { r.handleCustodyReceipt(tid, raw) }
+	// MD-0b decision C, on the SYNC path (LAN, radio): the batch's own proofs
+	// become trust before its frames are judged, and a hold-class refusal is
+	// taken into durable custody instead of dropped. The second half matters
+	// most on radio — a completed transfer is remembered by the receiver and
+	// never re-delivered upward, so a dropped refusal there is a LOSS, the
+	// same shape the relay's destructive Collect had.
+	st.eng.OnBatch = r.learnBundleProofs
+	st.eng.OnRefused = func(f []byte, err error) {
+		if !errors.Is(err, ErrAdmissionHold) {
+			return // permanent refusals stay refused; ordering stays the log's
+		}
+		hold, herr := r.ingressHold()
+		if herr != nil {
+			return // custody already lost or unopenable; latched elsewhere
+		}
+		raw := append([]byte(nil), f...)
+		if _, perr := hold.Put(bundle.Encode(tid, [][]byte{raw}),
+			storage.HeldIngressMeta{ReceivedAt: time.Now().Unix()}); perr != nil {
+			// SAME catastrophic class as a failed Put after a relay Collect:
+			// the radio receiver has marked this transfer complete and will
+			// never deliver it upward again, so bytes we cannot durably keep
+			// are bytes nobody holds. Latch, do not shrug.
+			r.noteCustodyLost()
+			r.noteIngressRefusal(IngressRefusal{
+				Space: tid, Reason: "ingress_custody_lost", Detail: perr.Error(),
+			})
+		}
+	}
 	// Asset exchange: serve only wire ids this space legitimately
 	// publishes; accept only what we requested (kernel/sync enforces both).
 	st.eng.Blobs = r.root
 	st.eng.BlobAllowed = func(h id.Hash) bool { return r.assetIdx.allowed(h, tid) }
 	st.eng.OnBlobStored = r.onBlobStored
+	// MD-0b: authorisation state, at the ONE point where it becomes current.
+	// A policy revision is a signed manifest frame rather than a log event on
+	// the local path, so watching the absorb funnel alone would catch a
+	// revision arriving over a relay and silently miss the owner's own —
+	// measured, ingress_reconsider_test.go failed exactly that way.
+	s.OnPolicyChanged = r.admissionStateChanged
+	// MD-0: the certification gate, on its OWN layer rather than SetAdmit —
+	// curated policy owns that slot and rewrites it on every policy change,
+	// so a space going curated → community would silently switch certificate
+	// checking off. This one runs first: "this device may not speak" is a
+	// stronger and more general answer than "not here".
+	//
+	// EVERY PATH, not just the relay. LAN and radio ingress reach the log
+	// without passing through the ingress hold, and a gate that only covers
+	// one transport is not a gate — an attacker would simply choose the other.
+	// It is safe here because at the LOG a refusal is a delay (measured:
+	// kernel/eventlog/refusal_test.go), and the one path where it was a LOSS
+	// is the destructive relay drain, which is exactly what MD-0b now holds.
+	//
+	// The flag is read dynamically so the replay inside Open — which runs
+	// before the allowlist is frozen — is not judged by a half-built store.
+	st.space.Log.SetIdentityAdmit(func(env *signal.Envelope) error {
+		// BOOTSTRAP PROOF, LEARNED AT THE DOOR (MD-0b, decision C). A
+		// certificate has two roles carried by one byte-identical object:
+		// admission proof, available BEFORE encrypted admission and free of
+		// chain ordering; and a replicated log record, applied in ordinary
+		// order for convergence and audit. This is the first role. The frame
+		// signature is already verified when this gate runs, the payload is
+		// plaintext by design (see sealForEmit), and observe() verifies the
+		// ROOT signature before any of it becomes trust — so learning here
+		// grants nothing the certificate's own signature does not grant, and
+		// it breaks the measured deadlock: trust no longer waits behind the
+		// chain position of its own proof. A sealed certificate from an older
+		// peer simply fails to decode here and is still learned at absorb,
+		// exactly as before.
+		switch env.Schema {
+		case schemas.DeviceCertified, schemas.DeviceRevoked:
+			r.ident.observe(env)
+			r.admissionStateChanged()
+		}
+		if !r.identityGate {
+			return nil
+		}
+		return r.ident.admit(env)
+	})
 	r.spaces[tid] = st
+	// MD-0b: MEMBERSHIP IS ADMISSION STATE TOO, and it does not arrive as an
+	// event — it is this map gaining an entry. A bundle held because we were
+	// not in that space becomes admissible the moment we are, whether that
+	// came from a join saga, a create, or a replay. Measured:
+	// ingress_membership_probe_test.go.
+	r.admissionStateChanged()
 }
 
 // saveKeystore persists key material; callers hold r.mu or are in setup.

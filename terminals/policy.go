@@ -584,6 +584,12 @@ var ErrReadOnlyReplica = errors.New("terminals: join this space to write")
 // replay must stay identical on old and fresh replicas. All authorization
 // then lives at the admission gate.
 func (s *Space) refreshPolicy() {
+	// The hook fires however this was reached and whatever the new policy
+	// says: the single point where access policy becomes current is the only
+	// honest place to announce that it changed (MD-0b).
+	if s.OnPolicyChanged != nil {
+		defer s.OnPolicyChanged()
+	}
 	pol := s.Policy()
 	if pol.Frozen {
 		// TRUE freeze: nothing is admitted — the owner's frames included.

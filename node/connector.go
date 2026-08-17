@@ -638,6 +638,7 @@ func (r *Runtime) ensureGatewayLocked() (*terminals.Participant, error) {
 			return nil, err
 		}
 		r.gateway = p
+		r.certifyOwnedDeviceLocked(dev)
 		return p, nil
 	}
 	dev, err := identity.NewDevice(identity.NewRand())
@@ -653,6 +654,7 @@ func (r *Runtime) ensureGatewayLocked() (*terminals.Participant, error) {
 		DeviceSeed: dev.Seed(), DeviceX25519: dev.X25519Priv(),
 		TerminalSeed: seed, ManifestFrame: p.ManifestFrame,
 	}
+	r.certifyOwnedDeviceLocked(dev)
 	if err := r.saveKeystore(); err != nil {
 		return nil, err
 	}
@@ -695,5 +697,6 @@ func (r *Runtime) loadGatewayLocked() error {
 		return err
 	}
 	r.gateway = p
+	r.certifyOwnedDeviceLocked(dev)
 	return nil
 }

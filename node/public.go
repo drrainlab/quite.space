@@ -585,6 +585,10 @@ func (r *Runtime) collectPublicIngressBatch(addr string, tids []id.TerminalID) (
 		if st.rejected == nil {
 			st.rejected = newRejectedRing()
 		}
+		// Decision C's pre-pass: the batch's own proofs become trust before
+		// any of its frames are judged, so a manifest that precedes its
+		// author's certificate in slice order still admits in this cycle.
+		r.learnBundleProofs(parts.Frames)
 		for _, f := range parts.Frames {
 			if len(f) > maxIngressFrame {
 				continue // community frame-size cap
@@ -610,7 +614,11 @@ func (r *Runtime) collectPublicIngressBatch(addr string, tids []id.TerminalID) (
 			}
 			n, err := st.space.Absorb(f)
 			if err != nil {
-				st.rejected.remember(eid, nowT)
+				// Memoized ONLY when terminal — a hold-class refusal is a
+				// delay, and the ring itself enforces that (MD-0b): the
+				// contributor keeps re-pushing unacked frames, so the retry
+				// costs nothing here.
+				st.rejected.rememberRefusal(eid, err, nowT)
 				continue // admission-refused or malformed: PolicyStats has it
 			}
 			if n > 0 {

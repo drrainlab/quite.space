@@ -95,6 +95,21 @@ type Engine struct {
 	// inferred from a message that simply never arrives.
 	OnTooLarge func(ev id.EventID, size, ceiling int)
 
+	// OnBatch fires once per received frames message, BEFORE any of its
+	// frames is offered to the log (MD-0b decision C). The node uses it to
+	// learn a batch's own admission proofs first, so a frame that precedes
+	// its author's certificate in slice order still admits in this round.
+	// The engine stays ignorant of what a proof is — that is the point.
+	OnBatch func(frames [][]byte)
+
+	// OnRefused fires for a frame the log would not take, with the log's
+	// error. It exists because on some carriers a refusal is a LOSS rather
+	// than a delay — a radio transfer, once completed, is remembered and
+	// never re-delivered upward — so the node above must be able to take
+	// durable custody of the bytes instead of watching them vanish. The
+	// engine does not know which refusals deserve that; the node does.
+	OnRefused func(frame []byte, err error)
+
 	// AttemptToken is the sender's current responsibility token for this
 	// space. When set it is stamped on every frames message the engine
 	// emits — unchanged across fragmentation and across re-sends within one
@@ -488,10 +503,16 @@ func (e *Engine) Handle(ep transports.Endpoint, raw []byte) (applied int, reject
 			return applied, rejected, err
 		}
 	case msgFrames:
+		if e.OnBatch != nil {
+			e.OnBatch(msg.frames)
+		}
 		for _, f := range msg.frames {
 			as, err := e.Log.Ingest(f)
 			if err != nil {
 				rejected++
+				if e.OnRefused != nil {
+					e.OnRefused(f, err)
+				}
 				continue
 			}
 			for _, a := range as {

@@ -24,6 +24,10 @@
 package node
 
 import (
+	"errors"
+	"fmt"
+	"time"
+
 	"github.com/drrainlab/quiet_places/kernel/identity"
 	"github.com/drrainlab/quiet_places/kernel/storage"
 	"github.com/drrainlab/quiet_places/protocol/id"
@@ -87,31 +91,35 @@ func (s *identityState) loadLegacy(bs []storage.LegacyBinding) {
 	}
 }
 
+// legacyBindingOf is the allowlist key: a PAIR, never a device. Being
+// grandfathered in as yourself is not permission to claim somebody else.
+func legacyBindingOf(env *signal.Envelope) storage.LegacyBinding {
+	return storage.LegacyBinding{Principal: env.Principal, Device: env.Device}
+}
+
+// ErrAdmissionHold marks a refusal that is a DELAY, never a judgement: the
+// prerequisite has not arrived yet. Any layer that caches refusals — the
+// community rejected-ring, a future one — MUST check errors.Is against this
+// before remembering a frame as bad, because remembering a hold is the
+// refusal-is-permanent assumption MD-0b exists to outlaw: the certificate
+// arrives an hour later and the cache goes on refusing what it never
+// re-judged.
+var ErrAdmissionHold = errors.New("node: admission prerequisite not yet known")
+
 // admit is the gate itself (PASS 2). Installed on every space log.
+//
+// It is written THROUGH classify so the two can never drift about who gets
+// in. A Hold verdict surfaces as ErrAdmissionHold so callers above the log —
+// which only see an error — can still tell a delay from a judgement.
 func (s *identityState) admit(env *signal.Envelope) error {
-	// A CERTIFICATE CARRIES ITS OWN PROOF, so it is admitted on its own
-	// merits and never on its bearer's. This is what unties the knot the
-	// first attempt tied: a device cannot publish the certificate that would
-	// let it be admitted if publishing already required being admitted.
-	//
-	// It costs nothing to allow. The payload is signed by a ROOT key and
-	// observe() verifies that signature before any of it becomes trust, so a
-	// forged one is bytes that go nowhere. What it buys is that certification
-	// can always travel — which is the precondition for every other rule
-	// here, and the reason this does not need the signed join structures
-	// widened to carry one.
-	switch env.Schema {
-	case schemas.DeviceCertified, schemas.DeviceRevoked:
+	res := s.classify(env)
+	switch res.Verdict {
+	case Admit:
 		return nil
+	case Hold:
+		return fmt.Errorf("%w (%s)", ErrAdmissionHold, res.Reason)
 	}
-	b := storage.LegacyBinding{Principal: env.Principal, Device: env.Device}
-	if s.legacy[b] {
-		// Predates certification on this node. Admitted as it always was —
-		// and note this is a pair, not a device: the allowlist does not let
-		// a known device start claiming a different person.
-		return nil
-	}
-	return s.store.Admit(env.Principal, env.Device, env.LogicalClock)
+	return fmt.Errorf("node: %s (%s)", res.Verdict, res.Reason)
 }
 
 // selfCertify mints this device's own certificate if the keystore has none,
@@ -161,6 +169,34 @@ func certifyOwnDevice(ks *storage.Keystore, st *identityState,
 	return frame
 }
 
+// certifyOwnedDeviceLocked certifies a device this node owns AT THE MOMENT IT
+// COMES INTO BEING, which is the only correct moment.
+//
+// Certifying only in Open was measured to be wrong the instant the gate went
+// on: the assistant and the gateway are minted LAZILY — the assistant on first
+// use, the gateway on the first connector projection — so a node that had
+// neither at open certified neither, and then refused their very first write
+// with certificate_not_known. Ninety-nine tests said so at once.
+//
+// Callers hold r.mu. On a secondary device (no root seed) this cannot certify,
+// and does not pretend to: delegated certification is MD-2's business, and
+// until then an owned device minted on a secondary is refused rather than
+// quietly trusted.
+func (r *Runtime) certifyOwnedDeviceLocked(dev *identity.Device) {
+	if dev == nil || r.Principal == nil {
+		return
+	}
+	certifyOwnDevice(r.ks, r.ident, r.Principal, dev, uint64(time.Now().Unix()))
+	// A device minted MID-RUN (the gateway on its first connector, the
+	// assistant on first use) will speak in spaces that were attached before
+	// it existed, so its proof must reach those logs now rather than at the
+	// next open — a peer cannot admit a writer whose certificate never
+	// travelled.
+	for _, st := range r.spaces {
+		r.publishCertLocked(st.space)
+	}
+}
+
 // certificateFor returns the stored certificate for a device, which is where
 // a sibling's X25519 wrapping key comes from (MD-2). The certificate has
 // carried that key since it was written — identity.Certificate.X25519Pub —
@@ -192,23 +228,39 @@ func lessLegacy(a, b storage.LegacyBinding) bool {
 	return false
 }
 
-// publishCertLocked emits this device's certificate into a space that does
-// not already carry it. Called wherever the manifest is published, because
-// the two answer the same question at the same moment: who is speaking here,
-// and by what authority.
+// markCertPublished records that a space's log carries the certificate of
+// one certified device. Callers hold r.mu.
+func (r *Runtime) markCertPublished(tid id.TerminalID, dev id.DeviceID) {
+	set, ok := r.certPublished[tid]
+	if !ok {
+		set = map[id.DeviceID]bool{}
+		r.certPublished[tid] = set
+	}
+	set[dev] = true
+}
+
+// publishCertLocked emits EVERY owned device's certificate this space's log
+// does not already carry — the person's device, the assistant, the gateway.
+// Called wherever the manifest is published, because the two answer the same
+// question at the same moment: who is speaking here, and by what authority.
 //
-// Idempotence is the registry-shaped kind: the trust store already holds our
-// certificate, and the space log is scanned at open. What this guards is the
-// runtime case — a space joined or created while the process is running,
-// which never passes through Open's loop and would otherwise leave every
-// peer unable to admit us.
+// ADR-002:36-37 — "certificates travel in the event log so peers can verify
+// any device's authority offline". Once per (space, device), and only where
+// the log lacks it: a certificate re-emitted every restart would grow an
+// append-only log forever to say a thing that has not changed. All emitted
+// from the PERSON's chain — a certificate is admitted on its own root proof,
+// never on its bearer's, so who carries it does not matter, and the person's
+// chain is the one guaranteed to exist before its siblings speak.
 func (r *Runtime) publishCertLocked(s *terminals.Space) {
-	if len(r.selfCert) == 0 || r.certPublished[s.ID] {
-		return
+	published := r.certPublished[s.ID]
+	for _, rec := range r.ks.Certs {
+		if len(rec.Frame) == 0 || published[rec.Device] {
+			continue
+		}
+		if _, err := r.Self.Emit(s, schemas.DeviceCertified, rec.Frame,
+			r.Self.DefaultAuthorship(), 0); err != nil {
+			continue // best effort: what cannot go now goes at the next open
+		}
+		r.markCertPublished(s.ID, rec.Device)
 	}
-	if _, err := r.Self.Emit(s, schemas.DeviceCertified, r.selfCert,
-		r.Self.DefaultAuthorship(), 0); err != nil {
-		return // best effort: a certificate that cannot go now goes at the next open
-	}
-	r.certPublished[s.ID] = true
 }
