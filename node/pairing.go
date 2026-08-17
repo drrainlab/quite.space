@@ -457,16 +457,28 @@ func JoinAsPairedDeviceVia(dir string, passphrase, offerBytes []byte,
 		return err
 	}
 	defer node.Close()
-	conn, err := node.Dial(offer.Addr)
-	if err != nil && announceAddr != "" {
-		addr, berr := awaitPairingBeacon(announceAddr, pairing.BeaconID(offer.Secret))
-		if berr != nil {
-			return fmt.Errorf("node: %v, and no pairing beacon heard: %w", err, berr)
+	// The offer's address is the FAST PATH and the beacon is the truth: DHCP,
+	// VPNs and firewalls all rewrite the guess inside the code, so the child
+	// ALTERNATES — a bounded dial, then a listen for the beacon only the
+	// offer's holder can derive — for as long as the offer lives. One path
+	// failing while another would have worked must never end the ceremony
+	// early; the sixty-second expiry is the one clock that does.
+	var conn *lan.Conn
+	dialErr := errors.New("never dialled")
+	addr := offer.Addr
+	for conn == nil {
+		if uint64(time.Now().Unix()) >= offer.ExpiresAt {
+			return fmt.Errorf("node: the offer expired before the parent was reachable (last attempt at %s: %v)", addr, dialErr)
 		}
-		conn, err = node.Dial(addr)
-	}
-	if err != nil {
-		return err
+		if conn, dialErr = node.Dial(addr); dialErr == nil {
+			break
+		}
+		if announceAddr == "" {
+			return dialErr
+		}
+		if heard, berr := awaitPairingBeacon(announceAddr, pairing.BeaconID(offer.Secret)); berr == nil {
+			addr = heard // and loop: the next dial goes where the beacon points
+		}
 	}
 	defer conn.Close()
 

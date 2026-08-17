@@ -303,7 +303,15 @@ func (n *Node) Close() error {
 
 // Dial opens a direct connection to a peer.
 func (n *Node) Dial(addr string) (*Conn, error) {
-	c, err := tls.Dial("tcp", addr, n.clientConfig())
+	// BOUNDED, because a LAN dial that cannot complete in seconds will not
+	// complete at all — same broadcast domain, no long paths — while the OS
+	// default connect timeout runs past a minute. Measured the hard way by
+	// pairing: a firewalled parent held the child in connect() for longer
+	// than the offer's whole life, and the beacon fallback never got its
+	// turn. A bound turns "silently too late" into "failed, try the next
+	// path" while there is still a window to try it in.
+	d := &net.Dialer{Timeout: 5 * time.Second}
+	c, err := tls.DialWithDialer(d, "tcp", addr, n.clientConfig())
 	if err != nil {
 		return nil, err
 	}

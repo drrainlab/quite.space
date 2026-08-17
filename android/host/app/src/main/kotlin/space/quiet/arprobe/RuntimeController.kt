@@ -444,12 +444,23 @@ class RuntimeController private constructor(appContext: Context) {
 
     fun hasIdentity(): Boolean = Quietcore.hasIdentity(dataDir().absolutePath)
 
-    /** Starts the ceremony; returns null on success or the refusal's text. */
+    /** Starts the ceremony; returns null on success or the refusal's text.
+     *  The multicast lock is held for the ceremony's life: the BEACON is the
+     *  fallback when the offer's address guess is stale, and without the
+     *  lock Android's Wi-Fi stack drops exactly those packets. */
     fun pairStart(passphrase: String, offer: String): String? = try {
+        acquireMulticast()
         Quietcore.pairStart(dataDir().absolutePath, passphrase, offer); null
-    } catch (t: Throwable) { t.message ?: "could not start pairing" }
+    } catch (t: Throwable) {
+        releaseMulticast()
+        t.message ?: "could not start pairing"
+    }
 
-    fun pairState(): JSONObject = JSONObject(Quietcore.pairState())
+    fun pairState(): JSONObject = JSONObject(Quietcore.pairState()).also {
+        // The ceremony ended, however it ended: the lock has done its job.
+        val st = it.optString("stage")
+        if (st == "done" || st == "failed") releaseMulticast()
+    }
 
     fun pairApprove() { Quietcore.pairApprove() }
 
