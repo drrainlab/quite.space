@@ -197,6 +197,20 @@ type Keystore struct {
 	// Radio is the radio this device brings up on start, and the segment seed
 	// it derives its frame key from. Zero means none, which is ordinary.
 	Radio RadioRecord
+
+	// The device trust store (MD-0, ADR-002). Certs and Revs are one store
+	// in two lists and are always written together; see trust.go for why
+	// splitting the write is a window a revoked device fits through.
+	Certs []CertRecord
+	Revs  []RevRecord
+	// LegacyBindings is the FROZEN migration allowlist: the (principal,
+	// device) pairs that already had history here when this build first ran.
+	// Those devices predate certification and are admitted without one.
+	// Written exactly once and never appended to — an allowlist that keeps
+	// growing admits everyone eventually, which is the hole it closes.
+	// Empty and nil mean the same thing and both mean "nobody": absence is
+	// never permission.
+	LegacyBindings []LegacyBinding
 }
 
 // PublicPublishState is the publisher-side durable projection counter.
@@ -286,16 +300,58 @@ func NewKeystore(p *identity.Principal, d *identity.Device) *Keystore {
 }
 
 // Identity rebuilds the principal and device from the keystore.
-func (k *Keystore) Identity() (*identity.Principal, *identity.Device, error) {
-	if len(k.PrincipalSeed) == 0 || len(k.DeviceSeed) == 0 {
-		return nil, nil, errors.New("storage: keystore has no identity")
+// ErrNoDeviceCertificate is a device that holds no root seed and no
+// certificate for itself. It is not a fresh install (that has no device key
+// either) and it is not a secondary in good order (pairing hands one over) —
+// it is a damaged keystore, and it must say so rather than proceed.
+var ErrNoDeviceCertificate = errors.New(
+	"storage: device certificate missing — pair this device again from the " +
+		"device that holds your identity")
+
+// Identity returns who this node is: the principal it belongs to, the
+// signing principal IF this is the authority device, and the device itself.
+//
+// The middle value is the whole point of MD-0. Before it, identity meant
+// "seed → Principal" and every caller could sign with the root key. A
+// secondary device has no root seed by construction — it can read and write
+// as the person, and it can NEVER certify another device or revoke one — so
+// the signing principal comes back nil there and callers must say which of
+// the two they actually need.
+func (k *Keystore) Identity() (id.PrincipalID, *identity.Principal, *identity.Device, error) {
+	if len(k.DeviceSeed) == 0 {
+		return id.PrincipalID{}, nil, nil, errors.New("storage: keystore has no identity")
 	}
-	p := identity.NewPrincipalFromSeed(k.PrincipalSeed)
 	d, err := identity.NewDeviceFromKeys(k.DeviceSeed, k.DeviceX25519)
 	if err != nil {
-		return nil, nil, err
+		return id.PrincipalID{}, nil, nil, err
 	}
-	return p, d, nil
+	// The authority device. It holds the root seed, so it is the only place
+	// a certificate or a revocation can be signed.
+	if len(k.PrincipalSeed) != 0 {
+		p := identity.NewPrincipalFromSeed(k.PrincipalSeed)
+		return p.ID, p, d, nil
+	}
+	// A secondary. Its principal is READ from the certificate the authority
+	// signed for it — there is no separate key here and no authority secret
+	// of any kind. Verified on the way out because a plain file is not a
+	// reason to trust bytes, even our own.
+	for _, rec := range k.Certs {
+		if rec.Device != d.ID {
+			continue
+		}
+		cert, err := identity.DecodeCertificate(rec.Frame)
+		if err != nil {
+			return id.PrincipalID{}, nil, nil, err
+		}
+		if err := cert.Verify(); err != nil {
+			return id.PrincipalID{}, nil, nil, err
+		}
+		if cert.Device != d.ID {
+			continue
+		}
+		return cert.Principal, nil, d, nil
+	}
+	return id.PrincipalID{}, nil, nil, ErrNoDeviceCertificate
 }
 
 // keystore wire key table v0 (append-only, ADR-009).
@@ -319,6 +375,8 @@ const (
 	ksKeyForgotten = 17 // SD-0 spaces this device was told to forget
 	ksKeyRoutes    = 18 // RT-0 the route book: self ingress + per-peer delivery
 	ksKeyGateway   = 19 // TR-0 the external-boundary participant
+	ksKeyCerts     = 20 // MD-0 device certificates AND revocations (one store)
+	ksKeyLegacy    = 21 // MD-0 the frozen pre-certification allowlist
 )
 
 // ksMapArity is how many top-level pairs encode() writes, and it MUST equal
@@ -326,7 +384,7 @@ const (
 // which is a poor place for a number that bricks every keystore when it is
 // wrong: too few and the trailing pair goes unread, so Done() fails and
 // nobody can open their data again. Named here, next to the keys it counts.
-const ksMapArity = 19
+const ksMapArity = 21
 
 func (k *Keystore) encode() []byte {
 	buf := codec.AppendMap(nil, ksMapArity)
@@ -418,6 +476,10 @@ func (k *Keystore) encode() []byte {
 	buf = appendRouteBook(buf, k.SelfIngress, k.PeerRoutes)
 	buf = codec.AppendUint(buf, ksKeyGateway)
 	buf = appendAgentRecord(buf, k.Gateway)
+	buf = codec.AppendUint(buf, ksKeyCerts)
+	buf = appendTrustStore(buf, k.Certs, k.Revs)
+	buf = codec.AppendUint(buf, ksKeyLegacy)
+	buf = appendLegacyBindings(buf, k.LegacyBindings)
 	return buf
 }
 
@@ -801,6 +863,10 @@ func decodeKeystore(data []byte) (*Keystore, error) {
 			k.Agent, er = readAgentRecord(d)
 		case ksKeyGateway:
 			k.Gateway, er = readAgentRecord(d)
+		case ksKeyCerts:
+			k.Certs, k.Revs, er = readTrustStore(d)
+		case ksKeyLegacy:
+			k.LegacyBindings, er = readLegacyBindings(d)
 		case ksKeyRadio:
 			k.Radio, er = readRadioRecord(d)
 		case ksKeyForgotten:

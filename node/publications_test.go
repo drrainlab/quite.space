@@ -39,7 +39,7 @@ func TestPublicationLifecycle(t *testing.T) {
 	if len(pubs) != 1 || pubs[0].Title != "First Post" {
 		t.Fatalf("projection missing: %+v", pubs)
 	}
-	if pubs[0].Author != rt.Principal.ID {
+	if pubs[0].Author != rt.PrincipalID {
 		t.Fatal("author must come from the envelope signature")
 	}
 

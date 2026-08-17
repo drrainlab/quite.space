@@ -41,6 +41,7 @@ import (
 
 	"github.com/drrainlab/quiet_places/kernel/eventlog"
 	"github.com/drrainlab/quiet_places/protocol/id"
+	"github.com/drrainlab/quiet_places/protocol/schemas"
 	"github.com/drrainlab/quiet_places/terminals"
 )
 
@@ -279,6 +280,16 @@ func (r *Runtime) notifyAbsorbed(tid id.TerminalID, s *terminals.Space, a eventl
 	if a.Env == nil {
 		return
 	}
+	// MACHINERY DOES NOT NOTIFY. A device certificate and a revocation are
+	// how the network establishes who may speak (MD-0, ADR-002) — nobody
+	// said anything, and a person joining a room should no more be told
+	// "a certificate arrived" than "an epoch rotated". Caught by
+	// TestJoiningASpaceWithHistoryDoesNotNotifyForThatHistory the moment
+	// certificates began to travel.
+	switch a.Env.Schema {
+	case schemas.DeviceCertified, schemas.DeviceRevoked:
+		return
+	}
 	fn, cursor := r.notify.next()
 	if fn == nil {
 		return
@@ -337,7 +348,7 @@ func (r *Runtime) decorateLocked(s *terminals.Space, a eventlog.Applied, c *Noti
 		c.PreviewText = clipRunes(entry.Content.Text.Text, maxPreviewRunes)
 	}
 
-	if entry.Author == r.Principal.ID {
+	if entry.Author == r.PrincipalID {
 		c.SenderLabel = r.displayNameLocked()
 		return
 	}

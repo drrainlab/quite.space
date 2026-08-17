@@ -196,7 +196,7 @@ func (r *Runtime) fetchPublicProjectionWith(client *relay.Client, tid id.Termina
 	// curator opening the public link IS an attested writer — recognized
 	// from the verified signed policy, never from local claims.
 	if meta.Role == storage.RoleReader && pol.Publish == terminals.PublishCurated {
-		mine := terminals.WriterBinding{Principal: r.Principal.ID, Device: r.Device.ID}
+		mine := terminals.WriterBinding{Principal: r.PrincipalID, Device: r.Device.ID}
 		for _, w := range pol.Writers {
 			if w == mine {
 				if err := r.activateContributorLocked(tid, st); err != nil {
@@ -387,6 +387,7 @@ func (r *Runtime) activateContributorLocked(tid id.TerminalID, st *spaceState) e
 	if _, _, err := r.Self.PublishManifest(st.space); err != nil {
 		return err
 	}
+	r.publishCertLocked(st.space)
 	return r.saveKeystore()
 }
 
@@ -786,7 +787,7 @@ func (r *Runtime) RevisePolicy(tid id.TerminalID, d PolicyDelta) error {
 			next.Publish = terminals.PublishCurated
 			next.Join = terminals.JoinNone
 			// The owner's binding must always exist among the writers.
-			owner := terminals.WriterBinding{Principal: r.Principal.ID, Device: r.Device.ID}
+			owner := terminals.WriterBinding{Principal: r.PrincipalID, Device: r.Device.ID}
 			if !next.AllowsWriter(owner.Principal, owner.Device) {
 				next.Writers = append(next.Writers, owner)
 			}
@@ -822,7 +823,7 @@ func (r *Runtime) RevisePolicy(tid id.TerminalID, d PolicyDelta) error {
 		next.Writers = kept
 		// Canonicalization keeps the owner; guard against removing the
 		// last writer of a curated space anyway.
-		owner := terminals.WriterBinding{Principal: r.Principal.ID, Device: r.Device.ID}
+		owner := terminals.WriterBinding{Principal: r.PrincipalID, Device: r.Device.ID}
 		if next.Publish == terminals.PublishCurated && !next.AllowsWriter(owner.Principal, owner.Device) {
 			next.Writers = append(next.Writers, owner)
 		}

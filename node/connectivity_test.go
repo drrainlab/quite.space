@@ -61,7 +61,18 @@ func TestTooLargeBlocksOnlyTheRadio(t *testing.T) {
 	if in.State == IntentSettled {
 		t.Fatal("an oversized frame was treated as a dead event")
 	}
-	if len(rt.ledger.Due(now, 10)) != 1 {
+	// The claim is that THIS intent is still tracked, not that it is the only
+	// thing in the ledger. Since MD-0 a space also carries this device's
+	// certificate (ADR-002:36-37 — certificates travel in the event log), so
+	// an exact count would be asserting how many events a space happens to
+	// contain, which was never what this test is about.
+	var tracked bool
+	for _, due := range rt.ledger.Due(now, 10) {
+		if due.EventID == big {
+			tracked = true
+		}
+	}
+	if !tracked {
 		t.Fatal("the intent stopped being tracked")
 	}
 }

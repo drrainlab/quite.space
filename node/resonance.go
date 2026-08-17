@@ -377,7 +377,7 @@ func (a *APIServer) handleResonanceActors(w http.ResponseWriter, r *http.Request
 		total int
 	)
 	if err := a.rt.withSpace(tid, func(st *spaceState) error {
-		me := a.rt.Principal.ID
+		me := a.rt.PrincipalID
 		names := map[id.PrincipalID]string{me: a.rt.displayNameLocked()}
 		for _, c := range st.space.MemberCards(0) {
 			if c.Name != "" {

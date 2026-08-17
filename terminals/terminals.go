@@ -226,7 +226,13 @@ func (s *Space) AttachSyncApply(a eventlog.Applied) { s.absorb(a) }
 // Participant is one terminal acting inside spaces, enforced by its own
 // manifest.
 type Participant struct {
-	Principal *identity.Principal
+	// Principal is the person this terminal acts for — the IDENTIFIER, never
+	// the root keypair. A participant reads it to stamp envelopes and to test
+	// curated writer bindings, and it has no other use for it: certifying and
+	// revoking devices are the authority device's job alone (MD-0, ADR-002).
+	// Holding only the id makes that structural instead of merely true —
+	// a participant cannot reach root authority because it does not have it.
+	Principal id.PrincipalID
 	Device    *identity.Device
 
 	TerminalID    id.TerminalID
@@ -254,7 +260,7 @@ func NewParticipant(template manifest.Manifest) (*Participant, error) {
 	if err != nil {
 		return nil, err
 	}
-	p, _, err := NewParticipantFrom(prin, dev, nil, template)
+	p, _, err := NewParticipantFrom(prin.ID, dev, nil, template)
 	return p, err
 }
 
@@ -295,7 +301,7 @@ func (p *Participant) Emit(s *Space, schema string, payload []byte,
 		if pol.Frozen {
 			return eventlog.Applied{}, ErrSpaceFrozen
 		}
-		if !pol.AllowsWriter(p.Principal.ID, p.Device.ID) {
+		if !pol.AllowsWriter(p.Principal, p.Device.ID) {
 			return eventlog.Applied{}, ErrNotAuthorized
 		}
 	}
@@ -371,7 +377,7 @@ func (p *Participant) Emit(s *Space, schema string, payload []byte,
 	src := p.TerminalID
 	env := &signal.Envelope{
 		Terminal:        s.ID,
-		Principal:       p.Principal.ID,
+		Principal:       p.Principal,
 		Device:          p.Device.ID,
 		Sequence:        c.seq,
 		Schema:          schema,

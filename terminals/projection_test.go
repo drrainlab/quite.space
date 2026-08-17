@@ -32,7 +32,7 @@ func buildPublicSpace(t *testing.T, n int) (*terminals.Space, *terminals.Partici
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := terminals.NewSpaceWithPolicy("Fieldnotes", owner.Principal.ID,
+	s, err := terminals.NewSpaceWithPolicy("Fieldnotes", owner.Principal,
 		terminals.DefaultCharacter("forest"), openCommunityPolicy())
 	if err != nil {
 		t.Fatal(err)

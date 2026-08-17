@@ -250,7 +250,7 @@ func TestTheDoorHoldsAcrossARestart(t *testing.T) {
 	// the terminal-vs-principal fix has to survive.
 	alice.mu.Lock()
 	raw := alice.spaces[room].space.MemberCards(uint64(time.Now().Unix()))
-	me := alice.Principal.ID
+	me := alice.PrincipalID
 	alice.mu.Unlock()
 	cards := make([]memberLike, 0, len(raw)+1)
 	for _, c := range raw {

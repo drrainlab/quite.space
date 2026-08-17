@@ -315,7 +315,7 @@ func (r *Runtime) admitFromDoor(client *relay.Client, rec *passRecord,
 	var resp []byte
 	if st != nil {
 		epochN, epochKey, mf, err := st.space.AcceptIntoSpace(r.Self,
-			device, xpub, name, r.Principal.ID, now)
+			device, xpub, name, r.PrincipalID, now)
 		if err == nil {
 			// The route exchange, both directions (RT-0) — same as the
 			// automatic accept path; persistence rides the admission commit.

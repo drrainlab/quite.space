@@ -58,7 +58,7 @@ func TestTheAssistantIsControlledByYouAndIsNotYou(t *testing.T) {
 	if rt.agent == nil {
 		t.Fatal("no assistant was built")
 	}
-	if rt.agent.Principal.ID != rt.Principal.ID {
+	if rt.agent.Principal != rt.PrincipalID {
 		t.Fatal("the assistant was given a principal of its own")
 	}
 	if rt.agent.Device.ID == rt.Device.ID {
@@ -129,7 +129,7 @@ func TestAnAnswerIsNotYours(t *testing.T) {
 			continue
 		}
 		sawAnswer = true
-		if e.Author != rt.Principal.ID {
+		if e.Author != rt.PrincipalID {
 			t.Fatal("the controller claim is not the person's after all")
 		}
 		if e.Content.Text == nil || e.Content.Text.Model != "anthropic/model-x" {

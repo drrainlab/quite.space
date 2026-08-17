@@ -39,7 +39,26 @@ func newCustodyFixture(t *testing.T) *custodyFixture {
 	if err := rt.PinCustodian("radio", pub); err != nil {
 		t.Fatal(err)
 	}
-	return &custodyFixture{rt: rt, tid: tid, eid: eid, priv: priv, now: time.Now()}
+	// This fixture is about custody of ONE event, and openAttempt takes the
+	// first due intent in the space — so anything else outstanding would
+	// silently make these tests measure the wrong one. Since MD-0 a space
+	// also carries this device's certificate (ADR-002:36-37), which is
+	// ordinary traffic here and nothing to do with custody. Settle it, so
+	// the epoch assertions below speak about eid and only eid.
+	now := time.Now()
+	rt.mu.Lock()
+	for _, due := range rt.ledger.Due(now, 64) {
+		if due.EventID == eid {
+			continue
+		}
+		other := due.EventID
+		_, _, _ = rt.ledger.Update(other, now, func(in *DeliveryIntent) bool {
+			in.State = IntentSettled
+			return true
+		})
+	}
+	rt.mu.Unlock()
+	return &custodyFixture{rt: rt, tid: tid, eid: eid, priv: priv, now: now}
 }
 
 // openAttempt mints and durably records the token for the current epoch,

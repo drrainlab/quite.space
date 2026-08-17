@@ -496,7 +496,7 @@ func (a *APIServer) handleEntries(w http.ResponseWriter, r *http.Request) {
 	}
 	var out []entryResp
 	if err := a.rt.withSpace(tid, func(st *spaceState) error {
-		me := a.rt.Principal.ID
+		me := a.rt.PrincipalID
 		// Resolve author principals to human display names (self-declared
 		// claims from member manifests) — the honest projection that keeps
 		// principal:hex out of the human path.

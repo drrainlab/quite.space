@@ -121,7 +121,7 @@ func TestCuratorActivationByPublicLink(t *testing.T) {
 			Visibility: terminals.VisibilityPublic,
 			Publish:    terminals.PublishCurated,
 			Writers: []terminals.WriterBinding{{
-				Principal: curator.Principal.ID, Device: curator.Device.ID,
+				Principal: curator.PrincipalID, Device: curator.Device.ID,
 			}},
 		},
 	})

@@ -54,9 +54,9 @@ func (r *Runtime) Unkeep(tid id.TerminalID, target id.EventID, keepAuthor id.Pri
 	if !ok {
 		return errors.New("node: unknown space")
 	}
-	if keepAuthor != r.Principal.ID {
+	if keepAuthor != r.PrincipalID {
 		ctrl := st.space.State.Controller
-		if ctrl == nil || *ctrl != r.Principal.ID {
+		if ctrl == nil || *ctrl != r.PrincipalID {
 			return errors.New("node: only the space controller may remove another member's keep")
 		}
 	}
@@ -132,7 +132,7 @@ func (a *APIServer) handleUnkeep(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusBadRequest, err)
 		return
 	}
-	author := a.rt.Principal.ID
+	author := a.rt.PrincipalID
 	if body.KeepAuthor != "" {
 		ab, err := hex.DecodeString(body.KeepAuthor)
 		if err != nil || len(ab) != id.Size {
@@ -157,7 +157,7 @@ func (a *APIServer) handleShelf(w http.ResponseWriter, r *http.Request) {
 	var out []shelfItemResp
 	if err := a.rt.withSpace(tid, func(st *spaceState) error {
 		sp := st.space
-		me := a.rt.Principal.ID
+		me := a.rt.PrincipalID
 		names := map[id.PrincipalID]string{me: a.rt.displayNameLocked()}
 		for _, c := range sp.MemberCards(0) {
 			if c.Name != "" {

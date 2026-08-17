@@ -79,7 +79,7 @@ func (r *Runtime) saveListeningCounters(iid [16]byte, c listeningCounters) {
 func (r *Runtime) emitListeningCommand(st *spaceState, iid [16]byte,
 	instAuthor id.PrincipalID, props map[string]string, fields map[string]any) (id.EventID, error) {
 
-	if instAuthor != r.Principal.ID {
+	if instAuthor != r.PrincipalID {
 		return id.EventID{}, errors.New("node: only the host controls the session (no transfer in v1)")
 	}
 	action, _ := fields["action"].(string)
@@ -236,7 +236,7 @@ func (a *APIServer) handleListeningSession(w http.ResponseWriter, r *http.Reques
 		}
 		rec, _ := st.space.State.AppInstanceByID(iid)
 
-		me := a.rt.Principal.ID
+		me := a.rt.PrincipalID
 		names := map[id.PrincipalID]string{me: a.rt.displayNameLocked()}
 		for _, c := range st.space.MemberCards(0) {
 			if c.Name != "" {

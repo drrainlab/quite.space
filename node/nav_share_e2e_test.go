@@ -253,7 +253,7 @@ func TestTheWaveEndToEnd(t *testing.T) {
 	if !alice2.ks.Spaces[ai].LocalOnly {
 		t.Fatal("the assistant's space stopped being local-only")
 	}
-	if alice2.agent == nil || alice2.agent.Principal.ID != alice2.Principal.ID {
+	if alice2.agent == nil || alice2.agent.Principal != alice2.Principal.ID {
 		t.Fatal("the assistant came back as somebody else")
 	}
 }

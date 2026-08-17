@@ -622,7 +622,7 @@ func (a *APIServer) publicationJSON(tid id.TerminalID, docID [16]byte) (map[stri
 		if !ok {
 			return errors.New("unknown publication")
 		}
-		me := a.rt.Principal.ID
+		me := a.rt.PrincipalID
 		names := map[id.PrincipalID]string{me: a.rt.displayNameLocked()}
 		for _, c := range sp.MemberCards(0) {
 			if c.Name != "" {

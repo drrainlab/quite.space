@@ -47,7 +47,7 @@ func TestKeepEmitGatesAndShelf(t *testing.T) {
 	// unkeep for a random principal: allowed only because we own the space.
 	// The negative case (member ≠ controller) is covered by the reducer test;
 	// here we verify the self path + persistence.
-	if err := rt.Unkeep(tid, eid, rt.Principal.ID); err != nil {
+	if err := rt.Unkeep(tid, eid, rt.PrincipalID); err != nil {
 		t.Fatal(err)
 	}
 	if len(sp.State.Shelf()) != 0 {

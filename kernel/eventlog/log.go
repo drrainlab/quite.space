@@ -49,6 +49,15 @@ type Log struct {
 
 	store *SegmentStore // nil = memory only
 	admit AdmitFunc
+	// identity is a SECOND, independent gate (MD-0). It asks whether this
+	// device may speak AT ALL — is it certified by the principal it claims,
+	// and has that certification been revoked (ADR-002). The space policy
+	// gate above asks a different question — may it speak HERE — and owns
+	// its own slot because refreshPolicy rewrites it on every policy change,
+	// including clearing it to nil. One slot for two lifetimes would mean a
+	// space going from curated to community silently switches identity
+	// checking off, which is exactly the class of bug this layering avoids.
+	identity AdmitFunc
 
 	frames  map[id.EventID][]byte
 	order   []id.EventID // append order for replay
@@ -60,6 +69,12 @@ type Log struct {
 // construction. PA-0 space policy derives the gate from the signed manifest,
 // which may arrive or change after the log is opened.
 func (l *Log) SetAdmit(f AdmitFunc) { l.admit = f }
+
+// SetIdentityAdmit installs the device-certification gate (MD-0, ADR-002).
+// It runs BEFORE the space policy gate, because "this device may not speak"
+// is a stronger and more general answer than "not here" — and because a
+// refusal should name the device rather than the room.
+func (l *Log) SetIdentityAdmit(f AdmitFunc) { l.identity = f }
 
 // Has reports whether the log already holds this event.
 func (l *Log) Has(eid id.EventID) bool {
@@ -132,6 +147,11 @@ func (l *Log) ingest(frame []byte, persist bool) ([]Applied, error) {
 	eid := id.EventIDOf(frame)
 	if _, dup := l.frames[eid]; dup {
 		return nil, nil // replay/duplicate: no-op
+	}
+	if l.identity != nil {
+		if err := l.identity(env); err != nil {
+			return nil, err
+		}
 	}
 	if l.admit != nil {
 		if err := l.admit(env); err != nil {

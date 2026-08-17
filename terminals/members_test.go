@@ -16,7 +16,7 @@ func TestMemberCardsAcrossEncryptedSpace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	spaceA, err := terminals.NewSpace("Lab", alice.Principal.ID)
+	spaceA, err := terminals.NewSpace("Lab", alice.Principal)
 	if err != nil {
 		t.Fatal(err)
 	}

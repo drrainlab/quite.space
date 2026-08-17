@@ -33,7 +33,7 @@ func TestPrivateSpaceEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	spaceA, err := terminals.NewSpace("Forest Session", alice.Principal.ID)
+	spaceA, err := terminals.NewSpace("Forest Session", alice.Principal)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +134,7 @@ func TestPrivateSpaceEndToEnd(t *testing.T) {
 
 func TestInviteSecurity(t *testing.T) {
 	alice, _ := human.New("alice")
-	spaceA, err := terminals.NewSpace("Forest Session", alice.Principal.ID)
+	spaceA, err := terminals.NewSpace("Forest Session", alice.Principal)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +170,7 @@ func TestInviteSecurity(t *testing.T) {
 
 func TestNonMemberCannotWrite(t *testing.T) {
 	alice, _ := human.New("alice")
-	spaceA, err := terminals.NewSpace("Forest Session", alice.Principal.ID)
+	spaceA, err := terminals.NewSpace("Forest Session", alice.Principal)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +198,7 @@ func TestAcceptingAnExistingMemberIsANoOp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	space, err := terminals.NewSpace("Line", alice.Principal.ID)
+	space, err := terminals.NewSpace("Line", alice.Principal)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,14 +213,14 @@ func TestAcceptingAnExistingMemberIsANoOp(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, _, _, err := space.AcceptIntoSpace(alice, bob.Device.ID,
-		bob.Device.X25519Pub, "bob", alice.Principal.ID, 100); err != nil {
+		bob.Device.X25519Pub, "bob", alice.Principal, 100); err != nil {
 		t.Fatal(err)
 	}
 	events, epoch := space.Log.Len(), space.CurrentEpoch()
 
 	// The same device again — a second link, a re-sent request, a double click.
 	n, key, mf, err := space.AcceptIntoSpace(alice, bob.Device.ID,
-		bob.Device.X25519Pub, "bob", alice.Principal.ID, 200)
+		bob.Device.X25519Pub, "bob", alice.Principal, 200)
 	if err != nil {
 		t.Fatalf("re-admitting an existing member failed: %v", err)
 	}

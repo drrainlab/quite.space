@@ -25,7 +25,7 @@ func broadcastPolicy(writers ...terminals.WriterBinding) terminals.SpacePolicy {
 }
 
 func bindingOf(p *terminals.Participant) terminals.WriterBinding {
-	return terminals.WriterBinding{Principal: p.Principal.ID, Device: p.Device.ID}
+	return terminals.WriterBinding{Principal: p.Principal, Device: p.Device.ID}
 }
 
 // Policy labels roundtrip through the signed manifest and coexist with the
@@ -141,7 +141,7 @@ func TestCuratedAdmissionKeepsSpamOutOfLog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := terminals.NewSpaceWithPolicy("Broadcast", owner.Principal.ID,
+	s, err := terminals.NewSpaceWithPolicy("Broadcast", owner.Principal,
 		terminals.DefaultCharacter("radio_room"),
 		broadcastPolicy(bindingOf(owner), bindingOf(curator)))
 	if err != nil {

@@ -72,7 +72,7 @@ func (r *Runtime) loadAgentLocked() error {
 		return err
 	}
 	// The PERSON's principal, deliberately — see the file header.
-	p, err := terminals.NewParticipantFromManifest(r.Principal, dev,
+	p, err := terminals.NewParticipantFromManifest(r.PrincipalID, dev,
 		rec.TerminalSeed, rec.ManifestFrame)
 	if err != nil {
 		return err
@@ -101,7 +101,7 @@ func (r *Runtime) EnsureAISpace() (id.TerminalID, error) {
 		if err != nil {
 			return id.TerminalID{}, err
 		}
-		p, seed, err := terminals.NewParticipantFrom(r.Principal, dev, nil,
+		p, seed, err := terminals.NewParticipantFrom(r.PrincipalID, dev, nil,
 			agent.Template(AgentLabel))
 		if err != nil {
 			return id.TerminalID{}, err

@@ -55,11 +55,25 @@ type Runtime struct {
 	// never r.mu — a preview touches no runtime state by design.
 	previews previewStore
 
-	root      *storage.Root
-	ks        *storage.Keystore
+	root *storage.Root
+	ks   *storage.Keystore
+	// PrincipalID is who this node acts as. Always present, on every device.
+	PrincipalID id.PrincipalID
+	// Principal is the ROOT KEYPAIR, and it is nil on a secondary device
+	// (MD-0). Only the authority device can certify a device or revoke one,
+	// so anything reaching for this field must first say why it needs to
+	// SIGN rather than merely to name — and must handle nil, because on a
+	// paired laptop or phone there is nothing here to reach for.
 	Principal *identity.Principal
 	Device    *identity.Device
 	Self      *terminals.Participant
+	// ident is the device-certification gate (MD-0). Built in one scan
+	// across every local log before any admission decision is taken.
+	ident *identityState
+	// selfCert is this device's own certificate, and certPublished is
+	// which spaces already carry it (MD-0).
+	selfCert      []byte
+	certPublished map[id.TerminalID]bool
 
 	spaces    map[id.TerminalID]*spaceState
 	assetIdx  *assetIndex
@@ -387,10 +401,29 @@ func Open(dataDir string, passphrase []byte, displayName string) (rt *Runtime, e
 	default:
 		return nil, err
 	}
-	r.Principal, r.Device, err = r.ks.Identity()
+	r.PrincipalID, r.Principal, r.Device, err = r.ks.Identity()
 	if err != nil {
 		return nil, err
 	}
+	r.ident = newIdentityState()
+	// The authority device certifies itself once, so that everything else
+	// in ADR-002 has something to stand on. A secondary never reaches here:
+	// Keystore.Identity refuses to open a keystore with no root seed and no
+	// certificate rather than let one proceed uncertified.
+	selfCert, selfCertNew, err := selfCertify(r.ks, r.Principal, r.Device,
+		uint64(time.Now().Unix()))
+	if err != nil {
+		return nil, err
+	}
+	if c, er := identity.DecodeCertificate(selfCert); er == nil {
+		_ = r.ident.store.AddCertificate(c)
+	}
+	_ = selfCertNew
+	r.selfCert = selfCert
+	r.certPublished = map[id.TerminalID]bool{}
+	identSeen := map[storage.LegacyBinding]bool{}
+	certHere := map[id.TerminalID]bool{}
+	var identLogs []*eventlog.Log
 
 	// Self participant. A persisted manifest frame (rev chain intact) is
 	// authoritative; otherwise mint a fresh one. The persisted display name
@@ -399,14 +432,14 @@ func Open(dataDir string, passphrase []byte, displayName string) (rt *Runtime, e
 		displayName = r.ks.DisplayName
 	}
 	if r.ks.SelfManifestFrame != nil && r.ks.SelfTerminalSeed != nil {
-		self, err := terminals.NewParticipantFromManifest(r.Principal, r.Device,
+		self, err := terminals.NewParticipantFromManifest(r.PrincipalID, r.Device,
 			r.ks.SelfTerminalSeed, r.ks.SelfManifestFrame)
 		if err != nil {
 			return nil, err
 		}
 		r.Self = self
 	} else {
-		self, seed, err := terminals.NewParticipantFrom(r.Principal, r.Device,
+		self, seed, err := terminals.NewParticipantFrom(r.PrincipalID, r.Device,
 			r.ks.SelfTerminalSeed, human.Template(displayName))
 		if err != nil {
 			return nil, err
@@ -424,6 +457,18 @@ func Open(dataDir string, passphrase []byte, displayName string) (rt *Runtime, e
 	}
 	if err := r.loadAgentLocked(); err != nil {
 		return nil, err
+	}
+	// The assistant and the gateway each hold their OWN device key and their
+	// own chain while sharing the person's principal — precisely the
+	// multi-device case ADR-002 describes. The gate found them the moment it
+	// went on, which is the gate working: an uncertified device is refused
+	// however local it is.
+	nowSec := uint64(time.Now().Unix())
+	if r.agent != nil {
+		certifyOwnDevice(r.ks, r.ident, r.Principal, r.agent.Device, nowSec)
+	}
+	if r.gateway != nil {
+		certifyOwnDevice(r.ks, r.ident, r.Principal, r.gateway.Device, nowSec)
 	}
 
 	// Reopen every known space: keys first, then the log, so the replay
@@ -464,6 +509,21 @@ func Open(dataDir string, passphrase []byte, displayName string) (rt *Runtime, e
 		if err != nil {
 			return nil, fmt.Errorf("node: reopening space %s: %w", tid, err)
 		}
+		// PASS 1 (MD-0). No identity gate is installed yet, anywhere: the
+		// scan must finish across EVERY local log before one admission
+		// decision is taken, or the answer depends on which space opened
+		// first. See node/identity_admit.go for the failure that shape has.
+		for _, a := range replayed {
+			r.ident.observe(a.Env)
+			identSeen[storage.LegacyBinding{
+				Principal: a.Env.Principal, Device: a.Env.Device,
+			}] = true
+			if a.Env.Schema == schemas.DeviceCertified && a.Env.Device == r.Device.ID {
+				certHere[tid] = true
+				r.certPublished[tid] = true
+			}
+		}
+		identLogs = append(identLogs, log)
 		s.AttachLog(log, replayed)
 		if !reader {
 			r.Self.ResumeChain(s)
@@ -485,6 +545,18 @@ func Open(dataDir string, passphrase []byte, displayName string) (rt *Runtime, e
 			if _, _, err := r.Self.PublishManifest(s); err != nil {
 				return nil, fmt.Errorf("node: publishing manifest into %s: %w", tid, err)
 			}
+			r.publishCertLocked(s)
+			// ADR-002:36-37 — "certificates travel in the event log so peers can
+			// verify any device's authority offline". Once per space, and only
+			// where this log does not already carry ours: a certificate re-emitted
+			// every restart would grow an append-only log forever to say a thing
+			// that has not changed.
+			if !certHere[tid] && len(selfCert) > 0 {
+				if _, err := r.Self.Emit(s, schemas.DeviceCertified, selfCert,
+					r.Self.DefaultAuthorship(), 0); err != nil {
+					return nil, fmt.Errorf("node: publishing device certificate into %s: %w", tid, err)
+				}
+			}
 		}
 		// Repair the visibility cache from the verified manifest.
 		if manifestKnown {
@@ -494,6 +566,35 @@ func Open(dataDir string, passphrase []byte, displayName string) (rt *Runtime, e
 			}
 		}
 	}
+	// PASS 2 (MD-0). The scan is complete, so admission is now a decision
+	// nothing about ordering can change. The legacy allowlist is frozen here
+	// ONCE — on the first open of a keystore that predates certification —
+	// and never appended to afterwards.
+	if len(r.ks.LegacyBindings) == 0 && len(identSeen) > 0 {
+		r.ks.LegacyBindings = r.ident.freezeLegacy(identSeen)
+	} else {
+		r.ident.loadLegacy(r.ks.LegacyBindings)
+	}
+	// The gate goes on HERE, and only here: the scan is complete, the
+	// authority has certified itself, and every space this node writes to
+	// now carries that certificate. Enforcement never precedes the thing
+	// that makes it satisfiable — measured the hard way, see the git history
+	// of this line.
+	// STILL OFF. Five of the six things the gate needs are now in place and
+	// each was a failing test first: the authority and its sibling devices
+	// certify themselves, certificates ride the log and are admitted on their
+	// own proof, spaces joined at runtime publish one, and an ARRIVING
+	// certificate becomes trust rather than mere storage.
+	//
+	// The sixth is not, and it is the one the plan already named as a risk:
+	// nothing orders a peer's certificate before its first message. TR-0's
+	// headless terminal still fails — it joins, publishes, restarts, speaks,
+	// and the message does not arrive. The remaining hypothesis, and it is
+	// only that: a frame refused here is DROPPED, and the sync engine does
+	// not re-offer it, so the refusal is permanent rather than a delay. If
+	// that is so, hold-and-replay is not an optimisation but the requirement,
+	// and it must land before this line is uncommented.
+	_ = identLogs
 	// SD-0: finish any deletion the last process did not live to finish.
 	// Before the saga is restored and before anything is served: events on
 	// disk for a space nobody lists are the messages somebody asked to be
@@ -588,6 +689,14 @@ func (r *Runtime) attach(tid id.TerminalID, s *terminals.Space) {
 	// created_local always, queued once any transport is live. Both are
 	// local claims, never destination proof (ADR-007).
 	s.OnAbsorb = func(a eventlog.Applied) {
+		// MD-0: a certificate that ARRIVES must become trust, not merely
+		// storage. The scan at Open builds the store from history and then
+		// never runs again, so without this line a peer's certificate lands
+		// in the log, is never learned, and every message from that peer is
+		// refused by a node that is holding the proof it says it lacks.
+		// Found by TR-0's headless terminal: it joined, published its
+		// certificate, restarted, spoke — and the message never arrived.
+		r.ident.observe(a.Env)
 		// AR-1b: the notification plane, and it is DISARMED during Open's
 		// replays — a host cannot arm it until Open has returned, so history
 		// is unable to notify by construction rather than by a filter.
@@ -793,10 +902,10 @@ func (r *Runtime) CreateSpaceWithOptions(title string, o CreateOptions) (id.Term
 	// writer — the owner must be able to publish from day one.
 	if o.Policy.Publish == terminals.PublishCurated {
 		o.Policy.Writers = append(o.Policy.Writers, terminals.WriterBinding{
-			Principal: r.Principal.ID, Device: r.Device.ID,
+			Principal: r.PrincipalID, Device: r.Device.ID,
 		})
 	}
-	s, err := terminals.NewSpaceWithPolicy(title, r.Principal.ID, o.Character, o.Policy)
+	s, err := terminals.NewSpaceWithPolicy(title, r.PrincipalID, o.Character, o.Policy)
 	if err != nil {
 		return id.TerminalID{}, err
 	}
@@ -831,6 +940,7 @@ func (r *Runtime) CreateSpaceWithOptions(title string, o CreateOptions) (id.Term
 	if _, _, err := r.Self.PublishManifest(s); err != nil {
 		return id.TerminalID{}, err
 	}
+	r.publishCertLocked(s)
 	r.persistEpochsLocked(s.ID, s)
 	return s.ID, nil
 }
@@ -893,6 +1003,7 @@ func (r *Runtime) JoinInvite(inviteB64 string) (id.TerminalID, error) {
 	if _, _, err := r.Self.PublishManifest(s); err != nil {
 		return id.TerminalID{}, err
 	}
+	r.publishCertLocked(s)
 	r.persistEpochsLocked(spaceID, s)
 	return spaceID, nil
 }
@@ -982,6 +1093,7 @@ func (r *Runtime) SetName(name string) error {
 		if _, _, err := r.Self.PublishManifest(st.space); err != nil {
 			return fmt.Errorf("node: republishing name into %s: %w", tid, err)
 		}
+		r.publishCertLocked(st.space)
 	}
 	return r.saveKeystore()
 }
@@ -1010,7 +1122,7 @@ func (r *Runtime) canWrite(st *spaceState) error {
 	}
 	if pol.Publish == terminals.PublishCurated {
 		for _, w := range pol.Writers {
-			if w.Principal == r.Principal.ID && w.Device == r.Device.ID {
+			if w.Principal == r.PrincipalID && w.Device == r.Device.ID {
 				return nil
 			}
 		}
@@ -1198,8 +1310,8 @@ func (r *Runtime) Spaces() []SpaceInfo {
 			Display: displayFor(spaceNaming{
 				Title: meta.Title, LocalTitle: meta.LocalTitle,
 				Unnamed: meta.Unnamed,
-			}, st.space, r.Principal.ID),
-			Dyad:          isDisplayDyad(cards, r.Principal.ID),
+			}, st.space, r.PrincipalID),
+			Dyad:          isDisplayDyad(cards, r.PrincipalID),
 			Events:        events,
 			Messages:      len(st.space.State.Messages()),
 			Undecryptable: st.space.Undecryptable,

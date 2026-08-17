@@ -23,7 +23,7 @@ func TestMentionsAndReplyReachTheProjection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	me := rt.Principal.ID
+	me := rt.PrincipalID
 	second, err := rt.Say(tid, "посмотришь до вечера?", SayOptions{
 		ReplyTo: &first, Mentions: []id.PrincipalID{me},
 	})
@@ -90,7 +90,7 @@ func TestRevisionDoesNotForgeAReplyEdge(t *testing.T) {
 	}
 
 	sp, _ := rt.spaceForTest(tid)
-	me := rt.Principal.ID
+	me := rt.PrincipalID
 	api, err := NewAPIServer(rt, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -128,7 +128,7 @@ func TestMentionsMeIsViewerRelative(t *testing.T) {
 		if e.ID != eid {
 			continue
 		}
-		got := api.projectEntry(tid, sp, &e, rt.Principal.ID, nil)
+		got := api.projectEntry(tid, sp, &e, rt.PrincipalID, nil)
 		if got.MentionsMe {
 			t.Fatal("mentions_me set for a viewer who was not addressed")
 		}

@@ -39,7 +39,7 @@ func runDemo() error {
 	if err != nil {
 		return err
 	}
-	spaceA, err := terminals.NewSpace("Forest Session", alice.Principal.ID)
+	spaceA, err := terminals.NewSpace("Forest Session", alice.Principal)
 	if err != nil {
 		return err
 	}
@@ -49,7 +49,7 @@ func runDemo() error {
 		return err
 	}
 	say("\n[node A] alice created PRIVATE space %s (%q), epoch 1 minted", spaceA.ID, "Forest Session")
-	say("[node A] alice fingerprint: %s", alice.Principal.Fingerprint())
+	say("[node A] alice fingerprint: %s", id.Fingerprint(alice.Principal[:]))
 
 	climate, err := sensor.NewTemperature("studio climate")
 	if err != nil {

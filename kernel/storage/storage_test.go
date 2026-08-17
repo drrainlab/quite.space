@@ -47,11 +47,11 @@ func TestKeystoreRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p2, d2, err := got.Identity()
+	pid2, p2, d2, err := got.Identity()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p2.ID != p.ID || d2.ID != d.ID || d2.X25519Pub != d.X25519Pub {
+	if pid2 != p.ID || p2.ID != p.ID || d2.ID != d.ID || d2.X25519Pub != d.X25519Pub {
 		t.Fatal("identity did not survive the keystore")
 	}
 	if !bytes.Equal(got.TerminalSeeds[term], ks.TerminalSeeds[term]) {

@@ -15,7 +15,7 @@ func TestCharacterRoundTripThroughManifest(t *testing.T) {
 	c.Rituals = []string{"listening_session", "field_recording_of_the_week"}
 	c.Presence = append(c.Presence, "sunday_capsule_prep")
 
-	s, err := terminals.NewSpaceWithCharacter("Night Studio", alice.Principal.ID, c)
+	s, err := terminals.NewSpaceWithCharacter("Night Studio", alice.Principal, c)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +71,7 @@ func TestPrivateHistoryInvite(t *testing.T) {
 	alice, _ := human.New("alice")
 	c := terminals.DefaultCharacter("home")
 	c.Memory = "private_history"
-	s, err := terminals.NewSpaceWithCharacter("Family", alice.Principal.ID, c)
+	s, err := terminals.NewSpaceWithCharacter("Family", alice.Principal, c)
 	if err != nil {
 		t.Fatal(err)
 	}

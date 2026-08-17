@@ -632,7 +632,7 @@ func (r *Runtime) ensureGatewayLocked() (*terminals.Participant, error) {
 		if err != nil {
 			return nil, err
 		}
-		p, err := terminals.NewParticipantFromManifest(r.Principal, dev,
+		p, err := terminals.NewParticipantFromManifest(r.PrincipalID, dev,
 			r.ks.Gateway.TerminalSeed, r.ks.Gateway.ManifestFrame)
 		if err != nil {
 			return nil, err
@@ -644,7 +644,7 @@ func (r *Runtime) ensureGatewayLocked() (*terminals.Participant, error) {
 	if err != nil {
 		return nil, err
 	}
-	p, seed, err := terminals.NewParticipantFrom(r.Principal, dev, nil,
+	p, seed, err := terminals.NewParticipantFrom(r.PrincipalID, dev, nil,
 		gateway.Template("external gateway"))
 	if err != nil {
 		return nil, err
@@ -689,7 +689,7 @@ func (r *Runtime) loadGatewayLocked() error {
 	if err != nil {
 		return err
 	}
-	p, err := terminals.NewParticipantFromManifest(r.Principal, dev,
+	p, err := terminals.NewParticipantFromManifest(r.PrincipalID, dev,
 		rec.TerminalSeed, rec.ManifestFrame)
 	if err != nil {
 		return err

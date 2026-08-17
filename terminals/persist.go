@@ -146,7 +146,7 @@ func (s *Space) RestoreEpochs(keys []crypto.EpochKey) {
 // NewParticipantFrom builds a participant on an existing identity. When
 // terminalSeed is nil a fresh terminal key is generated; the caller
 // persists the returned seed.
-func NewParticipantFrom(prin *identity.Principal, dev *identity.Device,
+func NewParticipantFrom(prin id.PrincipalID, dev *identity.Device,
 	terminalSeed []byte, template manifest.Manifest) (*Participant, []byte, error) {
 
 	var priv ed25519.PrivateKey
@@ -170,7 +170,7 @@ func NewParticipantFrom(prin *identity.Principal, dev *identity.Device,
 	}
 	copy(p.TerminalID[:], priv.Public().(ed25519.PublicKey))
 	template.Terminal = p.TerminalID
-	template.Controller = prin.ID
+	template.Controller = prin
 	if template.Revision == 0 {
 		template.Revision = 1
 	}
@@ -185,7 +185,7 @@ func NewParticipantFrom(prin *identity.Principal, dev *identity.Device,
 
 // NewParticipantFromManifest adopts a previously-signed self manifest frame
 // (persisted across restarts) so its revision chain stays intact.
-func NewParticipantFromManifest(prin *identity.Principal, dev *identity.Device,
+func NewParticipantFromManifest(prin id.PrincipalID, dev *identity.Device,
 	terminalSeed, manifestFrame []byte) (*Participant, error) {
 	if len(terminalSeed) != ed25519.SeedSize {
 		return nil, errors.New("terminals: bad participant terminal seed")

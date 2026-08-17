@@ -54,7 +54,7 @@ func TestPolicyRevisionCuratorAddViaProjection(t *testing.T) {
 	// Owner adds the curator's exact device via a policy revision.
 	if err := owner.RevisePolicy(tid, PolicyDelta{
 		AddCurator: &terminals.WriterBinding{
-			Principal: curator.Principal.ID, Device: curator.Device.ID,
+			Principal: curator.PrincipalID, Device: curator.Device.ID,
 		},
 	}); err != nil {
 		t.Fatal(err)

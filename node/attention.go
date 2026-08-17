@@ -169,7 +169,7 @@ func (r *Runtime) attentionSpaces() []attentionSpaceInfo {
 		}
 		out = append(out, attentionSpaceInfo{
 			tid: tid, space: st.space, title: meta.Title,
-			names: names, scope: scope, myself: r.Principal.ID,
+			names: names, scope: scope, myself: r.PrincipalID,
 		})
 	}
 	return out
@@ -299,7 +299,7 @@ func (r *Runtime) NoticeEvent(tid id.TerminalID, eid id.EventID) error {
 func (r *Runtime) learnFrom(st *attentionState, tid id.TerminalID, eid id.EventID, useful bool) error {
 	r.mu.Lock()
 	sp, ok := r.spaces[tid]
-	me := r.Principal.ID
+	me := r.PrincipalID
 	r.mu.Unlock()
 	if !ok {
 		return errNotFound

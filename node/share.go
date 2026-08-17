@@ -313,7 +313,7 @@ func clipCardText(s string, max int) string {
 // Self-declared, like every name in this codebase — and here it is the
 // SENDER repeating it, which is weaker still. Caller holds r.mu.
 func authorNameLocked(r *Runtime, st *spaceState, who id.PrincipalID) string {
-	if who == r.Principal.ID {
+	if who == r.PrincipalID {
 		return r.displayNameLocked()
 	}
 	for _, c := range st.space.MemberCards(0) {

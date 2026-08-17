@@ -825,7 +825,7 @@ func (a *APIServer) handleMessages(w http.ResponseWriter, r *http.Request) {
 			row := messageResp{
 				ID: m.ID.Hex(), Author: m.Author.String(), Text: m.Text,
 				ProducedBy: m.ProducedBy.String(), Revised: m.Revised,
-				Clock: m.Clock, Mine: m.Author == a.rt.Principal.ID,
+				Clock: m.Clock, Mine: m.Author == a.rt.PrincipalID,
 			}
 			if m.External != nil && m.ProducedBy == signal.AuthorshipImported {
 				row.External = &externalResp{
@@ -1114,7 +1114,7 @@ func (a *APIServer) handleMembers(w http.ResponseWriter, r *http.Request) {
 			Model: "not specified", IOMode: c.IOMode,
 			Capabilities: c.Capabilities, DeclaredLabels: c.DeclaredLabels,
 			SysLabels: c.SysLabels, Commandable: c.CanReceiveCommands,
-			Mine: c.Principal == a.rt.Principal.ID,
+			Mine: c.Principal == a.rt.PrincipalID,
 		}
 		m.Presence.Known = c.Presence.Known
 		m.Presence.Current = c.Presence.Current

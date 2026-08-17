@@ -163,7 +163,7 @@ func TestCuratedSayRefusedForNonWriter(t *testing.T) {
 		Publish:    terminals.PublishCurated,
 		Writers:    []terminals.WriterBinding{other},
 	}
-	s, err := terminals.NewSpaceWithPolicy("Their Broadcast", rt.Principal.ID,
+	s, err := terminals.NewSpaceWithPolicy("Their Broadcast", rt.PrincipalID,
 		terminals.DefaultCharacter("radio_room"), pol)
 	if err != nil {
 		t.Fatal(err)

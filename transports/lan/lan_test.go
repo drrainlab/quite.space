@@ -57,7 +57,7 @@ func buildSpaces(t *testing.T) (*syncNode, *syncNode, *terminals.Participant) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	spaceA, err := terminals.NewSpace("LAN Session", alice.Principal.ID)
+	spaceA, err := terminals.NewSpace("LAN Session", alice.Principal)
 	if err != nil {
 		t.Fatal(err)
 	}

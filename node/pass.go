@@ -344,7 +344,7 @@ func (r *Runtime) acceptOne(client *relay.Client, recs []*passRecord, sealed []b
 		var resp []byte
 		if st != nil {
 			epochN, epochKey, mf, err := st.space.AcceptIntoSpace(r.Self,
-				req.Device, req.DeviceXpub, req.DisplayName, r.Principal.ID, now)
+				req.Device, req.DeviceXpub, req.DisplayName, r.PrincipalID, now)
 			if err == nil {
 				// The route exchange, both directions, in the one moment
 				// both sides are talking (RT-0). The guest said where to
@@ -619,6 +619,7 @@ func (r *Runtime) adoptAccepted(at *joinAttempt, acc *terminals.Accepted) error 
 	if _, _, err := r.Self.PublishManifest(s); err != nil {
 		return err
 	}
+	r.publishCertLocked(s)
 	r.persistEpochsLocked(at.space, s)
 	return nil
 }
