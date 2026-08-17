@@ -393,7 +393,7 @@ func (g *Gate) pairStart(w http.ResponseWriter, r *http.Request) {
 	pass := body.Passphrase
 	go func() {
 		err := node.JoinAsPairedDeviceVia(g.dataDir, []byte(pass), offer,
-			lan.MulticastAddr, func(digits string) bool {
+			lan.MulticastAddr, "", func(digits string) bool {
 				flow.mu.Lock()
 				flow.stage, flow.digits = "digits", digits
 				flow.mu.Unlock()

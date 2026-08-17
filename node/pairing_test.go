@@ -237,7 +237,7 @@ func TestBeaconFindsAParentWhoseAddressMoved(t *testing.T) {
 	childErr := make(chan error, 1)
 	go func() {
 		childErr <- JoinAsPairedDeviceVia(childDir, []byte("test passphrase"), host.OfferBytes(),
-			udp, func(string) bool { return true }, now)
+			udp, "", func(string) bool { return true }, now)
 	}()
 	attempt, err := host.Accept(now)
 	if err != nil {

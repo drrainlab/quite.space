@@ -35,7 +35,7 @@ func HasIdentity(dir string) bool { return node.Inspect(dir).HasIdentity }
 
 // PairStart begins the child ceremony against an EMPTY data dir. The offer
 // is base64 in any of its dialects, exactly as a human pastes it.
-func PairStart(dir, passphrase, offerB64 string) error {
+func PairStart(dir, passphrase, offerB64, deviceLabel string) error {
 	pairMu.Lock()
 	defer pairMu.Unlock()
 	if pairStage == "running" || pairStage == "digits" {
@@ -49,7 +49,7 @@ func PairStart(dir, passphrase, offerB64 string) error {
 	pairStage, pairDigits, pairFail, pairApprove = "running", "", "", approve
 	go func() {
 		err := node.JoinAsPairedDeviceVia(dir, []byte(passphrase), offer,
-			lan.MulticastAddr, func(digits string) bool {
+			lan.MulticastAddr, deviceLabel, func(digits string) bool {
 				pairMu.Lock()
 				pairStage, pairDigits = "digits", digits
 				pairMu.Unlock()

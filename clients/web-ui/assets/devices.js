@@ -17,8 +17,9 @@ async function loadDevices() {
       row.className = 'list-row';
       const label = document.createElement('span');
       label.className = 'lr-label';
-      label.textContent = d.device.slice(0, 12) + '…' +
+      label.textContent = (d.label || d.device.slice(0, 12) + '…') +
         (d.this ? ' — this device' : '') + (d.revoked ? ' — revoked' : '');
+      label.title = d.device;
       row.appendChild(label);
       // The one revocation that is always a mistake is not offered at all.
       if (!d.this && !d.revoked) {
@@ -132,7 +133,33 @@ async function cancelPairingUI() {
   setPairStage('');
 }
 
+async function loadPasscode() {
+  const st = document.getElementById('pcState');
+  if (!st) return;
+  try {
+    const info = await api('/api/passcode');
+    st.textContent = info.bound
+      ? 'A ' + info.digits + '-digit code opens this device.'
+      : 'No code is bound — the lock screen asks for the passphrase.';
+  } catch { st.textContent = ''; }
+}
+
+async function bindPasscode() {
+  const code = document.getElementById('pcCode');
+  const pass = document.getElementById('pcPass');
+  const st = document.getElementById('pcState');
+  if (!/^[0-9]{4,8}$/.test(code.value)) { st.textContent = 'A code is 4–8 digits.'; return; }
+  try {
+    await api('/api/passcode', { method: 'POST',
+      body: JSON.stringify({ code: code.value, passphrase: pass.value }) });
+    code.value = ''; pass.value = '';
+    st.textContent = 'Bound. The lock screen offers the code from the next launch.';
+  } catch (e) { st.textContent = String(e.message || e); }
+}
+
 if (typeof window !== 'undefined') {
+  // @ts-ignore
+  window.loadPasscode = loadPasscode; window.bindPasscode = bindPasscode;
   // @ts-ignore
   window.loadDevices = loadDevices; window.beginPairingUI = beginPairingUI;
   // @ts-ignore

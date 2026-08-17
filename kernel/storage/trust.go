@@ -34,6 +34,10 @@ var errMalformedTrustEntry = errors.New("storage: malformed trust entry")
 type CertRecord struct {
 	Device id.DeviceID
 	Frame  []byte // identity.Certificate.Encode()
+	// Label is the human name a screen shows beside the hex — the phone's
+	// model, a hostname. Cosmetic and LOCAL: it travels in no certificate
+	// and proves nothing about anything.
+	Label string
 }
 
 // RevRecord is one revocation, same shape and for the same reason.
@@ -53,7 +57,7 @@ type LegacyBinding struct {
 // Record arities, NAMED — see SpaceMeta's unnamed literals for what a bare
 // number costs here. Append only, and bump when you do.
 const (
-	certFields   = 2
+	certFields   = 3
 	revFields    = 2
 	legacyFields = 2
 )
@@ -62,6 +66,7 @@ func appendCertRecord(buf []byte, c CertRecord) []byte {
 	buf = codec.AppendArray(buf, certFields)
 	buf = codec.AppendBytes(buf, c.Device[:])
 	buf = codec.AppendBytes(buf, c.Frame)
+	buf = codec.AppendText(buf, c.Label)
 	return buf
 }
 
@@ -83,6 +88,11 @@ func readCertRecord(d *codec.Decoder) (CertRecord, error) {
 	}
 	if acount >= 2 {
 		if c.Frame, err = d.ReadBytes(); err != nil {
+			return c, err
+		}
+	}
+	if acount >= 3 {
+		if c.Label, err = d.ReadText(); err != nil {
 			return c, err
 		}
 	}

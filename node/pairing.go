@@ -30,6 +30,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"time"
 
 	"github.com/drrainlab/quiet_places/kernel/crypto"
@@ -322,7 +323,7 @@ func (a *PairingAttempt) Approve(nowUnix uint64) error {
 	if err != nil {
 		return err
 	}
-	childDev, childX, err := decodeEnrollment(enroll)
+	childDev, childX, childLabel, err := decodeEnrollment(enroll)
 	if err != nil {
 		return err
 	}
@@ -340,7 +341,7 @@ func (a *PairingAttempt) Approve(nowUnix uint64) error {
 		r.mu.Unlock()
 		return err
 	}
-	r.ks.Certs = append(r.ks.Certs, storage.CertRecord{Device: childDev, Frame: frame})
+	r.ks.Certs = append(r.ks.Certs, storage.CertRecord{Device: childDev, Frame: frame, Label: childLabel})
 	_ = r.ident.store.AddCertificate(cert)
 	// 3 — the child joins every OWNED space, and each join rotates: a stolen
 	// recording of yesterday's epochs must not read tomorrow.
@@ -420,33 +421,43 @@ func replaceFreightCert(doc []byte, childCert []byte) []byte {
 	return buf
 }
 
-func encodeEnrollment(dev id.DeviceID, xpub [32]byte) []byte {
+func encodeEnrollment(dev id.DeviceID, xpub [32]byte, label string) []byte {
 	var buf []byte
-	buf = codec.AppendArray(buf, enrollFields)
+	buf = codec.AppendArray(buf, enrollFields+1)
 	buf = codec.AppendBytes(buf, dev[:])
 	buf = codec.AppendBytes(buf, xpub[:])
+	buf = codec.AppendText(buf, label)
 	return buf
 }
 
-func decodeEnrollment(data []byte) (id.DeviceID, [32]byte, error) {
+func decodeEnrollment(data []byte) (id.DeviceID, [32]byte, string, error) {
 	var dev id.DeviceID
 	var xpub [32]byte
 	bad := errors.New("node: malformed pairing enrollment")
 	d := codec.NewDecoder(data)
 	n, err := d.ReadArray()
 	if err != nil || n < enrollFields {
-		return dev, xpub, bad
+		return dev, xpub, "", bad
 	}
 	raw, err := d.ReadBytes()
 	if err != nil || len(raw) != len(dev) {
-		return dev, xpub, bad
+		return dev, xpub, "", bad
 	}
 	copy(dev[:], raw)
 	if raw, err = d.ReadBytes(); err != nil || len(raw) != len(xpub) {
-		return dev, xpub, bad
+		return dev, xpub, "", bad
 	}
 	copy(xpub[:], raw)
-	return dev, xpub, nil
+	label := ""
+	if n >= 3 {
+		if label, err = d.ReadText(); err != nil {
+			return dev, xpub, "", bad
+		}
+	}
+	if len(label) > 64 {
+		label = label[:64] // a NAME, not a payload
+	}
+	return dev, xpub, label, nil
 }
 
 // ---- the child's side ----
@@ -457,7 +468,7 @@ func decodeEnrollment(data []byte) (id.DeviceID, [32]byte, error) {
 // node.Open of that dir is a secondary of the person.
 func JoinAsPairedDevice(dir string, passphrase, offerBytes []byte,
 	approve func(digits string) bool, nowUnix uint64) error {
-	return JoinAsPairedDeviceVia(dir, passphrase, offerBytes, "", approve, nowUnix)
+	return JoinAsPairedDeviceVia(dir, passphrase, offerBytes, "", "", approve, nowUnix)
 }
 
 // JoinAsPairedDeviceVia is JoinAsPairedDevice with a beacon fallback: when
@@ -465,7 +476,12 @@ func JoinAsPairedDevice(dir string, passphrase, offerBytes []byte,
 // listens on announceAddr for the beacon only the offer's holder can derive,
 // and dials the address it names instead.
 func JoinAsPairedDeviceVia(dir string, passphrase, offerBytes []byte,
-	announceAddr string, approve func(digits string) bool, nowUnix uint64) error {
+	announceAddr, deviceLabel string, approve func(digits string) bool, nowUnix uint64) error {
+	if deviceLabel == "" {
+		if h, err := os.Hostname(); err == nil {
+			deviceLabel = h
+		}
+	}
 
 	// The same rule as restore, for the same reason: pairing writes an
 	// identity, and identities are never written over each other.
@@ -525,7 +541,7 @@ func JoinAsPairedDeviceVia(dir string, passphrase, offerBytes []byte,
 	if err != nil {
 		return err
 	}
-	if err := cs.SendSealed(encodeEnrollment(dev.ID, dev.X25519Pub)); err != nil {
+	if err := cs.SendSealed(encodeEnrollment(dev.ID, dev.X25519Pub, deviceLabel)); err != nil {
 		return err
 	}
 	raw, err := cs.AwaitSealed()

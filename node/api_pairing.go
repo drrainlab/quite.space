@@ -17,11 +17,13 @@ package node
 import (
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"sync"
 	"time"
 
+	"github.com/drrainlab/quiet_places/kernel/passcode"
 	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/protocol/pairing"
 	"github.com/drrainlab/quiet_places/transports/lan"
@@ -185,3 +187,38 @@ func (p *pairingUI) close() {
 // (advertiseHost), answered inside BeginPairing — binding to a guessed
 // address was the bug a live pairing found, with a VPN owning the guess.
 var pairingBind = func() string { return "0.0.0.0:0" }
+
+// ---- the login code (desktop): four digits instead of the passphrase.
+// Binding lived only in the CLI and on Android; a desktop that had lost its
+// passcode file had no way back short of a terminal. The passphrase is
+// demanded and VERIFIED first — a code is a convenience over the key, never
+// a substitute for proving you hold it.
+
+func (a *APIServer) handlePasscodeInfo(w http.ResponseWriter, r *http.Request) {
+	st, err := passcode.Info(a.rt.DataDir())
+	if err != nil {
+		writeJSON(w, map[string]any{"bound": false})
+		return
+	}
+	writeJSON(w, map[string]any{"bound": st.Bound, "digits": st.Digits})
+}
+
+func (a *APIServer) handlePasscodeBind(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Code       string `json:"code"`
+		Passphrase string `json:"passphrase"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&body); err != nil {
+		http.Error(w, "malformed", http.StatusBadRequest)
+		return
+	}
+	if err := VerifyPassphrase(a.rt.DataDir(), []byte(body.Passphrase)); err != nil {
+		http.Error(w, "that passphrase does not open this device", http.StatusForbidden)
+		return
+	}
+	if err := passcode.Bind(a.rt.DataDir(), body.Code, []byte(body.Passphrase)); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{"bound": true, "digits": len(body.Code)})
+}

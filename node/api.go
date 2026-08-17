@@ -175,6 +175,8 @@ func (a *APIServer) Handler() http.Handler {
 	mux.HandleFunc("GET /api/pairing", a.auth(a.handlePairingStatus))
 	mux.HandleFunc("POST /api/pairing/approve", a.auth(a.handleApprovePairing))
 	mux.HandleFunc("DELETE /api/pairing", a.auth(a.handleCancelPairing))
+	mux.HandleFunc("GET /api/passcode", a.auth(a.handlePasscodeInfo))
+	mux.HandleFunc("POST /api/passcode", a.auth(a.handlePasscodeBind))
 	mux.HandleFunc("GET /api/spaces", a.auth(a.handleSpaces))
 	mux.HandleFunc("POST /api/spaces", a.auth(a.handleCreateSpace))
 	// SD-0. DELETE, because that is what it is — and it deletes THIS

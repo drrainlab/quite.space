@@ -450,7 +450,8 @@ class RuntimeController private constructor(appContext: Context) {
      *  lock Android's Wi-Fi stack drops exactly those packets. */
     fun pairStart(passphrase: String, offer: String): String? = try {
         acquireMulticast()
-        Quietcore.pairStart(dataDir().absolutePath, passphrase, offer); null
+        Quietcore.pairStart(dataDir().absolutePath, passphrase, offer,
+            android.os.Build.MODEL ?: "Android"); null
     } catch (t: Throwable) {
         releaseMulticast()
         t.message ?: "could not start pairing"

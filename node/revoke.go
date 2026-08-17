@@ -97,6 +97,7 @@ func (r *Runtime) RevokeDevice(dev id.DeviceID) error {
 // to offer the one revocation that is always a mistake.
 type DeviceInfo struct {
 	Device  string `json:"device"` // hex id
+	Label   string `json:"label"`  // human name; hex is the fallback, never the face
 	This    bool   `json:"this"`
 	Revoked bool   `json:"revoked"`
 }
@@ -110,8 +111,21 @@ func (r *Runtime) Devices() []DeviceInfo {
 	}
 	out := make([]DeviceInfo, 0, len(r.ks.Certs))
 	for _, rec := range r.ks.Certs {
+		// The assistant and the gateway are the runtime's own writers, not
+		// the person's hands — a devices screen is about hands.
+		if r.agent != nil && rec.Device == r.agent.Device.ID {
+			continue
+		}
+		if r.gateway != nil && rec.Device == r.gateway.Device.ID {
+			continue
+		}
+		label := rec.Label
+		if label == "" && rec.Device == r.Device.ID {
+			label = deviceName()
+		}
 		out = append(out, DeviceInfo{
 			Device:  rec.Device.Hex(),
+			Label:   label,
 			This:    rec.Device == r.Device.ID,
 			Revoked: revoked[rec.Device],
 		})
@@ -123,3 +137,7 @@ func (r *Runtime) Devices() []DeviceInfo {
 // device — a secondary holds no *identity.Principal to ask (MD-2), and the
 // three callers that used to ask one panicked on the first paired phone.
 func (r *Runtime) Fingerprint() string { return id.Fingerprint(r.PrincipalID[:]) }
+
+// DataDir is where this runtime lives — the passcode file's home, among
+// other things a shell needs to name.
+func (r *Runtime) DataDir() string { return r.dataDir }
