@@ -67,22 +67,30 @@
     box-shadow:0 0 12px 2px rgba(111,220,140,.28)}
 
   /* ---- the card --------------------------------------------------- */
-  .card{position:relative; z-index:1; width:min(92vw,380px); text-align:center;
-    padding:34px 26px 26px; border-radius:22px;
-    background:var(--panel); border:1px solid var(--line);
-    backdrop-filter:blur(18px) saturate(1.1);
-    box-shadow:inset 0 1px 0 rgba(255,255,255,.06), 0 30px 80px -30px rgba(0,0,0,.9)}
+  /* SPACE GLASS. The card is a pane held in front of the sky, so the light
+     it catches comes from above (the inset highlight) and the depth from
+     what it hides behind it (the long shadow). Wider and calmer than
+     before: this is the first surface anybody meets, and a cramped one
+     reads as a password prompt rather than a door. */
+  .card{position:relative; z-index:1; width:min(94vw,440px); text-align:center;
+    padding:40px 32px 30px; border-radius:26px;
+    background:linear-gradient(180deg, rgba(28,30,46,.72), rgba(16,17,28,.78));
+    border:1px solid var(--line);
+    backdrop-filter:blur(22px) saturate(1.15);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.09),
+               inset 0 -1px 0 rgba(0,0,0,.35),
+               0 40px 100px -35px rgba(0,0,0,.95)}
   @media (prefers-reduced-transparency:reduce){
     .card{background:#101018; backdrop-filter:none}
   }
 
-  .mark{width:56px;height:56px;margin:0 auto 14px;display:block}
-  h1{margin:0 0 4px; font-size:17px; font-weight:600; letter-spacing:.01em}
-  .sub{margin:0 0 22px; color:var(--dim); font-size:13px}
+  .mark{width:64px;height:64px;margin:0 auto 16px;display:block}
+  h1{margin:0 0 6px; font-size:19px; font-weight:600; letter-spacing:.01em}
+  .sub{margin:0 0 26px; color:var(--dim); font-size:14px}
 
   /* ---- the dots --------------------------------------------------- */
-  .dots{display:flex; gap:14px; justify-content:center; margin:0 0 22px}
-  .dot{width:13px;height:13px;border-radius:50%;
+  .dots{display:flex; gap:16px; justify-content:center; margin:0 0 26px}
+  .dot{width:15px;height:15px;border-radius:50%;
     border:1.5px solid rgba(255,255,255,.22); transition:all .18s ease}
   .dot.on{background:var(--star); border-color:var(--star);
     box-shadow:0 0 12px rgba(223,232,255,.55); transform:scale(1.08)}
@@ -93,15 +101,21 @@
   }
 
   /* ---- the keypad ------------------------------------------------- */
-  .pad{display:grid; grid-template-columns:repeat(3,1fr); gap:10px}
-  .key{height:54px; border-radius:14px; cursor:pointer;
-    background:rgba(255,255,255,.035); border:1px solid var(--line);
-    color:var(--fg); font-size:20px; font-weight:500;
+  /* KEYS BIG ENOUGH TO HIT WITHOUT LOOKING. 64px clears the 44px touch
+     floor with room to spare, and the glass gets its own top highlight so
+     each key reads as a pane rather than a painted rectangle. */
+  .pad{display:grid; grid-template-columns:repeat(3,1fr); gap:12px}
+  .key{height:64px; border-radius:18px; cursor:pointer;
+    background:linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,.025));
+    border:1px solid var(--line);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.08);
+    color:var(--fg); font-size:24px; font-weight:500;
     font-variant-numeric:tabular-nums;
     display:grid; place-items:center; user-select:none;
-    transition:background .12s ease, transform .08s ease}
-  .key:hover{background:rgba(255,255,255,.07)}
-  .key:active{transform:scale(.95); background:rgba(211,154,231,.16)}
+    transition:background .12s ease, transform .08s ease, box-shadow .12s ease}
+  .key:hover{background:linear-gradient(180deg, rgba(255,255,255,.11), rgba(255,255,255,.05));
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.14), 0 0 20px -6px rgba(211,154,231,.5)}
+  .key:active{transform:scale(.95); background:rgba(211,154,231,.18)}
   .key.ghost{background:none; border-color:transparent; font-size:14px; color:var(--dim)}
   .key.ghost:hover{background:rgba(255,255,255,.04)}
   .key:focus-visible{outline:2px solid var(--acc); outline-offset:2px}
@@ -114,37 +128,65 @@
     font-size:11.5px; color:var(--muted); line-height:1.55}
   .foot a{color:var(--dim); text-decoration:underline; text-underline-offset:2px; cursor:pointer}
 
-  .pass{display:none; margin-top:14px}
-  .pass input{width:100%; padding:12px 14px; border-radius:12px;
-    background:rgba(0,0,0,.35); border:1px solid var(--line); color:var(--fg);
-    font-size:14px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-  .pass input:focus{outline:none; border-color:var(--acc)}
+  .pass{display:none; margin-top:16px}
+  .field{position:relative}
+  .pass input{width:100%; padding:16px 74px 16px 16px; border-radius:16px;
+    background:rgba(0,0,0,.32); border:1px solid var(--line); color:var(--fg);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.05);
+    font-size:16px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    transition:border-color .14s ease, box-shadow .14s ease}
+  .pass input:focus{outline:none; border-color:var(--acc);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.05), 0 0 0 3px rgba(211,154,231,.16)}
+  /* A passphrase long enough to be worth having is long enough to mistype,
+     and hiding it helps nobody who is alone at their own machine. */
+  .peek{position:absolute; right:8px; top:50%; transform:translateY(-50%);
+    border:0; background:rgba(255,255,255,.06); color:var(--dim);
+    font:inherit; font-size:12px; padding:7px 11px; border-radius:10px;
+    cursor:pointer; transition:background .12s ease, color .12s ease}
+  .peek:hover{background:rgba(255,255,255,.12); color:var(--fg)}
 
   /* First run. The same card, one more decision — and the decision is not
      "pick a password", it is "there is nobody to recover this from", so the
      warning is part of the form rather than a line somebody may scroll past. */
-  .make{display:none; margin-top:14px; text-align:left}
-  .make label{display:block; font-size:12px; color:var(--dim); margin:10px 2px 5px}
-  .make input{width:100%; padding:12px 14px; border-radius:12px;
-    background:rgba(0,0,0,.35); border:1px solid var(--line); color:var(--fg);
-    font-size:14px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-  .make input:focus{outline:none; border-color:var(--acc)}
+  .make{display:none; margin-top:16px; text-align:left}
+  .make label{display:block; font-size:13px; color:var(--dim); margin:14px 2px 6px}
+  .make input{width:100%; padding:16px; border-radius:16px;
+    background:rgba(0,0,0,.32); border:1px solid var(--line); color:var(--fg);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.05);
+    font-size:16px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    transition:border-color .14s ease, box-shadow .14s ease}
+  .make input:focus{outline:none; border-color:var(--acc);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.05), 0 0 0 3px rgba(211,154,231,.16)}
+  /* The confirmation answers WHILE typing, not after pressing a button:
+     a mismatch found at submit time is a mismatch found too late to
+     remember which of the two was the one you meant. */
+  .make input.ok{border-color:rgba(111,220,140,.55)}
+  .make input.bad{border-color:rgba(255,155,155,.55)}
+  .match{min-height:17px; margin:7px 2px 0; font-size:12px; color:var(--dim)}
+  .match.ok{color:var(--join)}
+  .match.bad{color:#ff9b9b}
   .make .row{display:flex; justify-content:space-between; align-items:baseline; gap:10px}
   .make .row label{margin-bottom:0}
   .make .row a{font-size:12px; color:var(--acc); cursor:pointer; white-space:nowrap}
   .warn{margin:12px 2px 0; font-size:12px; line-height:1.55; color:var(--warm)}
-  .go{width:100%; margin-top:16px; padding:13px; border-radius:12px; cursor:pointer;
-    border:1px solid var(--line); background:var(--panel); color:var(--fg);
-    font:inherit; font-size:14px}
-  .go:hover{border-color:var(--acc)}
-  .go[disabled]{opacity:.45; cursor:default}
+  .go{width:100%; margin-top:20px; padding:17px; border-radius:16px; cursor:pointer;
+    border:1px solid var(--line); color:var(--fg); font:inherit;
+    font-size:15px; font-weight:500; letter-spacing:.01em;
+    background:linear-gradient(180deg, rgba(211,154,231,.22), rgba(143,184,255,.14));
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.12);
+    transition:border-color .14s ease, box-shadow .14s ease, transform .08s ease}
+  .go:hover{border-color:var(--acc);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.18), 0 0 28px -8px rgba(211,154,231,.6)}
+  .go:active{transform:scale(.99)}
+  .go[disabled]{opacity:.4; cursor:default; box-shadow:none; transform:none}
 
   /* The project's floor: nothing moves for somebody who asked for that.
      The sky stays — it is a picture, not an animation. */
   @media (prefers-reduced-motion:reduce){
     .stars,.s1,.s2,.s3{animation:none}
     .dots.bad{animation:none}
-    .dot,.key{transition:none}
+    .dot,.key,.go,.pass input,.make input{transition:none}
+    .key:active,.go:active{transform:none}
   }
 </style>
 </head>
@@ -193,8 +235,13 @@
     <p class="msg" id="msg" role="alert"></p>
 
     <div class="pass" id="passBox">
-      <input id="passInput" type="password" autocomplete="current-password"
-             placeholder="your passphrase" spellcheck="false">
+      <div class="field">
+        <input id="passInput" type="password" autocomplete="current-password"
+               placeholder="your passphrase" spellcheck="false">
+        <button class="peek" id="passPeek" type="button" tabindex="0"
+                aria-label="show the passphrase">show</button>
+      </div>
+      <button class="go" id="passGo" type="button">Open</button>
     </div>
 
     <div class="make" id="makeBox">
@@ -207,6 +254,16 @@
       </div>
       <input id="makePass" type="text" autocomplete="new-password"
              placeholder="at least 8 characters" spellcheck="false">
+      <!-- TYPED TWICE, BECAUSE THERE IS NO SECOND CHANCE. Everywhere else a
+           confirmation field is a formality — a reset link is one click
+           away. Here nobody can reset it and nobody can read past it, so a
+           typo is not an inconvenience: it silently encrypts everything to
+           a key its owner never knew. The second field is the only moment
+           this can still be caught. -->
+      <label for="makePass2">Type it again</label>
+      <input id="makePass2" type="text" autocomplete="new-password"
+             placeholder="the same passphrase" spellcheck="false">
+      <p class="match" id="makeMatch" role="status"></p>
       <p class="warn">
         This passphrase encrypts everything this device holds, and nobody —
         including us — can reset it or read past it. Write it down somewhere
@@ -237,6 +294,10 @@
   const makePass = document.getElementById('makePass');
   const makeGo = document.getElementById('makeGo');
   const makeGen = document.getElementById('makeGen');
+  const makePass2 = document.getElementById('makePass2');
+  const makeMatch = document.getElementById('makeMatch');
+  const passPeek = document.getElementById('passPeek');
+  const passGo = document.getElementById('passGo');
 
   // Four situations, not four degrees of one. The keypad exists only in
   // 'passcode'; everything else has to be able to turn it off, which is why
@@ -369,23 +430,41 @@
     padEl.style.display = 'none';
     dotsEl.style.display = 'none';
     passBox.style.display = 'block';
+    // The footer exists to offer this way in. Once taken, it is an offer to
+    // do what you are already doing — and a paragraph about how weak four
+    // digits are belongs where the four digits are.
+    footEl.style.display = 'none';
     subEl.textContent = 'Enter your passphrase';
     passInput.focus();
   }
 
   document.getElementById('usePass').onclick = showPass;
 
-  passInput.addEventListener('keydown', async (e) => {
-    if (e.key !== 'Enter' || busy) return;
-    busy = true; say('checking…');
+  // Show/hide, because a passphrase worth having is long enough to mistype
+  // and there is nobody looking over your shoulder at your own machine.
+  passPeek.onclick = () => {
+    const shown = passInput.type === 'text';
+    passInput.type = shown ? 'password' : 'text';
+    passPeek.textContent = shown ? 'show' : 'hide';
+    passPeek.setAttribute('aria-label',
+      shown ? 'show the passphrase' : 'hide the passphrase');
+    passInput.focus();
+  };
+
+  async function tryPass() {
+    if (busy || !passInput.value) return;
+    busy = true; passGo.disabled = true; say('checking…');
     const r = await fetch('/unlock', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ code: passInput.value })
     }).then(x => x.json()).catch(() => ({ ok: false }));
     if (r.ok) { arrive(r.token); return; }
-    busy = false; passInput.value = '';
+    busy = false; passGo.disabled = false; passInput.value = '';
     say('That passphrase did not open this device', 'bad');
-  });
+    passInput.focus();
+  }
+  passGo.onclick = tryPass;
+  passInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') tryPass(); });
 
   // ---- first run -----------------------------------------------------------
 
@@ -393,16 +472,52 @@
     const r = await fetch('/suggest').then(x => x.json()).catch(() => null);
     if (!r || !r.passphrase) { say('Could not suggest one — type your own', 'bad'); return; }
     makePass.value = r.passphrase;
+    // A suggested passphrase was never typed, so there is nothing to
+    // confirm — filling both is honest here, and asking somebody to
+    // re-type twelve random words would only teach them to paste.
+    makePass2.value = r.passphrase;
+    checkMatch();
     makePass.focus();
     makePass.select();
     say('Copy it somewhere safe before you continue');
   };
+
+  // The two fields answer while you type. Silence until the second field
+  // has something in it: telling somebody "they do not match" before they
+  // have finished the first character is noise wearing a warning's clothes.
+  function checkMatch() {
+    const a = makePass.value, b = makePass2.value;
+    makePass2.classList.remove('ok', 'bad');
+    if (!b) { makeMatch.textContent = ''; makeMatch.className = 'match'; return true; }
+    if (a === b) {
+      makePass2.classList.add('ok');
+      makeMatch.textContent = 'the same';
+      makeMatch.className = 'match ok';
+      return true;
+    }
+    makePass2.classList.add('bad');
+    makeMatch.textContent = 'not the same yet';
+    makeMatch.className = 'match bad';
+    return false;
+  }
+  makePass.addEventListener('input', checkMatch);
+  makePass2.addEventListener('input', checkMatch);
 
   async function create() {
     if (busy) return;
     if (makePass.value.length < minPass) {
       say('At least ' + minPass + ' characters — this is the key to everything here', 'bad');
       makePass.focus();
+      return;
+    }
+    // The last moment a typo can still be caught. Past this line the
+    // passphrase encrypts everything and nobody — including us — can
+    // recover it, so "close enough" does not exist here.
+    if (makePass.value !== makePass2.value) {
+      checkMatch();
+      say('The two do not match — the second one is how a typo gets caught', 'bad');
+      makePass2.focus();
+      makePass2.select();
       return;
     }
     busy = true; makeGo.disabled = true;
@@ -429,7 +544,8 @@
   }
 
   makeGo.onclick = create;
-  makePass.addEventListener('keydown', e => { if (e.key === 'Enter') create(); });
+  makePass.addEventListener('keydown', e => { if (e.key === 'Enter') makePass2.focus(); });
+  makePass2.addEventListener('keydown', e => { if (e.key === 'Enter') create(); });
   makeName.addEventListener('keydown', e => { if (e.key === 'Enter') makePass.focus(); });
 
   padEl.addEventListener('click', e => {
