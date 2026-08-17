@@ -152,6 +152,23 @@ func (c *Certificate) signingBytes() []byte {
 	return buf
 }
 
+// CertifyPublic issues a certificate for a device known only by its PUBLIC
+// halves — the pairing case (MD-1), and the whole point of decision 5: the
+// child mints its keypair at home and sends only the public parts, so the
+// authority can vouch for a key it has never held. Certify below stays for
+// devices this process owns outright.
+func (p *Principal) CertifyPublic(dev id.DeviceID, xpub [32]byte, issuedAt, expiresAt uint64) *Certificate {
+	c := &Certificate{
+		Principal: p.ID,
+		Device:    dev,
+		X25519Pub: xpub,
+		IssuedAt:  issuedAt,
+		ExpiresAt: expiresAt,
+	}
+	c.Signature = p.Sign(c.signingBytes())
+	return c
+}
+
 // Certify issues a certificate for a device.
 func (p *Principal) Certify(d *Device, issuedAt, expiresAt uint64) *Certificate {
 	c := &Certificate{

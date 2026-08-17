@@ -1,0 +1,196 @@
+package node
+
+import (
+	"bytes"
+	"testing"
+
+	"github.com/drrainlab/quiet_places/protocol/id"
+	"time"
+)
+
+// THE LIVE T7 GATE: one person, two devices, different keys, different
+// chains — the user story the whole MD wave was for. A parent runtime pairs
+// a fresh data dir over real TLS; the child then opens as a SECONDARY —
+// no root seed, principal read from its certificate — and the two devices
+// exchange messages through a relay as one person.
+func TestPairingCreatesASecondDeviceThatSpeaksAsThePerson(t *testing.T) {
+	srv, addr := startRelay(t)
+	defer srv.Close()
+	now := uint64(time.Now().Unix())
+
+	parent := openRuntime(t, t.TempDir(), "gleb")
+	defer parent.Close()
+	setPersonalRelay(t, parent, addr)
+	tid, err := parent.CreateSpace("the workshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parent.Say(tid, "written before the second device existed", SayOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	host, err := parent.BeginPairing("127.0.0.1:0", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer host.Close()
+
+	childDir := t.TempDir()
+	childDigits := make(chan string, 1)
+	childErr := make(chan error, 1)
+	go func() {
+		childErr <- JoinAsPairedDevice(childDir, []byte("test passphrase"), host.OfferBytes(),
+			func(digits string) bool { childDigits <- digits; return true }, now)
+	}()
+
+	attempt, err := host.Accept(now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// BOTH SCREENS, one number — the human check, asserted mechanically.
+	if got := <-childDigits; got != attempt.Digits {
+		t.Fatalf("the two screens disagree: parent=%q child=%q", attempt.Digits, got)
+	}
+	if err := attempt.Approve(now); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-childErr; err != nil {
+		t.Fatal(err)
+	}
+
+	// The child opens as a SECONDARY of the same person.
+	child := openRuntime(t, childDir, "")
+	defer child.Close()
+	if child.PrincipalID != parent.PrincipalID {
+		t.Fatal("the paired device is not the same person")
+	}
+	if child.Principal != nil {
+		t.Fatal("the paired device holds a root keypair — the seed travelled")
+	}
+	if child.Device.ID == parent.Device.ID {
+		t.Fatal("the paired device shares the parent's device key")
+	}
+	if _, known := child.ident.certificateFor(child.Device.ID); !known {
+		t.Fatal("the child does not trust its own certificate")
+	}
+	if _, known := parent.ident.certificateFor(child.Device.ID); !known {
+		t.Fatal("the parent never learned the device it just certified")
+	}
+
+	// The space came in the freight, with POST-ROTATION epochs: the child
+	// reads what the parent writes from now on, through an ordinary relay.
+	setPersonalRelay(t, child, addr)
+	if _, err := parent.Say(tid, "hello, second device", SayOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := parent.PushToRelay(addr, tid); err != nil {
+		t.Fatal(err)
+	}
+	waitUntilMsg(t, child, addr, tid, "hello, second device")
+	if countMsg(t, child, tid, "written before the second device existed") != 1 {
+		t.Fatal("history did not reach the second device")
+	}
+
+	// And the person answers FROM the second device, over its own chain.
+	if _, err := child.Say(tid, "hello from the person's other hand", SayOptions{}); err != nil {
+		t.Fatalf("the secondary cannot speak: %v", err)
+	}
+	if _, _, err := child.PushToRelay(addr, tid); err != nil {
+		t.Fatal(err)
+	}
+	waitUntilMsg(t, parent, addr, tid, "hello from the person's other hand")
+}
+
+// The freight is the ONE artifact that crosses machines during pairing, so
+// what must never travel is asserted against its actual bytes: no root
+// seed, no controller seeds, no self-terminal seed, no device secrets.
+func TestFreightCarriesNoRootSecrets(t *testing.T) {
+	parent := openRuntime(t, t.TempDir(), "gleb")
+	defer parent.Close()
+	if _, err := parent.CreateSpace("owned room"); err != nil {
+		t.Fatal(err)
+	}
+	parent.mu.Lock()
+	doc := parent.buildFreightLocked()
+	secrets := [][]byte{parent.ks.PrincipalSeed, parent.ks.DeviceSeed, parent.ks.SelfTerminalSeed}
+	for _, seed := range parent.ks.TerminalSeeds {
+		secrets = append(secrets, seed)
+	}
+	parent.mu.Unlock()
+	for i, s := range secrets {
+		if len(s) == 0 {
+			t.Fatalf("secret %d is empty — the assertion would prove nothing", i)
+		}
+		if bytes.Contains(doc, s) {
+			t.Fatalf("secret %d travelled in the freight", i)
+		}
+	}
+}
+
+// Pairing writes an identity, and an identity must never be written over an
+// existing one — the same rule restore already enforces, for the same
+// reason.
+func TestPairedChildRefusesANonEmptyDataDir(t *testing.T) {
+	dir := t.TempDir()
+	old := openRuntime(t, dir, "somebody")
+	old.Close()
+	err := JoinAsPairedDevice(dir, []byte("test passphrase"), nil,
+		func(string) bool { return true }, uint64(time.Now().Unix()))
+	if err == nil {
+		t.Fatal("pairing into a data dir that already holds a keystore")
+	}
+}
+
+// A secondary holds no root seed, so it cannot mint pairing offers: the
+// authority to add devices does not spread by pairing (MD-2 draws that
+// line; delegation is its own future wave).
+func TestASecondaryCannotMintPairingOffers(t *testing.T) {
+	srv, addr := startRelay(t)
+	defer srv.Close()
+	_ = addr
+	now := uint64(time.Now().Unix())
+
+	parent := openRuntime(t, t.TempDir(), "gleb")
+	defer parent.Close()
+	host, err := parent.BeginPairing("127.0.0.1:0", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer host.Close()
+	childDir := t.TempDir()
+	childErr := make(chan error, 1)
+	go func() {
+		childErr <- JoinAsPairedDevice(childDir, []byte("test passphrase"), host.OfferBytes(),
+			func(string) bool { return true }, now)
+	}()
+	attempt, err := host.Accept(now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := attempt.Approve(now); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-childErr; err != nil {
+		t.Fatal(err)
+	}
+
+	child := openRuntime(t, childDir, "")
+	defer child.Close()
+	if _, err := child.BeginPairing("127.0.0.1:0", now); err == nil {
+		t.Fatal("a secondary minted a pairing offer without a root seed")
+	}
+}
+
+// waitUntilMsg pulls from the relay until the text lands, or fails loudly.
+func waitUntilMsg(t *testing.T, rt *Runtime, addr string, tid id.TerminalID, text string) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		_, _ = rt.PullFromRelay(addr)
+		if countMsg(t, rt, tid, text) >= 1 {
+			return
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+	t.Fatalf("%q never arrived", text)
+}

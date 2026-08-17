@@ -151,6 +151,9 @@ type ParentSession struct {
 	conn       CeremonyConn
 	binding    []byte
 	transcript []byte
+	// Per-direction sealed-channel counters (sealed.go): what makes a
+	// handful of freight messages replay- and reorder-proof.
+	sendSeq, recvSeq uint64
 }
 
 // Run admits one dial-in through the hello exchange. A failed attempt costs
@@ -232,6 +235,8 @@ type ChildSession struct {
 	binding    []byte
 	transcript []byte
 	confirmed  bool
+
+	sendSeq, recvSeq uint64
 }
 
 // RunChildCeremony dials into the ceremony: sends the child hello, verifies
