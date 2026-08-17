@@ -453,6 +453,12 @@ class RuntimeController private constructor(appContext: Context) {
 
     fun pairApprove() { Quietcore.pairApprove() }
 
+    /** Erases the data dir for a fresh pairing; null on success. Guarded in
+     *  the core: refused under a running node or a ceremony in flight. */
+    fun startOver(): String? = try {
+        Quietcore.startOver(dataDir().absolutePath); null
+    } catch (t: Throwable) { t.message ?: "could not erase" }
+
     fun addListener(l: Listener) {
         listeners.add(l)
         l.onRuntimeState(state())   // a new client is told where things stand

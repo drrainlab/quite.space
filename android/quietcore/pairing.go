@@ -10,6 +10,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -99,4 +101,52 @@ func decodeOfferLoose(s string) ([]byte, error) {
 		}
 	}
 	return nil, errors.New("quietcore: the offer does not read as base64")
+}
+
+// StartOver erases the data dir so this phone can pair as somebody's second
+// device — the tool a tester reaches for when an earlier identity is in the
+// way. THE GUARDS ARE THE FEATURE:
+//
+//   - refused while the node is running: a live runtime owns those files,
+//     and deleting them under it is corruption with extra steps;
+//   - refused mid-ceremony: a pairing in flight holds the very dir;
+//   - it deletes CONTENTS, keeping the dir itself, so the caller's next
+//     step needs no new paths.
+//
+// What it destroys is destroyed forever: the identity this phone held, its
+// spaces' local history, its remembered passcode. The screen that calls
+// this owes the person that sentence BEFORE the tap, not after.
+func StartOver(dir string) error {
+	openMu.Lock()
+	defer openMu.Unlock()
+	stateMu.Lock()
+	running := rt != nil
+	stateMu.Unlock()
+	if running {
+		return errors.New("quietcore: refusing to erase under a running node — stop it first")
+	}
+	pairMu.Lock()
+	busy := pairStage == "running" || pairStage == "digits"
+	if !busy {
+		// A finished or failed flow is history; clear it so the next
+		// ceremony starts from a clean slate.
+		pairStage, pairDigits, pairFail = "", "", ""
+	}
+	pairMu.Unlock()
+	if busy {
+		return errors.New("quietcore: a pairing is using this directory — cancel it first")
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // nothing to erase is the goal state
+		}
+		return err
+	}
+	for _, e := range entries {
+		if err := os.RemoveAll(filepath.Join(dir, e.Name())); err != nil {
+			return err
+		}
+	}
+	return nil
 }

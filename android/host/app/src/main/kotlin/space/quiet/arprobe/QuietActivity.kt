@@ -1,6 +1,7 @@
 package space.quiet.arprobe
 
 import android.Manifest
+import android.app.AlertDialog
 import android.app.DownloadManager
 import android.content.ActivityNotFoundException
 import android.content.Intent
@@ -726,9 +727,11 @@ class QuietActivity : ComponentActivity() {
             }
             panel.addView(note)
             // THE OTHER FIRST RUN (MD-1): a phone is usually somebody's
-            // SECOND device. Offered only while no identity exists here —
-            // afterwards this panel is an unlock, not a fork in the road.
-            if (!controller.hasIdentity()) {
+            // SECOND device. Offered on every not-running panel — a tester's
+            // phone that already holds an identity is exactly who needs this
+            // door — and anything standing in the dir is erased only through
+            // the confirm dialog below, never silently.
+            run {
                 val offerField = EditText(this).apply {
                     setHint("Pairing code from your other device (optional)")
                     inputType = InputType.TYPE_CLASS_TEXT
@@ -779,6 +782,13 @@ class QuietActivity : ComponentActivity() {
                     pairNote.text = "Waiting for the other device to approve too…"
                     controller.pairApprove()
                 }
+                fun beginPair(offer: String, pass: String) {
+                    val refusal = controller.pairStart(pass, offer)
+                    if (refusal != null) { pairNote.text = refusal; return }
+                    pairBtn.isEnabled = false
+                    pairNote.text = "Reaching your other device…"
+                    web.postDelayed(poll, 400)
+                }
                 pairBtn.setOnClickListener {
                     val offer = offerField.text.toString().trim()
                     val pass = field.text.toString()
@@ -787,11 +797,25 @@ class QuietActivity : ComponentActivity() {
                         pairNote.text = "Set the passphrase above first — it encrypts this device."
                         return@setOnClickListener
                     }
-                    val refusal = controller.pairStart(pass, offer)
-                    if (refusal != null) { pairNote.text = refusal; return@setOnClickListener }
-                    pairBtn.isEnabled = false
-                    pairNote.text = "Reaching your other device…"
-                    web.postDelayed(poll, 400)
+                    if (controller.hasIdentity() || controller.dataDir().listFiles()?.isNotEmpty() == true) {
+                        // The dir is somebody's. Pairing writes an identity, and
+                        // identities are never written over each other — so the
+                        // fork is the PERSON'S to take, with its cost spelled out.
+                        AlertDialog.Builder(this@QuietActivity)
+                            .setTitle("This phone already holds Quiet data")
+                            .setMessage("To pair as your other device, everything Quiet " +
+                                "keeps on this phone must be erased first: its identity, " +
+                                "its spaces' local history, its remembered code. " +
+                                "This cannot be undone. Erase and pair?")
+                            .setPositiveButton("Erase and pair") { _, _ ->
+                                val err = controller.startOver()
+                                if (err != null) { pairNote.text = err } else { beginPair(offer, pass) }
+                            }
+                            .setNegativeButton("Keep it", null)
+                            .show()
+                        return@setOnClickListener
+                    }
+                    beginPair(offer, pass)
                 }
             }
             panel.addView(Button(this).apply {
