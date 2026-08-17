@@ -25,6 +25,8 @@
 package node
 
 import (
+	"crypto/rand"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"net"
@@ -195,6 +197,9 @@ type PairingHost struct {
 	ceremony *pairing.ParentCeremony
 	offer    []byte
 	conns    chan *lan.Conn
+	port     int
+	beacon   [32]byte
+	stop     chan struct{}
 }
 
 // BeginPairing mints the offer and opens the door it names. Authority only:
@@ -228,15 +233,47 @@ func (r *Runtime) BeginPairing(bind string, nowUnix uint64) (*PairingHost, error
 	}
 	return &PairingHost{
 		r: r, node: node, ceremony: pairing.NewParentCeremony(offer),
-		offer: offer.Encode(), conns: conns,
+		offer: offer.Encode(), conns: conns, port: port,
+		beacon: pairing.BeaconID(offer.Secret), stop: make(chan struct{}),
 	}, nil
+}
+
+// Announce broadcasts the pairing beacon on udpAddr until the host closes:
+// the fallback for the address DHCP moved. Same wire shape as the space
+// beacons, under an identity only the offer's holder can derive.
+func (h *PairingHost) Announce(udpAddr string) {
+	var nonce [8]byte
+	_, _ = rand.Read(nonce[:])
+	n := binary.BigEndian.Uint64(nonce[:])
+	tid := id.TerminalID(h.beacon)
+	go func() {
+		tick := time.NewTicker(1 * time.Second)
+		defer tick.Stop()
+		for {
+			now := uint64(time.Now().Unix())
+			_ = lan.AnnounceOnce(udpAddr, h.port,
+				[][]byte{lan.Hint(tid, lan.Bucket(now))}, n)
+			select {
+			case <-h.stop:
+				return
+			case <-tick.C:
+			}
+		}
+	}()
 }
 
 // OfferBytes is what the sound or the QR carries.
 func (h *PairingHost) OfferBytes() []byte { return h.offer }
 
 // Close shuts the door. Idempotent; an unspent offer simply dies with it.
-func (h *PairingHost) Close() { h.node.Close() }
+func (h *PairingHost) Close() {
+	select {
+	case <-h.stop:
+	default:
+		close(h.stop)
+	}
+	h.node.Close()
+}
 
 // PairingAttempt is one dial-in that survived the hellos. Digits go on the
 // parent's screen; Approve is for after the human says yes.
@@ -396,6 +433,15 @@ func decodeEnrollment(data []byte) (id.DeviceID, [32]byte, error) {
 // node.Open of that dir is a secondary of the person.
 func JoinAsPairedDevice(dir string, passphrase, offerBytes []byte,
 	approve func(digits string) bool, nowUnix uint64) error {
+	return JoinAsPairedDeviceVia(dir, passphrase, offerBytes, "", approve, nowUnix)
+}
+
+// JoinAsPairedDeviceVia is JoinAsPairedDevice with a beacon fallback: when
+// the offer's address does not answer — DHCP moved the parent — the child
+// listens on announceAddr for the beacon only the offer's holder can derive,
+// and dials the address it names instead.
+func JoinAsPairedDeviceVia(dir string, passphrase, offerBytes []byte,
+	announceAddr string, approve func(digits string) bool, nowUnix uint64) error {
 
 	// The same rule as restore, for the same reason: pairing writes an
 	// identity, and identities are never written over each other.
@@ -412,6 +458,13 @@ func JoinAsPairedDevice(dir string, passphrase, offerBytes []byte,
 	}
 	defer node.Close()
 	conn, err := node.Dial(offer.Addr)
+	if err != nil && announceAddr != "" {
+		addr, berr := awaitPairingBeacon(announceAddr, pairing.BeaconID(offer.Secret))
+		if berr != nil {
+			return fmt.Errorf("node: %v, and no pairing beacon heard: %w", err, berr)
+		}
+		conn, err = node.Dial(addr)
+	}
 	if err != nil {
 		return err
 	}
@@ -489,4 +542,29 @@ func JoinAsPairedDevice(dir string, passphrase, offerBytes []byte,
 		ks.Epochs[sp.Terminal] = sp.Epochs
 	}
 	return root.SaveKeystore(ks)
+}
+
+// awaitPairingBeacon listens for the parent's pairing beacon and returns the
+// address it names. Bounded well inside the offer's own life.
+func awaitPairingBeacon(udpAddr string, beacon [32]byte) (string, error) {
+	tid := id.TerminalID(beacon)
+	found := make(chan string, 1)
+	_, stop, err := lan.ListenAnnounces(udpAddr, func(a lan.Announcement) {
+		if lan.MatchHint(a, tid, uint64(time.Now().Unix())) {
+			select {
+			case found <- a.Addr:
+			default:
+			}
+		}
+	})
+	if err != nil {
+		return "", err
+	}
+	defer stop()
+	select {
+	case addr := <-found:
+		return addr, nil
+	case <-time.After(10 * time.Second):
+		return "", errors.New("node: no pairing beacon within ten seconds")
+	}
 }

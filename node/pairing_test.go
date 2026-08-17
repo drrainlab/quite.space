@@ -2,9 +2,12 @@ package node
 
 import (
 	"bytes"
+	"crypto/rand"
 	"testing"
 
 	"github.com/drrainlab/quiet_places/protocol/id"
+	"github.com/drrainlab/quiet_places/protocol/pairing"
+	"github.com/drrainlab/quiet_places/transports/lan"
 	"time"
 )
 
@@ -193,4 +196,57 @@ func waitUntilMsg(t *testing.T, rt *Runtime, addr string, tid id.TerminalID, tex
 		time.Sleep(300 * time.Millisecond)
 	}
 	t.Fatalf("%q never arrived", text)
+}
+
+// DHCP DOES NOT CARE ABOUT CEREMONIES: the offer names an address that no
+// longer answers — the SAME bytes on both sides, as reality has it — and
+// the child finds the parent anyway, by the beacon only the offer's holder
+// can derive. Loopback UDP, like every LAN test.
+func TestBeaconFindsAParentWhoseAddressMoved(t *testing.T) {
+	now := uint64(time.Now().Unix())
+	parent := openRuntime(t, t.TempDir(), "gleb")
+	defer parent.Close()
+
+	// The move, simulated honestly: the offer was minted for an address
+	// nothing listens on any more, while the parent's REAL door lives at a
+	// port the offer never heard of. Both sides hold identical offer bytes.
+	offer, err := pairing.NewOffer(rand.Reader, "127.0.0.1:9", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	node, err := lan.NewNode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer node.Close()
+	conns := make(chan *lan.Conn, 4)
+	port, err := node.Listen("127.0.0.1:0", func(c *lan.Conn) { conns <- c })
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := &PairingHost{
+		r: parent, node: node, ceremony: pairing.NewParentCeremony(offer),
+		offer: offer.Encode(), conns: conns, port: port,
+		beacon: pairing.BeaconID(offer.Secret), stop: make(chan struct{}),
+	}
+	defer host.Close()
+	udp := "127.0.0.1:47999"
+	host.Announce(udp)
+
+	childDir := t.TempDir()
+	childErr := make(chan error, 1)
+	go func() {
+		childErr <- JoinAsPairedDeviceVia(childDir, []byte("test passphrase"), host.OfferBytes(),
+			udp, func(string) bool { return true }, now)
+	}()
+	attempt, err := host.Accept(now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := attempt.Approve(now); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-childErr; err != nil {
+		t.Fatalf("the beacon did not rescue the moved address: %v", err)
+	}
 }

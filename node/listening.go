@@ -188,7 +188,7 @@ func (r *Runtime) sharedNow() (nowMS uint64, sourceID string, uncertaintyMS uint
 	r.relayClk.mu.Lock()
 	defer r.relayClk.mu.Unlock()
 	if r.relayClk.sourceID == "" {
-		return uint64(local), "node:" + r.Principal.Fingerprint(), 0
+		return uint64(local), "node:" + r.Fingerprint(), 0
 	}
 	age := time.Since(r.relayClk.calibratedAt)
 	unc := r.relayClk.uncertaintyMS + uint64(age.Minutes())*10 // drift allowance

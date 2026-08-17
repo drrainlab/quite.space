@@ -18,6 +18,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/drrainlab/quiet_places/kernel/assets"
@@ -32,6 +33,10 @@ type APIServer struct {
 	rt    *Runtime
 	token string
 	ui    fs.FS // optional embedded web UI
+
+	// One pairing flow at a time (MD-1): the UI's poll-driven view of it.
+	pairingMu sync.Mutex
+	pairing   *pairingUI
 }
 
 // NewAPIServer creates the server with a fresh session token.
@@ -164,6 +169,12 @@ func (a *APIServer) Handler() http.Handler {
 	mux.HandleFunc("GET /api/status", a.auth(a.handleStatus))
 	mux.HandleFunc("GET /api/onboarding", a.auth(a.handleOnboarding))
 	mux.HandleFunc("POST /api/identity/name", a.auth(a.handleSetName))
+	mux.HandleFunc("GET /api/devices", a.auth(a.handleDevices))
+	mux.HandleFunc("POST /api/devices/{id}/revoke", a.auth(a.handleRevokeDevice))
+	mux.HandleFunc("POST /api/pairing", a.auth(a.handleBeginPairing))
+	mux.HandleFunc("GET /api/pairing", a.auth(a.handlePairingStatus))
+	mux.HandleFunc("POST /api/pairing/approve", a.auth(a.handleApprovePairing))
+	mux.HandleFunc("DELETE /api/pairing", a.auth(a.handleCancelPairing))
 	mux.HandleFunc("GET /api/spaces", a.auth(a.handleSpaces))
 	mux.HandleFunc("POST /api/spaces", a.auth(a.handleCreateSpace))
 	// SD-0. DELETE, because that is what it is — and it deletes THIS
@@ -463,7 +474,7 @@ func (a *APIServer) handleOnboarding(w http.ResponseWriter, r *http.Request) {
 		"first_run":   a.rt.IsFirstRun(),
 		"name":        a.rt.DisplayName(),
 		"device_name": deviceName(),
-		"fingerprint": a.rt.Principal.Fingerprint(),
+		"fingerprint": a.rt.Fingerprint(),
 	})
 }
 
@@ -492,7 +503,7 @@ func deviceName() string {
 
 func (a *APIServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 	var resp statusResp
-	resp.Fingerprint = a.rt.Principal.Fingerprint()
+	resp.Fingerprint = a.rt.Fingerprint()
 	resp.DeviceID = a.rt.Device.ID.Hex()
 	resp.DeviceXPub = hex.EncodeToString(a.rt.Device.X25519Pub[:])
 	l := a.rt.LAN()
