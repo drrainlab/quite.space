@@ -23,7 +23,7 @@ set -e
 cd "$(dirname "$0")"
 
 ARCH=${ARCH:-universal}
-VERSION=${VERSION:-0.1.0-beta}
+VERSION=${VERSION:-0.1.2}
 NAME="Quite Space"
 BIN="quite-space"
 # FROZEN FROM THE FIRST RELEASE. macOS keys preferences, keychain items and
