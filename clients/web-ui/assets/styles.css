@@ -2085,6 +2085,7 @@
   .res-act-send:hover { background: color-mix(in srgb, currentColor 14%, transparent); }
   .res-act-remove:hover { color: var(--danger, #e07a7a); border-color: currentColor; }
   .res-act[hidden] { display: none; }
+  .nav-ai-open { display: block; width: 100%; text-align: left; margin: 4px 0 2px; }
   .res-slot.res-picked, .res-emoji-grid button.res-picked {
     border-color: var(--acc, var(--human)); background: rgba(255,255,255,.06); }
   .res-emoji-grid { display: grid; grid-template-columns: repeat(8, 1fr);

@@ -227,6 +227,7 @@ func (a *APIServer) Handler() http.Handler {
 	// that never leaves this device.
 	mux.HandleFunc("GET /api/ai", a.auth(a.handleAI))
 	mux.HandleFunc("POST /api/ai/ask", a.auth(a.handleAsk))
+	mux.HandleFunc("POST /api/ai/space", a.auth(a.handleOpenAISpace))
 	// The Navigator (NAV-0): how this device arranges what it already has.
 	// Whole-document PUT with a base version — see node/navigator.go.
 	mux.HandleFunc("GET /api/navigator", a.auth(a.handleNavigator))

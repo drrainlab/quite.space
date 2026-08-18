@@ -9,7 +9,7 @@ import (
 
 func TestMembersAPIShowsOnePersonOncePerDevices(t *testing.T) {
 	now := uint64(time.Now().Unix())
-	laptop := openRuntime(t, t.TempDir(), "gleb")
+	laptop := openRuntime(t, t.TempDir(), "alice")
 	defer laptop.Close()
 	tid, err := laptop.CreateSpace("room")
 	if err != nil {

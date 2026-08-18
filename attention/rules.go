@@ -160,8 +160,8 @@ func matchesPrefix(tokens, lex []string) bool {
 }
 
 // maxAliasSuffix is how much inflection an alias may pick up. Two runes
-// covers the Russian cases that matter for addressing someone ("Глебу",
-// "Глебом") while refusing to let "Ян" swallow "январь".
+// covers the Russian cases that matter for addressing someone ("Алисе",
+// "Алисой") while refusing to let "Ян" swallow "январь".
 const maxAliasSuffix = 2
 
 // hasToken reports whether the alias addresses someone in this text. Short

@@ -50,6 +50,12 @@ const NAV = (() => {
   // for finding places, not for putting things in), and Recent first,
   // because the last few destinations are most of the answer.
   const PICKER_SECTIONS = ['recent', 'pinned', 'groups', 'spaces', 'people', 'ai'];
+  // Whether a provider is set up — read on paint so the AI section can offer
+  // to open the room instead of telling a configured person to configure.
+  let aiConfigured = false;
+  async function refreshAIConfigured() {
+    try { aiConfigured = !!(await api('/api/ai')).configured; } catch { aiConfigured = false; }
+  }
 
   // ---- state plumbing ----
 
@@ -724,6 +730,13 @@ const NAV = (() => {
     currentId = nextCurrent || '';
     if (busy()) { pendingPaint = true; return; }
     paintAll();
+    // The AI section's empty state depends on whether a provider is set —
+    // fetched off the paint and repainted only if the answer changed, so a
+    // list render never waits on it.
+    if (!spaces.some(s => s.ai)) {
+      const was = aiConfigured;
+      refreshAIConfigured().then(() => { if (aiConfigured !== was && !busy()) paintAll(); });
+    }
   }
 
   function paintAll() { for (const v of views) paintView(v); }
@@ -849,8 +862,32 @@ const NAV = (() => {
     note('spaces', spaces.length ? '' : t('spaces.empty.body'));
     note('recent', state.recent.length ? '' : t('share.recent.empty'));
     // No assistant yet is a different sentence from an empty list: it is
-    // something a person can act on, and it says where to go.
-    note('ai', spaces.some(s => s.ai) ? '' : t('share.ai.empty'));
+    // something a person can act on, and it says where to go. And once a
+    // provider IS set up, "set one up" would be a lie — the room simply does
+    // not exist yet, because rooms are made lazily and nothing had asked.
+    // So the note becomes the ask: one row that makes the room and opens it.
+    if (!spaces.some(s => s.ai)) {
+      const body = v.root.querySelector('.nav-sec[data-sec="ai"] .nav-sec-body');
+      const old = body && body.querySelector('.nav-note, .nav-ai-open');
+      if (old) old.remove();
+      if (body && !v.select && aiConfigured) {
+        const b = document.createElement('button');
+        b.className = 'nav-ai-open btn-plain';
+        b.textContent = t('share.ai.open');
+        b.onclick = async () => {
+          b.disabled = true;
+          try {
+            const { space } = await api('/api/ai/space', { method: 'POST' });
+            NAV.onOpen(space);
+          } catch (e) { note('ai', String(e.message || e)); }
+        };
+        body.appendChild(b);
+      } else {
+        note('ai', t('share.ai.empty'));
+      }
+    } else {
+      note('ai', '');
+    }
   }
 
   // The section headings and the empty notes are written on every paint, so

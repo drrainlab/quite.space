@@ -107,7 +107,7 @@ func TestCreateHandsBackWhatOpenWillNeed(t *testing.T) {
 	srv, g := gate(t, dir)
 
 	res := postJSON(t, srv.URL+"/create", map[string]any{
-		"name": "  gleb  ", "passphrase": "correct horse battery",
+		"name": "  alice  ", "passphrase": "correct horse battery",
 	})
 	if res["ok"] != true {
 		t.Fatalf("create refused: %v", res)
@@ -120,7 +120,7 @@ func TestCreateHandsBackWhatOpenWillNeed(t *testing.T) {
 	if !c.Created {
 		t.Fatal("Created is false — the caller cannot tell this was a first run")
 	}
-	if c.DisplayName != "gleb" {
+	if c.DisplayName != "alice" {
 		t.Fatalf("DisplayName = %q, want the trimmed name", c.DisplayName)
 	}
 	if string(c.Passphrase) != "correct horse battery" {
@@ -273,12 +273,12 @@ func TestACodeCreatesAKeyNobodyHadToInvent(t *testing.T) {
 	dir := t.TempDir()
 	srv, g := gate(t, dir)
 
-	res := postJSON(t, srv.URL+"/create", map[string]any{"name": " gleb ", "code": "4271"})
+	res := postJSON(t, srv.URL+"/create", map[string]any{"name": " alice ", "code": "4271"})
 	if res["ok"] != true {
 		t.Fatalf("create refused: %v", res)
 	}
 	c := <-g.Opened()
-	if !c.Created || c.DisplayName != "gleb" {
+	if !c.Created || c.DisplayName != "alice" {
 		t.Fatalf("credentials = %+v", c)
 	}
 	if c.BindCode != "4271" {
@@ -340,7 +340,7 @@ func TestAMalformedCodeMakesNoIdentity(t *testing.T) {
 	for _, code := range []string{"", "123", "12a4", "1234567890123", "１２３４", "4271 "} {
 		dir := t.TempDir()
 		srv, g := gate(t, dir)
-		res := postJSON(t, srv.URL+"/create", map[string]any{"name": "gleb", "code": code})
+		res := postJSON(t, srv.URL+"/create", map[string]any{"name": "alice", "code": code})
 		if res["ok"] == true {
 			t.Fatalf("code %q was accepted", code)
 		}

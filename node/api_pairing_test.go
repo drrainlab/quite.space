@@ -16,7 +16,7 @@ func TestPairingAPIDrivesTheWholeCeremony(t *testing.T) {
 	old := pairingBind
 	pairingBind = func() string { return "127.0.0.1:0" }
 	t.Cleanup(func() { pairingBind = old })
-	parent := openRuntime(t, t.TempDir(), "gleb")
+	parent := openRuntime(t, t.TempDir(), "alice")
 	defer parent.Close()
 	api, err := NewAPIServer(parent, nil)
 	if err != nil {

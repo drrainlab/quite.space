@@ -45,7 +45,7 @@ func TestRevokedDeviceStopsSpeakingButItsHistoryStands(t *testing.T) {
 	defer srv.Close()
 	now := uint64(time.Now().Unix())
 
-	parent := openRuntime(t, t.TempDir(), "gleb")
+	parent := openRuntime(t, t.TempDir(), "alice")
 	defer parent.Close()
 	setPersonalRelay(t, parent, addr)
 	tid, err := parent.CreateSpace("the workshop")
@@ -126,7 +126,7 @@ func TestRevokedDeviceStopsSpeakingButItsHistoryStands(t *testing.T) {
 // revoke the device they are standing on.
 func TestRevocationGuards(t *testing.T) {
 	now := uint64(time.Now().Unix())
-	parent := openRuntime(t, t.TempDir(), "gleb")
+	parent := openRuntime(t, t.TempDir(), "alice")
 	defer parent.Close()
 	child := pairChild(t, parent, now)
 

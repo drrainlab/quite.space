@@ -290,6 +290,27 @@ func (a *APIServer) handleAI(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, a.rt.AI())
 }
 
+// handleOpenAISpace makes the assistant's room exist and names it, for a
+// person who set up a provider and wants to TALK — not forward something.
+// Creation stays lazy: nothing is made until somebody asks for the room,
+// and this is somebody asking. Refused before creating when there is no
+// provider, for the same reason Ask refuses: a room with nowhere to send a
+// question is a promise this device cannot keep.
+func (a *APIServer) handleOpenAISpace(w http.ResponseWriter, r *http.Request) {
+	cfg := a.rt.LLMConfig()
+	if cfg.Provider == "" || cfg.Model == "" {
+		httpErr(w, http.StatusConflict, errors.New(
+			"set up an AI provider in Settings first — the assistant has nowhere to send a question"))
+		return
+	}
+	tid, err := a.rt.EnsureAISpace()
+	if err != nil {
+		httpErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, map[string]string{"space": tid.Hex()})
+}
+
 func (a *APIServer) handleAsk(w http.ResponseWriter, r *http.Request) {
 	body, err := readBody[struct {
 		Text string `json:"text"`

@@ -49,7 +49,7 @@ func get(t *testing.T, url string) (int, string) {
 
 func createIdentity(t *testing.T, srv *httptest.Server, pass string) {
 	t.Helper()
-	body, _ := json.Marshal(map[string]any{"name": "gleb", "passphrase": pass})
+	body, _ := json.Marshal(map[string]any{"name": "alice", "passphrase": pass})
 	resp, err := http.Post(srv.URL+"/create", "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
@@ -157,7 +157,7 @@ func TestTheOpeningPageWaitsRatherThanAccusing(t *testing.T) {
 // be survivable at this end too.
 func TestASecondShellSaysSoAndServesNoAPI(t *testing.T) {
 	dir := t.TempDir()
-	first, err := node.Open(dir, []byte("a passphrase that is long enough"), "gleb")
+	first, err := node.Open(dir, []byte("a passphrase that is long enough"), "alice")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,7 +208,7 @@ func TestShutdownIsIdempotentAndReleasesTheDirectory(t *testing.T) {
 
 	// The lock is gone, which is the only observable proof the node really
 	// closed rather than merely being forgotten about.
-	again, err := node.Open(dir, []byte("a passphrase that is long enough"), "gleb")
+	again, err := node.Open(dir, []byte("a passphrase that is long enough"), "alice")
 	if err != nil {
 		t.Fatalf("the directory was not released: %v", err)
 	}

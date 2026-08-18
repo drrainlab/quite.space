@@ -18,7 +18,7 @@ func viewer() Viewer {
 	mine := ev(200)
 	return Viewer{
 		Principal:    me,
-		Aliases:      []string{"Глеб", "gleb"},
+		Aliases:      []string{"Алиса", "alice"},
 		AuthoredByMe: func(e id.EventID) bool { return e == mine },
 	}
 }
@@ -65,7 +65,7 @@ func TestLexiconRespectsWordBoundaries(t *testing.T) {
 // Aliases are explicit and inflection-tolerant at the prefix; unrelated
 // words that merely start alike must not count as being addressed.
 func TestNameInTextUsesExplicitAliases(t *testing.T) {
-	reasons, _ := Detect(cand("Глебу стоит посмотреть"), viewer())
+	reasons, _ := Detect(cand("Алисау стоит посмотреть"), viewer())
 	if !hasReason(reasons, ReasonNameInText) {
 		t.Fatal("inflected alias not matched")
 	}

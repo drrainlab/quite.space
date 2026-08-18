@@ -22,7 +22,7 @@ func TestPairingCreatesASecondDeviceThatSpeaksAsThePerson(t *testing.T) {
 	defer srv.Close()
 	now := uint64(time.Now().Unix())
 
-	parent := openRuntime(t, t.TempDir(), "gleb")
+	parent := openRuntime(t, t.TempDir(), "bob")
 	defer parent.Close()
 	setPersonalRelay(t, parent, addr)
 	tid, err := parent.CreateSpace("the workshop")
@@ -116,7 +116,7 @@ func TestPairingCreatesASecondDeviceThatSpeaksAsThePerson(t *testing.T) {
 // what must never travel is asserted against its actual bytes: no root
 // seed, no controller seeds, no self-terminal seed, no device secrets.
 func TestFreightCarriesNoRootSecrets(t *testing.T) {
-	parent := openRuntime(t, t.TempDir(), "gleb")
+	parent := openRuntime(t, t.TempDir(), "bob")
 	defer parent.Close()
 	if _, err := parent.CreateSpace("owned room"); err != nil {
 		t.Fatal(err)
@@ -161,7 +161,7 @@ func TestASecondaryCannotMintPairingOffers(t *testing.T) {
 	_ = addr
 	now := uint64(time.Now().Unix())
 
-	parent := openRuntime(t, t.TempDir(), "gleb")
+	parent := openRuntime(t, t.TempDir(), "bob")
 	defer parent.Close()
 	host, err := parent.BeginPairing("127.0.0.1:0", now)
 	if err != nil {
@@ -212,7 +212,7 @@ func waitUntilMsg(t *testing.T, rt *Runtime, addr string, tid id.TerminalID, tex
 // can derive. Loopback UDP, like every LAN test.
 func TestBeaconFindsAParentWhoseAddressMoved(t *testing.T) {
 	now := uint64(time.Now().Unix())
-	parent := openRuntime(t, t.TempDir(), "gleb")
+	parent := openRuntime(t, t.TempDir(), "bob")
 	defer parent.Close()
 
 	// The move, simulated honestly: the offer was minted for an address
@@ -270,7 +270,7 @@ func TestAPairedDeviceHearsOtherPeopleInASpaceItDidNotCreate(t *testing.T) {
 	defer srv.Close()
 	now := uint64(time.Now().Unix())
 
-	// Alice owns the room; Gleb is a member on his laptop.
+	// Alice owns the room; Bob is a member on his laptop.
 	alice := openRuntime(t, t.TempDir(), "alice")
 	defer alice.Close()
 	setPersonalRelay(t, alice, addr)
@@ -278,7 +278,7 @@ func TestAPairedDeviceHearsOtherPeopleInASpaceItDidNotCreate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	laptop := openRuntime(t, t.TempDir(), "gleb")
+	laptop := openRuntime(t, t.TempDir(), "bob")
 	defer laptop.Close()
 	setPersonalRelay(t, laptop, addr)
 	invite, err := alice.MintInvite(tid, laptop.Device.ID, laptop.Device.X25519Pub)
@@ -296,7 +296,7 @@ func TestAPairedDeviceHearsOtherPeopleInASpaceItDidNotCreate(t *testing.T) {
 	}
 	waitUntilMsg(t, laptop, addr, tid, "alice, before the phone existed")
 
-	// Gleb pairs a phone. The phone has never written a byte anywhere.
+	// Bob pairs a phone. The phone has never written a byte anywhere.
 	phone := pairChild(t, laptop, now)
 	setPersonalRelay(t, phone, addr)
 
@@ -320,7 +320,7 @@ func phoneMembers(t *testing.T, rt *Runtime, tid id.TerminalID) []terminals.Memb
 	return cards
 }
 
-// THE FRIEND'S SIDE. Alice (a friend, her own node) writes AFTER Gleb pairs
+// THE FRIEND'S SIDE. Alice (a friend, her own node) writes AFTER Bob pairs
 // a phone. She has never seen the phone's device in a frame — so does her
 // push reach it? Only if SHE addresses it, and she cannot know it exists
 // until it speaks or its certificate reaches her log. This test says what
@@ -337,7 +337,7 @@ func TestAFriendsPushReachesTheNewPhone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	laptop := openRuntime(t, t.TempDir(), "gleb")
+	laptop := openRuntime(t, t.TempDir(), "bob")
 	defer laptop.Close()
 	setPersonalRelay(t, laptop, addr)
 	invite, err := alice.MintInvite(tid, laptop.Device.ID, laptop.Device.X25519Pub)
@@ -347,13 +347,13 @@ func TestAFriendsPushReachesTheNewPhone(t *testing.T) {
 	if _, err := laptop.JoinInvite(invite); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := laptop.Say(tid, "gleb from the laptop", SayOptions{}); err != nil {
+	if _, err := laptop.Say(tid, "bob from the laptop", SayOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := laptop.PushToRelay(addr, tid); err != nil {
 		t.Fatal(err)
 	}
-	waitUntilMsg(t, alice, addr, tid, "gleb from the laptop")
+	waitUntilMsg(t, alice, addr, tid, "bob from the laptop")
 
 	phone := pairChild(t, laptop, now)
 	setPersonalRelay(t, phone, addr)

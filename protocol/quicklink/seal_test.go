@@ -13,7 +13,7 @@ func TestSealRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := Payload{PassLink: "relay.example:7411\nAAAAsomepassenvelope", From: "gleb", Space: "line"}
+	want := Payload{PassLink: "relay.example:7411\nAAAAsomepassenvelope", From: "bob", Space: "line"}
 	sealed, err := Seal(tok, want)
 	if err != nil {
 		t.Fatal(err)
@@ -40,7 +40,7 @@ func TestSealRoundTrip(t *testing.T) {
 // would be theatre.
 func TestSealedBytesRevealNothing(t *testing.T) {
 	tok, _ := New()
-	p := Payload{PassLink: "relay.example:7411\nSECRETPASSENVELOPE", From: "gleb", Space: "the quiet line"}
+	p := Payload{PassLink: "relay.example:7411\nSECRETPASSENVELOPE", From: "bob", Space: "the quiet line"}
 	sealed, err := Seal(tok, p)
 	if err != nil {
 		t.Fatal(err)
