@@ -73,6 +73,17 @@ type Credentials struct {
 	Passphrase  []byte
 	DisplayName string // meaningful only when Created
 	Created     bool
+	// BindCode is set when the first run chose a CODE rather than a
+	// passphrase: the gate generated the real key, and the caller must
+	// bind it to this code once node.Open has proved it works.
+	//
+	// The gate cannot do the binding itself. Binding writes a wrap of a
+	// key that has not opened anything yet — if Open then fails, the
+	// device is left with a code that unlocks nothing, which is worse
+	// than no code at all. So the gate hands over the intent and the
+	// caller, who is the one who learns whether the key is real, carries
+	// it out.
+	BindCode string
 }
 
 // Gate serves the unlock screen and reports, exactly once, the credentials
@@ -120,6 +131,28 @@ func (g *Gate) deliver(c Credentials) {
 
 // Handler is the gate's whole surface. A locked node has this and nothing
 // else; the shell composes its own refusal for /api/* around it.
+// Confirm carries out the intent a first run left behind: BindCode is the
+// code somebody chose on the keypad, and this is where it starts opening
+// the device.
+//
+// IT IS CALLED ONLY ONCE THE KEY HAS PROVED ITSELF. Binding before the
+// keystore has actually opened would leave a device whose code unlocks a
+// key nothing accepts — a lock with no door behind it — so the gate hands
+// the intent to the caller and the caller hands it back here, at the
+// moment the answer is known.
+//
+// A failure is real but not fatal, and the caller is expected to say so
+// rather than tear anything down: the identity exists and its passphrase
+// still opens it; the person is simply asked for the long way in next
+// time. Credentials that carry no code are a no-op, so this is safe to
+// call on every open.
+func (g *Gate) Confirm(c Credentials) error {
+	if c.BindCode == "" {
+		return nil
+	}
+	return passcode.Bind(g.dataDir, c.BindCode, c.Passphrase)
+}
+
 func (g *Gate) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/state", g.state)
@@ -251,21 +284,58 @@ func (g *Gate) create(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name       string `json:"name"`
 		Passphrase string `json:"passphrase"`
+		Code       string `json:"code"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&body); err != nil {
 		writeJSON(w, map[string]any{"ok": false, "reason": "malformed"})
 		return
 	}
+	name := strings.TrimSpace(body.Name)
+	if name == "" {
+		name = "me"
+	}
+
+	// A CODE INSTEAD OF A PASSPHRASE — the ordinary first run.
+	//
+	// The key stays exactly as strong as it always was; what changes is who
+	// carries it. Six words drawn from the wordlist beat anything a person
+	// invents under the pressure of a setup screen, and nobody has to keep
+	// them in their head: the code wraps them here, the hardware store wraps
+	// the code on the platforms that have one, and the BACKUP — which gets
+	// its own passphrase, chosen deliberately, at a moment when somebody is
+	// thinking about exactly that — is what carries this device's contents
+	// anywhere else.
+	//
+	// The honest boundary, and it belongs on the screen rather than in a
+	// comment alone: four digits keep out somebody who picked this device
+	// up. They are not what protects a COPY of the data, and until the
+	// backup exists this device is the only place these spaces live.
+	if body.Passphrase == "" && body.Code != "" {
+		if err := passcode.ValidCode(body.Code); err != nil {
+			writeJSON(w, map[string]any{"ok": false, "reason": "bad_code"})
+			return
+		}
+		generated, err := passcode.Generate()
+		if err != nil {
+			writeJSON(w, map[string]any{"ok": false, "reason": "no_entropy"})
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true, "token": g.token})
+		g.deliver(Credentials{
+			Passphrase:  []byte(generated),
+			DisplayName: name,
+			Created:     true,
+			BindCode:    body.Code,
+		})
+		return
+	}
+
 	// Not trimmed: a passphrase is bytes, and silently eating somebody's
 	// leading space would make it untypable from the paper they wrote it on.
 	if len(body.Passphrase) < MinPassphrase {
 		writeJSON(w, map[string]any{"ok": false, "reason": "too_short",
 			"min_passphrase": MinPassphrase})
 		return
-	}
-	name := strings.TrimSpace(body.Name)
-	if name == "" {
-		name = "me"
 	}
 	writeJSON(w, map[string]any{"ok": true, "token": g.token})
 	g.deliver(Credentials{

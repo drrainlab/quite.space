@@ -148,6 +148,21 @@
   /* First run. The same card, one more decision — and the decision is not
      "pick a password", it is "there is nobody to recover this from", so the
      warning is part of the form rather than a line somebody may scroll past. */
+  .mk{display:none; margin-top:4px; text-align:left}
+  .mk label{display:block; font-size:13px; color:var(--dim); margin:0 2px 8px}
+  .mk input{width:100%; padding:16px; border-radius:16px;
+    background:rgba(0,0,0,.32); border:1px solid var(--line); color:var(--fg);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.05);
+    font-size:16px; transition:border-color .14s ease, box-shadow .14s ease}
+  .mk input:focus{outline:none; border-color:var(--acc);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.05), 0 0 0 3px rgba(211,154,231,.16)}
+  .mk-step{margin:18px 2px 0; font-size:13px; color:var(--fg); text-align:center}
+  .mk .warn{text-align:left}
+  .mk-alt{display:block; margin:16px 0 0; text-align:center; font-size:12px;
+    color:var(--dim); text-decoration:underline; text-underline-offset:3px;
+    cursor:pointer}
+  .mk-alt:hover{color:var(--fg)}
+
   .make{display:none; margin-top:16px; text-align:left}
   .make label{display:block; font-size:13px; color:var(--dim); margin:14px 2px 6px}
   .make input{width:100%; padding:16px; border-radius:16px;
@@ -244,6 +259,30 @@
       <button class="go" id="passGo" type="button">Open</button>
     </div>
 
+    <!-- THE ORDINARY FIRST RUN: a name and four digits.
+         The real key is generated here and is stronger than anything
+         chosen under the pressure of a setup screen — six words from the
+         wordlist — and nobody has to carry it: the code wraps it, and the
+         BACKUP, which gets its own passphrase at a moment when somebody is
+         actually thinking about backups, is what carries this device's
+         contents anywhere else. -->
+    <div class="mk" id="mkTop">
+      <label for="mkName">What should people call you?</label>
+      <input id="mkName" type="text" autocomplete="nickname"
+             placeholder="your name" spellcheck="false">
+      <p class="mk-step" id="mkStep">Now pick four digits to open it with</p>
+    </div>
+
+    <div class="mk" id="mkBot">
+      <p class="warn" id="mkWarn">
+        Four digits keep out somebody who picks up this device. Until you
+        make a backup, this device is the only place your spaces live.
+      </p>
+      <a class="mk-alt" id="mkAlt" tabindex="0" role="button">
+        or use a long passphrase instead
+      </a>
+    </div>
+
     <div class="make" id="makeBox">
       <label for="makeName">What should people call you?</label>
       <input id="makeName" type="text" autocomplete="nickname"
@@ -314,6 +353,11 @@
   const makeMatch = document.getElementById('makeMatch');
   const passPeek = document.getElementById('passPeek');
   const passGo = document.getElementById('passGo');
+  const mkTop = document.getElementById('mkTop');
+  const mkBot = document.getElementById('mkBot');
+  const mkName = document.getElementById('mkName');
+  const mkStep = document.getElementById('mkStep');
+  const mkAlt = document.getElementById('mkAlt');
 
   // Four situations, not four degrees of one. The keypad exists only in
   // 'passcode'; everything else has to be able to turn it off, which is why
@@ -351,13 +395,20 @@
       return;
     }
     if (mode === 'create') {
-      padEl.style.display = 'none';
-      dotsEl.style.display = 'none';
+      // The keypad STAYS: the ordinary first run is a name and four
+      // digits, and the long passphrase is the door beside it rather
+      // than the one everybody is marched through.
       footEl.style.display = 'none';
-      makeBox.style.display = 'block';
-      makePass.placeholder = 'at least ' + minPass + ' characters';
+      // Name first, then the keypad, then what it does and does not
+      // protect. The markup lists the keypad early because that is the
+      // returning-visitor order; a first run reads the other way round.
+      const card = dotsEl.parentNode;
+      card.insertBefore(mkTop, dotsEl);
+      card.insertBefore(mkBot, msgEl.nextSibling);
+      mkTop.style.display = 'block';
+      mkBot.style.display = 'block';
       subEl.textContent = 'Make this device yours';
-      makeName.focus();
+      mkName.focus();
       return;
     }
     if (mode === 'passphrase') {
@@ -388,15 +439,101 @@
     }, 700);
   }
 
+  // A KEY THAT ANSWERS THE FINGER. A short tick under each digit is what
+  // makes a keypad feel like a keypad rather than a picture of one — and it
+  // is the one feedback that works when somebody is not looking at the
+  // screen. Vibration exists on the phone and silently does not on a
+  // laptop, which is exactly the right behaviour in both places; anybody
+  // who asked the system for less motion gets none.
+  const canBuzz = typeof navigator !== 'undefined' &&
+    typeof navigator.vibrate === 'function' &&
+    !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function tick(ms) { if (canBuzz) { try { navigator.vibrate(ms); } catch (e) {} } }
+
   function push(k) {
-    if (busy || mode !== 'passcode') return;
-    if (k === 'del')   { entry = entry.slice(0, -1); drawDots(); return; }
-    if (k === 'clear') { entry = ''; drawDots(); say(''); return; }
+    if (busy) return;
+    if (mode !== 'passcode' && mode !== 'create') return;
+    if (k === 'del')   { entry = entry.slice(0, -1); drawDots(); tick(8); return; }
+    if (k === 'clear') { entry = ''; drawDots(); say(''); tick(8); return; }
     if (entry.length >= digits) return;
     entry += k;
     drawDots();
-    if (entry.length === digits) submit();
+    tick(11);
+    if (entry.length !== digits) return;
+    if (mode === 'create') { codeStep(); return; }
+    submit();
   }
+
+  // ---- first run: the code is typed twice, for the same reason the
+  // passphrase is. A mistyped code does not lose the data — the generated
+  // passphrase still opens it — but it loses the easy way in, and finding
+  // that out tomorrow is finding it out at the worst moment.
+  let firstCode = '';
+  function codeStep() {
+    if (!firstCode) {
+      // A NAME IS ASKED FOR HERE, not defaulted behind somebody's back. The
+      // gate will happily call an unnamed device "me", and the first thing
+      // everybody else in a space would see is a stranger called me.
+      if (!mkName.value.trim()) {
+        entry = ''; drawDots(); shake(); tick(60);
+        say('Tell people what to call you first', 'bad');
+        mkName.focus();
+        return;
+      }
+      firstCode = entry;
+      entry = ''; drawDots();
+      mkStep.textContent = 'Type the same four digits again';
+      say('');
+      return;
+    }
+    if (entry !== firstCode) {
+      firstCode = ''; entry = ''; drawDots(); shake(); tick(60);
+      mkStep.textContent = 'Now pick four digits to open it with';
+      say('Those were not the same — start again', 'bad');
+      return;
+    }
+    createWithCode(firstCode);
+  }
+
+  async function createWithCode(code) {
+    busy = true;
+    // The KDF is deliberately slow; naming the wait beats a spinner that
+    // suggests something has gone wrong.
+    say('making your keys…');
+    try {
+      const r = await fetch('/create', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ name: mkName.value, code })
+      });
+      const res = await r.json();
+      if (res.ok) { subEl.textContent = 'Welcome'; tick(24); arrive(res.token); return; }
+      busy = false; firstCode = ''; entry = ''; drawDots();
+      mkStep.textContent = 'Now pick four digits to open it with';
+      say(res.reason === 'exists'
+        ? 'This device already has an identity — reload'
+        : res.reason === 'bad_code'
+          ? 'A code is four digits'
+          : 'Could not create an identity here', 'bad');
+    } catch (e) {
+      busy = false; firstCode = ''; entry = ''; drawDots();
+      say('Could not reach this device', 'bad');
+    }
+  }
+
+  // The long way in stays one click away for anybody who wants to carry
+  // their own key — and it is the same screen it always was.
+  mkAlt.onclick = () => {
+    mkTop.style.display = 'none';
+    mkBot.style.display = 'none';
+    padEl.style.display = 'none';
+    dotsEl.style.display = 'none';
+    makeBox.style.display = 'block';
+    makePass.placeholder = 'at least ' + minPass + ' characters';
+    makeName.value = mkName.value;
+    subEl.textContent = 'Make this device yours';
+    say('');
+    makeName.focus();
+  };
 
   function shake() {
     dotsEl.classList.add('bad');
@@ -417,10 +554,11 @@
       const res = await r.json();
       if (res.ok) {
         subEl.textContent = 'Welcome back';
+        tick(24);
         arrive(res.token);
         return;
       }
-      entry = ''; drawDots(); shake(); busy = false;
+      entry = ''; drawDots(); shake(); tick(60); busy = false;
       if (res.reason === 'locked_out') {
         say('Too many tries. The code is gone — use the passphrase.', 'bad');
         showPass();
@@ -632,7 +770,10 @@
     }
   });
   window.addEventListener('keydown', e => {
-    if (mode !== 'passcode') return;
+    if (mode !== 'passcode' && mode !== 'create') return;
+    // While a name is being typed the digits belong to the field, not the
+    // keypad: somebody called "Ян2" must be able to write their own name.
+    if (document.activeElement === mkName) return;
     if (e.key >= '0' && e.key <= '9') push(e.key);
     else if (e.key === 'Backspace') push('del');
     else if (e.key === 'Escape') push('clear');

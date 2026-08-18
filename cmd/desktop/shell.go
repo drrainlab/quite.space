@@ -29,6 +29,7 @@ import (
 	"html"
 	"io"
 	"io/fs"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -115,6 +116,12 @@ func (s *Shell) open(c lockgate.Credentials) error {
 	rt, err := node.Open(s.dataDir, c.Passphrase, name)
 	if err != nil {
 		return err
+	}
+	// THE CODE IS BOUND ONLY ONCE THE KEY HAS PROVED ITSELF — and the gate
+	// does the binding, because the passcode is the gate's business. All
+	// that is known here, and nowhere else, is that Open said yes.
+	if err := s.gate.Confirm(c); err != nil {
+		log.Printf("desktop: identity created, but the code did not bind: %v", err)
 	}
 	api, err := node.NewAPIServer(rt, s.ui)
 	if err != nil {

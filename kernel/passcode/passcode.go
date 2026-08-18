@@ -145,6 +145,12 @@ var (
 func setParams(n, r, p int) { curN, curR, curP = n, r, p }
 func setProbe(fn func())    { deriveProbe = fn }
 
+// ValidCode reports whether a code is one this package would bind — the
+// same rule Bind applies, exported so a caller can refuse at the field
+// rather than after a derivation somebody waited a second for. Exported
+// and unexported must stay one function, not two agreeing ones.
+func ValidCode(code string) error { return validCode(code) }
+
 // validCode refuses anything that is not the shape we bind. Digits only:
 // a code with a letter in it is a passphrase somebody typed in the wrong
 // box, and telling them so beats spending a second deriving from it.

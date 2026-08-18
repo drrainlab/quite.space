@@ -261,3 +261,96 @@ func TestTheTokenNeverTravelsBeforeSomebodyIsIn(t *testing.T) {
 		t.Fatal("a refusal handed out the session token")
 	}
 }
+
+// TestACodeCreatesAKeyNobodyHadToInvent is the ordinary first run.
+//
+// Four digits are what somebody types; they are NOT the key. The gate draws a
+// real passphrase, the caller proves it opens a node, and only then does
+// Confirm make the code start working — so the whole claim is end to end:
+// nothing weaker than the wordlist ever guards the keystore, and the digits
+// open exactly the identity that was made.
+func TestACodeCreatesAKeyNobodyHadToInvent(t *testing.T) {
+	dir := t.TempDir()
+	srv, g := gate(t, dir)
+
+	res := postJSON(t, srv.URL+"/create", map[string]any{"name": " gleb ", "code": "4271"})
+	if res["ok"] != true {
+		t.Fatalf("create refused: %v", res)
+	}
+	c := <-g.Opened()
+	if !c.Created || c.DisplayName != "gleb" {
+		t.Fatalf("credentials = %+v", c)
+	}
+	if c.BindCode != "4271" {
+		t.Fatalf("BindCode = %q — the caller cannot bind what it was not told", c.BindCode)
+	}
+	// The generated passphrase is not the code, and is not something a person
+	// under the pressure of a setup screen would have produced.
+	if string(c.Passphrase) == "4271" || len(c.Passphrase) < 20 {
+		t.Fatalf("generated passphrase is too weak to be the real key: %q", c.Passphrase)
+	}
+
+	rt, err := node.Open(dir, c.Passphrase, c.DisplayName)
+	if err != nil {
+		t.Fatalf("the generated key does not open a node: %v", err)
+	}
+	rt.Close()
+
+	if err := g.Confirm(c); err != nil {
+		t.Fatalf("Confirm: %v", err)
+	}
+
+	// A second gate over the same directory — the returning device.
+	srv2, _ := gate(t, dir)
+	if st := getJSON(t, srv2.URL+"/state"); st["mode"] != "passcode" {
+		t.Fatalf("mode = %v, want passcode — the code did not become the way in", st["mode"])
+	}
+	if bad := postJSON(t, srv2.URL+"/unlock", map[string]any{"code": "9999"}); bad["ok"] != false {
+		t.Fatalf("a wrong code opened the device: %v", bad)
+	}
+	if ok := postJSON(t, srv2.URL+"/unlock", map[string]any{"code": "4271"}); ok["ok"] != true {
+		t.Fatalf("the chosen code does not open the device: %v", ok)
+	}
+}
+
+// TestConfirmWithoutACodeIsNothing — the shell calls it on every open, and a
+// returning person, or somebody who carries their own passphrase, must not
+// have anything bound behind their back.
+func TestConfirmWithoutACodeIsNothing(t *testing.T) {
+	dir := t.TempDir()
+	_, g := gate(t, dir)
+	makeIdentity(t, dir, []byte("correct horse battery"))
+
+	if err := g.Confirm(Credentials{Passphrase: []byte("correct horse battery")}); err != nil {
+		t.Fatalf("Confirm with no code: %v", err)
+	}
+	srv2, _ := gate(t, dir)
+	if st := getJSON(t, srv2.URL+"/state"); st["mode"] != "passphrase" {
+		t.Fatalf("mode = %v, want passphrase — something was bound uninvited", st["mode"])
+	}
+}
+
+// TestAMalformedCodeMakesNoIdentity. The KEYPAD only ever sends four digits,
+// but /create is an HTTP endpoint and the rule that matters is the one the
+// storage layer holds: 4 to 12 ASCII digits, nothing else. Too short, too
+// long, non-digits, digits that merely look like digits — each must be
+// refused BEFORE a key is drawn, or a device ends up holding an identity
+// whose way in was never valid.
+func TestAMalformedCodeMakesNoIdentity(t *testing.T) {
+	for _, code := range []string{"", "123", "12a4", "1234567890123", "１２３４", "4271 "} {
+		dir := t.TempDir()
+		srv, g := gate(t, dir)
+		res := postJSON(t, srv.URL+"/create", map[string]any{"name": "gleb", "code": code})
+		if res["ok"] == true {
+			t.Fatalf("code %q was accepted", code)
+		}
+		select {
+		case c := <-g.Opened():
+			t.Fatalf("code %q still produced credentials: %+v", code, c)
+		default:
+		}
+		if st := node.Inspect(dir); st.HasIdentity {
+			t.Fatalf("code %q left an identity behind", code)
+		}
+	}
+}
