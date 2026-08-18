@@ -319,3 +319,65 @@ func phoneMembers(t *testing.T, rt *Runtime, tid id.TerminalID) []terminals.Memb
 	}
 	return cards
 }
+
+// THE FRIEND'S SIDE. Alice (a friend, her own node) writes AFTER Gleb pairs
+// a phone. She has never seen the phone's device in a frame — so does her
+// push reach it? Only if SHE addresses it, and she cannot know it exists
+// until it speaks or its certificate reaches her log. This test says what
+// actually happens, so the answer is measured rather than assumed.
+func TestAFriendsPushReachesTheNewPhone(t *testing.T) {
+	srv, addr := startRelay(t)
+	defer srv.Close()
+	now := uint64(time.Now().Unix())
+
+	alice := openRuntime(t, t.TempDir(), "alice")
+	defer alice.Close()
+	setPersonalRelay(t, alice, addr)
+	tid, err := alice.CreateSpace("alice's room")
+	if err != nil {
+		t.Fatal(err)
+	}
+	laptop := openRuntime(t, t.TempDir(), "gleb")
+	defer laptop.Close()
+	setPersonalRelay(t, laptop, addr)
+	invite, err := alice.MintInvite(tid, laptop.Device.ID, laptop.Device.X25519Pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := laptop.JoinInvite(invite); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := laptop.Say(tid, "gleb from the laptop", SayOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := laptop.PushToRelay(addr, tid); err != nil {
+		t.Fatal(err)
+	}
+	waitUntilMsg(t, alice, addr, tid, "gleb from the laptop")
+
+	phone := pairChild(t, laptop, now)
+	setPersonalRelay(t, phone, addr)
+	// The laptop's next push carries the phone's certificate into the room
+	// (publishCertLocked, second role of the certificate) — and alice's
+	// replica learns the device from THAT frame's author? No: the cert is
+	// authored by the laptop. What alice needs is the CERTIFIED device as a
+	// recipient. Push, then let alice sync.
+	if _, _, err := laptop.PushToRelay(addr, tid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := alice.PullFromRelay(addr); err != nil {
+		t.Fatal(err)
+	}
+
+	// THE LAPTOP GOES TO SLEEP. What alice says now must reach the phone
+	// from ALICE — a person's second device must not depend on their first
+	// staying awake to hear friends.
+	laptop.Close()
+	if _, err := alice.Say(tid, "alice, after the phone was paired", SayOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := alice.PushToRelay(addr, tid); err != nil {
+		t.Fatal(err)
+	}
+	waitUntilMsg(t, phone, addr, tid, "alice, after the phone was paired")
+}

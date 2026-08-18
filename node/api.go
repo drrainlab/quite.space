@@ -1140,7 +1140,7 @@ func (a *APIServer) handleMembers(w http.ResponseWriter, r *http.Request) {
 	order := make([]id.PrincipalID, 0, len(cards))
 	var others []terminals.MemberCard
 	for _, c := range cards {
-		if c.Kind != string(manifest.KindHuman) || c.Principal == (id.PrincipalID{}) {
+		if c.Kind != manifest.KindHuman.String() || c.Principal == (id.PrincipalID{}) {
 			others = append(others, c)
 			continue
 		}
