@@ -95,6 +95,12 @@ class QuietActivity : ComponentActivity() {
     /** The four digits, wrapped in hardware. See PasscodeVault. */
     private val passcode by lazy { PasscodeVault(applicationContext) }
 
+    /** A face or a fingerprint, when somebody asked for one. See BiometricVault. */
+    private val bio by lazy { BiometricVault(applicationContext) }
+
+    /** Offered once per instance, like the code, and for the same reason. */
+    private var bioOffered = false
+
     /**
      * Per Activity instance, like [recoveryOffered]: a code is offered once
      * after an unlock and never nagged. Somebody who does not want one has
@@ -297,8 +303,14 @@ class QuietActivity : ComponentActivity() {
                             AvailabilityService.stop(this@QuietActivity)
                         }
                     },
-                    unlockRemembered = { vault.has() },
-                    forgetPassphrase = { vault.forget() },
+                    // BOTH COPIES, OR THE SETTING LIES. The row that offers to
+                    // undo a remembered passphrase must appear when the
+                    // remembered one is sealed behind a face as well — it is
+                    // still a passphrase this device opens with — and
+                    // forgetting has to take both, or "Quiet will ask for it
+                    // the next time it opens" is not what happens.
+                    unlockRemembered = { vault.has() || bio.has() },
+                    forgetPassphrase = { vault.forget(); bio.forget() },
                     stayRefused = { controller.availabilityRefused() },
                 ),
                 "QuietHost",
@@ -333,27 +345,38 @@ class QuietActivity : ComponentActivity() {
             insets
         }
 
-        // A REMEMBERED PASSPHRASE OPENS THE NODE BEFORE ANY SCREEN IS DRAWN.
-        // Asked for BEFORE addListener so the first render is "Opening…" and
-        // not a blank field that vanishes half a second later — a flash of the
-        // unlock panel on every launch is the same complaint in a shorter
-        // form.
-        // A BOUND CODE OUTRANKS THE REMEMBERED PASSPHRASE, and finding that
-        // out took a real handset: with the auto-open left in front, the node
-        // was already alive by the time the keypad could have been drawn, so
-        // the code never got asked and was pure decoration.
+        // THE LAUNCH IS DECIDED BEFORE ANY SCREEN IS DRAWN. Asked for BEFORE
+        // addListener so the first render is "Opening…" and not a blank field
+        // that vanishes half a second later — a flash of the unlock panel on
+        // every launch is the same complaint in a shorter form.
         //
-        // Both vaults want to own the launch and they want opposite things —
-        // one opens with no question, the other exists in order to ask one.
-        // Whichever a person set LAST is the one they meant, and setting a
-        // code is the later, more deliberate act, so it wins. Nothing is
-        // forgotten by this: the remembered passphrase is still there behind
-        // the code, and forgetting the code hands the launch straight back.
-        if (!passcode.has()) {
-            vault.load()?.let { stored ->
-                autoAttempt = stored
-                controller.ensureStarted(stored, null, true)
-            }
+        // WHICH door wins is UnlockRoute's business, along with the reasons,
+        // one of which cost a real handset to learn. Three things now want to
+        // own this moment; the one place they are ranked is a file with tests
+        // in front of it.
+        when (UnlockRoute.of(bio.has(), passcode.has(), vault.has())) {
+            UnlockRoute.BIOMETRIC ->
+                // NOTHING IS NEEDED ON REFUSAL. The prompt is raised over the
+                // panel the listener draws a moment later, and that panel is
+                // already the next door down — the keypad when a code is
+                // bound, the passphrase field when nothing is. The order the
+                // Activity falls through in and the order UnlockRoute.refused
+                // returns are the same order, and that is not a coincidence
+                // worth relying on quietly: see the test that pins it.
+                bio.unlock(this, onOpen = { stored ->
+                    autoAttempt = stored
+                    controller.ensureStarted(stored, null, true)
+                }, onRefused = { })
+
+            UnlockRoute.REMEMBERED ->
+                vault.load()?.let { stored ->
+                    autoAttempt = stored
+                    controller.ensureStarted(stored, null, true)
+                }
+
+            // Both draw a panel rather than opening anything, and render()
+            // already knows which — asking here would be a second opinion.
+            UnlockRoute.CODE, UnlockRoute.ASK -> Unit
         }
 
         controller.addListener(runtimeListener)   // also renders the current state
@@ -437,33 +460,32 @@ class QuietActivity : ComponentActivity() {
                 // passphrase the core has just opened with, so nothing
                 // unverified can ever be sealed. Offered once per instance
                 // and never nagged — the politeness recoveryOffered keeps.
-                var offeringCode = false
+                var offering = false
                 pendingPassphrase?.let { pass ->
                     pendingPassphrase = null
                     autoAttempt = null
-                    if (!vault.has()) vault.save(pass)
+                    // NOT WHILE A GUARDED COPY EXISTS. Writing the plain one
+                    // back on every successful open would quietly reopen the
+                    // hole offerFace closed — the app would auto-open before
+                    // the sensor was ever asked.
+                    if (!vault.has() && !bio.has()) vault.save(pass)
                     if (!passcode.has() && !passcodeOffered) {
                         passcodeOffered = true
-                        offeringCode = true
+                        offering = true
                         unlockMessage = null
-                        showKeypad(
-                            title = "Choose a code",
-                            note = "Four digits instead of your passphrase next time. " +
-                                "The passphrase still works, and still opens your backup.",
-                            digits = 4,
-                            onComplete = { code ->
-                                passcode.bind(code, pass)
-                                showInterface()
-                                applyAvailabilityMode()
-                            },
-                            onEscape = "Not now" to {
-                                showInterface()
-                                applyAvailabilityMode()
-                            },
-                        )
+                        chooseCode(pass)
+                    } else if (!bioOffered && !bio.has() &&
+                        bio.available() == BiometricVault.Availability.READY
+                    ) {
+                        // Somebody who already has a code still gets asked
+                        // once — otherwise the feature would only ever reach
+                        // people installing for the first time.
+                        offering = true
+                        unlockMessage = null
+                        offerFace(pass)
                     }
                 }
-                if (offeringCode) return
+                if (offering) return
                 unlockMessage = null
                 showInterface()
                 // The core is open, so "staying connected" is now a claim
@@ -587,11 +609,20 @@ class QuietActivity : ComponentActivity() {
         }
         paint()
 
-        fun push(k: String) {
+        fun push(k: String, from: View) {
             when (k) {
-                "<" -> if (codeEntry.isNotEmpty()) codeEntry = codeEntry.dropLast(1)
-                "C" -> codeEntry = ""
-                else -> if (codeEntry.length < digits) codeEntry += k
+                "<" -> {
+                    if (codeEntry.isNotEmpty()) codeEntry = codeEntry.dropLast(1)
+                    Haptics.erase(from)
+                }
+                "C" -> {
+                    codeEntry = ""
+                    Haptics.erase(from)
+                }
+                else -> if (codeEntry.length < digits) {
+                    codeEntry += k
+                    Haptics.tap(from)
+                }
             }
             paint()
             if (codeEntry.length == digits) {
@@ -611,7 +642,7 @@ class QuietActivity : ComponentActivity() {
                     addView(Button(this@QuietActivity).apply {
                         setText(k); textSize = 20f
                         minimumWidth = 200
-                        setOnClickListener { push(k) }
+                        setOnClickListener { push(k, it) }
                     })
                 }
             })
@@ -656,10 +687,109 @@ class QuietActivity : ComponentActivity() {
         showPassphraseStatus(text, unlockable)
     }
 
+    /**
+     * Choosing a code, which is TYPED TWICE.
+     *
+     * A mistyped code loses no data — the passphrase is still remembered and
+     * still opens everything — but it loses the easy way in, and the moment
+     * that gets discovered is the moment somebody wanted to be quick. The
+     * confirmation costs four taps once; being wrong costs a passphrase at
+     * the worst time.
+     *
+     * The two screens are the same keypad with different words, and a
+     * mismatch goes back to the first one rather than trying to be clever
+     * about which of the two was the typo.
+     */
+    private fun chooseCode(pass: String) {
+        val escape = "Not now" to { offerFace(pass) }
+        showKeypad(
+            title = "Choose a code",
+            note = unlockMessage ?: "Four digits instead of your passphrase next time. " +
+                "The passphrase still works, and still opens your backup.",
+            digits = 4,
+            onComplete = { first ->
+                unlockMessage = null
+                showKeypad(
+                    title = "Type it again",
+                    note = "So a slip now does not become a locked-out phone later.",
+                    digits = 4,
+                    onComplete = { second ->
+                        if (second == first) {
+                            statusPanel?.let { Haptics.accept(it) }
+                            passcode.bind(first, pass)
+                            offerFace(pass)
+                        } else {
+                            statusPanel?.let { Haptics.refuse(it) }
+                            unlockMessage = "Those were not the same — start again."
+                            chooseCode(pass)
+                        }
+                    },
+                    onEscape = escape,
+                )
+            },
+            onEscape = escape,
+        )
+    }
+
+    /**
+     * The one offer of a face, and then never again this instance.
+     *
+     * IT IS OFFERED AFTER THE CODE, not instead of it. They answer different
+     * questions — a code is what somebody types when the sensor will not
+     * look at them, and a phone with only a face and no other door is a
+     * phone that can lock its owner out over a scratched finger.
+     *
+     * TURNING IT ON FORGETS THE REMEMBERED PASSPHRASE, and that line is the
+     * whole feature. [PassphraseVault] opens with no question at all; leaving
+     * it in place behind a biometric would mean the app was already open
+     * before the prompt could matter — the same way an auto-open once made a
+     * bound code pure decoration, measured on a real handset. A gate with a
+     * hole beside it is not a gate.
+     */
+    private fun offerFace(pass: String) {
+        val done = {
+            showInterface()
+            applyAvailabilityMode()
+        }
+        if (bioOffered || bio.has() || bio.available() != BiometricVault.Availability.READY) {
+            done(); return
+        }
+        bioOffered = true
+        AlertDialog.Builder(this)
+            .setTitle("Open with your face?")
+            .setMessage(
+                "Your passphrase moves behind the sensor: nothing opens this app " +
+                    "until the phone has just seen you. Your code still works, and " +
+                    "so does your passphrase."
+            )
+            .setPositiveButton("Turn it on") { _, _ ->
+                bio.enroll(this, pass) { ok ->
+                    if (ok) {
+                        // The plain copy goes now that a guarded one exists,
+                        // and only now: forgetting first would leave a phone
+                        // with no stored passphrase at all if the prompt were
+                        // cancelled halfway.
+                        vault.forget()
+                    } else {
+                        Toast.makeText(this, "That did not turn on.", Toast.LENGTH_SHORT).show()
+                    }
+                    done()
+                }
+            }
+            .setNegativeButton("Not now") { _, _ -> done() }
+            .setOnCancelListener { done() }
+            .show()
+    }
+
     /** The passcode attempt, and the four answers it can have. */
     private fun tryPasscode(code: String) {
+        // The verdict is FELT on the panel that asked, so this happens before
+        // anything redraws — a moment later the keypad is gone and the buzz
+        // would land on whatever replaced it.
+        val asked = statusPanel
         when (val r = passcode.tryCode(code)) {
             is PasscodeVault.Attempt.Open -> {
+                asked?.let { Haptics.accept(it) }
                 // Straight into the ordinary open path — the controller owns
                 // the directory and the lock, exactly as with a typed
                 // passphrase. Nothing about the node knows a code was used.
@@ -667,19 +797,23 @@ class QuietActivity : ComponentActivity() {
                 controller.ensureStarted(r.passphrase, null, true)
             }
             is PasscodeVault.Attempt.Wrong -> {
+                asked?.let { Haptics.refuse(it) }
                 unlockMessage = "Not that one — ${r.attemptsLeft} of 10 tries left"
                 showStatus("", unlockable = true)
             }
             PasscodeVault.Attempt.LockedOut -> {
+                asked?.let { Haptics.refuse(it) }
                 unlockMessage = "Too many tries. The code is gone — " +
                     "your passphrase still opens everything."
                 showPassphraseStatus("Quiet is not running on this device yet.", unlockable = true)
             }
             PasscodeVault.Attempt.Malformed -> {
+                asked?.let { Haptics.refuse(it) }
                 unlockMessage = "That is not a code."
                 showStatus("", unlockable = true)
             }
             PasscodeVault.Attempt.Unavailable -> {
+                asked?.let { Haptics.refuse(it) }
                 // The hardware key would not answer — on a locked phone that
                 // is the ordinary reply, not a wrong code. Nothing was spent.
                 unlockMessage = "Unlock the phone first, then try again."

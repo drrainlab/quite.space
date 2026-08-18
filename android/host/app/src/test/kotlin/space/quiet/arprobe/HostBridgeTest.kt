@@ -48,8 +48,13 @@ class HostBridgeTest {
     private var token = "the-session-token"
 
     private var staying: Boolean? = null
+    private var remembered = true
+    private var forgot = false
     private val bridge = HostBridge(
         { token }, coordinator, { policy = it }, { staying = it },
+        unlockRemembered = { remembered },
+        forgetPassphrase = { forgot = true },
+        stayRefused = { false },
     )
 
     @Test
