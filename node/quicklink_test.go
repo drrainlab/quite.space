@@ -2,6 +2,7 @@ package node
 
 import (
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -196,10 +197,25 @@ func TestIssuanceIsRecordedWithoutKeepingTheWords(t *testing.T) {
 		t.Fatal(err)
 	}
 	blob := string(raw)
+	// A WHOLE WORD, NOT A SUBSTRING — and that is a correctness fix, not a
+	// loosening. A bare strings.Contains matched the file's own scaffolding:
+	// three words of the 2050-word list appear inside fixed text that is
+	// always there — "line" in the json key line_space, "draw" in
+	// "withdrawn", "stud" in this test's own note — so a phrase that drew
+	// one of them failed with "the issuance log kept the word", about once
+	// in a hundred and forty runs, on a store that had kept nothing.
+	//
+	// A word that really was kept is stored as a word: bounded by a quote,
+	// a space or a brace, all of which \b sees. So this still catches the
+	// leak, and the two checks below catch the shapes it cannot — the
+	// phrase run together, and the whole link.
 	for _, w := range strings.Fields(info.Phrase) {
-		if strings.Contains(blob, w) {
+		if regexp.MustCompile(`\b` + regexp.QuoteMeta(w) + `\b`).MatchString(blob) {
 			t.Fatalf("the issuance log kept the word %q", w)
 		}
+	}
+	if strings.Contains(blob, info.Phrase) {
+		t.Fatal("the issuance log kept the whole phrase")
 	}
 	if strings.Contains(blob, info.Link) {
 		t.Fatal("the issuance log kept the whole link")
