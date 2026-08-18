@@ -543,10 +543,11 @@ class RuntimeController private constructor(appContext: Context) {
                 // battery cost is the price of "stay connected", which is
                 // already this app's default posture.
                 if (withLAN) acquireMulticast()
-                Quietcore.start(
+                Quietcore.startAs(
                     dataDir().absolutePath,
                     passphrase ?: "",
                     name ?: "me",
+                    android.os.Build.MODEL ?: "Android",
                     withLAN,
                 )
             } catch (t: Throwable) {

@@ -222,3 +222,11 @@ func (a *APIServer) handlePasscodeBind(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, map[string]any{"bound": true, "digits": len(body.Code)})
 }
+
+func (a *APIServer) handlePasscodeForget(w http.ResponseWriter, r *http.Request) {
+	if err := passcode.Forget(a.rt.DataDir()); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{"bound": false})
+}

@@ -874,6 +874,7 @@ const I18N = {
     'ui.dev.pcPass': 'Passphrase',
     'ui.dev.pcPassPh': 'the one that opens this device',
     'ui.dev.pcBind': 'Bind the code',
+    'ui.dev.pcReset': 'Remove the code',
     'ui.dev.pcHint': 'Ten wrong tries and the code erases itself; the passphrase always works.',
 
     'ui.dev.listLabel': 'Your devices',
@@ -1724,6 +1725,7 @@ const I18N = {
     'ui.dev.pcPass': 'Ключевая фраза',
     'ui.dev.pcPassPh': 'та, что открывает это устройство',
     'ui.dev.pcBind': 'Привязать код',
+    'ui.dev.pcReset': 'Убрать код',
     'ui.dev.pcHint': 'Десять неверных попыток — и код сотрёт себя; ключевая фраза работает всегда.',
 
     'ui.dev.listLabel': 'Ваши устройства',

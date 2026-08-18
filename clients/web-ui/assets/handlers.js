@@ -281,6 +281,7 @@ const UI_HANDLERS = [
   /* 234 click    */ (event, el) => { approvePairingUI(); },
   /* 235 click    */ (event, el) => { cancelPairingUI(); },
   /* 236 click    */ (event, el) => { bindPasscode(); },
+  /* 237 click    */ (event, el) => { forgetPasscode(); },
 ];
 
 /** Attach every handler declared in the markup.

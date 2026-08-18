@@ -23,6 +23,7 @@ import (
 
 	"github.com/drrainlab/quiet_places/kernel/assets"
 	"github.com/drrainlab/quiet_places/protocol/id"
+	"github.com/drrainlab/quiet_places/protocol/manifest"
 	"github.com/drrainlab/quiet_places/protocol/signal"
 	"github.com/drrainlab/quiet_places/terminals"
 	qrcode "github.com/skip2/go-qrcode"
@@ -177,6 +178,7 @@ func (a *APIServer) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/pairing", a.auth(a.handleCancelPairing))
 	mux.HandleFunc("GET /api/passcode", a.auth(a.handlePasscodeInfo))
 	mux.HandleFunc("POST /api/passcode", a.auth(a.handlePasscodeBind))
+	mux.HandleFunc("DELETE /api/passcode", a.auth(a.handlePasscodeForget))
 	mux.HandleFunc("GET /api/spaces", a.auth(a.handleSpaces))
 	mux.HandleFunc("POST /api/spaces", a.auth(a.handleCreateSpace))
 	// SD-0. DELETE, because that is what it is — and it deletes THIS
@@ -497,7 +499,13 @@ func (a *APIServer) handleSetName(w http.ResponseWriter, r *http.Request) {
 
 // deviceName returns a friendly, platform-neutral device label.
 func deviceName() string {
-	if h, err := os.Hostname(); err == nil && h != "" {
+	// A host that knows its own name (the Android shell: the phone's model)
+	// says so; os.Hostname is "localhost" inside an app sandbox, which names
+	// nothing.
+	if n := os.Getenv("QUIET_DEVICE_NAME"); n != "" {
+		return n
+	}
+	if h, err := os.Hostname(); err == nil && h != "" && h != "localhost" {
 		return h
 	}
 	return "this device"
@@ -1118,6 +1126,40 @@ func (a *APIServer) handleMembers(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusNotFound, err)
 		return
 	}
+	// ONE PERSON, ONE CARD (ADR-001, MD-2). Every device is its own terminal
+	// with its own card, and now that the principal is verified the dedup is
+	// honest rather than cosmetic: a person on a laptop and a phone is one
+	// participant, not two strangers with the same name. Human cards merge
+	// on principal — the freshest presence wins; the AI/gateway cards keep
+	// their own rows, since a person's assistant is not that person.
+	type merged struct {
+		card terminals.MemberCard
+		devs int
+	}
+	byPerson := map[id.PrincipalID]*merged{}
+	order := make([]id.PrincipalID, 0, len(cards))
+	var others []terminals.MemberCard
+	for _, c := range cards {
+		if c.Kind != string(manifest.KindHuman) || c.Principal == (id.PrincipalID{}) {
+			others = append(others, c)
+			continue
+		}
+		if m, ok := byPerson[c.Principal]; ok {
+			m.devs++
+			if c.Presence.Known && (!m.card.Presence.Known ||
+				c.Presence.AgeSeconds < m.card.Presence.AgeSeconds) {
+				m.card.Presence = c.Presence
+			}
+			continue
+		}
+		byPerson[c.Principal] = &merged{card: c, devs: 1}
+		order = append(order, c.Principal)
+	}
+	cards = cards[:0]
+	for _, p := range order {
+		cards = append(cards, byPerson[p].card)
+	}
+	cards = append(cards, others...)
 	out := make([]memberResp, 0, len(cards))
 	for _, c := range cards {
 		m := memberResp{

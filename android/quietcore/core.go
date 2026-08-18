@@ -109,6 +109,12 @@ var (
 // held lock and a permission, and AR-0c syncs over a relay. Exposed anyway so
 // the LAN path can be measured deliberately rather than by accident.
 func Start(dir, passphrase, name string, withLAN bool) error {
+	return StartAs(dir, passphrase, name, "", withLAN)
+}
+
+// StartAs is Start with the host's own name for this device (the phone's
+// model), used wherever the person is shown their devices.
+func StartAs(dir, passphrase, name, deviceLabel string, withLAN bool) error {
 	openMu.Lock()
 	defer openMu.Unlock()
 
@@ -145,6 +151,12 @@ func Start(dir, passphrase, name string, withLAN bool) error {
 	}
 	if name == "" {
 		name = "me"
+	}
+	// The host's name for this device — the phone's model. os.Hostname is
+	// "localhost" in an app sandbox and the devices screen showed exactly
+	// that until a tester read it.
+	if deviceLabel != "" {
+		_ = os.Setenv("QUIET_DEVICE_NAME", deviceLabel)
 	}
 
 	r, err := node.Open(dir, []byte(passphrase), name)

@@ -247,11 +247,15 @@ type SpaceMeta struct {
 	// than "we could not read the manifest", which is why the reader
 	// distinguishes them (manifestTitleOf).
 	Unnamed bool
-	// LocalTitle is a name THIS DEVICE chose, for itself. It never travels:
-	// a private space's manifest is creation-immutable (ValidateRevision
-	// refuses revisions), and no in-log event carries a revised space
-	// manifest — so a shared name is not something this wave can offer
-	// without lying about it.
+	// LocalTitle is a name THIS PERSON chose, for themselves. It never
+	// travels to OTHER PEOPLE: a private space's manifest is
+	// creation-immutable (ValidateRevision refuses revisions), and no in-log
+	// event carries a revised space manifest — so a shared name is not
+	// something this wave can offer without lying about it. It DOES ride the
+	// pairing freight to the same person's other device (MD-1): a label is
+	// the person's, not the machine's, and a phone that shows "waiting for
+	// someone" over a room the laptop calls "Mailbox" is the person being
+	// made a stranger to their own names.
 	LocalTitle string
 	// Mirror means this node volunteers to keep the space REACHABLE: it
 	// republishes the owner's signed envelope verbatim and takes custody of

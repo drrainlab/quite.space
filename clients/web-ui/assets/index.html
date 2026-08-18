@@ -711,13 +711,18 @@
     <div class="settings-sec">
       <p class="sec-label" data-i18n="ui.dev.pcLabel">Login code on this device</p>
       <p class="hint" id="pcState"></p>
-      <div class="list">
-        <div class="list-row"><span class="lr-label" data-i18n="ui.dev.pcCode">Code (4–8 digits)</span>
-          <input type="text" id="pcCode" inputmode="numeric" placeholder="4213"></div>
-        <div class="list-row"><span class="lr-label" data-i18n="ui.dev.pcPass">Passphrase</span>
-          <input type="password" id="pcPass" placeholder="the one that opens this device" data-i18n-ph="ui.dev.pcPassPh"></div>
+      <div id="pcBound" style="display:none">
+        <div class="row"><button class="btn-plain" data-on-click="237" data-i18n="ui.dev.pcReset">Remove the code</button></div>
       </div>
-      <div class="row"><button class="btn-plain" data-on-click="236" data-i18n="ui.dev.pcBind">Bind the code</button></div>
+      <div id="pcForm">
+        <div class="list">
+          <div class="list-row"><span class="lr-label" data-i18n="ui.dev.pcCode">Code (4–8 digits)</span>
+            <input type="text" id="pcCode" inputmode="numeric" placeholder="4213"></div>
+          <div class="list-row"><span class="lr-label" data-i18n="ui.dev.pcPass">Passphrase</span>
+            <input type="password" id="pcPass" placeholder="the one that opens this device" data-i18n-ph="ui.dev.pcPassPh"></div>
+        </div>
+        <div class="row"><button class="btn-plain" data-on-click="236" data-i18n="ui.dev.pcBind">Bind the code</button></div>
+      </div>
       <p class="hint" data-i18n="ui.dev.pcHint">Ten wrong tries and the code erases itself; the passphrase always works.</p>
     </div>
   </div>

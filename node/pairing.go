@@ -62,6 +62,10 @@ type freightSpace struct {
 	Visibility    string
 	ManifestFrame []byte
 	Epochs        []crypto.EpochKey
+	// LocalTitle and Unnamed are the PERSON's own naming of the space; they
+	// ride to the person's other device (see storage.SpaceMeta.LocalTitle).
+	LocalTitle string
+	Unnamed    bool
 }
 
 type freightDoc struct {
@@ -95,11 +99,12 @@ func (r *Runtime) buildFreightLocked() []byte {
 		spaces = append(spaces, freightSpace{
 			Terminal: tid, Title: meta.Title, Visibility: meta.Visibility,
 			ManifestFrame: meta.ManifestFrame, Epochs: r.ks.Epochs[tid],
+			LocalTitle: meta.LocalTitle, Unnamed: meta.Unnamed,
 		})
 	}
 	buf = codec.AppendArray(buf, len(spaces))
 	for _, sp := range spaces {
-		buf = codec.AppendArray(buf, freightSpFields+1)
+		buf = codec.AppendArray(buf, freightSpFields+3)
 		buf = codec.AppendBytes(buf, sp.Terminal[:])
 		buf = codec.AppendText(buf, sp.Title)
 		buf = codec.AppendText(buf, sp.Visibility)
@@ -110,6 +115,8 @@ func (r *Runtime) buildFreightLocked() []byte {
 			buf = codec.AppendUint(buf, ek.N)
 			buf = codec.AppendBytes(buf, ek.Key[:])
 		}
+		buf = codec.AppendText(buf, sp.LocalTitle)
+		buf = codec.AppendBool(buf, sp.Unnamed)
 	}
 	return buf
 }
@@ -183,6 +190,21 @@ func decodeFreight(data []byte) (*freightDoc, error) {
 				}
 			}
 			sp.Epochs = append(sp.Epochs, ek)
+		}
+		if fc >= freightSpFields+2 {
+			if sp.LocalTitle, err = d.ReadText(); err != nil {
+				return nil, bad
+			}
+		}
+		if fc >= freightSpFields+3 {
+			if sp.Unnamed, err = d.ReadBool(); err != nil {
+				return nil, bad
+			}
+		}
+		for k := freightSpFields + 3; k < fc; k++ {
+			if err := d.SkipItem(); err != nil {
+				return nil, bad
+			}
 		}
 		doc.Spaces = append(doc.Spaces, sp)
 	}
@@ -406,7 +428,7 @@ func replaceFreightCert(doc []byte, childCert []byte) []byte {
 	buf = codec.AppendText(buf, parsed.DisplayName)
 	buf = codec.AppendArray(buf, len(parsed.Spaces))
 	for _, sp := range parsed.Spaces {
-		buf = codec.AppendArray(buf, freightSpFields+1)
+		buf = codec.AppendArray(buf, freightSpFields+3)
 		buf = codec.AppendBytes(buf, sp.Terminal[:])
 		buf = codec.AppendText(buf, sp.Title)
 		buf = codec.AppendText(buf, sp.Visibility)
@@ -417,6 +439,8 @@ func replaceFreightCert(doc []byte, childCert []byte) []byte {
 			buf = codec.AppendUint(buf, ek.N)
 			buf = codec.AppendBytes(buf, ek.Key[:])
 		}
+		buf = codec.AppendText(buf, sp.LocalTitle)
+		buf = codec.AppendBool(buf, sp.Unnamed)
 	}
 	return buf
 }
@@ -588,6 +612,7 @@ func JoinAsPairedDeviceVia(dir string, passphrase, offerBytes []byte,
 		ks.Spaces[sp.Terminal] = storage.SpaceMeta{
 			Title: sp.Title, Visibility: sp.Visibility,
 			ManifestFrame: sp.ManifestFrame,
+			LocalTitle:    sp.LocalTitle, Unnamed: sp.Unnamed,
 			// NEVER Owned: controller authority did not travel, and the
 			// metadata must not claim what the keystore cannot back.
 		}

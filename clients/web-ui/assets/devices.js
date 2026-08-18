@@ -135,13 +135,28 @@ async function cancelPairingUI() {
 
 async function loadPasscode() {
   const st = document.getElementById('pcState');
+  const form = document.getElementById('pcForm');
+  const bound = document.getElementById('pcBound');
   if (!st) return;
   try {
     const info = await api('/api/passcode');
+    // ONE STATE ON SCREEN AT A TIME: bound shows the fact and a way out;
+    // unbound shows the form. Both at once read as "did it work?".
+    if (form) form.style.display = info.bound ? 'none' : '';
+    if (bound) bound.style.display = info.bound ? '' : 'none';
     st.textContent = info.bound
-      ? 'A ' + info.digits + '-digit code opens this device.'
+      ? 'A ' + info.digits + '-digit code opens this device. Remove it to set another.'
       : 'No code is bound — the lock screen asks for the passphrase.';
   } catch { st.textContent = ''; }
+}
+
+async function forgetPasscode() {
+  const st = document.getElementById('pcState');
+  try {
+    await api('/api/passcode', { method: 'DELETE' });
+    st.textContent = 'Removed. Bind a new one below, or leave it — the passphrase always works.';
+  } catch (e) { st.textContent = String(e.message || e); }
+  loadPasscode();
 }
 
 async function bindPasscode() {
@@ -154,12 +169,15 @@ async function bindPasscode() {
       body: JSON.stringify({ code: code.value, passphrase: pass.value }) });
     code.value = ''; pass.value = '';
     st.textContent = 'Bound. The lock screen offers the code from the next launch.';
-  } catch (e) { st.textContent = String(e.message || e); }
+  } catch (e) { st.textContent = String(e.message || e); return; }
+  loadPasscode();
 }
 
 if (typeof window !== 'undefined') {
   // @ts-ignore
   window.loadPasscode = loadPasscode; window.bindPasscode = bindPasscode;
+  // @ts-ignore
+  window.forgetPasscode = forgetPasscode;
   // @ts-ignore
   window.loadDevices = loadDevices; window.beginPairingUI = beginPairingUI;
   // @ts-ignore
