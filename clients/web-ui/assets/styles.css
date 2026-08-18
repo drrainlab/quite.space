@@ -331,6 +331,10 @@
   .b-human { color: var(--human); } .b-ai_agent { color: var(--ai); }
   .b-deterministic_bot { color: var(--bot); } .b-sensor { color: var(--sensor); }
   .b-unknown { color: var(--dim); }
+  /* kind pictograms: a shape beside the name, never louder than it */
+  .badge.kind { display: inline-flex; align-items: center; gap: 4px; padding: 1px 6px; vertical-align: middle; }
+  .badge.kind.b-human { border-color: transparent; padding-left: 2px; opacity: .8; }
+  .kpicto { display: inline-block; vertical-align: -2px; flex: none; }
   .msg .txt { white-space: pre-wrap; }
   .msg .meta { color: var(--dim); font-size: 11px; }
   .msg .mk { color: var(--dim); font-size: 11px; cursor: pointer; text-decoration: underline; }

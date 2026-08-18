@@ -142,3 +142,45 @@ function verificationPhrase(id, words = 3) {
   }
   return out.join(' · ');
 }
+
+// ---- kind pictograms (MD-2 UI) ----
+// A glyph says WHO (id-derived, memory aid); the pictogram says WHAT KIND
+// of participant this is — human, agent, bot, sensor, gateway, space —
+// mirroring protocol/manifest.Kind. Small, monochrome, currentColor, so it
+// sits beside a name at 12–14px without shouting. Distinguishable by form,
+// not colour: the badge colour classes stay, the shape carries the meaning.
+const KIND_PICTO = {
+  human:   // a head-and-shoulders arc, the oldest sign there is
+    '<circle cx="12" cy="8" r="3.6"/><path d="M4.5 20c1.2-4 4-6 7.5-6s6.3 2 7.5 6"/>',
+  agent:   // a spark: agency that acts, not just answers
+    '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/>',
+  bot:     // a crisp box with two eyes and an antenna
+    '<rect x="6" y="9" width="12" height="9" rx="2"/><path d="M12 9V5"/><circle cx="12" cy="4" r="1"/><circle cx="9.5" cy="13.5" r="1"/><circle cx="14.5" cy="13.5" r="1"/>',
+  sensor:  // a dot with two emanation arcs — one ring reads at 12px, two do not
+    '<circle cx="12" cy="14" r="2"/><path d="M8 10a5.7 5.7 0 0 1 8 0M5.5 7.5a9.2 9.2 0 0 1 13 0"/>',
+  actuator:// a lever on a pivot
+    '<circle cx="12" cy="17" r="2"/><path d="M12 15L7 6M12 15l5-9"/>',
+  gateway: // a doorway with a path through it
+    '<path d="M6 20V6a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v14"/><path d="M3 20h18M12 12h.01"/>',
+  relay:   // two arrows passing
+    '<path d="M4 9h13l-3-3M20 15H7l3 3"/>',
+  archive: // a lidded box
+    '<rect x="4" y="4" width="16" height="4" rx="1"/><path d="M6 8v11h12V8M10 12h4"/>',
+  space:   // a planet with a tilted ring: a place, orbited
+    '<circle cx="12" cy="12" r="4"/><path d="M4.5 15.5c3 1.5 12 1 15-3.5M19.5 8.5c-3-1.5-12-1-15 3.5"/>',
+  unknown: '<circle cx="12" cy="12" r="8"/><path d="M12 8v5M12 16h.01"/>',
+};
+
+// kindPicto renders the pictogram for a member card. Agency refines kind:
+// a "bot" that acts with AI agency shows the spark, not the box, because
+// what a person needs to know is whether there is a mind behind the name.
+function kindPicto(kind, agency, size = 13) {
+  let k = String(kind || 'unknown').toLowerCase();
+  if (agency === 'ai_agent' && (k === 'bot' || k === 'agent' || k === 'unknown')) k = 'agent';
+  const body = KIND_PICTO[k] || KIND_PICTO.unknown;
+  return `<svg class="kpicto k-${k}" width="${size}" height="${size}" viewBox="0 0 24 24" ` +
+    `fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" ` +
+    `stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
+}
+
+if (typeof window !== 'undefined') { window.kindPicto = kindPicto; }

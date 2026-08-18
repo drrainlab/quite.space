@@ -1952,8 +1952,12 @@ async function refreshSpace() {
     else pres = `<div class="pres stale">${esc(m.presence.state)} · ${esc(relTime(m.presence.age_seconds))}</div>`;
     const glyphType = memberGlyphType(m);
     const name = m.name || m.terminal.slice(0, 10);
-    const kindBadge = m.kind === 'human' ? '' :
-      `<span class="badge b-${m.agency === 'ai_agent' ? 'ai_agent' : 'deterministic_bot'}">${esc(m.kind)}</span>`;
+    // The pictogram says WHAT KIND of participant this is; a human gets the
+    // quiet head-and-shoulders and no word, everyone else keeps the word too.
+    const kindCls = m.kind === 'human' ? 'b-human'
+      : (m.agency === 'ai_agent' ? 'b-ai_agent' : 'b-deterministic_bot');
+    const kindBadge = `<span class="badge kind ${kindCls}" title="${esc(m.kind)}">` +
+      kindPicto(m.kind, m.agency, 12) + (m.kind === 'human' ? '' : ` ${esc(m.kind)}`) + `</span>`;
     // Quiet-by-default: a member who is here gets a steady "present" glyph
     // (static). The gentle pulse fires ONCE, only on the transition into
     // presence — never as an idle loop. Reduced-motion drops the pulse.
