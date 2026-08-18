@@ -45,7 +45,11 @@ const NAV = (() => {
   let dragging = false, menuOpen = false, editing = false;
   let pendingPaint = false;
 
-  const SIDEBAR_SECTIONS = ['pinned', 'groups', 'spaces', 'people', 'catalogs'];
+  // AI sits after People, where the other one-to-one conversations live —
+  // it was always titled (nav.sec.ai) and filtered out of Spaces (!s.ai),
+  // and simply never listed here, so the assistant's room vanished from
+  // the sidebar the moment somebody left it. Measured on the first day.
+  const SIDEBAR_SECTIONS = ['pinned', 'groups', 'spaces', 'people', 'ai', 'catalogs'];
   // The picker offers where a message can GO, so: no catalogs (a catalog is
   // for finding places, not for putting things in), and Recent first,
   // because the last few destinations are most of the answer.
@@ -871,6 +875,12 @@ const NAV = (() => {
       const body = v.root.querySelector('.nav-sec[data-sec="ai"] .nav-sec-body');
       const old = body && body.querySelector('.nav-note, .nav-ai-open');
       if (old) old.remove();
+      // In the SIDEBAR an assistant nobody set up is not a section, it is
+      // noise on every screen: hide it until there is a provider or a room.
+      // The picker keeps its sentence — there the person is choosing where
+      // something goes, and "not here, and why" is an answer.
+      const sec = v.root.querySelector('.nav-sec[data-sec="ai"]');
+      if (sec && !v.select) sec.hidden = !aiConfigured;
       if (body && aiConfigured) {
         // In the picker the row MAKES the room and then hands it to the
         // picker as a destination — so "forward to AI" works the first
@@ -898,6 +908,8 @@ const NAV = (() => {
       }
     } else {
       note('ai', '');
+      const sec = v.root.querySelector('.nav-sec[data-sec="ai"]');
+      if (sec) sec.hidden = false;
     }
   }
 
