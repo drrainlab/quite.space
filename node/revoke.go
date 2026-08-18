@@ -141,3 +141,28 @@ func (r *Runtime) Fingerprint() string { return id.Fingerprint(r.PrincipalID[:])
 // DataDir is where this runtime lives — the passcode file's home, among
 // other things a shell needs to name.
 func (r *Runtime) DataDir() string { return r.dataDir }
+
+// ownDevicesLocked lists this person's certified, unrevoked devices — the
+// hands that must hear everything the person is in. Caller holds r.mu. The
+// assistant and the gateway are the runtime's own writers, not hands, and
+// they have their own delivery story.
+func (r *Runtime) ownDevicesLocked() []id.DeviceID {
+	revoked := map[id.DeviceID]bool{}
+	for _, rec := range r.ks.Revs {
+		revoked[rec.Device] = true
+	}
+	out := make([]id.DeviceID, 0, len(r.ks.Certs))
+	for _, rec := range r.ks.Certs {
+		if revoked[rec.Device] {
+			continue
+		}
+		if r.agent != nil && rec.Device == r.agent.Device.ID {
+			continue
+		}
+		if r.gateway != nil && rec.Device == r.gateway.Device.ID {
+			continue
+		}
+		out = append(out, rec.Device)
+	}
+	return out
+}

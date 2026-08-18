@@ -7,6 +7,7 @@ import (
 
 	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/protocol/pairing"
+	"github.com/drrainlab/quiet_places/terminals"
 	"github.com/drrainlab/quiet_places/transports/lan"
 	"time"
 )
@@ -29,6 +30,10 @@ func TestPairingCreatesASecondDeviceThatSpeaksAsThePerson(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := parent.Say(tid, "written before the second device existed", SayOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	// The person's OWN name for the room rides to the person's other device.
+	if err := parent.SetLocalTitle(tid, "my workshop, my name"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -78,6 +83,9 @@ func TestPairingCreatesASecondDeviceThatSpeaksAsThePerson(t *testing.T) {
 	}
 	if _, known := parent.ident.certificateFor(child.Device.ID); !known {
 		t.Fatal("the parent never learned the device it just certified")
+	}
+	if got := child.ks.Spaces[tid].LocalTitle; got != "my workshop, my name" {
+		t.Fatalf("the person's own name did not reach the second device: %q", got)
 	}
 
 	// The space came in the freight, with POST-ROTATION epochs: the child
@@ -249,4 +257,65 @@ func TestBeaconFindsAParentWhoseAddressMoved(t *testing.T) {
 	if err := <-childErr; err != nil {
 		t.Fatalf("the beacon did not rescue the moved address: %v", err)
 	}
+}
+
+// A FRESHLY PAIRED DEVICE HEARS OTHER PEOPLE. In a space somebody ELSE owns
+// the phone has authored nothing, so no peer learns its device from a frame
+// and the owner's Members() does not list it — the two ways recipients used
+// to be found. The person's own certified devices are recipients of
+// everything the person is in, by the fact of being the person: measured
+// on the first paired phone as "no history, no reactions, no member cards".
+func TestAPairedDeviceHearsOtherPeopleInASpaceItDidNotCreate(t *testing.T) {
+	srv, addr := startRelay(t)
+	defer srv.Close()
+	now := uint64(time.Now().Unix())
+
+	// Alice owns the room; Gleb is a member on his laptop.
+	alice := openRuntime(t, t.TempDir(), "alice")
+	defer alice.Close()
+	setPersonalRelay(t, alice, addr)
+	tid, err := alice.CreateSpace("alice's room")
+	if err != nil {
+		t.Fatal(err)
+	}
+	laptop := openRuntime(t, t.TempDir(), "gleb")
+	defer laptop.Close()
+	setPersonalRelay(t, laptop, addr)
+	invite, err := alice.MintInvite(tid, laptop.Device.ID, laptop.Device.X25519Pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := laptop.JoinInvite(invite); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := alice.Say(tid, "alice, before the phone existed", SayOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := alice.PushToRelay(addr, tid); err != nil {
+		t.Fatal(err)
+	}
+	waitUntilMsg(t, laptop, addr, tid, "alice, before the phone existed")
+
+	// Gleb pairs a phone. The phone has never written a byte anywhere.
+	phone := pairChild(t, laptop, now)
+	setPersonalRelay(t, phone, addr)
+
+	// The laptop's ordinary push must now address the phone too, with the
+	// WHOLE log — including alice's words the phone never saw.
+	if _, _, err := laptop.PushToRelay(addr, tid); err != nil {
+		t.Fatal(err)
+	}
+	waitUntilMsg(t, phone, addr, tid, "alice, before the phone existed")
+	if len(phoneMembers(t, phone, tid)) < 2 {
+		t.Fatal("the phone does not see the other person as a member")
+	}
+}
+
+func phoneMembers(t *testing.T, rt *Runtime, tid id.TerminalID) []terminals.MemberCard {
+	t.Helper()
+	cards, err := rt.Members(tid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cards
 }

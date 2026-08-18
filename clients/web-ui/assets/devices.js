@@ -138,6 +138,16 @@ async function loadPasscode() {
   const form = document.getElementById('pcForm');
   const bound = document.getElementById('pcBound');
   if (!st) return;
+  // INSIDE THE ANDROID HOST THE CODE LIVES IN HARDWARE — the phone's own
+  // vault, on the "This device" tab — not in the data dir this form binds.
+  // Two locks with one name confused the first tester who set both; here
+  // the file-backed one simply steps aside.
+  if (typeof window !== 'undefined' && window.QuietHost) {
+    if (form) form.style.display = 'none';
+    if (bound) bound.style.display = 'none';
+    st.textContent = 'On this phone the login code is set on the "This device" tab — it is kept in the phone\'s hardware, not in a file.';
+    return;
+  }
   try {
     const info = await api('/api/passcode');
     // ONE STATE ON SCREEN AT A TIME: bound shows the fact and a way out;

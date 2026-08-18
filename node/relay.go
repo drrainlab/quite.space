@@ -372,6 +372,18 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 	for dev := range st.space.Members() {
 		devSet[dev] = struct{}{}
 	}
+	// MY OWN OTHER DEVICES (MD-2). A freshly paired phone has authored
+	// nothing in a space somebody else owns, so neither learning path above
+	// knows it exists — and a device nobody addresses drains an empty
+	// mailbox: no history, no reactions, no member cards, no names. Measured
+	// on the first paired phone. The person's certified, unrevoked devices
+	// are recipients of everything the person is in, by the plain fact of
+	// being the person; the epochs already reached them in the freight.
+	for _, dev := range r.ownDevicesLocked() {
+		if dev != self {
+			devSet[dev] = struct{}{}
+		}
+	}
 	blobs, _ := r.collectBlobs(tid, policy, DefaultBundleBudget)
 	// Ride an outstanding media request (if any) on the same bundle: wants =
 	// blob hashes we are missing, wanter = our device so a holder knows which
