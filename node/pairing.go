@@ -73,6 +73,13 @@ type freightDoc struct {
 	CertFrame   []byte
 	DisplayName string
 	Spaces      []freightSpace
+	// Legacy is the parent's frozen allowlist: the pre-certification devices
+	// this PERSON already knew. It is the person's knowledge, not the
+	// machine's — a child born after the migration would otherwise hold
+	// every un-upgraded friend's frame forever, since no certificate for
+	// those devices exists anywhere to release them. Measured on the first
+	// live pairing as "no other people, no history, no media".
+	Legacy []storage.LegacyBinding
 }
 
 // buildFreightLocked snapshots what the child needs, AFTER the rotations.
@@ -86,7 +93,7 @@ func (r *Runtime) buildFreightLocked() []byte {
 		}
 	}
 	var buf []byte
-	buf = codec.AppendArray(buf, freightFields)
+	buf = codec.AppendArray(buf, freightFields+1)
 	buf = codec.AppendUint(buf, freightVersion)
 	buf = codec.AppendBytes(buf, doc.Principal[:])
 	buf = codec.AppendBytes(buf, doc.CertFrame)
@@ -117,6 +124,17 @@ func (r *Runtime) buildFreightLocked() []byte {
 		}
 		buf = codec.AppendText(buf, sp.LocalTitle)
 		buf = codec.AppendBool(buf, sp.Unnamed)
+	}
+	buf = appendLegacyBindings(buf, r.ks.LegacyBindings)
+	return buf
+}
+
+func appendLegacyBindings(buf []byte, bs []storage.LegacyBinding) []byte {
+	buf = codec.AppendArray(buf, len(bs))
+	for _, b := range bs {
+		buf = codec.AppendArray(buf, 2)
+		buf = codec.AppendBytes(buf, b.Principal[:])
+		buf = codec.AppendBytes(buf, b.Device[:])
 	}
 	return buf
 }
@@ -207,6 +225,38 @@ func decodeFreight(data []byte) (*freightDoc, error) {
 			}
 		}
 		doc.Spaces = append(doc.Spaces, sp)
+	}
+	if n >= freightFields+1 {
+		lc, err := d.ReadArray()
+		if err != nil {
+			return nil, bad
+		}
+		for i := 0; i < lc; i++ {
+			pc, err := d.ReadArray()
+			if err != nil || pc < 2 {
+				return nil, bad
+			}
+			var b storage.LegacyBinding
+			if raw, err = d.ReadBytes(); err != nil || len(raw) != len(b.Principal) {
+				return nil, bad
+			}
+			copy(b.Principal[:], raw)
+			if raw, err = d.ReadBytes(); err != nil || len(raw) != len(b.Device) {
+				return nil, bad
+			}
+			copy(b.Device[:], raw)
+			for k := 2; k < pc; k++ {
+				if err := d.SkipItem(); err != nil {
+					return nil, bad
+				}
+			}
+			doc.Legacy = append(doc.Legacy, b)
+		}
+	}
+	for k := freightFields + 1; k < n; k++ {
+		if err := d.SkipItem(); err != nil {
+			return nil, bad
+		}
 	}
 	return doc, nil
 }
@@ -421,7 +471,7 @@ func replaceFreightCert(doc []byte, childCert []byte) []byte {
 	}
 	parsed.CertFrame = childCert
 	var buf []byte
-	buf = codec.AppendArray(buf, freightFields)
+	buf = codec.AppendArray(buf, freightFields+1)
 	buf = codec.AppendUint(buf, freightVersion)
 	buf = codec.AppendBytes(buf, parsed.Principal[:])
 	buf = codec.AppendBytes(buf, parsed.CertFrame)
@@ -442,6 +492,7 @@ func replaceFreightCert(doc []byte, childCert []byte) []byte {
 		buf = codec.AppendText(buf, sp.LocalTitle)
 		buf = codec.AppendBool(buf, sp.Unnamed)
 	}
+	buf = appendLegacyBindings(buf, parsed.Legacy)
 	return buf
 }
 
@@ -608,6 +659,10 @@ func JoinAsPairedDeviceVia(dir string, passphrase, offerBytes []byte,
 		PeerRoutes:    map[id.DeviceID][]storage.Route{},
 		PublicPublish: map[id.TerminalID]storage.PublicPublishState{},
 	}
+	// The allowlist is inherited AS IS and never appended to here: it is a
+	// frozen fact about the past, and a child that could grow it would be
+	// the open door the freeze exists to close.
+	ks.LegacyBindings = append([]storage.LegacyBinding(nil), doc.Legacy...)
 	for _, sp := range doc.Spaces {
 		ks.Spaces[sp.Terminal] = storage.SpaceMeta{
 			Title: sp.Title, Visibility: sp.Visibility,

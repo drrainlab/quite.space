@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/drrainlab/quiet_places/kernel/storage"
 	"github.com/drrainlab/quiet_places/protocol/id"
 )
 
@@ -167,6 +168,59 @@ func TestPreCertificatePublicSpaceCanBeOpenedByAFreshNode(t *testing.T) {
 	for _, text := range []string{"release notes: 0.1.1", "welcome to the quiet directory"} {
 		if got := countMsg(t, bob2, tid, text); got != 1 {
 			t.Fatalf("%q visible %d times after the mirror restarted, want 1", text, got)
+		}
+	}
+}
+
+// THE SECOND DEVICE INHERITS THE ALLOWLIST. A laptop that migrated froze
+// its legacy bindings — the pre-certification devices it already knew — and
+// admits their history by that list. A phone paired afterwards was born
+// after the migration: empty allowlist, and no certificate for those
+// devices exists anywhere, so every old frame the laptop relays sits in the
+// phone's hold forever. Measured on the first live pairing as "no history,
+// no other people, no names, no media". The allowlist is the PERSON's
+// knowledge and rides the freight with the rest of what the person knows.
+func TestAPairedPhoneReadsHistoryFromBeforeCertificationExisted(t *testing.T) {
+	srv, addr := startRelay(t)
+	defer srv.Close()
+	now := uint64(time.Now().Unix())
+
+	dir, tid := premdDataDir(t)
+	laptop := openRuntime(t, dir, "curator") // migrated: allowlist frozen
+	defer laptop.Close()
+	setPersonalRelay(t, laptop, addr)
+	if len(laptop.ks.LegacyBindings) == 0 {
+		t.Fatal("the fixture did not migrate an allowlist")
+	}
+
+	// A FRIEND WHO NEVER UPGRADED. Her frames were admitted here by the
+	// laptop's frozen allowlist; no certificate for her device exists
+	// anywhere. Simulated by an author the laptop grandfathers in by hand.
+	friend := newTestAuthor(t, tid, 0x77)
+	lsp, _ := laptop.spaceForTest(tid) // takes r.mu itself — never call it under the lock
+	laptop.mu.Lock()
+	laptop.ident.legacy[storage.LegacyBinding{Principal: friend.prin, Device: friend.dev}] = true
+	laptop.ks.LegacyBindings = append(laptop.ks.LegacyBindings,
+		storage.LegacyBinding{Principal: friend.prin, Device: friend.dev})
+	_, err := lsp.Log.Ingest(friend.frameAt(t, "a friend, from before certificates", 1))
+	laptop.mu.Unlock()
+	if err != nil {
+		t.Fatalf("the laptop refused a grandfathered friend: %v", err)
+	}
+
+	phone := pairChild(t, laptop, now)
+	setPersonalRelay(t, phone, addr)
+	if _, _, err := laptop.PushToRelay(addr, tid); err != nil {
+		t.Fatal(err)
+	}
+	waitUntilMsg(t, phone, addr, tid, "release notes: 0.1.1")
+	waitUntilMsg(t, phone, addr, tid, "a friend, from before certificates")
+	if got := countMsg(t, phone, tid, "welcome to the quiet directory"); got != 1 {
+		t.Fatalf("pre-certification history on the phone: %d, want 1", got)
+	}
+	if h, err := phone.ingressHold(); err == nil {
+		if items, _ := h.List(); len(items) != 0 {
+			t.Fatalf("%d frame(s) stuck in the phone's hold — history it can never release", len(items))
 		}
 	}
 }

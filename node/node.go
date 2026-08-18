@@ -608,7 +608,12 @@ func Open(dataDir string, passphrase []byte, displayName string) (rt *Runtime, e
 	// nothing about ordering can change. The legacy allowlist is frozen here
 	// ONCE — on the first open of a keystore that predates certification —
 	// and never appended to afterwards.
-	if len(r.ks.LegacyBindings) == 0 && len(identSeen) > 0 {
+	//
+	// A SECONDARY NEVER FREEZES ITS OWN. It inherits the authority's list in
+	// the pairing freight; a secondary that could freeze one from whatever
+	// history it happens to have replayed would be a device minting trust for
+	// strangers — the open door the freeze exists to close, one hop away.
+	if r.Principal != nil && len(r.ks.LegacyBindings) == 0 && len(identSeen) > 0 {
 		r.ks.LegacyBindings = r.ident.freezeLegacy(identSeen)
 	} else {
 		r.ident.loadLegacy(r.ks.LegacyBindings)
