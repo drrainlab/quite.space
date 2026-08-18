@@ -20,11 +20,35 @@
 //
 // The threat it does NOT defend against is somebody who copies this file
 // to a machine of their own. There is no rate limiting once the bytes have
-// left, and hours is hours. On a phone the answer is hardware — Android's
-// keystore and the Secure Enclave enforce their own attempt limits below
-// the OS — and wrapping this file's key with a hardware-held key is the
-// upgrade path. It is not implemented here, and this comment is the reason
-// the interface never claims otherwise.
+// left, and hours is hours. The answer is to wrap these bytes again under
+// a key the hardware will not hand out — which is a HOST's job, not this
+// package's: it happens outside, around the blob Seal and Open pass, and
+// this file stays the same on every platform.
+//
+// ANDROID HAS IT. PasscodeVault seals this file's bytes under an
+// AndroidKeyStore key that cannot be exported, so the offline grind does
+// not exist there: what remains is guessing at the screen, which is what
+// the attempt counter is for.
+//
+// MACOS DOES NOT, AND THE REASON IS MEASURED RATHER THAN ASSUMED. Probed
+// on 2026-08-18 against an unsigned build, which is what the beta ships:
+//
+//	data-protection keychain      errSecMissingEntitlement (-34018)
+//	permanent Secure Enclave key  errSecMissingEntitlement (-34018)
+//	ad-hoc signature carrying     process killed at launch (SIGKILL)
+//	  keychain-access-groups
+//	legacy keychain, default ACL  works — but the ACL is bound to the
+//	                              binary's code signature, so a build
+//	                              differing only in cdhash raises a GUI
+//	                              prompt. Measured with two such builds:
+//	                              the second one blocked. That would mean
+//	                              asking permission after every update.
+//
+// So the door is a DEVELOPER ID SIGNATURE plus entitlements, not more
+// code: with one, the first two rows work and the wrap is a small piece of
+// work around Seal and Open. Until then macOS keeps the honest number
+// above — about an hour for four digits, once the file has been copied —
+// and nothing in the interface says otherwise.
 //
 // THE PASSPHRASE REMAINS THE REAL SECRET. The passcode is a shortcut to
 // it, never a replacement: the passphrase alone opens the data directory,
