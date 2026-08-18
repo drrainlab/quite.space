@@ -251,7 +251,23 @@ jobs:
           NAME: ${{ needs.version.outputs.name }}
         run: |
           set -euo pipefail
-          cat > notes.md <<'NOTES'
+          # THE STORY OF THIS RELEASE COMES FROM THE REPOSITORY, written
+          # before the tag and reviewed with the code it describes. The
+          # standing section below is appended to it rather than replaced:
+          # every release is somebody's first, and the install steps are
+          # what they need. A release with no note of its own still
+          # publishes — with the standing section alone, which is honest
+          # about the assets even when nobody wrote a word.
+          : > notes.md
+          STORY="docs/releases/${NAME}.md"
+          if [ -f "$STORY" ]; then
+            echo "using $STORY"
+            cat "$STORY" >> notes.md
+            printf '\n---\n\n' >> notes.md
+          else
+            echo "no $STORY — publishing the standing section alone"
+          fi
+          cat >> notes.md <<'NOTES'
           ## Public Beta
 
           Quite Space keeps your conversations on your own devices and carries
