@@ -2073,8 +2073,20 @@
     .res-slot:hover, .res-add:hover, .res-slot:active { transform: none; }
     .res-picker-slots { perspective: none; }
   }
-  .res-picker-actions { display: flex; gap: 8px; justify-content: flex-end;
-    margin-top: 6px; }
+  .res-picker-actions { display: flex; gap: 6px; justify-content: flex-end;
+    margin-top: 8px; }
+  /* Small, quiet verbs — the palette is the loud part. */
+  .res-act { font-size: 11px; line-height: 1; padding: 6px 10px;
+    border-radius: 999px; border: 1px solid var(--line);
+    background: transparent; color: var(--dim); cursor: pointer;
+    transition: color .15s, border-color .15s, background .15s; }
+  .res-act:hover { color: var(--fg); border-color: var(--fg-dim, var(--dim)); }
+  .res-act-send { color: var(--acc, var(--human)); border-color: currentColor; }
+  .res-act-send:hover { background: color-mix(in srgb, currentColor 14%, transparent); }
+  .res-act-remove:hover { color: var(--danger, #e07a7a); border-color: currentColor; }
+  .res-act[hidden] { display: none; }
+  .res-slot.res-picked, .res-emoji-grid button.res-picked {
+    border-color: var(--acc, var(--human)); background: rgba(255,255,255,.06); }
   .res-emoji-grid { display: grid; grid-template-columns: repeat(8, 1fr);
     gap: 2px; margin-top: 8px; max-height: 180px; overflow-y: auto; }
   .res-emoji-grid button { border: 0; background: transparent; font-size: 20px;

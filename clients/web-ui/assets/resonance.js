@@ -144,29 +144,27 @@ function renderResonanceRow(res, targetId, onChange) {
   const mayResonate =
     !(typeof currentSpace === 'function' && currentSpace()?.can_write === false);
 
-  // ✧ quick affordance: tap = default meaning (or release own);
-  // hover/long-press = the palette picker.
+  // ✧ ONE GESTURE, ONE EXPECTATION: a tap opens the palette, on every
+  // device. It used to be "tap = the default meaning, long-press = the
+  // palette", which read fine with a mouse and badly under a thumb — on a
+  // phone the tap won the race against the long-press timer and stamped the
+  // first slot before anybody saw a choice. Hover still opens it early on
+  // a desktop, as a shortcut rather than a second model.
   const add = document.createElement('span');
   add.className = 'res-add';
   add.textContent = '✧';
-  add.title = 'resonate';
-  let pressT = null, hoverT = null, pickerOpened = false;
-  add.onclick = () => {
-    if (pickerOpened) { pickerOpened = false; return; }
-    if (res?.own) clearResonance(targetId, onChange);
-    else setSemantic(targetId, RES.defaultKey(), onChange);
+  add.title = t('res.resonate');
+  let hoverT = null;
+  add.onclick = (ev) => {
+    ev.stopPropagation();
+    clearTimeout(hoverT);
+    if (resPickerEl && resPickerEl.dataset.target === targetId) { closeResPicker(); return; }
+    openResPicker(targetId, add, res, onChange);
   };
   add.onmouseenter = () => {
     hoverT = setTimeout(() => openResPicker(targetId, add, res, onChange), 350);
   };
   add.onmouseleave = () => clearTimeout(hoverT);
-  add.addEventListener('touchstart', () => {
-    pressT = setTimeout(() => {
-      pickerOpened = true;
-      openResPicker(targetId, add, res, onChange);
-    }, 450);
-  }, { passive: true });
-  add.addEventListener('touchend', () => clearTimeout(pressT));
   if (mayResonate) row.appendChild(add);
   // No residue on the host — the owner's call: the chips with their counts
   // ARE the accumulated state, and a touched message hangs in space exactly
@@ -221,7 +219,31 @@ function openResPicker(targetId, anchor, res, onChange) {
   closeResPicker();
   const pop = document.createElement('div');
   pop.className = 'res-picker';
+  pop.dataset.target = targetId;
   const ownId = res?.own ? resIdentity(res.own) : null;
+  // A COARSE POINTER HAS NO HOVER, so it gets a two-beat choice instead:
+  // the first tap on a slot plays its effect and selects it, the second
+  // tap (or Send) commits. A fine pointer keeps hover-to-preview and
+  // click-to-commit — same palette, same words, one fewer beat.
+  const coarse = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
+  let picked = null; // {kind:'semantic', key} | {kind:'unicode', value}
+  let sendBtn = null;
+  const preview = (el, spec) => {
+    if (typeof RESFX?.fireArrival !== 'function') return;
+    RESFX.fireArrival(el, spec, 1);
+  };
+  const commit = () => {
+    if (!picked) return;
+    closeResPicker();
+    if (picked.kind === 'semantic') setSemantic(targetId, picked.key, onChange);
+    else setUnicode(targetId, picked.value, onChange);
+  };
+  const select = (btn, spec) => {
+    for (const b of pop.querySelectorAll('.res-picked')) b.classList.remove('res-picked');
+    btn.classList.add('res-picked');
+    picked = spec;
+    if (sendBtn) sendBtn.hidden = false;
+  };
 
   const slotRow = document.createElement('div');
   slotRow.className = 'res-picker-slots';
@@ -241,37 +263,42 @@ function openResPicker(targetId, anchor, res, onChange) {
       use.className = 'res-use'; use.textContent = usage;
       b.appendChild(use);
     }
+    const spec = { kind: 'semantic', key: s.key, fallback: s.fallback };
     // SHOW WHAT IT DOES, NOT ONLY WHAT IT IS CALLED. Every meaning already
     // owns a surface effect — a heartbeat, a golden wash, rising sparks,
-    // a settling weight — and until now a person met it only AFTER
-    // choosing blind. Hovering plays that same effect on the slot itself,
-    // so the vocabulary explains itself the way it was designed to: by
-    // behaving. Nothing new is invented here; RESFX is reused as-is, and
-    // it refuses on its own when effects are off or motion is reduced.
-    b.onmouseenter = () => {
-      if (typeof RESFX?.fireArrival !== 'function') return;
-      RESFX.fireArrival(b, { kind: 'semantic', key: s.key, fallback: s.fallback }, 1);
+    // a settling weight — and a person should meet it BEFORE choosing.
+    // RESFX is reused as-is and refuses on its own when effects are off.
+    b.onmouseenter = () => { if (!coarse) preview(b, spec); };
+    b.onclick = (ev) => {
+      ev.stopPropagation();
+      if (!coarse) { closeResPicker(); setSemantic(targetId, s.key, onChange); return; }
+      if (picked && picked.kind === 'semantic' && picked.key === s.key) { commit(); return; }
+      preview(b, spec);
+      select(b, spec);
     };
-    b.onclick = () => { closeResPicker(); setSemantic(targetId, s.key, onChange); };
     slotRow.appendChild(b);
   }
   pop.appendChild(slotRow);
 
   const actions = document.createElement('div');
   actions.className = 'res-picker-actions';
+  const act = (label, cls, onclick) => {
+    const b = document.createElement('button');
+    b.className = 'res-act ' + cls; b.type = 'button';
+    b.textContent = label;
+    b.onclick = (ev) => { ev.stopPropagation(); onclick(); };
+    actions.appendChild(b);
+    return b;
+  };
   if (RES.allowUnicode()) {
-    const more = document.createElement('button');
-    more.className = 'btn-plain'; more.type = 'button';
-    more.textContent = 'More…';
-    more.onclick = () => renderEmojiGrid(pop, targetId, onChange);
-    actions.appendChild(more);
+    act(t('res.more'), 'res-act-more', () => renderEmojiGrid(pop, targetId, onChange, coarse ? select : null));
   }
   if (res?.own) {
-    const rm = document.createElement('button');
-    rm.className = 'btn-plain'; rm.type = 'button';
-    rm.textContent = 'Remove';
-    rm.onclick = () => { closeResPicker(); clearResonance(targetId, onChange); };
-    actions.appendChild(rm);
+    act(t('res.remove'), 'res-act-remove', () => { closeResPicker(); clearResonance(targetId, onChange); });
+  }
+  if (coarse) {
+    sendBtn = act(t('res.send'), 'res-act-send', commit);
+    sendBtn.hidden = true;
   }
   if (actions.childElementCount) pop.appendChild(actions);
 
@@ -293,20 +320,27 @@ const RES_EMOJI = [
   '🚀','💡','🧠','🧭','🗝️','📌','🏔️','🏕️','🌋','🎈','🎁','🏆',
 ];
 
-function renderEmojiGrid(pop, targetId, onChange) {
+function renderEmojiGrid(pop, targetId, onChange, select) {
   let grid = pop.querySelector('.res-emoji-grid');
   if (grid) { grid.remove(); return; }
   grid = document.createElement('div');
   grid.className = 'res-emoji-grid';
+  const choose = (btn, em) => {
+    // Under a thumb the emoji joins the two-beat choice; with a mouse it
+    // commits at once, as it always did.
+    if (select) { select(btn, { kind: 'unicode', value: em }); return; }
+    closeResPicker(); setUnicode(targetId, em, onChange);
+  };
   for (const em of RES_EMOJI) {
     if (!em) continue;
     const b = document.createElement('button');
     b.type = 'button'; b.textContent = em;
-    b.onclick = () => { closeResPicker(); setUnicode(targetId, em, onChange); };
+    b.onclick = (ev) => { ev.stopPropagation(); choose(b, em); };
     grid.appendChild(b);
   }
   const free = document.createElement('input');
-  free.placeholder = 'any emoji…'; free.maxLength = 8;
+  free.placeholder = t('res.anyEmoji'); free.maxLength = 8;
+  free.onclick = (ev) => ev.stopPropagation();
   free.onkeydown = (ev) => {
     if (ev.key === 'Enter' && free.value.trim()) {
       const v = free.value.trim();
