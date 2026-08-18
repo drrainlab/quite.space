@@ -307,6 +307,17 @@ func (s *Server) serve(c *lan.Conn) {
 	for {
 		select {
 		case <-s.stop:
+			// STOPPING MEANS HANGING UP. Returning without closing left
+			// the socket open until the GC got to it — the peer never saw
+			// a FIN, its reader loop stayed blocked, and every request it
+			// had in flight sat out its full deadline over a connection
+			// that was, as far as it could tell, merely quiet. In the
+			// suite that was Runtime.Close waiting ten seconds per node
+			// on a relay that had "stopped"; in production it is what a
+			// graceful relay restart does to every client still attached.
+			// A closed listener refuses new callers; only closing the
+			// connection tells the ones already here.
+			c.Close()
 			return
 		case <-t.C:
 		}
