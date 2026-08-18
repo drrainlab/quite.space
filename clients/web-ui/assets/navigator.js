@@ -52,7 +52,7 @@ const NAV = (() => {
   const PICKER_SECTIONS = ['recent', 'pinned', 'groups', 'spaces', 'people', 'ai'];
   // Whether a provider is set up — read on paint so the AI section can offer
   // to open the room instead of telling a configured person to configure.
-  let aiConfigured = false;
+  let aiConfigured = false, aiProbed = false;
   async function refreshAIConfigured() {
     try { aiConfigured = !!(await api('/api/ai')).configured; } catch { aiConfigured = false; }
   }
@@ -730,6 +730,7 @@ const NAV = (() => {
     currentId = nextCurrent || '';
     if (busy()) { pendingPaint = true; return; }
     paintAll();
+    if (!aiProbed) { aiProbed = true; refreshAIConfigured().then(() => { if (!busy()) paintAll(); }); }
     // The AI section's empty state depends on whether a provider is set —
     // fetched off the paint and repainted only if the answer changed, so a
     // list render never waits on it.
@@ -870,16 +871,26 @@ const NAV = (() => {
       const body = v.root.querySelector('.nav-sec[data-sec="ai"] .nav-sec-body');
       const old = body && body.querySelector('.nav-note, .nav-ai-open');
       if (old) old.remove();
-      if (body && !v.select && aiConfigured) {
+      if (body && aiConfigured) {
+        // In the picker the row MAKES the room and then hands it to the
+        // picker as a destination — so "forward to AI" works the first
+        // time, not only once a room already exists.
         const b = document.createElement('button');
         b.className = 'nav-ai-open btn-plain';
-        b.textContent = t('share.ai.open');
-        b.onclick = async () => {
+        b.textContent = t(v.select ? 'share.ai.make' : 'share.ai.open');
+        b.onclick = async (e) => {
+          e.stopPropagation();
           b.disabled = true;
           try {
             const { space } = await api('/api/ai/space', { method: 'POST' });
-            NAV.onOpen(space);
-          } catch (e) { note('ai', String(e.message || e)); }
+            if (v.select) {
+              // The picker paints from the app's cached list; the new room
+              // is not in it yet, so refresh the app (which re-renders us)
+              // and only then pick it.
+              if (typeof refresh === 'function') await refresh();
+              togglePick(v, space);
+            } else NAV.onOpen(space);
+          } catch (e2) { note('ai', String(e2.message || e2)); }
         };
         body.appendChild(b);
       } else {

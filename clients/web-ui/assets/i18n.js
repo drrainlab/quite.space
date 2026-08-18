@@ -325,6 +325,7 @@ const I18N = {
     'share.recent.empty': 'Places you send to will show up here.',
     'share.ai.empty': 'Set up an AI provider in Settings to send things to it.',
     'share.ai.open': 'Open Quite AI',
+    'share.ai.make': 'Send to Quite AI (opens its room)',
 
     // Forwarding, seen (SHARE-1). The claim line is the sentence the whole
     // wave turns on and it is never softened.
@@ -1178,6 +1179,7 @@ const I18N = {
     'share.recent.empty': 'Места, куда вы отправляете, появятся здесь.',
     'share.ai.empty': 'Настройте провайдера AI в настройках, чтобы отправлять ему что-нибудь.',
     'share.ai.open': 'Открыть Quite AI',
+    'share.ai.make': 'Отправить в Quite AI (откроет его комнату)',
     'share.quote.anon': 'кто-то написал',
     'share.quote.claim': ({ sender, author }) =>
       `${sender} говорит, что это пришло от ${author}. Подпись вместе с цитатой не пришла — это только слова ${sender}.`,

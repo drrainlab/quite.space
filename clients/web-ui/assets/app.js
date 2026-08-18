@@ -2228,6 +2228,28 @@ async function say(e) {
     alert(t('conv.too_long', { n: inp.value.length, max: MAX_MESSAGE_CHARS }));
     return false;
   }
+  // "@ai …" FROM ANY ROOM is a question for the assistant, not a message
+  // for the room. The room never sees it: the text goes to the assistant's
+  // own space (made now if it did not exist), and the screen follows it
+  // there. Checked before mentions, because "@ai" is not a person and must
+  // never be staged as one.
+  const aiCmd = inp.value.match(/^\s*@ai\b[\s:,—-]*([\s\S]*)$/i);
+  if (aiCmd && !currentSpace()?.ai) {
+    const question = aiCmd[1].trim();
+    try {
+      const { space } = await api('/api/ai/space', { method: 'POST' });
+      if (question) {
+        await api('/api/ai/ask', { method: 'POST', body: JSON.stringify({ text: question }) });
+      }
+      inp.value = '';
+      growComposer(inp);
+      cancelReply();
+      if (typeof mentionsReset === 'function') mentionsReset();
+      NAV.onOpen(space);
+      refreshAI();
+    } catch (err) { alert(err.message); }
+    return false;
+  }
   // Mentions travel as a signed structural field, not as text markup.
   const mentions = typeof mentionsPayload === 'function' ? mentionsPayload(inp.value) : [];
   const body = { text: inp.value, mentions };
