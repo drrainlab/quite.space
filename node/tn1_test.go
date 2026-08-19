@@ -21,6 +21,16 @@ func (testLink) Closed() (bool, error) { return false, nil }
 // it actually cares about instead of polling a clock. The engine is
 // caller-serialized under r.mu, and the tap is installed under the same
 // lock, so this races with nothing.
+// appliedCh delivers the id of every event that lands in a space, from
+// whichever door it came through.
+//
+// IT LISTENS ON THE SPACE'S OnAbsorb, NOT THE SYNC ENGINE'S OnApplied. An
+// earlier form hooked the engine, and under load a test went red with every
+// room holding exactly one message and the channel silent: a frame that
+// arrives while the receiver holds it in custody is released by judgeFrame
+// straight into Log.Ingest and AttachSyncApply — correct, and not through
+// the engine's hook. OnAbsorb fires for every absorbed event, local or
+// synced, by either path; it is the one door everything passes.
 func appliedCh(t *testing.T, rt *Runtime, tid id.TerminalID) <-chan id.EventID {
 	t.Helper()
 	ch := make(chan id.EventID, 32)
@@ -30,8 +40,8 @@ func appliedCh(t *testing.T, rt *Runtime, tid id.TerminalID) <-chan id.EventID {
 	if !ok {
 		t.Fatalf("space %s not attached", tid.Hex()[:6])
 	}
-	prev := st.eng.OnApplied
-	st.eng.OnApplied = func(a eventlog.Applied) {
+	prev := st.space.OnAbsorb
+	st.space.OnAbsorb = func(a eventlog.Applied) {
 		if prev != nil {
 			prev(a)
 		}
