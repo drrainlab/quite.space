@@ -3164,8 +3164,7 @@ function renderEntry(log, e, fresh, grouped) {
     q.title = t('conv.replyTo');
     q.appendChild(who);
     if (src) {
-      const body = src.querySelector('.bubble > .body');
-      const text = (body?.textContent || '').trim().replace(/\s+/g, ' ');
+      const text = replyExcerpt(src);
       if (text) {
         const line = document.createElement('span');
         line.className = 'reply-text';
@@ -3291,6 +3290,38 @@ const UNAVAILABLE_TEXT = 'media temporarily unavailable — no online source';
 // has answered YET, `failed` + no_source means it stopped. Both used to
 // render the same sentence, so the one question a person actually has —
 // "is it still trying, or is that it?" — had no answer on the screen.
+// replyExcerpt is the line a reply quotes from the message it answers.
+//
+// WHAT IS QUOTED IS THE THING, NOT ITS WEATHER. The first form took the
+// bubble's whole textContent, which for a picture is not the picture — it
+// is the fetch note under it and the retry button beside it, concatenated
+// without a space because textContent does not put one between elements.
+// A reply to a photo that had not arrived yet therefore quoted
+// "me's device did not answer — tap to look againtry again", which reads
+// as a sentence somebody typed. Seen on a phone. A picture is quoted as a
+// picture; a file as its name; words as words. Transient notes, buttons
+// and the progress bar are not the message and are never quoted.
+function replyExcerpt(src) {
+  const body = src.querySelector('.bubble > .body');
+  if (!body) return '';
+  const caption = (body.querySelector(':scope > .txt, .txt')?.textContent || '').trim();
+  if (body.querySelector('.video-holder, video')) return caption || '🎞 video';
+  if (body.querySelector('.filecard')) {
+    // The card's first line is "📄 name" — the thing itself, without the note.
+    return (body.querySelector('.filecard .txt')?.textContent || '').trim() || '📎 file';
+  }
+  if (body.querySelector('audio, .voice, .player')) return caption || '🎙 voice';
+  const img = body.querySelector('img.thumb');
+  if (img) {
+    const alt = (img.getAttribute('alt') || '').trim();
+    return caption || (alt ? '📷 ' + alt : '📷 photo');
+  }
+  // Words: the body minus anything that is about the body rather than in it.
+  const clone = body.cloneNode(true);
+  clone.querySelectorAll('.asset-note, .asset-retry, button, progress, .progress').forEach(n => n.remove());
+  return (clone.textContent || '').trim().replace(/\s+/g, ' ');
+}
+
 function waitingForText(e, live) {
   const who = (!e || e.mine || PROTOCOL) ? '' : (e.author_name || '');
   if (live) {
