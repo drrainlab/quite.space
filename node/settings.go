@@ -61,7 +61,11 @@ type AdapterConfig struct {
 }
 
 // relayInterval clamps the configured cadence to a sane range (default 2s).
-func relayInterval(s Settings) time.Duration {
+func relayInterval(s Settings) time.Duration { return relayIntervalAt(cadence, s) }
+
+// relayIntervalAt is relayInterval against an explicit beat, so the shipped
+// arithmetic can be asserted without touching the live variable.
+func relayIntervalAt(beat time.Duration, s Settings) time.Duration {
 	n := s.RelaySyncSeconds
 	if n <= 0 {
 		n = 2
@@ -72,7 +76,8 @@ func relayInterval(s Settings) time.Duration {
 	if n > 3600 {
 		n = 3600
 	}
-	return time.Duration(n) * time.Second
+	// n is seconds to the person; under test a "second" is half a beat.
+	return time.Duration(n) * (beat / 2)
 }
 
 // GetSettings returns the decoded settings (zero-value if unset).

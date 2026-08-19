@@ -342,17 +342,21 @@ func TestTheDoorHoldsAcrossARestart(t *testing.T) {
 		t.Fatalf("the spent places came back as %d", u)
 	}
 	waitMembers(t, alice, room, 5)
-	found := false
-	carol.mu.Lock()
-	for _, m := range carol.spaces[room].space.State.Messages() {
-		if strings.Contains(m.Text, "we are all here") {
-			found = true
+	// Waited for on CAROL'S side. Alice seeing five members says the
+	// admissions landed; it says nothing about when the message reaches a
+	// guest — that is one more hop, and reading carol's state the instant
+	// alice's settles was a race the detector's slower schedule lost.
+	waitUntil(t, 20*time.Second, "carol lost the epoch she was admitted under", func() bool {
+		found := false
+		carol.mu.Lock()
+		for _, m := range carol.spaces[room].space.State.Messages() {
+			if strings.Contains(m.Text, "we are all here") {
+				found = true
+			}
 		}
-	}
-	carol.mu.Unlock()
-	if !found {
-		t.Fatal("carol lost the epoch she was admitted under")
-	}
+		carol.mu.Unlock()
+		return found
+	})
 
 	// 11 — the three deadlines are genuinely separate. A decision made
 	// just before the pass expires still reaches a guest who only comes

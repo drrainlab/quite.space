@@ -209,7 +209,7 @@ func (r *Runtime) ensurePassPolling() {
 	r.wg.Add(1)
 	go func() {
 		defer r.wg.Done()
-		t := time.NewTicker(2 * time.Second)
+		t := cadenceTicker(1)
 		defer t.Stop()
 		for {
 			select {
@@ -523,7 +523,7 @@ func (r *Runtime) JoinStatus(reqIDShort string) (JoinState, string) {
 
 func (r *Runtime) pollJoinResponse(at *joinAttempt) {
 	defer r.wg.Done()
-	t := time.NewTicker(2 * time.Second)
+	t := cadenceTicker(1)
 	defer t.Stop()
 	for {
 		select {

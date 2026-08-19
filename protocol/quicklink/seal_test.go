@@ -103,6 +103,15 @@ func TestFailureIsIndistinguishable(t *testing.T) {
 // The KDF is the part of the budget we bought. If someone tunes it down to
 // make a test suite faster, this says so out loud.
 func TestKeyDerivationIsActuallySlow(t *testing.T) {
+	// THE SHIPPED PARAMETERS FIRST, as constants: TestKDFParams lets another
+	// package's suite derive cheaply, and this line is what makes that safe
+	// — a lowered live value can never masquerade as the shipped one here.
+	if scryptN != 1<<17 || scryptR != 8 || scryptP != 1 {
+		t.Fatalf("shipped scrypt parameters are N=%d r=%d p=%d, not 2^17/8/1", scryptN, scryptR, scryptP)
+	}
+	if kdfN != scryptN || kdfR != scryptR || kdfP != scryptP {
+		t.Fatalf("the live KDF parameters (%d/%d/%d) differ from the shipped ones inside this package's own tests", kdfN, kdfR, kdfP)
+	}
 	if testing.Short() {
 		t.Skip("timing check")
 	}

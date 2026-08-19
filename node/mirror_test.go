@@ -62,19 +62,22 @@ func TestMirrorKeepsASpaceReadableAfterTheOwnerLeaves(t *testing.T) {
 	if err := mirror.OpenPublicSpace(tid, addr); err != nil {
 		t.Fatal(err)
 	}
-	if err := mirror.SetMirror(tid, true); err != nil {
-		t.Fatal(err)
-	}
 	waitUntil(t, 20*time.Second, "mirror never installed the projection", func() bool {
 		_ = mirror.fetchPublicProjection(addr, tid)
 		return msgCount(mirror, tid) == 3
 	})
-	if err := mirror.mirrorKeepalive(addr, tid); err != nil {
-		t.Fatal(err)
-	}
 
 	// The owner goes away, and the relay forgets the space — which is what
 	// a 48-hour expiry looks like without waiting 48 hours.
+	//
+	// The volunteer has the copy but is NOT YET a mirror. Ordering matters:
+	// a mirror republishes on its own heartbeat, and with the mirror
+	// switched on before the wipe there was a race between the wipe and
+	// that heartbeat — lost under the race detector, where the wipe landed
+	// a beat late and the "nothing is there" check below saw a fresh
+	// republish and reported that the test proved nothing. Switching on
+	// after the wipe proves the same claim without the coin toss, and
+	// proves it more sharply: what comes back can only be the copy.
 	owner.Close()
 	b := relay.Bucket(uint64(time.Now().Unix()))
 	srv.WipeForTest(relay.HintPublicOutbox(tid, b))
@@ -89,7 +92,11 @@ func TestMirrorKeepsASpaceReadableAfterTheOwnerLeaves(t *testing.T) {
 		t.Fatal("the wipe did not take effect; the test proves nothing")
 	}
 
-	// The mirror republishes the owner's own signed bytes.
+	// The volunteer becomes a mirror, and republishes the owner's own
+	// signed bytes from the copy it holds.
+	if err := mirror.SetMirror(tid, true); err != nil {
+		t.Fatal(err)
+	}
 	if err := mirror.mirrorKeepalive(addr, tid); err != nil {
 		t.Fatal(err)
 	}

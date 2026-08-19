@@ -27,6 +27,34 @@ const (
 	scryptP = 1
 )
 
+// The live parameters. Production never writes these; they are variables
+// only so a test process can pay less per derivation — see TestKDFParams.
+var kdfN, kdfR, kdfP = scryptN, scryptR, scryptP
+
+// TestKDFParams lowers the key-derivation cost FOR THIS PROCESS and returns
+// a function that restores it. It exists for test suites in other packages,
+// which is why it is exported, and it must be called before any goroutine
+// derives a key — from a TestMain, not from a test body.
+//
+// WHY. Every quick link derives with scrypt at N=2^17 — half a second and
+// 128 MiB, which is the point of it. A suite that mints and resolves links
+// hundreds of times pays that every time, and under the race detector the
+// derivation is ten times dearer still: measured on the node package, the
+// same tests went from 0.9s plain to 7.6s under -race, and 363 of 601 tests
+// were more than twice as slow. That is compute, not waiting, and no amount
+// of shortening the waits touches it.
+//
+// WHAT THIS DOES NOT CHANGE. The parameters do not travel on the wire — the
+// minter and the resolver are the same binary — so nothing about the format
+// moves. And TestKeyDerivationIsActuallySlow in this package asserts the
+// constants, not these variables, so lowering them here can never quietly
+// lower them for people.
+func TestKDFParams(n, r, p int) (restore func()) {
+	oldN, oldR, oldP := kdfN, kdfR, kdfP
+	kdfN, kdfR, kdfP = n, r, p
+	return func() { kdfN, kdfR, kdfP = oldN, oldR, oldP }
+}
+
 // Sealed payload field numbers. Append-only, ascending on the wire.
 const (
 	sealKeyVersion = 1
@@ -261,7 +289,7 @@ func tokenAEAD(t Token) (interface {
 	Seal(dst, nonce, plaintext, ad []byte) []byte
 	Open(dst, nonce, ciphertext, ad []byte) ([]byte, error)
 }, error) {
-	key, err := scrypt.Key(t.Secret[:], t.KDFSalt(), scryptN, scryptR, scryptP,
+	key, err := scrypt.Key(t.Secret[:], t.KDFSalt(), kdfN, kdfR, kdfP,
 		chacha20poly1305.KeySize)
 	if err != nil {
 		return nil, fmt.Errorf("quicklink: key derivation failed: %w", err)

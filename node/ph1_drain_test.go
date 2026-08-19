@@ -217,13 +217,17 @@ func TestStrangerCannotDrainIngressAfterCommitment(t *testing.T) {
 		t.Fatalf("a stranger drained %d ingress items", len(got))
 	}
 
-	// The owner, holding the space key, still receives it.
-	n, err := owner.collectPublicIngress(addr, tid)
-	if err != nil {
+	// The owner, holding the space key, still receives it. Collect is
+	// destructive and the owner's own background sync is running, so the
+	// contribution may already be home before this line asks — at the
+	// suite's faster beat it sometimes was, and "n == 0" read as a refusal.
+	// What is claimed is that the owner GETS it, by either hand.
+	if n, err := owner.collectPublicIngress(addr, tid); err != nil {
 		t.Fatal(err)
-	}
-	if n == 0 {
-		t.Fatal("the owner could not collect its own ingress")
+	} else if n == 0 && countMsg(t, owner, tid, "a contribution") == 0 {
+		waitUntil(t, 10*time.Second, "the owner could not collect its own ingress", func() bool {
+			return countMsg(t, owner, tid, "a contribution") > 0
+		})
 	}
 }
 

@@ -56,6 +56,21 @@ func setPersonalRelay(t *testing.T, rt *Runtime, addr string) {
 
 // waitForPost polls until the reader's replica holds a publication whose
 // title contains want.
+// hasPost is waitForPost's question without its verdict, for a loop that
+// wants to stop the moment the answer is yes.
+func hasPost(rt *Runtime, tid id.TerminalID, want string) bool {
+	found := false
+	_ = rt.withSpace(tid, func(st *spaceState) error {
+		for _, p := range st.space.State.Publications() {
+			if p.Title == want {
+				found = true
+			}
+		}
+		return nil
+	})
+	return found
+}
+
 func waitForPost(t *testing.T, rt *Runtime, tid id.TerminalID, want string, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -230,9 +245,15 @@ func TestSpaceRelaySetMovesEveryoneAcrossRelays(t *testing.T) {
 	if err := alice.publishPublicProjection(addr2, tid); err != nil {
 		t.Fatal(err)
 	}
+	// Leave as soon as it lands: this loop once had no exit and sat out
+	// its whole 25 seconds on every run, then asked waitForPost with a
+	// one-second budget for what had arrived twenty seconds earlier.
 	deadline = time.Now().Add(25 * time.Second)
 	for time.Now().Before(deadline) {
 		_ = bob.fetchPublicProjection(bob.ResolvePublicReadRelay(tid), tid)
+		if hasPost(bob, tid, "После переезда") {
+			break
+		}
 		time.Sleep(200 * time.Millisecond)
 	}
 	waitForPost(t, bob, tid, "После переезда", time.Second)

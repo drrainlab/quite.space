@@ -123,7 +123,7 @@ func quietStagger(tid id.TerminalID) uint64 { return uint64(tid[0]) % quietEvery
 // cadence. An empty address stops it. Safe to call from settings changes.
 func (r *Runtime) applyRelaySync(addr string, interval time.Duration) {
 	if interval <= 0 {
-		interval = 2 * time.Second
+		interval = cadence
 	}
 	r.mu.Lock()
 	if r.relaySync == nil {
@@ -620,7 +620,7 @@ func (r *Runtime) relaySyncOnce(addr string) {
 		}
 		every := rs.interval
 		if every <= 0 {
-			every = 2 * time.Second
+			every = cadence
 		}
 		back := time.Duration(1<<min(rs.failStreak-1, 4)) * every
 		// THE CEILING IS WALL TIME, NOT TICKS. Capping at the quiet cadence

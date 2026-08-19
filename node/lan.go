@@ -17,7 +17,10 @@ import (
 )
 
 const (
-	announceEvery = 3 * time.Second
+	// announceEvery is 1.5 background cadences — 3s as shipped. Kept as a
+	// ratio (see cadence.go) so the LAN beacon stays in step with the rest
+	// of the node's heartbeat under test as well as in the world.
+	announceEvery = 1.5
 	pumpEvery     = 300 * time.Millisecond
 )
 
@@ -71,7 +74,7 @@ func (r *Runtime) StartLAN(listenAddr, announceAddr string) error {
 	r.wg.Add(1)
 	go func() {
 		defer r.wg.Done()
-		t := time.NewTicker(announceEvery)
+		t := cadenceTicker(announceEvery)
 		defer t.Stop()
 		for {
 			r.announceOnce(announceAddr, port, selfNonce)
