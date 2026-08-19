@@ -75,10 +75,22 @@ internal class BiometricVault(private val app: Context) {
     fun available(): Availability {
         if (Build.VERSION.SDK_INT < 30) return Availability.UNSUPPORTED
         val m = app.getSystemService(BiometricManager::class.java) ?: return Availability.UNSUPPORTED
-        return when (m.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG)) {
-            BiometricManager.BIOMETRIC_SUCCESS -> Availability.READY
-            BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED -> Availability.NOT_ENROLLED
-            else -> Availability.UNSUPPORTED
+        // NEVER LET THIS QUESTION CRASH THE APP. It is asked on every
+        // successful unlock. canAuthenticate throws SecurityException when
+        // USE_BIOMETRIC is not held — which is exactly what 0.1.3 shipped,
+        // and every person who typed their code correctly hit the ground.
+        // The manifest holds the permission now; this catch is for the day
+        // some build or platform disagrees. A device whose answer is an
+        // exception is a device where this feature does not exist.
+        return try {
+            when (m.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG)) {
+                BiometricManager.BIOMETRIC_SUCCESS -> Availability.READY
+                BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED -> Availability.NOT_ENROLLED
+                else -> Availability.UNSUPPORTED
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "biometric availability could not be asked; treating as unsupported", t)
+            Availability.UNSUPPORTED
         }
     }
 
@@ -216,7 +228,11 @@ internal class BiometricVault(private val app: Context) {
             .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
             .setNegativeButton("Another way in", activity.mainExecutor) { _, _ -> onRefused() }
             .build()
-        p.authenticate(
+        // The same rule as available(): the prompt either shows or the
+        // caller is sent to another door. Nothing on this path may throw
+        // out of an unlock.
+        try {
+            p.authenticate(
             BiometricPrompt.CryptoObject(cipher),
             CancellationSignal(),
             activity.mainExecutor,
@@ -240,7 +256,11 @@ internal class BiometricVault(private val app: Context) {
                 // recognise. The prompt stays up and tries again on its own;
                 // nothing here should end the attempt for it.
             },
-        )
+            )
+        } catch (t: Throwable) {
+            Log.w(TAG, "the biometric prompt could not be shown", t)
+            onRefused()
+        }
     }
 
     private fun keyStore(): KeyStore = KeyStore.getInstance(PROVIDER).apply { load(null) }
