@@ -404,8 +404,22 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 	// inbox. The shared per-terminal mailbox is single-reader (destructive
 	// Collect), so with many members polling one relay the first poller drains
 	// everyone's mail; per-recipient boxes let all members sync concurrently.
-	// Self is skipped — we already hold our own frames.
+	// Self is skipped — we already hold our own frames. AND SO ARE THE
+	// OTHER FACES OF SELF: the local agent and the gateway participant sign
+	// with devices of their own, so as authors they land in devSet like any
+	// member — and a copy addressed to them is a copy this node mails to
+	// itself, counted as reached, with lastLen advanced past frames nobody
+	// else received. Found by the terminal-outage test at a faster tick:
+	// a gateway that had not yet heard the space's owner delivered the
+	// owner's letter to its own inbox and called the space in sync.
+	// ownDevicesLocked already excludes both for the same reason.
 	delete(devSet, self)
+	if r.agent != nil {
+		delete(devSet, r.agent.Device.ID)
+	}
+	if r.gateway != nil {
+		delete(devSet, r.gateway.Device.ID)
+	}
 	var recipients []id.DeviceID
 	for dev := range devSet {
 		recipients = append(recipients, dev)

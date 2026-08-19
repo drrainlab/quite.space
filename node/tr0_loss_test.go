@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/drrainlab/quiet_places/kernel/eventlog"
 	"github.com/drrainlab/quiet_places/transports/relayserver"
 )
 
@@ -43,6 +44,27 @@ func TestRelayOutageDoesNotDropOrDuplicateIngress(t *testing.T) {
 	if _, err := term.ConnectorRoute("fix", tid); err != nil {
 		t.Fatal(err)
 	}
+	// THE TERMINAL MUST HAVE HEARD THE OWNER BEFORE THE OUTAGE, and JoinReady
+	// does not say that: it says the pass was accepted. Alice's own frames
+	// reach the terminal on her next sync tick, and until they do the
+	// terminal's recipient set — authors it has seen, plus Members(), which
+	// is controller-only and empty for a joiner — does not contain her. Cut
+	// the relay before that tick and the letter has nobody to go to; at the
+	// shipped 2s beat alice always won that race, at a faster one she did
+	// not, and the test measured the start-up race instead of the outage.
+	waitUntil(t, 20*time.Second, "the terminal never heard alice", func() bool {
+		heard := false
+		_ = term.withSpace(tid, func(st *spaceState) error {
+			_ = st.space.Log.Replay(func(a eventlog.Applied) error {
+				if a.Env.Device == alice.Device.ID {
+					heard = true
+				}
+				return nil
+			})
+			return nil
+		})
+		return heard
+	})
 
 	// The outage begins; a letter arrives anyway.
 	srv.Close()
