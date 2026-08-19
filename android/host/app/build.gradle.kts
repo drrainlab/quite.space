@@ -40,7 +40,7 @@ android {
         // as long as tags are — and 0.1.0 gives 100, comfortably past the
         // hand-bumped 8 these local builds have reached.
         versionCode = (project.findProperty("quietVersionCode") as String?)?.toInt() ?: 10
-        versionName = (project.findProperty("quietVersionName") as String?) ?: "0.1.2"
+        versionName = (project.findProperty("quietVersionName") as String?) ?: "0.1.3"
         ndk { abiFilters += "arm64-v8a" }
 
         // AR-1b.6b.5. The structural notification tests are INSTRUMENTED
