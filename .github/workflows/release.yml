@@ -41,6 +41,44 @@ permissions:
   contents: write
 
 jobs:
+  # THE TESTS MUST BE GREEN ON THIS EXACT COMMIT BEFORE ANYTHING IS PUBLISHED.
+  #
+  # ci and release are two workflows on the same tag push, and until now
+  # they did not know about each other: v0.1.0, v0.1.1 and v0.1.2 all shipped
+  # while ci was red on the very commit they were built from, and the only
+  # signal was a cross beside a green build. This job waits for the ci run
+  # on the tagged SHA and refuses to let publish proceed unless it succeeded.
+  # The build jobs still run in parallel — they prove the artifacts build —
+  # so a red ci costs a wasted build, never a shipped one.
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    if: github.ref_type == 'tag'
+    steps:
+      - name: wait for ci on this commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 110); do
+            RUN=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci --commit "$GITHUB_SHA" \
+                    --json databaseId,status,conclusion --limit 1 --jq '.[0]')
+            if [ -z "$RUN" ] || [ "$RUN" = "null" ]; then
+              echo "no ci run yet for $GITHUB_SHA ($i)"; sleep 30; continue
+            fi
+            STATUS=$(echo "$RUN" | jq -r .status)
+            CONCL=$(echo "$RUN" | jq -r .conclusion)
+            echo "ci: $STATUS / $CONCL"
+            if [ "$STATUS" = "completed" ]; then
+              [ "$CONCL" = "success" ] && exit 0
+              echo "::error::ci is $CONCL on $GITHUB_SHA — nothing will be published"
+              exit 1
+            fi
+            sleep 30
+          done
+          echo "::error::ci did not finish inside the wait budget"
+          exit 1
+
   version:
     runs-on: ubuntu-latest
     outputs:
@@ -223,7 +261,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: [version, macos, linux, android]
+    needs: [version, macos, linux, android, tests]
     # A dry run stops here: it has proved the pipeline builds, which is the
     # only thing it was asked to prove.
     if: github.ref_type == 'tag'
@@ -260,13 +298,21 @@ jobs:
           # about the assets even when nobody wrote a word.
           : > notes.md
           STORY="docs/releases/${NAME}.md"
+          # THE TITLE IS THE NOTE'S OWN FIRST LINE when there is one — a
+          # release called "four digits, and the key writes itself" and
+          # titled with the standing motto reads as two different releases.
+          # The motto stays as the fallback for a release with no note.
+          TITLE="$NAME — the space between us belongs to us"
           if [ -f "$STORY" ]; then
             echo "using $STORY"
             cat "$STORY" >> notes.md
             printf '\n---\n\n' >> notes.md
+            FIRST="$(head -n1 "$STORY" | sed -E 's/^#+[[:space:]]*//')"
+            if [ -n "$FIRST" ]; then TITLE="$FIRST"; fi
           else
             echo "no $STORY — publishing the standing section alone"
           fi
+          echo "title: $TITLE"
           cat >> notes.md <<'NOTES'
           ## Public Beta
 
@@ -304,6 +350,6 @@ jobs:
           work around it — tell us instead.
           NOTES
           gh release create "$TAG" dist/* \
-            --title "$NAME — the space between us belongs to us" \
+            --title "$TITLE" \
             --notes-file notes.md \
             --latest
