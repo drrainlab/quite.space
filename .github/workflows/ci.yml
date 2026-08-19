@@ -13,11 +13,10 @@ on:
 jobs:
   root:
     runs-on: ubuntu-latest
-    # 40, not 30: see the -timeout note on the test step below. The job
-    # budget must be comfortably larger than the deadline it hands go test,
-    # or the fix is a job cancelled instead of a package timed out — the
-    # same red, with a worse message.
-    timeout-minutes: 40
+    # Comfortably above the -timeout handed to go test below, or the fix
+    # is a job cancelled instead of a package timed out — the same red,
+    # with a worse message.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -44,28 +43,23 @@ jobs:
         run: go vet ./...
       # THE DEADLINE IS OURS TO SET, and go test's default is not it.
       #
-      # go test allows 10 minutes PER PACKAGE unless told otherwise, and
-      # node passes in 13m22s on a fast laptop — measured, every test green.
-      # So this job went red on a suite that works, and stayed red across
-      # two releases, because nobody names the number: the release workflow
-      # does not depend on ci, so the only signal was a cross beside a
-      # green build.
+      # go test allows 10 minutes PER PACKAGE unless told otherwise. node
+      # once took 13m22s — green, and killed — and this job stayed red
+      # across two releases because nobody named the number: the release
+      # workflow does not depend on ci, so the only signal was a cross
+      # beside a green build.
       #
-      # The number is large because the suite WAITS rather than computes —
-      # 100s of CPU across 13 minutes of wall clock, which is sleeps,
-      # polling and backoff timers, not work. That also means a slower
-      # runner does not stretch it proportionally: a fixed sleep is the
-      # same length everywhere.
-      #
-      # 30m is headroom over the measurement, not an invitation. A suite
-      # that grows into it is a suite to make faster; the waiting is the
-      # part worth attacking, and it is tracked separately.
+      # node now passes in ~6m: it was waiting on a 2s heartbeat and on a
+      # relay that never hung up (see node/cadence.go, relayserver). 15m is
+      # headroom over that, not an invitation — a suite that grows into it
+      # is a suite to make faster, and the way to do that is measured in
+      # node/relayreg_testmain_test.go, not by raising this.
       - name: test
-        run: go test -timeout 30m ./...
+        run: go test -timeout 15m ./...
 
   race:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -74,9 +68,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      # Same reasoning as the root job, with more room: the race detector
-      # multiplies the COMPUTED part of the suite, and node already spends
-      # 601s of its 10-minute default before being killed here too —
-      # reproduced locally with this exact command.
+      # Same reasoning, with more room: under the detector node passes in
+      # ~16m — the compute is scrypt, and the suite pays less for it now
+      # (quicklink.TestKDFParams), but every remaining tick is instrumented.
+      # 30m is headroom over the measurement.
       - name: test -race
-        run: go test -race -timeout 40m ./...
+        run: go test -race -timeout 30m ./...
