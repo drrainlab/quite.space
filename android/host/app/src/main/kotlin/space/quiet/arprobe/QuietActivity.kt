@@ -648,22 +648,11 @@ class QuietActivity : ComponentActivity() {
         statusPanel?.let { root.removeView(it) }
         codeEntry = ""
 
-        val panel = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            setPadding(48, 64, 48, 64)
-        }
-        panel.addView(TextView(this).apply {
-            setText(title); gravity = Gravity.CENTER; textSize = 18f
-        })
-        val dots = TextView(this).apply {
-            gravity = Gravity.CENTER; textSize = 30f
-            setPadding(0, 28, 0, 28)
-        }
+        val panel = SpaceLook.card(this)
+        panel.addView(SpaceLook.title(this, title))
+        val dots = SpaceLook.dots(this)
         panel.addView(dots)
-        val noteView = TextView(this).apply {
-            setText(note); gravity = Gravity.CENTER
-        }
+        val noteView = SpaceLook.note(this, note)
         panel.addView(noteView)
 
         fun paint() {
@@ -702,26 +691,25 @@ class QuietActivity : ComponentActivity() {
                 listOf("7", "8", "9"), listOf("C", "0", "<"))) {
             panel.addView(LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
                 row.forEach { k ->
-                    addView(Button(this@QuietActivity).apply {
-                        setText(k); textSize = 20f
-                        minimumWidth = 200
+                    addView(SpaceLook.key(this@QuietActivity, k).apply {
                         setOnClickListener { push(k, it) }
-                    })
+                    }, SpaceLook.keyRowParams(this@QuietActivity))
                 }
             })
         }
 
         onEscape?.let { (label, action) ->
-            panel.addView(Button(this).apply {
-                setText(label)
+            panel.addView(SpaceLook.ghost(this, label).apply {
                 setOnClickListener { action() }
             })
         }
 
-        root.addView(panel)
-        statusPanel = panel
+        val screen = SpaceLook.screen(this, panel)
+        root.addView(screen)
+        statusPanel = screen
     }
 
     private fun showStatus(text: String, unlockable: Boolean) {
@@ -953,32 +941,12 @@ class QuietActivity : ComponentActivity() {
         web.visibility = View.GONE
         statusPanel?.let { root.removeView(it) }
 
-        val panel = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            setPadding(64, 64, 64, 64)
-            addView(TextView(this@QuietActivity).apply {
-                setText(text)
-                gravity = Gravity.CENTER
-            })
-        }
-        fun sectionLabel(label: String) = TextView(this).apply {
-            setText(label)
-            textSize = 13f
-            alpha = 0.6f
-            gravity = Gravity.START
-            setPadding(0, 40, 0, 8)
-        }
-        fun hintView(label: String) = TextView(this).apply {
-            setText(label)
-            textSize = 13f
-            alpha = 0.7f
-            gravity = Gravity.CENTER
-        }
+        val panel = SpaceLook.card(this)
+        panel.addView(SpaceLook.title(this, "quite.space"))
+        panel.addView(SpaceLook.sub(this, text))
 
-        panel.addView(sectionLabel("What should people call you?"))
-        val nameField = EditText(this).apply {
-            setHint("Your name")
+        panel.addView(SpaceLook.section(this, "What should people call you?"))
+        val nameField = SpaceLook.input(this, "Your name").apply {
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_WORDS
             setText(lastName)
             setSelection(lastName.length)
@@ -989,18 +957,11 @@ class QuietActivity : ComponentActivity() {
             })
         }
         panel.addView(nameField)
-        val note = TextView(this).apply {
-            setText(unlockMessage
-                ?: "Then pick four digits to open it with. The key itself is written " +
-                    "by the app — you can read it later in Settings → This device.")
-            textSize = 13f
-            alpha = 0.8f
-            gravity = Gravity.CENTER
-            setPadding(0, 8, 0, 8)
-        }
+        val note = SpaceLook.note(this, unlockMessage
+            ?: "Then pick four digits to open it with. The key itself is written " +
+                "by the app — you can read it later in Settings → This device.")
         panel.addView(note)
-        panel.addView(Button(this).apply {
-            setText("Choose four digits and open")
+        panel.addView(SpaceLook.primary(this, "Choose four digits and open").apply {
             setOnClickListener {
                 val name = nameField.text.toString().trim()
                 if (name.isEmpty()) {
@@ -1025,17 +986,15 @@ class QuietActivity : ComponentActivity() {
             }
         })
 
-        panel.addView(sectionLabel("Or: this is my second device"))
-        val offerField = EditText(this).apply {
-            setHint("Pairing code from the other device")
+        panel.addView(SpaceLook.section(this, "Or: this is my second device"))
+        val offerField = SpaceLook.input(this, "Pairing code from the other device").apply {
             inputType = InputType.TYPE_CLASS_TEXT
         }
         panel.addView(offerField)
-        val pairNote = hintView("On the other device: Settings → Devices → Pair a new device. " +
+        val pairNote = SpaceLook.note(this, "On the other device: Settings → Devices → Pair a new device. " +
             "Your name and spaces come across with the pairing.")
         panel.addView(pairNote)
-        panel.addView(Button(this).apply {
-            setText("Pair with my other device")
+        panel.addView(SpaceLook.plain(this, "Pair with my other device").apply {
             setOnClickListener {
                 val offer = offerField.text.toString().trim()
                 if (offer.isEmpty()) { pairNote.text = "Paste the code first."; return@setOnClickListener }
@@ -1067,9 +1026,7 @@ class QuietActivity : ComponentActivity() {
             }
         })
 
-        panel.addView(sectionLabel(""))
-        panel.addView(Button(this).apply {
-            setText("Use a long passphrase instead")
+        panel.addView(SpaceLook.ghost(this, "Use a long passphrase instead").apply {
             setOnClickListener {
                 // The door for whoever wants to own the words themselves —
                 // sticky, so a refused attempt re-renders THIS form.
@@ -1079,8 +1036,9 @@ class QuietActivity : ComponentActivity() {
             }
         })
 
-        root.addView(panel)
-        statusPanel = panel
+        val screen = SpaceLook.screen(this, panel)
+        root.addView(screen)
+        statusPanel = screen
     }
 
     /**
@@ -1105,29 +1063,26 @@ class QuietActivity : ComponentActivity() {
 
         web.visibility = View.GONE
         statusPanel?.let { root.removeView(it) }
-        val panel = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            setPadding(64, 64, 64, 64)
-        }
-        val pairNote = TextView(this).apply {
-            setText("Reaching your other device…")
-            gravity = Gravity.CENTER
-        }
+        val panel = SpaceLook.card(this)
+        panel.addView(SpaceLook.title(this, "Pairing"))
+        val pairNote = SpaceLook.note(this, "Reaching your other device…")
         panel.addView(pairNote)
         val pairDigits = TextView(this).apply {
             gravity = Gravity.CENTER
             textSize = 34f
             letterSpacing = 0.3f
+            setTextColor(SpaceLook.STAR)
+            setShadowLayer(14f, 0f, 0f, 0x8CDFE8FF.toInt())
+            setPadding(0, 24, 0, 12)
         }
         panel.addView(pairDigits)
-        val approveBtn = Button(this).apply {
-            setText("The digits match")
+        val approveBtn = SpaceLook.primary(this, "The digits match").apply {
             visibility = View.GONE
         }
         panel.addView(approveBtn)
-        root.addView(panel)
-        statusPanel = panel
+        val screen = SpaceLook.screen(this, panel)
+        root.addView(screen)
+        statusPanel = screen
 
         var cancelled = false
         val poll = object : Runnable {
@@ -1160,8 +1115,7 @@ class QuietActivity : ComponentActivity() {
             pairNote.text = "Waiting for the other device to approve too…"
             controller.pairApprove()
         }
-        panel.addView(Button(this).apply {
-            setText("Start over")
+        panel.addView(SpaceLook.ghost(this, "Start over").apply {
             setOnClickListener {
                 cancelled = true
                 unlockMessage = null
@@ -1183,34 +1137,16 @@ class QuietActivity : ComponentActivity() {
         web.visibility = View.GONE
         statusPanel?.let { root.removeView(it) }
 
-        val panel = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            setPadding(64, 64, 64, 64)
-            addView(TextView(this@QuietActivity).apply {
-                setText(text)
-                gravity = Gravity.CENTER
-            })
-        }
+        val panel = SpaceLook.card(this)
+        panel.addView(SpaceLook.title(this, "quite.space"))
+        panel.addView(SpaceLook.sub(this, text))
         if (unlockable) {
             val fresh = !controller.hasIdentity()
-            fun sectionLabel(text: String) = TextView(this).apply {
-                setText(text)
-                textSize = 13f
-                alpha = 0.6f
-                gravity = Gravity.START
-                setPadding(0, 40, 0, 8)
-            }
-            fun hintView(text: String) = TextView(this).apply {
-                setText(text)
-                textSize = 13f
-                alpha = 0.7f
-                gravity = Gravity.CENTER
-            }
+            fun sectionLabel(text: String) = SpaceLook.section(this, text)
+            fun hintView(text: String) = SpaceLook.note(this, text)
 
             if (fresh) panel.addView(sectionLabel("A passphrase for this phone"))
-            val field = EditText(this).apply {
-                setHint("Passphrase")
+            val field = SpaceLook.input(this, "Passphrase").apply {
                 inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
                 // THE TEXT SURVIVES A REFUSAL. The panel is rebuilt on every
                 // state change, so a rejected attempt used to take the typed
@@ -1233,29 +1169,21 @@ class QuietActivity : ComponentActivity() {
             // chance there is simply typing again.
             var field2: EditText? = null
             if (fresh) {
-                field2 = EditText(this).apply {
-                    setHint("Type it again")
+                field2 = SpaceLook.input(this, "Type it again").apply {
                     inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
                 }
                 panel.addView(field2)
             }
 
-            val note = TextView(this).apply {
-                setText(unlockMessage ?: (if (fresh)
-                    "At least 8 characters. It encrypts everything on THIS phone — " +
-                    "you may reuse the passphrase from your other device, or make a new one."
-                else
-                    "At least 8 characters. This is what encrypts everything on this device."))
-                textSize = 13f
-                alpha = 0.8f
-                gravity = Gravity.CENTER
-                setPadding(0, 8, 0, 8)
-            }
+            val note = SpaceLook.note(this, unlockMessage ?: (if (fresh)
+                "At least 8 characters. It encrypts everything on THIS phone — " +
+                "you may reuse the passphrase from your other device, or make a new one."
+            else
+                "At least 8 characters. This is what encrypts everything on this device."))
             panel.addView(note)
 
             if (fresh) {
-                panel.addView(Button(this).apply {
-                    setText("Suggest a passphrase")
+                panel.addView(SpaceLook.plain(this, "Suggest a passphrase").apply {
                     setOnClickListener {
                         val p = space.quiet.quietcore.Quietcore.suggestPassphrase()
                         if (p.isNotEmpty()) {
@@ -1284,8 +1212,7 @@ class QuietActivity : ComponentActivity() {
             // ---- pairing: its own section, not part of the pile ----
             panel.addView(sectionLabel(if (fresh)
                 "Or: this is my second device" else "Pair as a second device instead"))
-            val offerField = EditText(this).apply {
-                setHint("Pairing code from the other device")
+            val offerField = SpaceLook.input(this, "Pairing code from the other device").apply {
                 inputType = InputType.TYPE_CLASS_TEXT
             }
             panel.addView(offerField)
@@ -1295,14 +1222,15 @@ class QuietActivity : ComponentActivity() {
                 gravity = Gravity.CENTER
                 textSize = 34f
                 letterSpacing = 0.3f
+                setTextColor(SpaceLook.STAR)
+                setShadowLayer(14f, 0f, 0f, 0x8CDFE8FF.toInt())
             }
             panel.addView(pairDigits)
-            val approveBtn = Button(this).apply {
-                setText("The digits match")
+            val approveBtn = SpaceLook.primary(this, "The digits match").apply {
                 visibility = View.GONE
             }
             panel.addView(approveBtn)
-            val pairBtn = Button(this).apply { setText("Pair with my other device") }
+            val pairBtn = SpaceLook.plain(this, "Pair with my other device")
             panel.addView(pairBtn)
             val poll = object : Runnable {
                 override fun run() {
@@ -1372,9 +1300,8 @@ class QuietActivity : ComponentActivity() {
                 beginPair(offer, pass)
             }
 
-            panel.addView(sectionLabel(if (fresh) "Or: start fresh on this phone" else ""))
-            panel.addView(Button(this).apply {
-                setText(if (fresh) "Create and open" else "Open")
+            if (fresh) panel.addView(sectionLabel("Or: start fresh on this phone"))
+            panel.addView(SpaceLook.primary(this, if (fresh) "Create and open" else "Open").apply {
                 setOnClickListener {
                     val pass = passOrComplain() ?: return@setOnClickListener
                     pendingPassphrase = pass
@@ -1385,8 +1312,9 @@ class QuietActivity : ComponentActivity() {
                 }
             })
         }
-        root.addView(panel)
-        statusPanel = panel
+        val screen = SpaceLook.screen(this, panel)
+        root.addView(screen)
+        statusPanel = screen
     }
 
     // ----------------------------------------------------------- permissions
