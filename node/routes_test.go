@@ -196,12 +196,21 @@ func TestExplicitSyncEndpointDoesNotBecomePeerReachability(t *testing.T) {
 		t.Fatal("the explicitly-addressed cycle did not carry the frame")
 	}
 
-	// And it taught the RouteBook NOTHING.
+	// And the RouteBook holds nothing DERIVED. Since content pushes began
+	// announcing their sender's ingress, bob may hold alice's own stated
+	// routes — that is her claim, attributed and cert-gated, and it is
+	// exactly what the announce exists to spread. What the explicit cycle
+	// must still never do is mint a route out of the wire itself: every
+	// entry bob holds for alice must be her statement (advertised), never
+	// an invitation he did not receive, an observation he did not make,
+	// or a guess written down as knowledge.
 	bob.mu.Lock()
 	routes := append([]storage.Route(nil), bob.ks.PeerRoutes[alice.Device.ID]...)
 	bob.mu.Unlock()
-	if len(routes) != 0 {
-		t.Fatalf("an explicit cycle endpoint minted peer routes: %+v", routes)
+	for _, rt := range routes {
+		if rt.Provenance != storage.RouteAdvertised {
+			t.Fatalf("an explicit cycle endpoint minted a non-stated peer route: %+v", rt)
+		}
 	}
 	for _, ep := range bob.SelfIngressRoutes() {
 		if ep == addr {
