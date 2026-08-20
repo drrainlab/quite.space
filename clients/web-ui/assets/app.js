@@ -4233,7 +4233,47 @@ function attachPick(mode) {
   attachMode = mode;
   fileInput.accept = mode === 'photo' ? 'image/*' : mode === 'video' ? 'video/*'
     : mode === 'audio' ? 'audio/*' : '';
+  // Photos and documents come in handfuls; a video or an audio file carries
+  // its own dialog work (poster, title) and stays one at a time.
+  fileInput.multiple = mode === 'photo' || mode === 'doc';
   fileInput.click();
+}
+
+// What is still waiting behind the dialog's first file: [{file, kind}].
+// Filled by onFilesPicked, drained by sendAttachment, emptied by cancel.
+let pendingBatch = [];
+
+/**
+ * SEVERAL FILES, ONE DIALOG. The first file gets the full dialog — caption,
+ * alt, the reply edge if the bar is armed. The rest follow it silently with
+ * machine alt text, because a dialog per photo is how albums never get sent.
+ * Only images and plain documents queue; a video or audio beyond the first
+ * still says "one at a time" — their dialogs do real work.
+ */
+function onFilesPicked(files, opts = {}) {
+  files = (files || []).filter(Boolean);
+  if (!files.length) return;
+  if (maxAssetBytes) {
+    const over = files.filter(f => f.size > maxAssetBytes);
+    if (over.length) {
+      alert(`${over.length === 1 ? over[0].name + ' is over' : over.length + ' files are over'} ` +
+        `the ${fmtBytes(maxAssetBytes)} this build carries in one message — skipped.`);
+      files = files.filter(f => f.size <= maxAssetBytes);
+      if (!files.length) { fileInput.value = ''; return; }
+    }
+  }
+  const kindOf = (f) => f.type.startsWith('image/') ? 'visual'
+    : f.type.startsWith('video/') ? 'video'
+      : f.type.startsWith('audio/') ? 'audio' : 'file';
+  const first = files[0];
+  const rest = files.slice(1);
+  pendingBatch = rest.filter(f => kindOf(f) === 'visual' || kindOf(f) === 'file')
+    .map(f => ({ file: f, kind: kindOf(f) }));
+  const skipped = rest.length - pendingBatch.length;
+  attachMode = first.type.startsWith('image/') ? 'photo'
+    : first.type.startsWith('video/') ? 'video'
+      : first.type.startsWith('audio/') ? 'audio' : 'doc';
+  return onFilePicked(first, { ...opts, skipped: (opts.skipped || 0) + skipped });
 }
 
 // Drag a file anywhere over the window to attach it: routed to the right kind
@@ -4290,13 +4330,10 @@ function initDropZone() {
     if (dropBelongsElsewhere(e)) return;
     if (!dragHasFiles(e)) return;
     e.preventDefault(); depth = 0; show(false);
-    const file = e.dataTransfer.files && e.dataTransfer.files[0];
-    if (!file) return;
+    const files = Array.from(e.dataTransfer.files || []);
+    if (!files.length) return;
     if (!current) { alert('open a space first'); return; }
-    attachMode = file.type.startsWith('image/') ? 'photo'
-      : file.type.startsWith('video/') ? 'video'
-      : file.type.startsWith('audio/') ? 'audio' : 'doc';
-    onFilePicked(file);
+    onFilesPicked(files);
   });
 }
 
@@ -4336,11 +4373,7 @@ function initClipboardPaste() {
     const files = clipboardFiles(e.clipboardData);
     if (!files.length) return;
     e.preventDefault();
-    const file = files[0];
-    attachMode = file.type.startsWith('image/') ? 'photo'
-      : file.type.startsWith('video/') ? 'video'
-      : file.type.startsWith('audio/') ? 'audio' : 'doc';
-    await onFilePicked(file, { fromPaste: true, skipped: files.length - 1 });
+    await onFilesPicked(files, { fromPaste: true });
   });
 }
 
@@ -4488,11 +4521,23 @@ async function onFilePicked(file, opts = {}) {
   } else {
     prev.textContent = `${file.name} · ${fmtBytes(file.size)}`;
   }
-  // A CLIPBOARD CAN HOLD SEVERAL AND THIS DIALOG SENDS ONE. Saying so beats
-  // sending the first silently, which reads as the other two having failed.
+  // WHAT FOLLOWS THE DIALOG, said out loud. Queued photos and documents
+  // ride behind this one with machine alt text; anything that could not
+  // queue (a second video, a second audio) is named as still needing its
+  // own turn — sending it silently reads as it having failed.
+  if (pendingBatch.length) {
+    const warn = document.getElementById('attachWarn');
+    const note = `+ ${pendingBatch.length} more will follow this one ` +
+      `(caption and reply ride the first; alt text is written automatically for the rest).`;
+    warn.textContent = warn.textContent ? warn.textContent + ' ' + note : note;
+    const title = document.getElementById('attachTitle');
+    if (pendingKind === 'visual' && pendingBatch.every(q => q.kind === 'visual')) {
+      title.textContent = `Send ${pendingBatch.length + 1} photos`;
+    }
+  }
   if (opts.skipped > 0) {
     const warn = document.getElementById('attachWarn');
-    const note = `sending the first of ${opts.skipped + 1} — paste the rest one at a time.`;
+    const note = `sending ${opts.skipped} other file(s) needs its own turn — attach them one at a time.`;
     warn.textContent = warn.textContent ? warn.textContent + ' ' + note : note;
   }
   dlgAttach.showModal();
@@ -4572,6 +4617,11 @@ async function encodeThumbUnder(canvas, maxBytes) {
 function makeThumb(file) {
   return new Promise((resolve) => {
     const img = new Image();
+    // A file that will not decode resolves EMPTY instead of never: the
+    // batch sender awaits this in a loop, and one corrupt photo must not
+    // silently hold every photo behind it. No thumbnail is an ordinary
+    // outcome — the picture still goes.
+    img.onerror = () => resolve({ blob: null, dataURL: null });
     img.onload = async () => {
       const max = 480;
       let { width: w, height: h } = img;
@@ -4629,6 +4679,30 @@ async function sendAttachment() {
   if (pendingKind === 'visual' && replyTarget) meta.reply_to = replyTarget.id;
   await postBlock(meta, pendingPreview, pendingFile);
   if (pendingKind === 'visual' && replyTarget) cancelReply();
+  // THE REST OF THE HANDFUL, in the order it was picked. Sequential on
+  // purpose: parallel uploads would race the feed order the person just
+  // chose, and the media-run tiles read left to right.
+  const batch = pendingBatch;
+  pendingBatch = [];
+  for (const q of batch) {
+    const m = { kind: q.kind, size: q.file.size,
+      media_type: q.file.type || 'application/octet-stream' };
+    let preview = null;
+    if (q.kind === 'visual') {
+      m.alt = describeMedia('visual', q.file);
+      const t = await makeThumb(q.file);
+      preview = t.blob;
+      if (preview) m.preview_mime = preview.type || 'image/jpeg';
+    } else {
+      m.filename = q.file.name;
+    }
+    try {
+      await postBlock(m, preview, q.file);
+    } catch (err) {
+      alert(`${q.file.name}: ${err.message}`);
+      break; // the rest would land out of order; stop where it broke
+    }
+  }
   dlgAttach.close();
   refreshSpace();
 }

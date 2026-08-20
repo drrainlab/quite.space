@@ -198,9 +198,19 @@ class QuietActivity : ComponentActivity() {
             // press of the same button does nothing, forever.
             val cb = pendingFiles
             pendingFiles = null
-            cb?.onReceiveValue(
-                WebChromeClient.FileChooserParams.parseResult(result.resultCode, result.data),
-            )
+            // parseResult reads only intent.data — ONE uri — so a
+            // multi-select answer (which arrives as clipData) would collapse
+            // to nothing. Read both shapes ourselves.
+            val data = result.data
+            val clip = data?.clipData
+            val uris = when {
+                result.resultCode != RESULT_OK -> null
+                clip != null && clip.itemCount > 0 ->
+                    Array(clip.itemCount) { clip.getItemAt(it).uri }
+                data?.data != null -> arrayOf(data.data!!)
+                else -> null
+            }
+            cb?.onReceiveValue(uris)
         }
 
     private var pendingMic: PermissionRequest? = null
@@ -253,10 +263,24 @@ class QuietActivity : ComponentActivity() {
                     // told so rather than dropped.
                     pendingFiles?.onReceiveValue(null)
                     pendingFiles = callback
-                    val intent = params?.createIntent()
-                    if (intent == null) {
-                        pendingFiles = null
-                        return false
+                    // NOT createIntent(): that helper types the intent */*
+                    // and drops the page's accept list on most WebViews —
+                    // measured as "choosing a photo offers every file on the
+                    // phone" — and it never asks for multi-select even when
+                    // the input said multiple. The page's own accept types
+                    // and mode are right here; honor them.
+                    val accepts = params?.acceptTypes
+                        ?.filter { it.isNotBlank() && it.contains('/') }
+                        ?: emptyList()
+                    val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
+                        addCategory(Intent.CATEGORY_OPENABLE)
+                        type = if (accepts.size == 1) accepts[0] else "*/*"
+                        if (accepts.isNotEmpty()) {
+                            putExtra(Intent.EXTRA_MIME_TYPES, accepts.toTypedArray())
+                        }
+                        if (params?.mode == WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE) {
+                            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+                        }
                     }
                     return try {
                         pickFiles.launch(intent)
@@ -264,7 +288,7 @@ class QuietActivity : ComponentActivity() {
                     } catch (e: ActivityNotFoundException) {
                         // A phone with no picker for this MIME type. Say no
                         // properly so the input can be used again.
-                        Log.w(TAG, "no activity can pick ${params.acceptTypes?.joinToString()}", e)
+                        Log.w(TAG, "no activity can pick ${accepts.joinToString()}", e)
                         pendingFiles = null
                         callback?.onReceiveValue(null)
                         false
