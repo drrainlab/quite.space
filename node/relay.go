@@ -1404,6 +1404,16 @@ func (r *Runtime) PullFromRelay(addr string) (applied int, err error) {
 	if err := r.relayGate(); err != nil {
 		return 0, err
 	}
+	// THE DEADLINE IS CHECKED BEFORE THE DIAL, not after. Dialing is
+	// already traffic — and when the pooled connection has died in the
+	// meantime, checking after Control() turns "answer from the stored
+	// deadline" into a fresh dial's error, which is exactly the request
+	// the relay asked us not to make. Found by the wait-discipline test
+	// the day the identity plane's fetch started sharing (and sometimes
+	// poisoning) the pooled connection.
+	if left, yes := r.relayThrottled(addr); yes {
+		return 0, relay.ErrRelay{Reason: relay.ReasonRateLimited, RetryAfter: left}
+	}
 	// Pooled control lane (RR-2): the drain is latency-bound and must
 	// never sit behind a bulk fetch on the serial wire.
 	client, release, err := r.pool().Control(addr)

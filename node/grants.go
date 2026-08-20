@@ -35,6 +35,8 @@ import (
 	"crypto/sha256"
 	"errors"
 	"log"
+	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/drrainlab/quiet_places/kernel/crypto"
@@ -287,6 +289,25 @@ type grantState struct {
 	// rest of the process lifetime).
 	tagChecked map[id.DeviceID]bool
 	refusals   int
+	// refused: sealed-envelope hash → refusal reason. The mailbox is
+	// non-destructive, so a refused envelope WILL be fetched again every
+	// cycle; without memory that is one log line per envelope per two
+	// seconds, forever. The bytes are immutable, so most verdicts are
+	// too — the one refusal that can heal is "uncertified", because
+	// certificate knowledge only grows, and that one is retried.
+	refused map[[32]byte]string
+	// busy: the plane heartbeat is single-flight. Two sync loops overlap
+	// for a moment around every SetSettings, and the tag scan holds no
+	// lock across its relay round trip — one rider at a time is the rule
+	// that makes the rest of this file single-threaded in practice.
+	//
+	// ATOMIC, and the release is a plain Store, deliberately: the first
+	// version cleared it in a defer that took r.mu — and when a nil-map
+	// write panicked UNDER r.mu, the unwind ran that defer, deadlocked
+	// on the lock it was dying inside of, and froze the whole runtime
+	// with the panic message still unprinted. A defer that runs during
+	// unwinding must never need a lock the panicking body may hold.
+	busy atomic.Bool
 }
 
 // offerItem is one pending plane message bound for one sibling.
@@ -306,6 +327,7 @@ func (r *Runtime) grantsInit() {
 			setSent:    map[id.DeviceID]int{},
 			setBytes:   map[id.DeviceID][]byte{},
 			tagChecked: map[id.DeviceID]bool{},
+			refused:    map[[32]byte]string{},
 		}
 	}
 }
@@ -316,6 +338,11 @@ func (r *Runtime) grantsInit() {
 func (r *Runtime) offerGrants() {
 	r.mu.Lock()
 	r.grantsInit()
+	if !r.grants.busy.CompareAndSwap(false, true) {
+		r.mu.Unlock()
+		return
+	}
+	defer r.grants.busy.Store(false)
 	self := r.Device.ID
 	// The person's devices, minus the faces of self that are not devices
 	// of the person's hand (agent, gateway), minus this device.
@@ -386,6 +413,12 @@ func (r *Runtime) offerGrants() {
 			}
 		}
 		if ep == "" {
+			continue
+		}
+		// The plane obeys the relay's own deadline like every other
+		// caller: asking while throttled is the thing being asked to
+		// stop, and the derived pending set makes waiting free.
+		if _, yes := r.relayThrottled(ep); yes {
 			continue
 		}
 		hint := relay.HintIdentityPlane(o.dev, relay.Bucket(now))
@@ -524,7 +557,13 @@ func (r *Runtime) mailboxTags(offers []offerItem, own string, now uint64) map[st
 	present := map[string]bool{}
 	r.mu.Lock()
 	r.grantsInit()
-	checked := r.grants.tagChecked
+	// A COPY, not an alias: the closure below writes the live map under
+	// the lock while this loop reads; an aliased read outside it is the
+	// data race the 1B race run caught.
+	checked := make(map[id.DeviceID]bool, len(r.grants.tagChecked))
+	for k, v := range r.grants.tagChecked {
+		checked[k] = v
+	}
 	r.mu.Unlock()
 	seen := map[id.DeviceID]bool{}
 	for _, o := range offers {
@@ -572,6 +611,16 @@ func (r *Runtime) fetchGrants(addr string) {
 	if addr == "" {
 		return
 	}
+	if _, yes := r.relayThrottled(addr); yes {
+		return // the relay named a deadline; the mailbox keeps
+	}
+	r.mu.Lock()
+	r.grantsInit()
+	r.mu.Unlock()
+	if !r.grants.busy.CompareAndSwap(false, true) {
+		return
+	}
+	defer r.grants.busy.Store(false)
 	now := uint64(time.Now().Unix())
 	b := relay.Bucket(now)
 	hints := [][]byte{relay.HintIdentityPlane(r.Device.ID, b)}
@@ -588,12 +637,31 @@ func (r *Runtime) fetchGrants(addr string) {
 		return
 	}
 	for _, item := range items {
+		key := sha256.Sum256(item)
+		r.mu.Lock()
+		r.grantsInit()
+		prev, seen := r.grants.refused[key]
+		r.mu.Unlock()
+		if seen && !strings.Contains(prev, "uncertified") {
+			continue // immutable bytes, monotonic verdict: still refused
+		}
 		if err := r.installGrant(item); err != nil {
 			r.mu.Lock()
 			r.grantsInit()
-			r.grants.refusals++
+			if !seen {
+				r.grants.refusals++
+			}
+			if len(r.grants.refused) < 512 {
+				r.grants.refused[key] = err.Error()
+			}
 			r.mu.Unlock()
-			log.Printf("node: a space grant was refused: %v", err)
+			if !seen {
+				log.Printf("node: a space grant was refused: %v", err)
+			}
+		} else if seen {
+			r.mu.Lock()
+			delete(r.grants.refused, key)
+			r.mu.Unlock()
 		}
 	}
 }
