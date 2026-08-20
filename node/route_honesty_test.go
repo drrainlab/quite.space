@@ -38,6 +38,14 @@ func TestABootstrapGuessIsNeverRecordedAndNeverFinal(t *testing.T) {
 	guest := openRuntime(t, t.TempDir(), "guest")
 	defer guest.Close()
 	setPersonalRelay(t, guest, addrB)
+	// The guest pulls BY HAND in this test. Its background loop polls
+	// addrB every test-cadence tick, and Collect is destructive — left
+	// running, it drains the very item t3 asserts is pending at the
+	// stated relay, a coin-flip lost more often the busier the machine.
+	// The flake read as a product bug for an afternoon; the product had
+	// in fact delivered end-to-end, which is why every instrument on the
+	// holder came back clean.
+	guest.applyRelaySync("", 0)
 	invite, err := holder.MintInvite(tid, guest.Device.ID, guest.Device.X25519Pub)
 	if err != nil {
 		t.Fatal(err)
