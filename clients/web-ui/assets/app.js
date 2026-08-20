@@ -16,6 +16,31 @@ let hereMembers = new Set();
 // feedSig: per-entry signatures from the last render — the incremental feed
 // only touches the DOM when something actually changed (keeps players alive).
 let feedSig = [];
+// entriesTag: ETag of the last /entries body per space. The node answers
+// 304 when nothing changed — which, on a 2s poll, is almost every time —
+// so the webview stops parsing megabytes of unchanged base64 thumbnails.
+const entriesTag = new Map(); // spaceId -> {tag, body}
+async function fetchEntries(spaceId) {
+  const prev = entriesTag.get(spaceId);
+  const r = await fetch(`/api/spaces/${spaceId}/entries`, {
+    headers: {
+      'X-QP-Token': token,
+      ...(prev ? { 'If-None-Match': prev.tag } : {}),
+    },
+  });
+  if (r.status === 304 && prev) return prev.body;
+  if (!r.ok) throw new Error((await r.json()).error || r.status);
+  const body = await r.json();
+  const tag = r.headers.get('ETag');
+  if (tag) {
+    // A handful of rooms, not a museum: the cache exists so the ACTIVE
+    // space's 2s poll costs nothing, not to hold every room ever opened.
+    entriesTag.delete(spaceId);
+    entriesTag.set(spaceId, { tag, body });
+    while (entriesTag.size > 4) entriesTag.delete(entriesTag.keys().next().value);
+  }
+  return body;
+}
 let feedContentSig = [];
 // feedResCounts: entry id → {group identity → count} from the last render.
 // Arrival effects are computed as per-group DELTAS against this map — the
@@ -1753,7 +1778,7 @@ async function refreshSpace() {
   presenceSetStates([...new Set(char?.presence || [])]);
 
   await RES.load(current); // palette must exist before rows render
-  const entries = await api(`/api/spaces/${current}/entries`);
+  const entries = await fetchEntries(current);
   const log = document.getElementById('log');
   const stick = log.scrollTop + log.clientHeight >= log.scrollHeight - 40;
   // A SWITCH always rebuilds. Without this, entering an EMPTY space kept

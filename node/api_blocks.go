@@ -7,6 +7,7 @@ package node
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -537,7 +538,30 @@ func (a *APIServer) handleEntries(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusNotFound, err)
 		return
 	}
-	writeJSON(w, out)
+	// NOT MODIFIED IS AN ANSWER — and on this endpoint it is the usual
+	// one. The interface polls every two seconds and this handler used to
+	// ship the WHOLE room each time, every inline preview re-encoded to
+	// base64: a network-panel screenshot measured 24 MB over one sitting
+	// for a 244-event room, all of it through the webview bridge a phone
+	// has to parse. The tag is a hash of the exact bytes we would send —
+	// not of the log head, because an asset can finish fetching without
+	// the log growing, and a length-based tag would freeze the screen at
+	// "fetching…" forever. Serialization still happens each poll; the
+	// transfer and the client-side parse — the part that hurts — do not.
+	body, err := json.Marshal(out)
+	if err != nil {
+		httpErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	sum := sha256.Sum256(body)
+	tag := `W/"` + hex.EncodeToString(sum[:16]) + `"`
+	w.Header().Set("ETag", tag)
+	if r.Header.Get("If-None-Match") == tag {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(body)
 }
 
 // projectEntry renders one entry. It reads the replica and the asset index,
