@@ -721,6 +721,77 @@ func (w *wantAccumulator) answer(r *Runtime, client *relay.Client, tid id.Termin
 // asker listens". No route known → no answer sent: the asker's own retry
 // ladder keeps asking, and LAN/direct may serve them meanwhile — better than
 // depositing bytes on a machine nobody reads.
+// WantHold is one media request this node WANTED to answer and could
+// not route — the transfer state machine's held state, made visible.
+//
+// THE VOCABULARY MATTERS (ADR-023 doctrine): "no route to the wanter"
+// is not a refusal. A refusal is terminal — not_found, not_authorized,
+// revoked, unsupported — and waiting changes nothing about it. No route
+// is TRANSIENT: the holder wants to answer and cannot address the
+// answer yet. Confusing the two is how a silent return shipped: the
+// drop looked like a policy decision when it was actually an inability.
+//
+// NO RETRY QUEUE HANGS OFF THIS RECORD, deliberately. Retry is already
+// free: the wanter's fetch loop re-registers its wants every cycle and
+// re-offers them with every push while the fetch lives, so the moment
+// this node learns the wanter's route a fresh want arrives and is
+// answered on the spot. This record exists so the inability is VISIBLE
+// — in diagnostics and one day on a screen as "waiting for a route to
+// this device" — never to drive machinery.
+type WantHold struct {
+	Space  id.TerminalID
+	Wanter id.DeviceID
+	Wants  int // how many hashes the request carried
+	Reason string
+	At     time.Time
+}
+
+const maxWantHolds = 64
+
+func (r *Runtime) noteWantHold(h WantHold) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	h.At = time.Now()
+	// One line per (space, wanter, reason), refreshed in place: the same
+	// starving fetch knocks every cycle, and a ring that scrolls on every
+	// knock would hold sixty-four copies of one fact.
+	for i := range r.wantHolds {
+		if r.wantHolds[i].Space == h.Space && r.wantHolds[i].Wanter == h.Wanter &&
+			r.wantHolds[i].Reason == h.Reason {
+			r.wantHolds[i] = h
+			return
+		}
+	}
+	if len(r.wantHolds) >= maxWantHolds {
+		r.wantHolds = r.wantHolds[1:]
+	}
+	r.wantHolds = append(r.wantHolds, h)
+}
+
+// WantHolds returns the record, oldest first — the diagnostic twin of
+// IngressRefusals.
+func (r *Runtime) WantHolds() []WantHold {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]WantHold(nil), r.wantHolds...)
+}
+
+// clearWantHolds drops the held lines for a wanter once an answer has
+// actually been routed to it — the hold is over, and a stale line
+// reading "waiting for a route" next to a delivered answer would be its
+// own small lie.
+func (r *Runtime) clearWantHolds(dev id.DeviceID) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	kept := r.wantHolds[:0]
+	for _, h := range r.wantHolds {
+		if h.Wanter != dev {
+			kept = append(kept, h)
+		}
+	}
+	r.wantHolds = kept
+}
+
 func (r *Runtime) answerWantsRouted(tid id.TerminalID, wanter []byte, wants [][]byte) {
 	if len(wanter) != len(id.DeviceID{}) {
 		return
@@ -732,6 +803,12 @@ func (r *Runtime) answerWantsRouted(tid id.TerminalID, wanter []byte, wants [][]
 	}
 	eps := r.PeerRoutesFor(dev)
 	if len(eps) == 0 {
+		// HELD, NOT DROPPED, AND NEVER SILENT AGAIN. This return shipped
+		// bare and was the quietest cell of the Phase-0 table: the true
+		// holder of every starving asset was standing exactly here,
+		// wanting to answer, saying nothing.
+		r.noteWantHold(WantHold{Space: tid, Wanter: dev, Wants: len(wants),
+			Reason: "held_no_route"})
 		if wantsProbe != nil { // SCRATCH (Phase 0 instrument)
 			wantsProbe(r, dev, "no_route")
 		}
@@ -740,11 +817,16 @@ func (r *Runtime) answerWantsRouted(tid id.TerminalID, wanter []byte, wants [][]
 	if wantsProbe != nil { // SCRATCH (Phase 0 instrument)
 		wantsProbe(r, dev, "answer→"+eps[0])
 	}
-	// Bulk lane: answers carry media blobs.
-	_ = r.withRelayBulk(eps[0], func(client *relay.Client) error {
+	// Bulk lane: answers carry media blobs. The hold clears only once the
+	// lane actually carried the answer out — clearing on the way in would
+	// erase "waiting for a route" a moment before a dead relay proved the
+	// wait was still true.
+	if err := r.withRelayBulk(eps[0], func(client *relay.Client) error {
 		r.answerWants(client, tid, wanter, wants, nil, false)
 		return nil
-	})
+	}); err == nil {
+		r.clearWantHolds(dev)
+	}
 }
 
 func (r *Runtime) answerWants(client *relay.Client, tid id.TerminalID, wanter []byte, wants [][]byte, replyBox []byte, public bool) {

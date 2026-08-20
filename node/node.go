@@ -93,6 +93,8 @@ type Runtime struct {
 	hold            *storage.IngressHold
 	custodyLost     bool
 	ingressRefusals []IngressRefusal
+	// wantHolds: media answers this node could not route yet (relay.go).
+	wantHolds []WantHold
 	// Reconsideration is COALESCED, never recursive: a held frame may itself
 	// be the control event that changes admission state again.
 	// ingressArmed stays false throughout Open, so every change applied

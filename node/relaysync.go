@@ -680,6 +680,19 @@ type RelaySyncStatus struct {
 	// outside, which is how a post can sit in a local log for a night
 	// while the relay light stays green.
 	Held []HeldSpace `json:"held,omitempty"`
+	// WantHolds: media requests this node WANTED to answer and could not
+	// route yet (transient, retry is free — see WantHold in relay.go).
+	// The holder-side twin of Held: an inability said out loud.
+	WantHolds []WantHoldStatus `json:"want_holds,omitempty"`
+}
+
+// WantHoldStatus is the wire shape of one held media answer.
+type WantHoldStatus struct {
+	SpaceID string `json:"space_id"`
+	Wanter  string `json:"wanter"`
+	Wants   int    `json:"wants"`
+	Reason  string `json:"reason"`
+	AgoSec  int    `json:"seconds_ago"`
 }
 
 // HeldSpace is one space whose local frames have nowhere to go right now.
@@ -735,7 +748,9 @@ func (r *Runtime) RelaySync() RelaySyncStatus {
 	// Asked with r.mu released — it reads the settings, which takes the lock.
 	blocked := !r.anySpaceAllows(TransportRelay)
 	if rs == nil {
-		return RelaySyncStatus{Public: public, Blocked: blocked}
+		st := RelaySyncStatus{Public: public, Blocked: blocked}
+		r.fillWantHolds(&st)
+		return st
 	}
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
@@ -775,6 +790,7 @@ func (r *Runtime) RelaySync() RelaySyncStatus {
 			}
 		}
 	}
+	r.fillWantHolds(&st)
 	return st
 }
 
@@ -828,4 +844,17 @@ func (r *Runtime) unackedLocal(tid id.TerminalID) int {
 		return 0
 	}
 	return len(st.space.UnackedLocalFrames())
+}
+
+// fillWantHolds copies the holder-side media holds into a status — on
+// every exit path, because a node with no relay loop configured can
+// still be holding unroutable answers.
+func (r *Runtime) fillWantHolds(st *RelaySyncStatus) {
+	for _, h := range r.WantHolds() {
+		st.WantHolds = append(st.WantHolds, WantHoldStatus{
+			SpaceID: h.Space.Hex(), Wanter: h.Wanter.Hex()[:12],
+			Wants: h.Wants, Reason: h.Reason,
+			AgoSec: int(time.Since(h.At).Seconds()),
+		})
+	}
 }
