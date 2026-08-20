@@ -494,12 +494,38 @@ async function renderRelayDiagnostics() {
   if (d.last_error) line(t('relay.diag.error'), d.last_error);
 }
 
+// copyText: navigator.clipboard first, textarea+execCommand as the
+// fallback — the macOS webview (wails://) denies the async clipboard API
+// outright ("not allowed by the user agent"), and the one screen that hit
+// it was the diagnostics button: the copy built for bug reports produced
+// only an error to report.
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch (_) {}
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed'; ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.focus(); ta.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch (_) {}
+  ta.remove();
+  return ok;
+}
+
 async function copyRelayDiagnostics() {
   const msg = document.getElementById('relaySetMsg');
   try {
     const d = await api('/api/relay/diagnostics');
-    await navigator.clipboard.writeText(JSON.stringify(d, null, 2));
-    msg.textContent = t('relay.copied');
+    const text = JSON.stringify(d, null, 2);
+    if (await copyText(text)) { msg.textContent = t('relay.copied'); return; }
+    // Even the fallback refused: show the JSON so it can be selected by
+    // hand — a diagnostics screen must never answer "permission denied".
+    msg.textContent = '';
+    const pre = document.createElement('textarea');
+    pre.readOnly = true; pre.value = text;
+    pre.style.width = '100%'; pre.style.height = '10em';
+    msg.appendChild(pre);
+    pre.focus(); pre.select();
   } catch (e) { msg.textContent = e.message; }
 }
 
@@ -1184,7 +1210,7 @@ async function copyPublicLink() {
   }
   try {
     const r = await api(`/api/spaces/${current}/link`);
-    await navigator.clipboard.writeText(r.link);
+    await copyText(r.link);
     const b = document.getElementById('shareLinkBtn');
     b.textContent = 'Copied · irrevocable';
     setTimeout(() => { b.textContent = 'Share link'; }, 1800);
@@ -2776,7 +2802,7 @@ async function mintPass() {
 async function copyPass() {
   if (!mintedPass) return;
   try {
-    await navigator.clipboard.writeText(mintedPass.link);
+    await copyText(mintedPass.link);
     document.getElementById('passCopyBtn').textContent = t('pass.copied');
     setTimeout(() => { document.getElementById('passCopyBtn').textContent = t('pass.copy'); }, 1500);
   } catch (_) { /* clipboard blocked — the link is visible to select manually */ }

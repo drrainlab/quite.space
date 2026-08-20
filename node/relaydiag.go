@@ -51,6 +51,25 @@ type RelayDiagnostics struct {
 	// ONLY place they surface; they are never in Peers, because Peers is
 	// the durable book and these are the room.
 	LocalPeers []string `json:"local_peers,omitempty"`
+	// THE VERDICTS, because a beta report is exactly the moment they are
+	// needed: Held is what this node could not hand over and why
+	// (sender side), WantHolds is media it was ASKED for and could not
+	// answer yet (holder side), Fetches is every asset THIS node is
+	// trying to pull right now or has given up on, with the true reason.
+	// Together the two halves of one stuck photo — the asker's fetch and
+	// the holder's want_hold — name the seam that failed.
+	Held      []HeldSpace       `json:"held,omitempty"`
+	WantHolds []WantHoldStatus  `json:"want_holds,omitempty"`
+	Fetches   []FetchBrief      `json:"fetches,omitempty"`
+}
+
+// FetchBrief is one in-flight or failed asset fetch, for diagnostics.
+type FetchBrief struct {
+	Space string `json:"space"` // short prefix
+	Asset string `json:"asset"` // short prefix
+	State string `json:"state"` // fetching | silent | failed
+	// Reason is the fetch verdict for failed entries (no_peers, …).
+	Reason string `json:"reason,omitempty"`
 }
 
 // PeerRouteBrief is one peer device's delivery picture, for diagnostics.
@@ -124,6 +143,8 @@ func (r *Runtime) RelayDiagnosticsSnapshot() RelayDiagnostics {
 	d.IntervalMs = sync.IntervalMs
 	d.LastError = sync.LastErr
 	d.Spaces = sync.Public
+	d.Held = sync.Held
+	d.WantHolds = sync.WantHolds
 
 	// The route book, briefly (RT-0).
 	d.Ingress = r.SelfIngressRoutes()
@@ -149,10 +170,38 @@ func (r *Runtime) RelayDiagnosticsSnapshot() RelayDiagnostics {
 		}
 		d.Peers = append(d.Peers, brief)
 	}
+	// Fetch verdicts: what this node is pulling, waiting on, or done
+	// asking for. Failed entries keep their reason; a silent entry is one
+	// the person is probably staring at right now.
+	for key := range r.assetIdx.fetching {
+		st := "fetching"
+		if _, quiet := r.assetIdx.silent[key]; quiet {
+			st = "silent"
+		}
+		d.Fetches = append(d.Fetches, FetchBrief{
+			Space: key.Space.Hex()[:8], Asset: shortAsset(key.Asset), State: st})
+	}
+	for key, why := range r.assetIdx.failed {
+		d.Fetches = append(d.Fetches, FetchBrief{
+			Space: key.Space.Hex()[:8], Asset: shortAsset(key.Asset),
+			State: "failed", Reason: string(why)})
+	}
 	r.mu.Unlock()
 	sort.Slice(d.Peers, func(i, j int) bool { return d.Peers[i].Device < d.Peers[j].Device })
 	sort.Strings(d.LocalPeers)
+	sort.Slice(d.Fetches, func(i, j int) bool {
+		a, b := d.Fetches[i], d.Fetches[j]
+		return a.Space+a.Asset < b.Space+b.Asset
+	})
 	return d
+}
+
+// shortAsset trims an asset id to a correlatable prefix.
+func shortAsset(a string) string {
+	if len(a) > 8 {
+		return a[:8]
+	}
+	return a
 }
 
 // provenanceWord names a provenance for a person reading diagnostics.
