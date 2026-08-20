@@ -583,6 +583,8 @@ type characterResp struct {
 	Relic     string   `json:"relic"`
 	Rituals   []string `json:"rituals"`
 	Presence  []string `json:"presence"`
+	// state → small symbol; absent when the space never declared any.
+	PresenceGlyphs map[string]string `json:"presence_glyphs,omitempty"`
 }
 
 func characterOf(c terminals.Character) characterResp {
@@ -591,6 +593,7 @@ func characterOf(c terminals.Character) characterResp {
 		Motion: c.Motion, Geometry: c.Geometry, Central: c.Central,
 		Memory: c.Memory, Relic: c.Relic,
 		Rituals: c.Rituals, Presence: c.Presence,
+		PresenceGlyphs: c.PresenceGlyphs,
 	}
 }
 
@@ -709,6 +712,9 @@ func (a *APIServer) handleCreateSpace(w http.ResponseWriter, r *http.Request) {
 		Memory    string   `json:"memory"`
 		Rituals   []string `json:"rituals"`
 		Presence  []string `json:"presence"` // extra custom states
+		// state → emoji; validated by Character.Validate (NormalizeEmoji,
+		// declared states only), so a bad one refuses the create loudly.
+		PresenceGlyphs map[string]string `json:"presence_glyphs"`
 		// PA-0 access policy (absent = private, unchanged behavior).
 		Visibility string `json:"visibility"` // "" | "unlisted" | "public"
 		Join       string `json:"join"`       // "" | "open"
@@ -745,6 +751,9 @@ func (a *APIServer) handleCreateSpace(w http.ResponseWriter, r *http.Request) {
 		if !slices.Contains(c.Presence, p) {
 			c.Presence = append(c.Presence, p)
 		}
+	}
+	if len(body.PresenceGlyphs) > 0 {
+		c.PresenceGlyphs = body.PresenceGlyphs
 	}
 	pol := terminals.SpacePolicy{
 		Visibility: terminals.Visibility(body.Visibility),

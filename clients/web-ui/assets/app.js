@@ -1801,7 +1801,7 @@ async function refreshSpace() {
   if (persona) persona.innerHTML = '';
 
   // presence selector fed by the space's declared vocabulary.
-  presenceSetStates([...new Set(char?.presence || [])]);
+  presenceSetStates([...new Set(char?.presence || [])], char?.presence_glyphs);
 
   await RES.load(current); // palette must exist before rows render
   const entries = await fetchEntries(current);
@@ -1998,9 +1998,17 @@ async function refreshSpace() {
     let pres;
     const here = m.presence.known && m.presence.current;
     if (here) nextHere.add(m.terminal);
+    // The glyph replaces the word where one exists; the word survives in
+    // the title so hovering (or a screen reader via aria-label) still says
+    // it. A state without a glyph keeps its word on the card.
+    const pg = m.presence.known ? presenceGlyph(m.presence.state) : '';
+    const pword = m.presence.known ? m.presence.state : '';
     if (!m.presence.known) pres = `<div class="pres stale">${esc(t('presence.unknown'))}</div>`;
-    else if (m.presence.current) pres = `<div class="pres current">● ${esc(m.presence.state)}</div>`;
-    else pres = `<div class="pres stale">${esc(m.presence.state)} · ${esc(relTime(m.presence.age_seconds))}</div>`;
+    else if (m.presence.current) {
+      pres = `<div class="pres current" title="${esc(pword)}" aria-label="${esc(pword)}">● ${esc(pg || pword)}</div>`;
+    } else {
+      pres = `<div class="pres stale" title="${esc(pword)}" aria-label="${esc(pword)}">${esc(pg || pword)} · ${esc(relTime(m.presence.age_seconds))}</div>`;
+    }
     const glyphType = memberGlyphType(m);
     const name = m.name || m.terminal.slice(0, 10);
     // The pictogram says WHAT KIND of participant this is; a human gets the
@@ -2386,7 +2394,25 @@ let presenceTimer = null;
  * JavaScript — closing the string and running whatever followed. An
  * HTML escaper cannot protect a JavaScript context; the fix is to stop
  * having a JavaScript context in the markup at all. */
-function presenceSetStates(states) {
+// THE WORD'S SMALL TWIN. Seed and archetype states carry a default glyph;
+// a space may declare its own per state (character.presence_glyphs — an
+// emoji bounded like a reaction, riding the manifest ONCE, so a presence
+// update itself costs the radio nothing new). A custom state without a
+// glyph keeps its word: a word is more honest than an anonymous dot.
+const PRESENCE_GLYPHS = {
+  around: '🌿', listening: '🎧', open_to_talk: '💬', busy: '⏳',
+  quiet_today: '🌫️', do_not_disturb: '🌙',
+  mixing_a_track: '🎚️', in_the_shop: '🔧', ready_to_test: '🧪',
+  monitoring_the_air: '📡',
+};
+let presenceGlyphMap = {}; // the open space's declared glyphs
+
+function presenceGlyph(state) {
+  return presenceGlyphMap[state] || PRESENCE_GLYPHS[state] || '';
+}
+
+function presenceSetStates(states, glyphs) {
+  presenceGlyphMap = glyphs || {};
   presenceStates = states;
   const menu = document.getElementById('presenceMenu');
   menu.replaceChildren();
@@ -2400,7 +2426,8 @@ function presenceSetStates(states) {
     const b = document.createElement('button');
     b.type = 'button';
     b.setAttribute('role', 'menuitem');
-    b.textContent = s;
+    const g = presenceGlyph(s);
+    b.textContent = g ? `${g} ${s}` : s;
     b.addEventListener('click', () => setPresence(s));
     menu.appendChild(b);
   }
@@ -2499,7 +2526,9 @@ function presenceRender() {
     if (presenceTimer) { clearInterval(presenceTimer); presenceTimer = null; }
     return;
   }
-  label.textContent = `${presenceLive} · ${Math.ceil(left / 60)}m`;
+  const g = presenceGlyph(presenceLive);
+  label.textContent = `${g || presenceLive} · ${Math.ceil(left / 60)}m`;
+  label.title = presenceLive;
   picker.classList.add('live');
 }
 
@@ -3075,8 +3104,27 @@ async function wizCreate() {
   // is in it. Forcing a name made people invent one before they knew
   // what the place was.
   const rituals = [...document.querySelectorAll('#ritualList input:checked')].map(i => i.value);
-  const presence = document.getElementById('wPresence').value
-    .split(',').map(s => s.trim().replaceAll(' ', '_')).filter(Boolean);
+  // "state" or "state:🌿" — an entry may carry its own small symbol after
+  // the LAST colon (a state name could hold one; an emoji cannot). The
+  // node validates the symbol the way it validates a reaction, so a bad
+  // one refuses the create loudly rather than shipping garbage.
+  const presence = [];
+  const presenceGlyphs = {};
+  for (const raw of document.getElementById('wPresence').value.split(',')) {
+    let entry = raw.trim();
+    if (!entry) continue;
+    const i = entry.lastIndexOf(':');
+    let glyph = '';
+    if (i > 0 && i < entry.length - 1) {
+      const tail = entry.slice(i + 1).trim();
+      // Only a non-ASCII tail reads as a symbol — "team:alpha" stays a word.
+      if (tail && /[^ -~]/.test(tail)) { glyph = tail; entry = entry.slice(0, i).trim(); }
+    }
+    const state = entry.replaceAll(' ', '_');
+    if (!state) continue;
+    presence.push(state);
+    if (glyph) presenceGlyphs[state] = glyph;
+  }
   const memory = document.querySelector('.mem-opt.sel')?.dataset.v || 'everything';
   try {
     const r = await api('/api/spaces', { method: 'POST', body: JSON.stringify({
@@ -3086,6 +3134,7 @@ async function wizCreate() {
       motion: document.getElementById('wMotion').value,
       central: document.getElementById('wCentral').value,
       memory, rituals, presence,
+      presence_glyphs: Object.keys(presenceGlyphs).length ? presenceGlyphs : undefined,
       ...wizPolicy(),
       // The declared purpose is not a policy field, so it stays out of
       // wizPolicy() — that function's three lines are readable precisely

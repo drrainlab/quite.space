@@ -12,7 +12,10 @@ package terminals
 
 import (
 	"errors"
+	"slices"
 	"strings"
+
+	"github.com/drrainlab/quiet_places/protocol/schemas"
 )
 
 // Archetypes (v1 set). An archetype seeds the scene, blocks, and suggested
@@ -33,6 +36,12 @@ type Character struct {
 	Relic     string   // ember_ring | tree | constellation | structure | garden | waveform
 	Rituals   []string // up to 3 chosen ritual slugs
 	Presence  []string // the space's presence vocabulary
+	// PresenceGlyphs maps a state to the small symbol a card may show for
+	// it. AN EMOJI STRING, NEVER BYTES OR MARKUP — the same rule as a
+	// resonance palette slot: no user-supplied rendering code crosses the
+	// wire, and the whole map rides the manifest ONCE, so a presence
+	// update itself costs the radio nothing new.
+	PresenceGlyphs map[string]string
 }
 
 // DefaultCharacter returns the archetype's seed character.
@@ -123,6 +132,20 @@ func (c Character) Labels(title string) []string {
 	if len(c.Presence) > 0 {
 		add("presence", strings.Join(c.Presence, ","))
 	}
+	if len(c.PresenceGlyphs) > 0 {
+		// state:glyph pairs, comma-joined — the same comma the presence
+		// list already relies on states not containing. Ordered by the
+		// vocabulary so the label is deterministic.
+		pairs := make([]string, 0, len(c.PresenceGlyphs))
+		for _, st := range c.Presence {
+			if g := c.PresenceGlyphs[st]; g != "" {
+				pairs = append(pairs, st+":"+g)
+			}
+		}
+		if len(pairs) > 0 {
+			add("presence_glyphs", strings.Join(pairs, ","))
+		}
+	}
 	return out
 }
 
@@ -167,9 +190,51 @@ func ParseCharacter(labels []string) (string, Character) {
 			}
 		case "presence":
 			c.Presence = admissiblePresence(strings.Split(kv[1], ","))
+		case "presence_glyphs":
+			c.PresenceGlyphs = parsePresenceGlyphs(kv[1])
+		}
+	}
+	// A glyph may only name a state the vocabulary actually declares —
+	// filtered HERE, after the loop, because the two labels can arrive in
+	// either order. Same read-side honesty as admissiblePresence.
+	if len(c.PresenceGlyphs) > 0 {
+		for st := range c.PresenceGlyphs {
+			if !slices.Contains(c.Presence, st) {
+				delete(c.PresenceGlyphs, st)
+			}
+		}
+		if len(c.PresenceGlyphs) == 0 {
+			c.PresenceGlyphs = nil
 		}
 	}
 	return title, c
+}
+
+// parsePresenceGlyphs reads state:glyph pairs. The split is on the LAST
+// colon of each pair — a state name could carry one, an emoji cannot —
+// and every glyph goes through the same normalization a reaction does,
+// so nothing unrenderable or oversized survives the read.
+func parsePresenceGlyphs(v string) map[string]string {
+	out := map[string]string{}
+	for _, pair := range strings.Split(v, ",") {
+		i := strings.LastIndex(pair, ":")
+		if i <= 0 || i == len(pair)-1 {
+			continue
+		}
+		st := pair[:i]
+		g, err := schemas.NormalizeEmoji(pair[i+1:])
+		if err != nil || g == "" {
+			continue
+		}
+		if len(out) >= maxPresenceStates {
+			break
+		}
+		out[st] = g
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // admissiblePresence keeps the states a reader may honestly show.
@@ -227,6 +292,14 @@ func (c Character) Validate() error {
 	for _, p := range c.Presence {
 		if err := ValidatePresenceState(p); err != nil {
 			return err
+		}
+	}
+	for st, g := range c.PresenceGlyphs {
+		if !slices.Contains(c.Presence, st) {
+			return errors.New("terminals: a glyph may only name a declared presence state")
+		}
+		if _, err := schemas.NormalizeEmoji(g); err != nil {
+			return errors.New("terminals: presence glyph must be a small renderable symbol: " + err.Error())
 		}
 	}
 	return nil
