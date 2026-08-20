@@ -80,6 +80,9 @@ func (r *Runtime) RevokeDevice(dev id.DeviceID) error {
 		// so tomorrow's must be new ones it never receives.
 		if meta.Owned {
 			st.space.RemoveMember(dev)
+			// Expansion cannot resurrect it: the revocation is already in
+			// the store, and CertifiedDevices skips revoked outright.
+			r.expandMembersLocked(st.space)
 			if _, err := r.Self.RotateEpoch(st.space); err != nil {
 				return fmt.Errorf("node: rotating %s after revocation: %w", tid, err)
 			}

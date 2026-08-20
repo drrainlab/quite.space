@@ -264,3 +264,37 @@ func (r *Runtime) publishCertLocked(s *terminals.Space) {
 		r.markCertPublished(s.ID, rec.Device)
 	}
 }
+
+// expandMembersLocked realizes ADR-024's decision — membership belongs
+// to the PRINCIPAL, the device wrap list is derived state — at the one
+// moment it matters: just before an epoch is minted. For every device
+// already in the wrap list, every currently certified, unrevoked
+// sibling of its principal joins the list too, wrap key straight from
+// the certificate (identity.Certificate.X25519Pub — carried for exactly
+// this since MD-0).
+//
+// No new protocol message feeds this: certificates and revocations ride
+// the space log plaintext so admission can see them, which means the
+// owner's own store already holds everything the expansion reads. The
+// latent failure this closes, measured in BETA_AUDIT_2026-08-20: an
+// owner's members map never learned a paired sibling, so the owner's
+// next rotation deafened it — space present, Undecryptable climbing,
+// nobody told.
+//
+// Revocation falls out for free: a revoked device never comes back from
+// CertifiedDevices, so it silently stops appearing in every future
+// wrap, everywhere, as each owner next rotates. Caller holds r.mu.
+func (r *Runtime) expandMembersLocked(sp *terminals.Space) {
+	for dev := range sp.Members() {
+		cert, ok := r.ident.certificateFor(dev)
+		if !ok {
+			continue // a legacy/pre-certification member: nothing to derive
+		}
+		for _, sib := range r.ident.store.CertifiedDevices(cert.Principal) {
+			if sib.Device == dev || sp.HasMember(sib.Device) {
+				continue
+			}
+			sp.AddMember(sib.Device, sib.X25519Pub)
+		}
+	}
+}

@@ -1075,6 +1075,7 @@ func (r *Runtime) CreateSpaceWithOptions(title string, o CreateOptions) (id.Term
 	if private {
 		s.EnablePrivate(r.Device)
 		s.AddMember(r.Device.ID, r.Device.X25519Pub)
+		r.expandMembersLocked(s)
 		if _, err := r.Self.RotateEpoch(s); err != nil {
 			return id.TerminalID{}, err
 		}
@@ -1117,6 +1118,9 @@ func (r *Runtime) MintInvite(tid id.TerminalID, dev id.DeviceID, xpub [32]byte) 
 		return "", err
 	}
 	st.space.AddMember(dev, xpub)
+	// The invitee's siblings ride in on the same rotation (ADR-024): the
+	// person was invited, and the person is all of their devices.
+	r.expandMembersLocked(st.space)
 	if _, err := r.Self.RotateEpoch(st.space); err != nil {
 		return "", err
 	}

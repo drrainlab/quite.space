@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 
 	"github.com/drrainlab/quiet_places/protocol/codec"
 	"github.com/drrainlab/quiet_places/protocol/id"
@@ -458,6 +459,32 @@ func (s *Store) AddRevocation(r *Revocation) error {
 func (s *Store) Certificate(dev id.DeviceID) (*Certificate, bool) {
 	c, ok := s.certs[dev]
 	return c, ok
+}
+
+// CertifiedDevices returns every UNREVOKED certificate this store holds
+// for one principal, in deterministic device order.
+//
+// This is the enumeration ADR-024's epoch expansion stands on:
+// membership belongs to the principal, and the owner derives the wrap
+// list from certificates its own log already admitted. A device with
+// any revocation on record is excluded outright — future epochs are
+// exactly what a revocation exists to withhold, and the wrap list is
+// only ever consulted for the future.
+func (s *Store) CertifiedDevices(principal id.PrincipalID) []*Certificate {
+	var out []*Certificate
+	for dev, c := range s.certs {
+		if !bytes.Equal(c.Principal[:], principal[:]) {
+			continue
+		}
+		if _, revoked := s.revs[dev]; revoked {
+			continue
+		}
+		out = append(out, c)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return bytes.Compare(out[i].Device[:], out[j].Device[:]) < 0
+	})
+	return out
 }
 
 // Admit decides whether an event from (principal, device) at the given

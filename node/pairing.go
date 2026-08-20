@@ -557,6 +557,7 @@ func (a *PairingAttempt) Approve(nowUnix uint64) error {
 			continue
 		}
 		st.space.AddMember(childDev, childX)
+		r.expandMembersLocked(st.space)
 		if _, err := r.Self.RotateEpoch(st.space); err != nil {
 			r.mu.Unlock()
 			return fmt.Errorf("node: rotating %s for the new device: %w", tid, err)
