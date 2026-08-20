@@ -193,11 +193,17 @@ func (a *APIServer) handlePostBlock(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusBadRequest, err)
 		return
 	}
+	// Armed BEFORE the emit so the push that carries the new frame finds
+	// the bytes already waiting — armed after, a tick landing in between
+	// would ship the frame alone and the chunks would never ride.
+	a.rt.RideAhead(tid, ref)
 	eid, err := a.rt.EmitBlock(tid, schema, payload)
 	if err != nil {
+		a.rt.DisarmRideAhead(tid, ref)
 		httpErr(w, http.StatusForbidden, err)
 		return
 	}
+	a.rt.kickRelaySync()
 	writeJSON(w, map[string]string{"id": eid.Hex()})
 }
 

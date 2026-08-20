@@ -203,6 +203,13 @@ type Runtime struct {
 	// measured cost of politely waiting was the first third of every
 	// "фото ооочень медленно стартовало".
 	syncKick chan struct{}
+	// rideAhead: assets whose BYTES should ride the next background push,
+	// once. Armed at the moment of sending — the one moment the sender is
+	// certainly awake — so a recipient's fetch finds the bytes already in
+	// its mailbox instead of having to wake a phone that has gone back
+	// into a pocket. One-shot and bounded (rideAheadMaxBytes); anything
+	// bigger, and any re-offer, travels on demand as before.
+	rideAhead map[id.TerminalID]map[AssetKey]struct{}
 	stopOnce     sync.Once
 	wg           sync.WaitGroup
 

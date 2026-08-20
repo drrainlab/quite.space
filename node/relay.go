@@ -17,6 +17,7 @@ import (
 	"github.com/drrainlab/quiet_places/kernel/storage"
 	"github.com/drrainlab/quiet_places/protocol/claims"
 	"github.com/drrainlab/quiet_places/protocol/id"
+	"github.com/drrainlab/quiet_places/protocol/schemas"
 	"github.com/drrainlab/quiet_places/protocol/signal"
 	"github.com/drrainlab/quiet_places/transports/bundle"
 	"github.com/drrainlab/quiet_places/transports/relay"
@@ -133,10 +134,48 @@ type ExportReport struct {
 	Truncated      bool
 }
 
+// rideAheadMaxBytes bounds what may ride ahead of a request: a photo or a
+// voice note fits, a feature film does not. Chosen equal to the bundle
+// budget — anything larger could not ride in one pass anyway.
+const rideAheadMaxBytes = DefaultBundleBudget
+
+// RideAhead arms one asset's bytes to travel with the NEXT background
+// push of the space (once). Call it at the moment of sending, before the
+// event is emitted: the sender is awake right now, and every second of
+// its wakefulness spent is a second some recipient's fetch will not wait.
+// Oversized assets are refused silently — on-demand is their path.
+func (r *Runtime) RideAhead(space id.TerminalID, ref *schemas.AssetRef) {
+	if ref == nil || ref.Size > rideAheadMaxBytes {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.rideAhead == nil {
+		r.rideAhead = map[id.TerminalID]map[AssetKey]struct{}{}
+	}
+	if r.rideAhead[space] == nil {
+		r.rideAhead[space] = map[AssetKey]struct{}{}
+	}
+	r.rideAhead[space][AssetKey{Space: space, Asset: ref.PublicIDHex()}] = struct{}{}
+}
+
+// DisarmRideAhead forgets an armed asset — the emit it was riding for
+// failed, and shipping bytes for an event that never happened is waste.
+func (r *Runtime) DisarmRideAhead(space id.TerminalID, ref *schemas.AssetRef) {
+	if ref == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.rideAhead[space], AssetKey{Space: space, Asset: ref.PublicIDHex()})
+}
+
 // collectBlobs gathers asset blobs for a space per policy, in deterministic
 // order (assets in first-seen event order, manifest first, chunks by
 // index), stopping strictly before the byte budget. Partial assets are
 // allowed — lazy retrieval completes them later.
+//
+// Caller holds r.mu (it reads the asset index and the ride-ahead set).
 func (r *Runtime) collectBlobs(space id.TerminalID, policy AssetPolicy, budget int) ([][]byte, ExportReport) {
 	rep := ExportReport{}
 	if policy == AssetsNone {
@@ -157,6 +196,11 @@ func (r *Runtime) collectBlobs(space id.TerminalID, policy AssetPolicy, budget i
 		rep.BlobBytes += len(data)
 		return true
 	}
+	// The ride-ahead set is consumed on collection, success or not: one
+	// shot is the contract, and the on-demand path is the fallback for
+	// whatever a truncation or a failed push leaves behind.
+	armed := r.rideAhead[space]
+	delete(r.rideAhead, space)
 	for _, key := range r.assetIdx.refOrder[space] {
 		ref := r.assetIdx.refs[key]
 		complete := true
@@ -165,7 +209,8 @@ func (r *Runtime) collectBlobs(space id.TerminalID, policy AssetPolicy, budget i
 				complete = false
 			}
 		}
-		if policy == AssetsAvailable {
+		_, ride := armed[key]
+		if policy == AssetsAvailable || ride {
 			chunks := ref.WireIDs()
 			if ref.ManifestWireID != nil {
 				if man, err := assets.LoadManifest(r.root, ref); err == nil {
