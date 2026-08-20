@@ -1203,3 +1203,21 @@ async function aiDraftPost() {
     msg.textContent = 'Draft filled from the proposal — edit freely, then publish.';
   } catch (err) { msg.textContent = err.message; msg.className = 'hint warn'; }
 }
+
+// ESC LEAVES THE ARTICLE. The reader's back gesture on a keyboard — the same
+// verb as the «← Posts» button, which also tears the atmosphere down with it.
+// Three things outrank it, in order: an open <dialog> (the image viewer's own
+// Escape must win — its keydown still bubbles here after the browser closes
+// it, hence the check happens in the same event), typing (a half-written
+// comment must never cost the page it comments on), and there being no
+// article at all.
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  if (document.querySelector('dialog[open]')) return;
+  const el = /** @type {HTMLElement} */ (e.target);
+  if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+  const art = document.getElementById('pubArticle');
+  if (!openDocID || !art || art.style.display === 'none') return;
+  e.preventDefault();
+  refreshPosts();
+});

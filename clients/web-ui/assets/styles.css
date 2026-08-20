@@ -1659,9 +1659,11 @@
   /* Code keeps the mono face — it is not prose and must not read as prose. */
   #pubArticle .md code, #pubArticle .md pre { font-family: var(--font-mono); }
   /* Content scales to its column — nothing busts out of the article. */
+  /* pointer, not zoom-in: the click opens the viewer at the same size —
+     a magnifier cursor promised magnification we do not do. */
   #pubArticle img, .pub-block img, .pub-card img {
     max-width: 100%; height: auto; border-radius: var(--radius-md);
-    cursor: zoom-in; display: block; }
+    cursor: pointer; display: block; }
   /* A PHOTO IN AN ARTICLE IS NOT A BANNER. At full column width every image
      became the page for as long as it was on screen — a paragraph, then a
      wall, then a paragraph. Half the column keeps it part of the reading
