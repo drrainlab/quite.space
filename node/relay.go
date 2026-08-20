@@ -732,7 +732,13 @@ func (r *Runtime) answerWantsRouted(tid id.TerminalID, wanter []byte, wants [][]
 	}
 	eps := r.PeerRoutesFor(dev)
 	if len(eps) == 0 {
+		if wantsProbe != nil { // SCRATCH (Phase 0 instrument)
+			wantsProbe(r, dev, "no_route")
+		}
 		return
+	}
+	if wantsProbe != nil { // SCRATCH (Phase 0 instrument)
+		wantsProbe(r, dev, "answer→"+eps[0])
 	}
 	// Bulk lane: answers carry media blobs.
 	_ = r.withRelayBulk(eps[0], func(client *relay.Client) error {
@@ -1416,3 +1422,6 @@ func (r *Runtime) replyBoxCaps(tids []id.TerminalID, bucket uint64) [][]byte {
 
 // routeProbe — SCRATCH.
 var routeProbe func(dev id.DeviceID, ep string)
+
+// wantsProbe — SCRATCH (Phase 0): which branch a routed want-answer took.
+var wantsProbe func(holder *Runtime, dev id.DeviceID, outcome string)
