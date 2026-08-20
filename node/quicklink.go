@@ -466,6 +466,20 @@ func (r *Runtime) ResolveQuickLink(words string) (QuickLinkPreview, error) {
 	if err != nil {
 		return QuickLinkPreview{}, err
 	}
+	// A DOOR THIS DEVICE ALREADY OPENED ANSWERS FROM MEMORY. Resolving a
+	// personal link is destructive — the Collect burns the door at the
+	// relay — and interfaces double-fire: a second tap, a paste event, a
+	// retry. The memory below has existed since Back-and-return was fixed
+	// (rememberResolved); what was missing was consulting it HERE, so the
+	// second fire went back to the relay and came home with "nothing
+	// waiting" — an error that reads as a failed join while the join it
+	// describes is in fact underway.
+	r.mu.Lock()
+	if prev, ok := r.resolvedLinks[tok.Phrase()]; ok {
+		r.mu.Unlock()
+		return prev, nil
+	}
+	r.mu.Unlock()
 	// Candidates (RR-4): the words carry NO relay on purpose, and before
 	// the registry existed both sides had to configure the same address by
 	// hand. Now: personal relay first, then the best-measured registry

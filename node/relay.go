@@ -797,7 +797,7 @@ func (w *wantAccumulator) add(wanter []byte, wants [][]byte, replyBox []byte) {
 
 func (w *wantAccumulator) answer(r *Runtime, client *relay.Client, tid id.TerminalID, public bool) {
 	for _, bw := range w.byBox {
-		r.answerWants(client, tid, bw.wanter, bw.wants, bw.replyBox, public)
+		_, _ = r.answerWants(client, tid, bw.wanter, bw.wants, bw.replyBox, public)
 	}
 }
 
@@ -908,8 +908,8 @@ func (r *Runtime) answerWantsRouted(tid id.TerminalID, wanter []byte, wants [][]
 		// only when a stated route carries an answer for real.
 		if own := r.ResolvePersonalRelay(); own != "" {
 			_ = r.withRelayBulk(own, func(client *relay.Client) error {
-				r.answerWants(client, tid, wanter, wants, nil, false)
-				return nil
+				_, err := r.answerWants(client, tid, wanter, wants, nil, false)
+				return err
 			})
 		}
 		return
@@ -921,17 +921,45 @@ func (r *Runtime) answerWantsRouted(tid id.TerminalID, wanter []byte, wants [][]
 	// lane actually carried the answer out — clearing on the way in would
 	// erase "waiting for a route" a moment before a dead relay proved the
 	// wait was still true.
-	if err := r.withRelayBulk(eps[0], func(client *relay.Client) error {
-		r.answerWants(client, tid, wanter, wants, nil, false)
-		return nil
-	}); err == nil {
+	var sent int
+	var sendErr error
+	err := r.withRelayBulk(eps[0], func(client *relay.Client) error {
+		sent, sendErr = r.answerWants(client, tid, wanter, wants, nil, false)
+		return sendErr
+	})
+	if err == nil && sendErr == nil {
 		r.clearWantHolds(dev)
+		return
+	}
+	// THE FAILED ANSWER SAYS SO. The android beta hung exactly here for a
+	// day: a holder with a healthy control lane whose bulk lane could not
+	// deliver, retrying invisibly — every instrument on both sides green
+	// while a video sat at zero. The hold carries the transport's own
+	// words so the next diagnostics copy is the verdict.
+	if err == nil {
+		err = sendErr
+	}
+	reason := "answer_failed: " + err.Error()
+	if sent > 0 {
+		reason = "answer_cut_short: " + err.Error()
+	}
+	if len(reason) > 200 {
+		reason = reason[:200]
+	}
+	r.noteWantHold(WantHold{Space: tid, Wanter: dev, Wants: len(wants),
+		Reason: reason})
+	if wantsProbe != nil { // test seam, see its declaration
+		wantsProbe(r, dev, "answer_failed")
 	}
 }
 
-func (r *Runtime) answerWants(client *relay.Client, tid id.TerminalID, wanter []byte, wants [][]byte, replyBox []byte, public bool) {
+// answerWants ships the requested blobs and reports what happened: bytes
+// actually handed to the relay, and the first refusal if one cut the
+// answer short. A holder that fails to answer and says nothing was this
+// path's founding sin — every caller that can hold must record the error.
+func (r *Runtime) answerWants(client *relay.Client, tid id.TerminalID, wanter []byte, wants [][]byte, replyBox []byte, public bool) (int, error) {
 	if len(wants) == 0 {
-		return
+		return 0, nil
 	}
 	now := uint64(time.Now().Unix())
 	var hint []byte
@@ -939,16 +967,16 @@ func (r *Runtime) answerWants(client *relay.Client, tid id.TerminalID, wanter []
 	case len(replyBox) == relay.HintLen:
 		hint = replyBox
 	case public:
-		return // no safe address; the requester re-asks with a reply box
+		return 0, nil // no safe address; the requester re-asks with a reply box
 	case len(wanter) == id.Size:
 		var dev id.DeviceID
 		copy(dev[:], wanter)
 		if dev == r.Device.ID {
-			return // never answer our own request
+			return 0, nil // never answer our own request
 		}
 		hint = relay.HintFor(tid, dev, relay.Bucket(now))
 	default:
-		return
+		return 0, nil
 	}
 	expires := now + uint64(DefaultRelayTTL/time.Second)
 
@@ -986,6 +1014,7 @@ func (r *Runtime) answerWants(client *relay.Client, tid id.TerminalID, wanter []
 	// collects them all and re-asks for whatever did not fit.
 	var batch [][]byte
 	batchBytes, totalSent := 0, 0
+	var refusal error
 	flush := func() bool {
 		if len(batch) == 0 {
 			return true
@@ -993,6 +1022,9 @@ func (r *Runtime) answerWants(client *relay.Client, tid id.TerminalID, wanter []
 		body := bundle.EncodeWithBlobs(tid, nil, batch)
 		_, err := client.Put(hint, expires, body)
 		batch, batchBytes = nil, 0
+		if err != nil && refusal == nil {
+			refusal = err
+		}
 		return err == nil
 	}
 	for _, hb := range wants {
@@ -1016,7 +1048,12 @@ func (r *Runtime) answerWants(client *relay.Client, tid id.TerminalID, wanter []
 		}
 		if batchBytes+len(data) > maxRelayItem {
 			if !flush() {
-				return // relay refused a batch; stop, the requester re-asks
+				// The relay refused a batch mid-answer: stop — the
+				// requester re-asks for whatever is still missing — but
+				// the refusal travels up, because "I answered part of it
+				// and was cut off" and "I answered" must never report
+				// identically.
+				return totalSent, refusal
 			}
 		}
 		batch = append(batch, data)
@@ -1024,6 +1061,7 @@ func (r *Runtime) answerWants(client *relay.Client, tid id.TerminalID, wanter []
 		totalSent += len(data)
 	}
 	flush()
+	return totalSent, refusal
 }
 
 // PullFromRelay collects bundles for every known space (current and
@@ -1161,7 +1199,7 @@ func (r *Runtime) applyHeldRelayItem(client *relay.Client, heldItem storage.Held
 		// the cert gate, the endpoint cap, and the per-device book cap.
 		r.recordStatedReturnRoutes(parts.Wanter, parts.ReturnRoutes)
 		if len(parts.ReplyBox) > 0 {
-			r.answerWants(client, terminal, parts.Wanter, parts.Wants, parts.ReplyBox, false)
+			_, _ = r.answerWants(client, terminal, parts.Wanter, parts.Wants, parts.ReplyBox, false)
 		} else {
 			r.answerWantsRouted(terminal, parts.Wanter, parts.Wants)
 		}

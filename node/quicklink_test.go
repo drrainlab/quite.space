@@ -82,28 +82,45 @@ func TestFiveWordsCarrySomebodyIntoYourLine(t *testing.T) {
 // Single use is not a policy this code enforces — it falls out of the relay's
 // Collect draining what it reads. Worth pinning, because switching that call
 // to Fetch would silently make every link replayable.
+//
+// EXACTLY ONCE IS ABOUT THE DOOR, NOT ABOUT THE HAND THAT OPENED IT. The
+// device that spent the door keeps its own way in (rememberResolved) and a
+// re-resolve answers from that memory — interfaces double-fire, and a beta
+// phone showed "nothing waiting" over a join that was in fact underway. A
+// DIFFERENT device is what the single-use promise is made about.
 func TestAQuickLinkWorksExactlyOnce(t *testing.T) {
 	rtA := openRuntime(t, t.TempDir(), "alice")
 	defer rtA.Close()
 	rtB := openRuntime(t, t.TempDir(), "bob")
 	defer rtB.Close()
-	srv, _ := setUpRelay(t, rtA, rtB)
+	rtC := openRuntime(t, t.TempDir(), "cara")
+	defer rtC.Close()
+	srv, _ := setUpRelay(t, rtA, rtB, rtC)
 	defer srv.Close()
 
 	info, err := rtA.MintQuickLink(id.TerminalID{}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := rtB.ResolveQuickLink(info.Phrase); err != nil {
+	first, err := rtB.ResolveQuickLink(info.Phrase)
+	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = rtB.ResolveQuickLink(info.Phrase)
-	if err == nil {
-		t.Fatal("the same words resolved twice")
+	// The opener asks again (a double-tap, a paste event): same answer,
+	// no error, no second trip through the door.
+	again, err := rtB.ResolveQuickLink(info.Phrase)
+	if err != nil {
+		t.Fatalf("the device that opened the door lost its own way in: %v", err)
 	}
-	// The refusal has to explain itself — and now that a link may be
-	// personal OR shared, it must say WHICH kind was spent rather than
-	// asserting that every link works once.
+	if again.PassLink != first.PassLink {
+		t.Fatal("a re-resolve answered with a different entrance")
+	}
+	// A different device finds the door spent — and the refusal explains
+	// itself, saying WHICH kind of link ran out.
+	_, err = rtC.ResolveQuickLink(info.Phrase)
+	if err == nil {
+		t.Fatal("a spent personal door opened for a second device")
+	}
 	if !strings.Contains(err.Error(), "spent by the first person") {
 		t.Fatalf("the second attempt should explain itself, got: %v", err)
 	}
