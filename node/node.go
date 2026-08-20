@@ -197,6 +197,12 @@ type Runtime struct {
 	// so a mismatch can be named rather than merely displayed.
 	radioProfile *meshtastic.Profile
 	stop         chan struct{}
+	// syncKick wakes the relay sync loop out of turn. Buffered one deep:
+	// a kick while one is pending is the same kick. Sent when somebody
+	// opens media — the want should leave NOW, not on the next tick; the
+	// measured cost of politely waiting was the first third of every
+	// "фото ооочень медленно стартовало".
+	syncKick chan struct{}
 	stopOnce     sync.Once
 	wg           sync.WaitGroup
 
@@ -402,6 +408,7 @@ func Open(dataDir string, passphrase []byte, displayName string) (rt *Runtime, e
 		notifyLedger: newNotifyLedger(dataDir),
 		assetIdx:     newAssetIndex(), passes: newPassRegistry(),
 		joins: map[string]*joinAttempt{}, stop: make(chan struct{}),
+		syncKick: make(chan struct{}, 1),
 		startupReconsidered: make(chan struct{}),
 		relayWants:          map[id.TerminalID]map[id.Hash]struct{}{},
 		// Radios ask for retransmission unless told otherwise. See

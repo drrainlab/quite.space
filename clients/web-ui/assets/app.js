@@ -3423,8 +3423,19 @@ function assetNote(e) {
     n.className = 'asset-note asset-waiting';
     n.textContent = waitingForText(e, true);
   } else if (a.state === 'fetching') {
-    n.textContent = `fetching… ${a.total - a.missing}/${a.total}`;
-    n.appendChild(makeProgress(a.total - a.missing, a.total));
+    const got = a.total - a.missing;
+    if (got <= 0) {
+      // ZERO BYTES IS A STAGE, NOT A PROGRESS VALUE. Before the sender
+      // answers, a bar frozen at 0/N reads as "stuck" — and for a small
+      // file the bar can only ever make one step anyway (one relay round
+      // carries it whole), so the honest thing to show is which leg of
+      // the trip we are on. The bar appears with the first real byte.
+      n.className = 'asset-note asset-waiting';
+      n.textContent = `reaching the sender… ${fmtBytes(a.size || 0)}`;
+    } else {
+      n.textContent = `fetching… ${got}/${a.total}`;
+      n.appendChild(makeProgress(got, a.total));
+    }
   } else if (a.state === 'failed' && a.reason === 'integrity_error') {
     // The one terminal failure here, and it must not be dressed up as a
     // network problem: these bytes did not match their hash, so they are

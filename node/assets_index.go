@@ -406,8 +406,14 @@ func (r *Runtime) fetchLoop(key AssetKey, ref *schemas.AssetRef, st *spaceState)
 			if len(satisfied) > 0 {
 				r.clearRelayWants(key.Space, satisfied)
 			}
+			first := len(registered) == 0
 			r.addRelayWants(key.Space, want)
 			registered = wantSet
+			if first {
+				// The first registration is the person opening the card.
+				// Ride out with the next breath, not the next tick.
+				r.kickRelaySync()
+			}
 			// Report a provisional verdict long before the deadline. The
 			// fetch keeps running — a holder may still come online — but a
 			// person staring at a spinner deserves a true sentence within
@@ -474,6 +480,15 @@ const (
 	// this build accepts needs, and far less than forever.
 	fetchHardCeiling = time.Hour
 )
+
+// kickRelaySync wakes the sync loop out of turn (see syncKick). Non-
+// blocking by construction: a pending kick already promises a pass.
+func (r *Runtime) kickRelaySync() {
+	select {
+	case r.syncKick <- struct{}{}:
+	default:
+	}
+}
 
 // noSourceAfter is how long a fetch may find nothing before the interface
 // is allowed to say so. Short enough that a person is not left guessing,

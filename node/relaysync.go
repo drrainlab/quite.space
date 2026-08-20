@@ -204,6 +204,8 @@ func (r *Runtime) applyRelaySync(addr string, interval time.Duration) {
 				return
 			case <-stop:
 				return
+			case <-r.syncKick:
+				r.relaySyncOnce(addr)
 			case <-t.C:
 				// THE FIRST TICK AFTER A SLEEP IS NOT AN ORDINARY TICK, and
 				// this loop is where it is cheapest to notice: it runs on a
