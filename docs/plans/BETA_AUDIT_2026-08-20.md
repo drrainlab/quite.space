@@ -1,170 +1,160 @@
-# Beta audit — 2026-08-20
+# Beta audit — 2026-08-20 (rev 2, forensic)
 
-Where the product actually stands after the first week of real people
-using it, and the work that falls out of that. Everything here is
-**measured** — a stand, an instrument, or a reproduced report — not
-supposed. Written to be handed to parallel work sessions as their
-starting brief; each stream names its branch, its red test, and its
-first task.
+Every claim below carries its evidence level:
 
-## The headline
+- **OBSERVED** — reported from production, screenshots or a live device.
+- **PROVEN** — reproduced under instruments on a stand; the instrument
+  and its output are named.
+- **CODE ABSENCE** — verified by inspection that no code path exists;
+  the absence itself is the finding.
+- **DESIGN CANDIDATE** — a proposed shape, not yet decided or built.
 
-**Delivery between two relays silently loses media, and two official
-relays is what production runs.** This is not an edge case: any two
-people whose nodes auto-selected different relays hit it on their first
-photo. It is the single biggest threat to beta trust — the app looks
-broken while every diagnostic reads healthy — and it is Stream 1.
+Rev 1 of this document claimed one root cause and was corrected by the
+owner's review: there were two independent invariants broken, and the
+voice anomaly had to be explained by measurement before any conviction.
+Both corrections are now closed with instruments. The doctrine this
+week kept teaching is ADR-023: *inability is never success, and never
+silence.*
 
-## What is shipped and solid
+## Headlines (owner's formulation)
 
-- **v0.1.4 is out** and the Android unlock crash is fixed at the root
-  (missing USE_BIOMETRIC + a fence so no biometric question can ever
-  take an unlock down again). Verified on the emulator over the broken
-  state; confirmed working by the reporter.
-- **CI is green on main for the first time since v0.1.0**, both jobs,
-  and `release.yml` now refuses to publish unless ci succeeded on the
-  tagged SHA. Three releases shipped on red before that; structurally
-  impossible now.
-- **Release notes live in the repository** (`docs/releases/<v>.md`),
-  publish with the standing install section appended, and the release
-  takes its title from the note's first line.
-- The node test suite runs in ~6 min plain / ~16 min race (was: killed
-  at the 10-minute default), 601/601, zero data races. The cadence and
-  KDF seams that bought this are documented in
-  `node/relayreg_testmain_test.go` and `node/cadence.go`.
-- Production fixes shipped along the way: a stopping relay hangs up on
-  its clients (relayserver), and a gateway's own device is no longer a
-  delivery recipient.
+1. ~~Images and file-like media fail across the production relay path
+   while text and voice remain healthy. The divergence point is not yet
+   isolated.~~ → **isolated, convicted, and fixed on branch
+   `stream-1-media-routing`** — see Stream 1A.
+2. **Paired devices of one principal do not converge on spaces joined
+   after pairing.** Open; design-first; see Stream 1B.
 
-## Stream 1 — route honesty (branch `stream-1-media-routing`, red test waiting)
+## Stream 1A — media across relays
 
-**Symptoms reported:** media hangs at "fetching…" with both sides
-online while text and voice cross fine; a space joined by quick link on
-one of the person's devices never appears on the other; all of it works
-on a LAN.
+**OBSERVED:** with everyone online, text and voice crossed the internet
+relay path; images and files hung at "fetching…" forever. A space's
+diagnostics read healthy on all sides.
 
-**Root, convicted by instruments** (commit 6b46d4d on the branch):
+**PROVEN (Phase 0, `node/media_matrix_test.go`, two relays, pass-joined
+friend, paired phone):** five kinds from 100KB voice to 6MB video —
+every kind identical, every kind dying at the same stage:
 
-    push #1:  laptop -> RELAY-A (the sender's own)   <- copy landed wrong
-    later:    laptop -> RELAY-B, phone -> RELAY-B    <- routes learned,
-                                                        nothing left to push
+    kind          frame  want  who-saw-the-want                 state
+    voice         ✓      ✓     friend:NEVER  laptop:answer→B    fetching
+    photo-small   ✓      ✓     friend:NEVER  laptop:answer→B    fetching
+    photo-large   ✓      ✓     friend:NEVER  laptop:answer→B    fetching
+    video         ✓      ✓     friend:NEVER  laptop:answer→B    fetching
+    file          ✓      ✓     friend:NEVER  laptop:answer→B    fetching
 
-At push time the holder has not yet learned the recipient's route, so
-`deliverSpace`'s legacy bootstrap fires — "nothing known → my own
-relay, recorded" — the item lands on the sender's relay, `lastLen`
-advances, and the ledger says delivered. A tick later the real route
-arrives and the RouteBook reads healthy in every diagnostic, but the
-re-offer machinery only re-offers what `lastLen` has not covered. Every
-other undelivered branch of `deliverSpaceRouted` holds `lastLen` back
-and says so out loud (`heldNoRoute`, `heldNoRecipient`); the legacy
-bootstrap is the one path that claims success while delivering to
-itself. The same wrong turn breaks want→answer in both directions, and
-`answerWantsRouted` compounds it by returning **silently** when it has
-no route for the wanter. A LAN masks everything: T6 pushes pending
-media straight down the live link and never consults the RouteBook.
+**PROVEN — voice was never special.** The production "voice works" was
+the sibling cache: `TestSiblingCacheDiagnosis` showed the kind the
+laptop had fetched reaching the phone while the kind it never touched
+starved. The owner's insistence on explaining the anomaly before
+conviction was correct twice: the first probe table LIED (a global
+probe showed "answer→B" without saying WHO answered — the laptop, into
+its own emptiness), and the split-by-holder column was the load-bearing
+cell.
 
-**Work, in order:**
+**PROVEN — the mechanism** (branch commits 7ff8467 → 31a53b5):
+1. The zero-knowledge bootstrap put copies at the SENDER's own relay,
+   recorded that guess into the route book as the peer's stated route
+   (poison that outlived the mistake and satisfied the known>0 gate
+   forever), advanced `lastLen`, and reported reached. *Transport
+   acceptance at some endpoint ≠ delivery to the intended recipient.*
+2. The private wire had no way to say "I listen at X": the bundle knew
+   seven keys, `RouteAdvertised` was dead code, the pairing freight
+   carried no routes (CODE ABSENCE, all three verified). Honesty alone
+   could therefore only make the failure visible — nothing could teach
+   the routes.
+3. `answerWantsRouted` returned bare when it had no route: the true
+   holder of every starving asset stood at that line wanting to answer,
+   saying nothing.
 
-1. Make the legacy bootstrap honest. Either HOLD like every other
-   routeless branch, or record the assumption and **re-offer when a
-   real route displaces it** (`routeRank` already knows legacy is the
-   weakest word). Gate: `TestAPairedPhoneFetchesAcrossTwoRelays` goes
-   green; `TestAPairedPhoneFetchesAFriendsPhotoOverTheRelay` (single
-   relay, green today) stays green; full `./node/ -race` stays green.
-2. The same honesty for wants and answers: a want that could not reach
-   the holder and an answer that could not reach the wanter are held
-   states, not silence. `answerWantsRouted`'s bare `return` becomes a
-   recorded refusal the UI can speak about.
-3. **Post-pairing space propagation** — the missing room of the MD
-   wave: freight carries spaces only at pairing time; a space joined
-   afterwards (pass or quick link, either direction) reaches the
-   person's other devices by no mechanism at all. Confirmed by reading:
-   nothing after `node/pairing.go`'s freight touches another own
-   device's space set. This needs a small design note first (likely an
-   ADR amendment to ADR-020/MD): the candidate shape is "my own devices
-   are standing recipients of my joins", riding the same signed-cert
-   trust that already names them.
-4. Design frame for all three: the pre-T4/T5 sections of ADR-020 — this
-   is their unbuilt room. Do not patch around them separately.
+**FIXED, gate green** (same branch):
+- *Phase 1* — `WantHold`: no-route is HELD/RETRYABLE and visible;
+  refusals stay terminal (41a8a08).
+- *Honesty* — the guess is used, never recorded, never final:
+  `heldTentative`, displacement of recorded guesses by any statement,
+  legacy-basis re-offer on stronger knowledge (25ea86e).
+- *Convergence* — the freight carries the person's route book (doctrine
+  amendment, the allowlist's argument), and a want carries up to three
+  stated return routes (bundle key 8 → `RouteAdvertised`, cert-gated;
+  both wire changes verified append-compatible before writing) (31a53b5).
 
-**Also known, adjacent, cheaper:** the UI's "did not answer" is the
-node's honest timeout, but the node often *knows* more (no route for
-the wanter — see 2). Once refusals are recorded, surface them.
+After: the forever-red two-relay fetch passes in 3.8s; the five-kind
+matrix is all-complete in 14s with the friend answering at the wanter's
+stated relay; `TestNoSiblingCacheDependency` enforces, in both
+directions, that a receiver never depends on what its sibling opened.
 
-## Stream 2 — composer and replies (UI session)
+**Scope honesty:** the fix covers pass/quick-link relationships — the
+paths the UI offers. A LEGACY direct invite records no routes on either
+side (CODE ABSENCE) and remains unsupported across relays; the UI does
+not offer it (the invite button runs the pass flow), pasted legacy
+invites still work on a shared relay, and the follow-up is either
+carrying the minter's routes in the invite string or retiring the path.
 
-- **Reply + pasted image loses the reply.** Root found:
-  `reply_to` exists only on `message.text.v1` (`api_blocks.go:455`) —
-  blocks structurally cannot be replies — and the upload path neither
-  sends nor clears `replyTarget` (`app.js`: only `say()` reads it).
-  Decision to make in-session: caption travels as a reply text with the
-  image as its sibling, or the reply bar is honestly cleared with a
-  word. Either way the current silent divergence goes.
-- **Grouped media** (send several as one) — requested by testers; same
-  corner of the code.
-- Already committed locally, rides with this stream: the reply-quote
-  layout fix (`4a617c1` — quote pushed its bubble off a phone's screen;
-  quote now names the thing, not its fetch-state weather). **This
-  commit sits unpushed on local main** — push it with this stream's
-  work.
+## Stream 1B — principal convergence (open, design-first)
 
-## Stream 3 — reading polish (short UI session, after or with Stream 2)
+**OBSERVED (both directions):** a space joined by quick link on one of
+the person's devices never appears on the other.
 
-- **Esc closes an open post.** The global Escape router exists
-  (`app.js:2389`); add the branch.
-- **The magnifier cursor over post images** is our own
-  `cursor: zoom-in` (`styles.css:1664`); the image is click-to-open.
-  Decide: keep the affordance, change the cursor, or both. One line.
+**CODE ABSENCE:** the freight carries spaces only at pairing time;
+nothing propagates a membership acquired afterwards to sibling devices.
 
-Streams 2 and 3 share files (`app.js`, `styles.css`) — run them as one
-session or strictly in sequence, never parallel to each other. Both are
-safe alongside Stream 1 (different tree).
+**PROVEN by inspection, the deeper split:** cryptographic membership is
+per-DEVICE (epochs wrap to device X25519 keys; no principal appears in
+any wrap list), while admission is per-PRINCIPAL (cert chains; private
+spaces check nothing at admission — holding the key IS membership). The
+freight already ships other people's space keys to a new device, so a
+sibling-sealed SpaceGrant is consistent with — indeed stricter than —
+shipped behaviour.
 
-## Platform track (not scheduled, decisions recorded)
+**The load-bearing edge (CODE ABSENCE, latent beta blocker):** the
+owner's members map never learns a sibling device — no path calls
+AddMember on seeing DeviceCertified — so the owner's next rotation
+(inviting anyone, revoking anything) silently deafens the paired phone:
+`Undecryptable++`, no test, no mitigation. Access granted by freight or
+grant is *valid until the owner's next rotation and no longer.*
 
-- **Android first run** still asks for a passphrase; PIN+name is
-  desktop-only in 0.1.4 (the note says so honestly). Agreed direction:
-  don't restyle the native screen — serve the existing web
-  `lockscreen.html` through a lockgate inside the Android host, which
-  brings PIN+name, the design, and future fixes to every platform at
-  once. First step when picked up: stand lockgate up in the host and
-  see the screen live.
-- **iOS** — paused by owner. Research done: core and web UI port as-is
-  via `gomobile -target=ios`; the Kotlin host (~6300 lines) is the
-  rewrite; background model is the real design question; USB radio does
-  not exist there. First experiment when resumed: bind the existing
-  `android/quietcore` for iOS and list what breaks (needs no license).
-- **macOS hardware-backed passcode** — blocked on a Developer ID
-  decision, measured and recorded in `kernel/passcode/passcode.go`.
-  The same signature would remove the Gatekeeper warning for every
-  tester.
+**DESIGN CANDIDATE (the note must choose):** either sibling
+certificates reach the owner's AddMember (a "my devices" announcement
+the controller folds in — `identity_admit.go` already anticipates it),
+or RotateEpoch expands principals to their certified devices at wrap
+time. The invariant, exit criteria, and the ten-step red test (offline
+window, speaks-as-principal, rotation, revocation) are in the approved
+plan. Implementation is v0.1.6.
 
-## Hygiene (cheap, background)
+## Streams 2–3 (unchanged from rev 1, one addition)
 
-- `TestAPinToAnUnknownSpaceIsKept`: one failure in ~2400 runs, message
-  never captured. Add `-v` to CI's test step so the next such flake
-  names itself; hunt only if it recurs.
-- Site says "macOS / universal" — a person on Apple Silicon cannot tell
-  it is for them. One label, other repo (`quite.space` site).
-- Owner's standing items: rotate the leaked keystore password; PTR
-  record for 195.63.160.237; Developer ID / Play licenses when ready.
+Reply+pasted-image loses the reply (blocks cannot carry `reply_to` —
+message.text.v1 only; the composer neither sends nor clears the
+target); grouped media; Esc closes a post; the zoom cursor. **Decide
+reply+image with the envelope direction in mind:** the grouped-media
+request suggests `reply_to` eventually belongs to a composition/message
+envelope, not to `message.text.v1` — do not cement a caption-hack that
+fights that future. **New (PROVEN by inspection):** the web UI sends
+voice as `kind:'audio'` with a transcript that AudioBlock cannot carry —
+the typed transcript is silently discarded and `block.voice.v1` is
+never produced from the web UI.
 
-## Suggested order
+## Exit criteria for Stream 1 (owner's gate)
 
-1. **Stream 1** — now, in its own session, on its branch. It is the
-   beta's trust. Release as **v0.1.5 on its own** the moment the gate
-   is green; don't batch it with UI work.
-2. Streams 2+3 as one UI session in parallel; they ship whenever ready
-   (no release pressure — 4a617c1 already waits there).
-3. Android lockgate screen next release after that.
+    1A MEDIA: photo/video/file/voice ✓ · different relays ✓ · paired
+    devices ✓ · no sibling-cache dependency ✓        ← green on branch
+    1B IDENTITY: join anywhere → siblings converge · works after an
+    offline window · current + future epochs · sibling speaks as the
+    same principal · revocation stops convergence     ← v0.1.6
 
-## The lesson this week keeps teaching
+Release cut: v0.1.5 = media trust restored (this branch, after review);
+v0.1.6 = principal convergence. Stream 1 is DONE only after both. The
+two sentences the whole stream answers to: *"I am one person on my Mac
+and my phone — wherever I make a connection, it is mine everywhere"*
+and *"I sent media — it can be fetched directly, regardless of file
+type, relay choice, or what my other device happened to do."*
 
-Every real bug of the week — the relay that never hung up, the gateway
-mailing itself, the legacy bootstrap delivering to itself,
-`answerWantsRouted`'s bare return — is the same shape: **a path that
-stays silent or reports success where every neighbouring path speaks.**
-When in doubt in any stream: make the code say what happened; the UI
-already knows how to repeat it honestly. And prove causes with
-instruments, not by reading — seven plausible theories died to probes
-this week, and zero survived them.
+## Method note
+
+Ten of this week's convictions came from instruments; zero from reading
+code. Two probe tables lied until the instrument itself was
+instrumented (who-saw-the-want; the global wantsProbe). Three bugs were
+caught by the stand before any user saw them — a self-deadlock, a
+duplicated freight encoder silently dropping the newest field, a test
+joining by a flow production never used. The doctrine and the method
+are now written where the next person will read them: ADR-023, and the
+comments of the tests that measured everything above.
