@@ -961,7 +961,7 @@ class QuietActivity : ComponentActivity() {
             ?: "Then pick four digits to open it with. The key itself is written " +
                 "by the app — you can read it later in Settings → This device.")
         panel.addView(note)
-        panel.addView(SpaceLook.primary(this, "Choose four digits and open").apply {
+        panel.addView(SpaceLook.primary(this, "Next").apply {
             setOnClickListener {
                 val name = nameField.text.toString().trim()
                 if (name.isEmpty()) {
