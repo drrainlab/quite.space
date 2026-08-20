@@ -831,6 +831,22 @@
   #log { display: flex; flex-direction: column; gap: 3px; }
   .msg { display: flex; flex-direction: column; align-items: flex-start;
     max-width: 78%; margin: 0; }
+  /* --- media runs: consecutive photos from one person tile into a row.
+     The row is a flex child of #log like any entry; the photos inside give
+     up their bubble chrome and full width for a thumbnail grid. The first
+     tile keeps the author head; followers are .grouped and hide it. */
+  .media-run { display: flex; flex-wrap: wrap; gap: 4px;
+    align-self: flex-start; align-items: flex-end; max-width: 78%; }
+  .media-run.own { align-self: flex-end; justify-content: flex-end; }
+  .media-run .msg { max-width: none; margin: 0; }
+  .media-run .bubble { padding: 4px; }
+  .media-run img.thumb { max-width: 148px; max-height: 148px;
+    object-fit: cover; margin-top: 0; }
+  /* The per-photo "open original · N B" line is chrome a tile has no room
+     for — the tap opens the viewer, and the viewer holds the original. An
+     incomplete asset's note (arriving/missing) stays: that is honesty, not
+     chrome, and hiding it would show a thumbnail pretending to be whole. */
+  .media-run .msg .asset-note[data-state="complete"] { display: none; }
   .msg.own { align-self: flex-end; align-items: flex-end; }
   .msg.grouped { margin-top: 2px; }
   .msg:not(.grouped) { margin-top: 16px; }

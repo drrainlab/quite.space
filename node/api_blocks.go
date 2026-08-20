@@ -30,8 +30,11 @@ import (
 const MaxMultipartBody = assets.MaxAssetSize + (1 << 20)
 
 type blockMeta struct {
-	Kind        string `json:"kind"` // visual|voice|audio|file|link|live_signal
-	Size        int64  `json:"size"` // declared file size (streaming ingest)
+	Kind string `json:"kind"` // visual|voice|audio|file|link|live_signal
+	Size int64  `json:"size"` // declared file size (streaming ingest)
+	// ReplyTo (hex event id) makes a picture an answer. Visual only for now
+	// — the one kind a live reply bar was measured sending.
+	ReplyTo     string `json:"reply_to"`
 	MediaType   string `json:"media_type"`
 	Caption     string `json:"caption"`
 	Alt         string `json:"alt"`
@@ -154,8 +157,19 @@ func (a *APIServer) handlePostBlock(w http.ResponseWriter, r *http.Request) {
 	switch meta.Kind {
 	case "visual":
 		schema = schemas.BlockVisual
-		payload, err = (&schemas.VisualBlock{Caption: meta.Caption, Alt: meta.Alt,
-			ThumbMIME: previewMIME, Thumb: preview, Original: ref}).Encode()
+		vb := &schemas.VisualBlock{Caption: meta.Caption, Alt: meta.Alt,
+			ThumbMIME: previewMIME, Thumb: preview, Original: ref}
+		if meta.ReplyTo != "" {
+			raw, derr := hex.DecodeString(meta.ReplyTo)
+			var eid id.EventID
+			if derr != nil || len(raw) != len(eid) {
+				httpErr(w, http.StatusBadRequest, errors.New("bad reply_to"))
+				return
+			}
+			copy(eid[:], raw)
+			vb.ReplyTo = &eid
+		}
+		payload, err = vb.Encode()
 	case "video":
 		schema = schemas.BlockVideo
 		payload, err = (&schemas.VideoBlock{Caption: meta.Caption, Alt: meta.Alt,
@@ -459,8 +473,8 @@ type entryResp struct {
 	KeepCount      int    `json:"keep_count,omitempty"`
 
 	Text string `json:"text,omitempty"`
-	// ReplyTo is a genuine reply edge (message.text.v1 only — the revision
-	// schema reuses the same wire field for a different meaning).
+	// ReplyTo is a genuine reply edge (message.text.v1 and block.visual.v1 —
+	// the revision schema reuses the same wire field for a different meaning).
 	ReplyTo string `json:"reply_to,omitempty"`
 	// Mentions is the author's signed claim of who is addressed (full hex),
 	// with names resolved here so the client renders without a lookup.
@@ -666,6 +680,9 @@ func (a *APIServer) projectEntry(tid id.TerminalID, sp *terminals.Space,
 	case e.Content.Visual != nil:
 		v := e.Content.Visual
 		resp.Caption, resp.Alt, resp.Fallback = v.Caption, v.Alt, v.Fallback()
+		if rt := v.ReplyTo; rt != nil {
+			resp.ReplyTo = rt.Hex()
+		}
 		if len(v.Thumb) > 0 {
 			resp.ThumbB64 = base64.StdEncoding.EncodeToString(v.Thumb)
 			resp.ThumbMIME = v.ThumbMIME

@@ -1904,7 +1904,7 @@ async function refreshSpace() {
         const e = entries[i];
         if (e.id) seenEntries.add(e.id);
         const grouped = prev && prev.author === e.author && prev.produced_by === e.produced_by;
-        renderEntry(log, e, true, grouped);
+        renderEntryTiled(log, e, true, grouped, prev);
         prev = e;
       }
     }
@@ -1918,7 +1918,7 @@ async function refreshSpace() {
         const e = entries[i];
         if (e.id) seenEntries.add(e.id);
         const grouped = prev && prev.author === e.author && prev.produced_by === e.produced_by;
-        renderEntry(log, e, true, grouped);
+        renderEntryTiled(log, e, true, grouped, prev);
         prev = e;
       }
     } else {
@@ -1927,7 +1927,7 @@ async function refreshSpace() {
         const fresh = !firstPaint && e.id && !seenEntries.has(e.id);
         if (e.id) seenEntries.add(e.id);
         const grouped = prev && prev.author === e.author && prev.produced_by === e.produced_by;
-        renderEntry(log, e, fresh, grouped);
+        renderEntryTiled(log, e, fresh, grouped, prev);
         prev = e;
       }
     }
@@ -3145,6 +3145,28 @@ function cssId(v) {
   return window.CSS && CSS.escape ? CSS.escape(s) : s.replace(/[^a-zA-Z0-9_-]/g, '');
 }
 
+// CONSECUTIVE PHOTOS FROM ONE PERSON TILE INTO A ROW instead of stacking as
+// N full-width bubbles. #log is a flex COLUMN, so tiling needs a shared row
+// node: the second photo of a run wraps the first into a .media-run and
+// joins it; later ones just join. The feed differ is untouched — patchRow
+// finds rows by [data-eid] at any depth, and append/rebuild paths all come
+// through here with the same prev they already computed for `grouped`.
+function renderEntryTiled(log, e, fresh, grouped, prev) {
+  if (grouped && prev && e.kind === 'visual' && prev.kind === 'visual') {
+    let run = log.lastElementChild;
+    if (!run || !run.classList.contains('media-run')) {
+      const first = log.lastElementChild;
+      run = document.createElement('div');
+      run.className = 'media-run' + (first && first.classList.contains('own') ? ' own' : '');
+      if (first) { log.replaceChild(run, first); run.appendChild(first); }
+      else { log.appendChild(run); }
+    }
+    renderEntry(run, e, fresh, grouped);
+    return;
+  }
+  renderEntry(log, e, fresh, grouped);
+}
+
 function renderEntry(log, e, fresh, grouped) {
   const d = document.createElement('div');
   const own = !!e.mine;
@@ -3204,7 +3226,11 @@ function renderEntry(log, e, fresh, grouped) {
   // never received — the row still says a reply happened and says only what
   // it can support, instead of guessing at the words.
   if (e.reply_to) {
-    const src = log.querySelector('.entry[data-eid="' + cssId(e.reply_to) + '"]');
+    // Resolved against the REAL feed, not the container this row lands in:
+    // a tiled photo renders into its .media-run and a patched row into a
+    // detached div, and the message being answered lives in neither.
+    const feed = document.getElementById('log') || log;
+    const src = feed.querySelector('.entry[data-eid="' + cssId(e.reply_to) + '"]');
     const q = document.createElement(src ? 'button' : 'div');
     q.className = 'reply-to';
     const who = document.createElement('span');
@@ -3405,6 +3431,11 @@ function assetNote(e) {
   const n = document.createElement('div');
   n.className = 'asset-note';
   if (!a) return n;
+  // The state rides the DOM so a media tile can hide the note for a whole
+  // asset while an arriving/missing one keeps saying so — honesty over
+  // chrome. Guarded: the wording harness runs this function on a stub
+  // element that has no dataset, and the stamp is styling, not wording.
+  if (n.dataset) n.dataset.state = a.state || '';
   if (a.state === 'complete') {
     n.textContent = `⬇ open original · ${fmtBytes(a.size)}`;
     // Through the viewer, which knows how to close itself. A file has no
@@ -4590,7 +4621,14 @@ async function sendAttachment() {
   } else {
     meta.filename = pendingFile.name;
   }
+  // A PHOTO SENT FROM AN ARMED REPLY BAR IS THE REPLY. The bar used to be
+  // invisible to this path: the picture went out unattached and the bar
+  // stayed up, promising an answer that had already left as something else
+  // — measured live. Visual only, because that is the one kind the
+  // protocol's reply edge covers (block.visual.v1 key 7).
+  if (pendingKind === 'visual' && replyTarget) meta.reply_to = replyTarget.id;
   await postBlock(meta, pendingPreview, pendingFile);
+  if (pendingKind === 'visual' && replyTarget) cancelReply();
   dlgAttach.close();
   refreshSpace();
 }

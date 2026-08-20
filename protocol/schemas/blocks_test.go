@@ -322,3 +322,39 @@ func TestAssetRefVersionValidation(t *testing.T) {
 		t.Fatal("legacy ref with content id accepted")
 	}
 }
+
+// A PICTURE CAN ANSWER SOMEONE (key 7, appended 2026-08). Both directions of
+// compatibility are the test: bytes with the edge decode it back exactly, and
+// bytes WITHOUT it — everything ever encoded before the key existed — still
+// decode, because the reader skips keys it does not know rather than refusing.
+func TestVisualBlockReplyEdgeRoundTripAndOldBytesStillDecode(t *testing.T) {
+	var reply id.EventID
+	reply[0], reply[31] = 0xD4, 0x7E
+	b := &VisualBlock{
+		Alt: "a photo sent as an answer", Original: testRef(1), ReplyTo: &reply,
+	}
+	enc, err := b.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := DecodeVisualBlock(enc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ReplyTo == nil || *got.ReplyTo != reply {
+		t.Fatalf("the reply edge did not survive the trip: %+v", got.ReplyTo)
+	}
+
+	// Pre-extension bytes: the same block encoded with no edge.
+	old, err := (&VisualBlock{Alt: "from before the key existed", Original: testRef(1)}).Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, err := DecodeVisualBlock(old)
+	if err != nil {
+		t.Fatalf("pre-extension bytes refused: %v", err)
+	}
+	if plain.ReplyTo != nil {
+		t.Fatal("an edge appeared out of nothing")
+	}
+}

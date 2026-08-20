@@ -12,7 +12,9 @@ import (
 )
 
 // ---- VisualBlock (block.visual.v1) ----
-// keys: 1 fallback, 2 caption, 3 alt, 4 thumb_mime, 5 thumb, 6 original
+// keys: 1 fallback, 2 caption, 3 alt, 4 thumb_mime, 5 thumb, 6 original,
+// 7 reply_to (event id; appended 2026-08 — a picture can answer someone.
+// Old decoders skip unknown keys, so they show the image without the quote)
 
 type VisualBlock struct {
 	Caption   string
@@ -20,6 +22,9 @@ type VisualBlock struct {
 	ThumbMIME string
 	Thumb     []byte // inline preview, jpeg/png/webp only
 	Original  *AssetRef
+	// ReplyTo is a genuine reply edge, the same meaning as the text
+	// message's — a photo sent as an answer, not beside one.
+	ReplyTo *id.EventID
 }
 
 func (b *VisualBlock) Fallback() string {
@@ -53,6 +58,9 @@ func (b *VisualBlock) Encode() ([]byte, error) {
 	if len(b.Thumb) > 0 {
 		n += 2
 	}
+	if b.ReplyTo != nil {
+		n++
+	}
 	buf := codec.AppendMap(nil, n)
 	buf = codec.AppendUint(buf, 1)
 	buf = codec.AppendText(buf, clip(b.Fallback(), MaxFallbackLen))
@@ -70,6 +78,10 @@ func (b *VisualBlock) Encode() ([]byte, error) {
 	}
 	buf = codec.AppendUint(buf, 6)
 	buf = append(buf, orig...)
+	if b.ReplyTo != nil {
+		buf = codec.AppendUint(buf, 7)
+		buf = codec.AppendBytes(buf, b.ReplyTo[:])
+	}
 	return finishBlock(buf)
 }
 
@@ -89,6 +101,16 @@ func DecodeVisualBlock(p []byte) (*VisualBlock, error) {
 			b.Thumb = append([]byte(nil), v...)
 		case 6:
 			b.Original, er = decodeAssetRef(d)
+		case 7:
+			var v []byte
+			if v, er = d.ReadBytes(); er == nil {
+				var e id.EventID
+				if len(v) != len(e) {
+					return errors.New("schemas: reply_to must be 32 bytes")
+				}
+				copy(e[:], v)
+				b.ReplyTo = &e
+			}
 		default:
 			er = d.SkipItem()
 		}

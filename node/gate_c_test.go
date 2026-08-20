@@ -243,3 +243,78 @@ func waitFor(t *testing.T, cond func() bool) {
 		time.Sleep(50 * time.Millisecond)
 	}
 }
+
+// A PICTURE SENT AS AN ANSWER (block.visual.v1 key 7). The reply edge rides
+// the multipart metadata, survives the log, and comes back on the entry the
+// way a text reply's does — so the feed's existing quote header lights up
+// with no renderer change. The second post proves absence stays absence.
+func TestVisualBlockCarriesAReplyEdge(t *testing.T) {
+	rt := openRuntime(t, t.TempDir(), "alice")
+	defer rt.Close()
+	api, err := NewAPIServer(rt, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(api.Handler())
+	defer srv.Close()
+	tid, err := rt.CreateSpace("answers in pictures")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sid := tid.Hex()
+
+	questionID, err := rt.Say(tid, "what does the ridge look like at dawn?", SayOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	content := bytes.Repeat([]byte{0xAB}, 2048)
+	resp, created := postMultipart(t, srv.URL, api.Token(), "/api/spaces/"+sid+"/blocks",
+		map[string]any{"kind": "visual", "size": len(content), "media_type": "image/webp",
+			"alt": "foggy pines", "reply_to": questionID.Hex()},
+		nil, content)
+	if resp.StatusCode != 200 {
+		t.Fatalf("visual reply upload: %d %v", resp.StatusCode, created)
+	}
+
+	// And a picture that answers nobody, to prove the edge never leaks.
+	resp, _ = postMultipart(t, srv.URL, api.Token(), "/api/spaces/"+sid+"/blocks",
+		map[string]any{"kind": "visual", "size": len(content), "media_type": "image/webp",
+			"alt": "just a photo"},
+		nil, content)
+	if resp.StatusCode != 200 {
+		t.Fatalf("plain visual upload: %d", resp.StatusCode)
+	}
+
+	req, _ := http.NewRequest("GET", srv.URL+"/api/spaces/"+sid+"/entries", nil)
+	req.Header.Set("X-QP-Token", api.Token())
+	r, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var entries []entryResp
+	json.NewDecoder(r.Body).Decode(&entries)
+	r.Body.Close()
+	if len(entries) != 3 {
+		t.Fatalf("entries: %d, want 3", len(entries))
+	}
+	byAlt := map[string]entryResp{}
+	for _, e := range entries {
+		byAlt[e.Alt] = e
+	}
+	if got := byAlt["foggy pines"].ReplyTo; got != questionID.Hex() {
+		t.Fatalf("the reply edge did not come back: %q", got)
+	}
+	if got := byAlt["just a photo"].ReplyTo; got != "" {
+		t.Fatalf("an edge leaked onto a plain photo: %q", got)
+	}
+
+	// A malformed edge is refused before anything is emitted.
+	resp, _ = postMultipart(t, srv.URL, api.Token(), "/api/spaces/"+sid+"/blocks",
+		map[string]any{"kind": "visual", "size": len(content), "media_type": "image/webp",
+			"alt": "bad edge", "reply_to": "zz"},
+		nil, content)
+	if resp.StatusCode != 400 {
+		t.Fatalf("malformed reply_to admitted: %d", resp.StatusCode)
+	}
+}
