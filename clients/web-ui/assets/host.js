@@ -109,6 +109,23 @@ const HOST = (() => {
     stayRefused() {
       return call('stayRefused') === true;
     },
+
+    /**
+     * Ask the phone to SHOW the recovery passphrase — in its own native
+     * dialog, on its own screen. Nothing comes back into this page but
+     * "the dialog is up": the bridge's doctrine (no getters, ever) is the
+     * reason this is a request and not a read. False when the host cannot
+     * right now (older build, or the Activity no longer holds the opened
+     * key) — the caller says "lock and unlock first" instead of pretending.
+     */
+    revealPassphrase() {
+      return call('revealPassphrase') === true;
+    },
+
+    /** Ask the phone to run its native choose-a-code flow. Same shape. */
+    changeCode() {
+      return call('changeCode') === true;
+    },
   };
 })();
 

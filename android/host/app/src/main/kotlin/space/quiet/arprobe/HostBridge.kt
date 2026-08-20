@@ -48,6 +48,8 @@ internal class HostBridge(
     private val unlockRemembered: () -> Boolean,
     private val forgetPassphrase: () -> Unit,
     private val stayRefused: () -> Boolean,
+    private val revealPassphrase: () -> Boolean = { false },
+    private val changeCode: () -> Boolean = { false },
 ) {
 
     /** True when the caller proved it is the page our own node served. */
@@ -181,6 +183,35 @@ internal class HostBridge(
         if (!admitted(pass)) return refuse("forgetPassphrase")
         forgetPassphrase()
         return true
+    }
+
+    /**
+     * Show the recovery passphrase — ON THE PHONE'S SCREEN, in a native
+     * dialog. The rule above holds exactly because of calls like this one:
+     * nothing is returned but "the dialog is up". The page that asked never
+     * sees a word of it, so a stolen token buys a dialog in front of the
+     * person holding the phone — which is who it is for.
+     *
+     * False when this instance no longer holds the opened passphrase (the
+     * Activity was recreated under a live core); the page says "lock and
+     * unlock first" instead of pretending.
+     */
+    @JavascriptInterface
+    fun revealPassphrase(pass: String?): Boolean {
+        if (!admitted(pass)) return refuse("revealPassphrase")
+        return revealPassphrase()
+    }
+
+    /**
+     * Re-run the native choose-a-code flow. Until now the one offer per
+     * install was the only door — the settings page even pointed at a control
+     * that did not exist. Same shape as [revealPassphrase]: a Boolean and a
+     * native screen, nothing into the page.
+     */
+    @JavascriptInterface
+    fun changeCode(pass: String?): Boolean {
+        if (!admitted(pass)) return refuse("changeCode")
+        return changeCode()
     }
 
     private fun refuse(what: String): Boolean {

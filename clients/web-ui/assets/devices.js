@@ -145,9 +145,30 @@ async function loadPasscode() {
   if (typeof window !== 'undefined' && window.QuietHost) {
     if (form) form.style.display = 'none';
     if (bound) bound.style.display = 'none';
-    st.textContent = 'On this phone the login code is set on the "This device" tab — it is kept in the phone\'s hardware, not in a file.';
+    st.textContent = t('ui.dev.pcPhone');
+    // THE TWO CONTROLS THE OLD SENTENCE ONLY POINTED AT. Both raise a native
+    // dialog on the phone's own screen; nothing about the key ever enters
+    // this page (HOST doctrine: the passphrase has no getter, ever).
+    const box = document.getElementById('pcHost');
+    if (box) {
+      box.style.display = '';
+      box.innerHTML = '';
+      const mk = (label, verb) => {
+        const b = document.createElement('button');
+        b.className = 'btn-plain';
+        b.textContent = label;
+        b.onclick = () => {
+          if (!HOST[verb]()) st.textContent = t('ui.dev.pcHostStale');
+        };
+        box.appendChild(b);
+      };
+      mk(t('ui.dev.pcReveal'), 'revealPassphrase');
+      mk(t('ui.dev.pcChange'), 'changeCode');
+    }
     return;
   }
+  const hostBox = document.getElementById('pcHost');
+  if (hostBox) hostBox.style.display = 'none';
   try {
     const info = await api('/api/passcode');
     // ONE STATE ON SCREEN AT A TIME: bound shows the fact and a way out;

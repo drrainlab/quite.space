@@ -135,6 +135,33 @@ class QuietActivity : ComponentActivity() {
     /** What is in the field, so rebuilding the panel does not empty it. */
     private var lastTyped: String = ""
 
+    /** The first-run name field, preserved across panel rebuilds like [lastTyped]. */
+    private var lastName: String = ""
+
+    /**
+     * The code chosen during onboarding, held until the core proves the
+     * generated passphrase by opening with it. Bound only at STATE_ALIVE —
+     * the same law as [pendingPassphrase]: nothing unverified is ever sealed.
+     */
+    @Volatile
+    private var pendingBindCode: String? = null
+
+    /**
+     * The passphrase this instance opened with, kept in memory only. It backs
+     * the two native dialogs Settings can raise (reveal / change code); it is
+     * never written anywhere new and never crosses the WebView bridge — the
+     * bridge's own doctrine: the passphrase has no getter anywhere.
+     */
+    @Volatile
+    private var openedPassphrase: String? = null
+
+    /**
+     * The person walked through the "use a long passphrase instead" door.
+     * Sticky for this instance so a refused attempt re-renders the form they
+     * were actually filling in, not the short one.
+     */
+    private var longFormPreferred = false
+
     /** The URL currently shown, so a state change does not reload needlessly. */
     private var loaded: String? = null
 
@@ -311,6 +338,30 @@ class QuietActivity : ComponentActivity() {
                     // the next time it opens" is not what happens.
                     unlockRemembered = { vault.has() || bio.has() },
                     forgetPassphrase = { vault.forget(); bio.forget() },
+                    // BOTH ANSWER WITH A DIALOG ON THE PHONE'S OWN SCREEN,
+                    // never with a value into the page — the bridge's doctrine
+                    // stands: the passphrase has no getter anywhere.
+                    revealPassphrase = {
+                        val pass = openedPassphrase
+                        if (pass.isNullOrEmpty()) {
+                            false
+                        } else {
+                            runOnUiThread { showRecoveryDialog(pass) }
+                            true
+                        }
+                    },
+                    changeCode = {
+                        val pass = openedPassphrase
+                        if (pass.isNullOrEmpty()) {
+                            false
+                        } else {
+                            runOnUiThread {
+                                unlockMessage = null
+                                chooseCode(pass)
+                            }
+                            true
+                        }
+                    },
                     stayRefused = { controller.availabilityRefused() },
                 ),
                 "QuietHost",
@@ -464,12 +515,25 @@ class QuietActivity : ComponentActivity() {
                 pendingPassphrase?.let { pass ->
                     pendingPassphrase = null
                     autoAttempt = null
+                    openedPassphrase = pass
                     // NOT WHILE A GUARDED COPY EXISTS. Writing the plain one
                     // back on every successful open would quietly reopen the
                     // hole offerFace closed — the app would auto-open before
                     // the sensor was ever asked.
                     if (!vault.has() && !bio.has()) vault.save(pass)
-                    if (!passcode.has() && !passcodeOffered) {
+                    val chosen = pendingBindCode
+                    if (chosen != null) {
+                        // The onboarding already asked for the code; binding it
+                        // here, against a passphrase the core has JUST opened
+                        // with, is the whole point of the delay. No offer needed
+                        // — the person chose these digits minutes ago.
+                        pendingBindCode = null
+                        passcodeOffered = true
+                        passcode.bind(chosen, pass)
+                        offering = true
+                        unlockMessage = null
+                        offerFace(pass)
+                    } else if (!passcode.has() && !passcodeOffered) {
                         passcodeOffered = true
                         offering = true
                         unlockMessage = null
@@ -499,6 +563,7 @@ class QuietActivity : ComponentActivity() {
                 // status, and throwing it away is what made this screen so
                 // hard to get past: a person typed a word, pressed Open, and
                 // got back the same blank field with no sentence anywhere.
+                pendingBindCode = null
                 pendingPassphrase?.let {
                     pendingPassphrase = null
                     unlockMessage = unlockReason(controller.lastError())
@@ -781,6 +846,25 @@ class QuietActivity : ComponentActivity() {
             .show()
     }
 
+    /**
+     * The recovery passphrase, on the phone's own screen. Six words the app
+     * minted at first run (or whatever the person typed themselves) — the one
+     * secret that outlives this phone's hardware vault. Shown, never sent:
+     * the WebView asked for this dialog but never sees its content.
+     */
+    private fun showRecoveryDialog(pass: String) {
+        AlertDialog.Builder(this)
+            .setTitle("Your recovery passphrase")
+            .setMessage(
+                pass + "\n\n" +
+                    "Write it down somewhere that is not this phone. It opens this " +
+                    "device's data even if the code and the phone's own vault are " +
+                    "gone — a repair or a biometric reset must not cost you your spaces."
+            )
+            .setPositiveButton("I wrote it down", null)
+            .show()
+    }
+
     /** The passcode attempt, and the four answers it can have. */
     private fun tryPasscode(code: String) {
         // The verdict is FELT on the panel that asked, so this happens before
@@ -822,7 +906,280 @@ class QuietActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * Picking a code is TYPED TWICE, the same reasoning as [chooseCode]: a
+     * mistyped code costs the easy way in at the worst moment. Generic over
+     * what happens next, because onboarding binds it only after the core has
+     * proven the key the code will wrap.
+     */
+    private fun pickCode(back: () -> Unit, onChosen: (String) -> Unit) {
+        val escape = "Back" to back
+        showKeypad(
+            title = "Pick four digits",
+            note = unlockMessage
+                ?: "They open Quiet on this phone. The real key is longer, written by the app itself.",
+            digits = 4,
+            onComplete = { first ->
+                unlockMessage = null
+                showKeypad(
+                    title = "Type them again",
+                    note = "So a slip now does not become a locked-out phone later.",
+                    digits = 4,
+                    onComplete = { second ->
+                        if (second == first) {
+                            statusPanel?.let { Haptics.accept(it) }
+                            onChosen(first)
+                        } else {
+                            statusPanel?.let { Haptics.refuse(it) }
+                            unlockMessage = "Those were not the same — start again."
+                            pickCode(back, onChosen)
+                        }
+                    },
+                    onEscape = escape,
+                )
+            },
+            onEscape = escape,
+        )
+    }
+
+    /**
+     * FIRST RUN: what should people call you, and four digits. The passphrase
+     * is minted by the core (six words, the same generator as the desktop),
+     * proven by OPENING before the code is bound, and readable afterwards in
+     * Settings → This device — a keystore reset must never equal data loss,
+     * so the real key stays reachable by its owner.
+     */
+    private fun showFreshOnboarding(text: String) {
+        web.visibility = View.GONE
+        statusPanel?.let { root.removeView(it) }
+
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(64, 64, 64, 64)
+            addView(TextView(this@QuietActivity).apply {
+                setText(text)
+                gravity = Gravity.CENTER
+            })
+        }
+        fun sectionLabel(label: String) = TextView(this).apply {
+            setText(label)
+            textSize = 13f
+            alpha = 0.6f
+            gravity = Gravity.START
+            setPadding(0, 40, 0, 8)
+        }
+        fun hintView(label: String) = TextView(this).apply {
+            setText(label)
+            textSize = 13f
+            alpha = 0.7f
+            gravity = Gravity.CENTER
+        }
+
+        panel.addView(sectionLabel("What should people call you?"))
+        val nameField = EditText(this).apply {
+            setHint("Your name")
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_WORDS
+            setText(lastName)
+            setSelection(lastName.length)
+            addTextChangedListener(object : TextWatcher {
+                override fun afterTextChanged(s: Editable?) { lastName = s?.toString() ?: "" }
+                override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            })
+        }
+        panel.addView(nameField)
+        val note = TextView(this).apply {
+            setText(unlockMessage
+                ?: "Then pick four digits to open it with. The key itself is written " +
+                    "by the app — you can read it later in Settings → This device.")
+            textSize = 13f
+            alpha = 0.8f
+            gravity = Gravity.CENTER
+            setPadding(0, 8, 0, 8)
+        }
+        panel.addView(note)
+        panel.addView(Button(this).apply {
+            setText("Choose four digits and open")
+            setOnClickListener {
+                val name = nameField.text.toString().trim()
+                if (name.isEmpty()) {
+                    note.text = "A name first — it is how the people you write to will see you."
+                    return@setOnClickListener
+                }
+                unlockMessage = null
+                pickCode(back = { showFreshOnboarding(text) }) { code ->
+                    val generated = space.quiet.quietcore.Quietcore.suggestPassphrase()
+                    if (generated.isEmpty()) {
+                        unlockMessage = "Could not mint a key — try again."
+                        showFreshOnboarding(text)
+                        return@pickCode
+                    }
+                    pendingBindCode = code
+                    pendingPassphrase = generated
+                    // The CONTROLLER opens the node — one owner, one directory,
+                    // one lock. The name rides the same call; the binding has
+                    // threaded it end to end all along, the UI just never spoke.
+                    controller.ensureStarted(generated, name, true)
+                }
+            }
+        })
+
+        panel.addView(sectionLabel("Or: this is my second device"))
+        val offerField = EditText(this).apply {
+            setHint("Pairing code from the other device")
+            inputType = InputType.TYPE_CLASS_TEXT
+        }
+        panel.addView(offerField)
+        val pairNote = hintView("On the other device: Settings → Devices → Pair a new device. " +
+            "Your name and spaces come across with the pairing.")
+        panel.addView(pairNote)
+        panel.addView(Button(this).apply {
+            setText("Pair with my other device")
+            setOnClickListener {
+                val offer = offerField.text.toString().trim()
+                if (offer.isEmpty()) { pairNote.text = "Paste the code first."; return@setOnClickListener }
+                val proceed = {
+                    unlockMessage = null
+                    pickCode(back = { showFreshOnboarding(text) }) { code ->
+                        startPairCeremony(offer, code, text)
+                    }
+                }
+                if (controller.hasIdentity() || controller.dataDir().listFiles()?.isNotEmpty() == true) {
+                    // The dir is somebody's. Pairing writes an identity, and
+                    // identities are never written over each other — so the
+                    // fork is the PERSON'S to take, with its cost spelled out.
+                    AlertDialog.Builder(this@QuietActivity)
+                        .setTitle("This phone already holds Quiet data")
+                        .setMessage("To pair as your other device, everything Quiet " +
+                            "keeps on this phone must be erased first: its identity, " +
+                            "its spaces' local history, its remembered code. " +
+                            "This cannot be undone. Erase and pair?")
+                        .setPositiveButton("Erase and pair") { _, _ ->
+                            val err = controller.startOver()
+                            if (err != null) { pairNote.text = err } else { proceed() }
+                        }
+                        .setNegativeButton("Keep it", null)
+                        .show()
+                    return@setOnClickListener
+                }
+                proceed()
+            }
+        })
+
+        panel.addView(sectionLabel(""))
+        panel.addView(Button(this).apply {
+            setText("Use a long passphrase instead")
+            setOnClickListener {
+                // The door for whoever wants to own the words themselves —
+                // sticky, so a refused attempt re-renders THIS form.
+                longFormPreferred = true
+                unlockMessage = null
+                showPassphraseStatus(text, unlockable = true)
+            }
+        })
+
+        root.addView(panel)
+        statusPanel = panel
+    }
+
+    /**
+     * The child's side of the ceremony, with a key nobody typed: minted here,
+     * handed to the pairing (it encrypts THIS phone only — the freight is
+     * sealed by the ceremony's own key), bound to the chosen code only after
+     * the paired open proves it. Order is law, same as create.
+     */
+    private fun startPairCeremony(offer: String, code: String, backText: String) {
+        val generated = space.quiet.quietcore.Quietcore.suggestPassphrase()
+        if (generated.isEmpty()) {
+            unlockMessage = "Could not mint a key — try again."
+            showFreshOnboarding(backText)
+            return
+        }
+        val refusal = controller.pairStart(generated, offer)
+        if (refusal != null) {
+            unlockMessage = refusal
+            showFreshOnboarding(backText)
+            return
+        }
+
+        web.visibility = View.GONE
+        statusPanel?.let { root.removeView(it) }
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(64, 64, 64, 64)
+        }
+        val pairNote = TextView(this).apply {
+            setText("Reaching your other device…")
+            gravity = Gravity.CENTER
+        }
+        panel.addView(pairNote)
+        val pairDigits = TextView(this).apply {
+            gravity = Gravity.CENTER
+            textSize = 34f
+            letterSpacing = 0.3f
+        }
+        panel.addView(pairDigits)
+        val approveBtn = Button(this).apply {
+            setText("The digits match")
+            visibility = View.GONE
+        }
+        panel.addView(approveBtn)
+        root.addView(panel)
+        statusPanel = panel
+
+        var cancelled = false
+        val poll = object : Runnable {
+            override fun run() {
+                if (cancelled) return
+                val st = controller.pairState()
+                when (st.optString("stage")) {
+                    "digits" -> {
+                        pairDigits.text = st.optString("digits")
+                        approveBtn.visibility = View.VISIBLE
+                        pairNote.text = "Compare with the other screen. Continue only if the digits match."
+                        web.postDelayed(this, 400)
+                    }
+                    "done" -> {
+                        pairNote.text = "Paired — opening…"
+                        pendingBindCode = code
+                        pendingPassphrase = generated
+                        controller.ensureStarted(generated, null, true)
+                    }
+                    "failed" -> {
+                        unlockMessage = "Failed: " + st.optString("error")
+                        showFreshOnboarding(backText)
+                    }
+                    else -> web.postDelayed(this, 400)
+                }
+            }
+        }
+        approveBtn.setOnClickListener {
+            approveBtn.visibility = View.GONE
+            pairNote.text = "Waiting for the other device to approve too…"
+            controller.pairApprove()
+        }
+        panel.addView(Button(this).apply {
+            setText("Start over")
+            setOnClickListener {
+                cancelled = true
+                unlockMessage = null
+                showFreshOnboarding(backText)
+            }
+        })
+        web.postDelayed(poll, 400)
+    }
+
     private fun showPassphraseStatus(text: String, unlockable: Boolean) {
+        // FIRST RUN, THE SHORT WAY: a name and four digits, and the key draws
+        // itself — the desktop's create screen (lockgate, 61a0d6e), finally
+        // ported. The long-passphrase form below stays one button away for
+        // whoever wants to own the words themselves.
+        if (unlockable && !longFormPreferred && !controller.hasIdentity()) {
+            showFreshOnboarding(text)
+            return
+        }
         web.visibility = View.GONE
         statusPanel?.let { root.removeView(it) }
 
