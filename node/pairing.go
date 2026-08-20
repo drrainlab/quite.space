@@ -20,11 +20,21 @@
 // the PrincipalSeed and TerminalSeeds (root and controller authority stay
 // home — decision 5, or revocation is theatre), the parent's device
 // secrets, the SelfTerminalSeed (each device is its own terminal, decision
-// 6), routes, sagas, and counters (device-local by doctrine). The freight
-// test asserts the absences against the actual bytes.
+// 6), sagas, and counters (device-local by doctrine). The freight test
+// asserts the absences against the actual bytes.
+//
+// PEER ROUTES TRAVEL — a doctrine amendment, and the argument is the
+// allowlist's (a529c81): where the people this person knows can be
+// REACHED is the person's knowledge, not the machine's. A child born
+// route-blind delivered every copy to its own relay on a guess and
+// starved on media the moment its relay differed from a friend's —
+// BETA_AUDIT_2026-08-20, stream 1A. What stays device-local is the
+// device's own half: SelfIngress (each device advertises where IT
+// listens), route health, backoff, counters. This is ADR-020's T7 rung.
 package node
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/binary"
 	"errors"
@@ -80,37 +90,53 @@ type freightDoc struct {
 	// those devices exists anywhere to release them. Measured on the first
 	// live pairing as "no other people, no history, no media".
 	Legacy []storage.LegacyBinding
+	// Routes is the parent's PeerRoutes book — where the person's peers
+	// can be reached — plus one synthetic entry: the parent itself at its
+	// own ingress, provenance RouteAdvertised (the parent is literally
+	// stating "answer me here" to its own child). The person's knowledge,
+	// inherited as is; the child's own SelfIngress still grows at home.
+	Routes map[id.DeviceID][]storage.Route
 }
 
 // buildFreightLocked snapshots what the child needs, AFTER the rotations.
 // Caller holds r.mu. LocalOnly spaces stay home: the assistant's room is
 // this device's room (AI-0), and under decision 6 the child grows its own.
-func (r *Runtime) buildFreightLocked() []byte {
+func (r *Runtime) buildFreightLocked(selfIngress []string) []byte {
 	doc := freightDoc{Principal: r.PrincipalID, DisplayName: r.ks.DisplayName}
 	for _, rec := range r.ks.Certs {
 		if rec.Device == r.Device.ID {
 			doc.CertFrame = rec.Frame // replaced by the child's below; see sendFreight
 		}
 	}
-	var buf []byte
-	buf = codec.AppendArray(buf, freightFields+1)
-	buf = codec.AppendUint(buf, freightVersion)
-	buf = codec.AppendBytes(buf, doc.Principal[:])
-	buf = codec.AppendBytes(buf, doc.CertFrame)
-	buf = codec.AppendText(buf, doc.DisplayName)
-	spaces := make([]freightSpace, 0, len(r.ks.Spaces))
 	for tid, meta := range r.ks.Spaces {
 		if meta.LocalOnly {
 			continue
 		}
-		spaces = append(spaces, freightSpace{
+		doc.Spaces = append(doc.Spaces, freightSpace{
 			Terminal: tid, Title: meta.Title, Visibility: meta.Visibility,
 			ManifestFrame: meta.ManifestFrame, Epochs: r.ks.Epochs[tid],
 			LocalTitle: meta.LocalTitle, Unnamed: meta.Unnamed,
 		})
 	}
-	buf = codec.AppendArray(buf, len(spaces))
-	for _, sp := range spaces {
+	doc.Legacy = append([]storage.LegacyBinding(nil), r.ks.LegacyBindings...)
+	doc.Routes = freightRoutesSnapshot(r, selfIngress)
+	return encodeFreightDoc(&doc)
+}
+
+// encodeFreightDoc is THE one freight encoder. replaceFreightCert used to
+// carry its own copy of the encoding loop, and the day the routes field
+// was born that copy silently dropped it between build and send — the
+// child arrived route-blind with every test on the builder green. One
+// encoder, or the wire format forks the moment anyone adds a field.
+func encodeFreightDoc(doc *freightDoc) []byte {
+	var buf []byte
+	buf = codec.AppendArray(buf, freightFields+2)
+	buf = codec.AppendUint(buf, freightVersion)
+	buf = codec.AppendBytes(buf, doc.Principal[:])
+	buf = codec.AppendBytes(buf, doc.CertFrame)
+	buf = codec.AppendText(buf, doc.DisplayName)
+	buf = codec.AppendArray(buf, len(doc.Spaces))
+	for _, sp := range doc.Spaces {
 		buf = codec.AppendArray(buf, freightSpFields+3)
 		buf = codec.AppendBytes(buf, sp.Terminal[:])
 		buf = codec.AppendText(buf, sp.Title)
@@ -125,7 +151,57 @@ func (r *Runtime) buildFreightLocked() []byte {
 		buf = codec.AppendText(buf, sp.LocalTitle)
 		buf = codec.AppendBool(buf, sp.Unnamed)
 	}
-	buf = appendLegacyBindings(buf, r.ks.LegacyBindings)
+	buf = appendLegacyBindings(buf, doc.Legacy)
+	buf = appendRouteEntries(buf, doc.Routes)
+	return buf
+}
+
+// freightRoutesSnapshot is the person's route knowledge as of this
+// pairing: the PeerRoutes book plus the parent itself at its own stated
+// ingress (provenance RouteAdvertised — the parent is literally telling
+// its child "answer me here"). Caller holds r.mu.
+func freightRoutesSnapshot(r *Runtime, selfIngress []string) map[id.DeviceID][]storage.Route {
+	out := map[id.DeviceID][]storage.Route{}
+	for dev, routes := range r.ks.PeerRoutes {
+		if len(routes) > 0 {
+			out[dev] = append([]storage.Route(nil), routes...)
+		}
+	}
+	var self []storage.Route
+	for _, ep := range selfIngress {
+		self = append(self, storage.Route{Endpoint: ep, Transport: "relay",
+			Provenance: storage.RouteAdvertised})
+	}
+	if len(self) > 0 {
+		out[r.Device.ID] = self
+	}
+	return out
+}
+
+// appendRouteEntries writes the routes field in deterministic device order.
+func appendRouteEntries(buf []byte, routes map[id.DeviceID][]storage.Route) []byte {
+	devs := make([]id.DeviceID, 0, len(routes))
+	for dev := range routes {
+		devs = append(devs, dev)
+	}
+	for i := 1; i < len(devs); i++ {
+		for j := i; j > 0 && bytes.Compare(devs[j][:], devs[j-1][:]) < 0; j-- {
+			devs[j], devs[j-1] = devs[j-1], devs[j]
+		}
+	}
+	buf = codec.AppendArray(buf, len(devs))
+	for _, dev := range devs {
+		buf = codec.AppendArray(buf, 2)
+		buf = codec.AppendBytes(buf, dev[:])
+		rts := routes[dev]
+		buf = codec.AppendArray(buf, len(rts))
+		for _, rt := range rts {
+			buf = codec.AppendArray(buf, 3)
+			buf = codec.AppendText(buf, rt.Endpoint)
+			buf = codec.AppendText(buf, rt.Transport)
+			buf = codec.AppendUint(buf, uint64(rt.Provenance))
+		}
+	}
 	return buf
 }
 
@@ -253,7 +329,62 @@ func decodeFreight(data []byte) (*freightDoc, error) {
 			doc.Legacy = append(doc.Legacy, b)
 		}
 	}
-	for k := freightFields + 1; k < n; k++ {
+	if n >= freightFields+2 {
+		rc, err := d.ReadArray()
+		if err != nil {
+			return nil, bad
+		}
+		doc.Routes = map[id.DeviceID][]storage.Route{}
+		for i := 0; i < rc; i++ {
+			ec, err := d.ReadArray()
+			if err != nil || ec < 2 {
+				return nil, bad
+			}
+			var dev id.DeviceID
+			if raw, err = d.ReadBytes(); err != nil || len(raw) != len(dev) {
+				return nil, bad
+			}
+			copy(dev[:], raw)
+			lc, err := d.ReadArray()
+			if err != nil {
+				return nil, bad
+			}
+			var routes []storage.Route
+			for j := 0; j < lc; j++ {
+				fc, err := d.ReadArray()
+				if err != nil || fc < 3 {
+					return nil, bad
+				}
+				var rt storage.Route
+				if rt.Endpoint, err = d.ReadText(); err != nil {
+					return nil, bad
+				}
+				if rt.Transport, err = d.ReadText(); err != nil {
+					return nil, bad
+				}
+				prov, err := d.ReadUint()
+				if err != nil || prov > 255 {
+					return nil, bad
+				}
+				rt.Provenance = uint8(prov)
+				for k := 3; k < fc; k++ {
+					if err := d.SkipItem(); err != nil {
+						return nil, bad
+					}
+				}
+				routes = append(routes, rt)
+			}
+			for k := 2; k < ec; k++ {
+				if err := d.SkipItem(); err != nil {
+					return nil, bad
+				}
+			}
+			if len(routes) > 0 {
+				doc.Routes[dev] = routes
+			}
+		}
+	}
+	for k := freightFields + 2; k < n; k++ {
 		if err := d.SkipItem(); err != nil {
 			return nil, bad
 		}
@@ -401,6 +532,9 @@ func (a *PairingAttempt) Approve(nowUnix uint64) error {
 	}
 
 	r := a.host.r
+	// The freight states where THIS device can be answered; computed
+	// before the lock because SelfIngressRoutes takes it.
+	selfIngress := r.SelfIngressRoutes()
 	r.mu.Lock()
 	if r.Principal == nil {
 		r.mu.Unlock()
@@ -449,7 +583,7 @@ func (a *PairingAttempt) Approve(nowUnix uint64) error {
 		r.publishCertLocked(st.space)
 	}
 	// 4 — snapshot AFTER the rotations, never before.
-	doc := r.buildFreightLocked()
+	doc := r.buildFreightLocked(selfIngress)
 	doc = replaceFreightCert(doc, frame)
 	if err := r.saveKeystore(); err != nil {
 		r.mu.Unlock()
@@ -470,30 +604,7 @@ func replaceFreightCert(doc []byte, childCert []byte) []byte {
 		return doc
 	}
 	parsed.CertFrame = childCert
-	var buf []byte
-	buf = codec.AppendArray(buf, freightFields+1)
-	buf = codec.AppendUint(buf, freightVersion)
-	buf = codec.AppendBytes(buf, parsed.Principal[:])
-	buf = codec.AppendBytes(buf, parsed.CertFrame)
-	buf = codec.AppendText(buf, parsed.DisplayName)
-	buf = codec.AppendArray(buf, len(parsed.Spaces))
-	for _, sp := range parsed.Spaces {
-		buf = codec.AppendArray(buf, freightSpFields+3)
-		buf = codec.AppendBytes(buf, sp.Terminal[:])
-		buf = codec.AppendText(buf, sp.Title)
-		buf = codec.AppendText(buf, sp.Visibility)
-		buf = codec.AppendBytes(buf, sp.ManifestFrame)
-		buf = codec.AppendArray(buf, len(sp.Epochs))
-		for _, ek := range sp.Epochs {
-			buf = codec.AppendArray(buf, 2)
-			buf = codec.AppendUint(buf, ek.N)
-			buf = codec.AppendBytes(buf, ek.Key[:])
-		}
-		buf = codec.AppendText(buf, sp.LocalTitle)
-		buf = codec.AppendBool(buf, sp.Unnamed)
-	}
-	buf = appendLegacyBindings(buf, parsed.Legacy)
-	return buf
+	return encodeFreightDoc(parsed)
 }
 
 func encodeEnrollment(dev id.DeviceID, xpub [32]byte, label string) []byte {
@@ -663,6 +774,25 @@ func JoinAsPairedDeviceVia(dir string, passphrase, offerBytes []byte,
 	// frozen fact about the past, and a child that could grow it would be
 	// the open door the freeze exists to close.
 	ks.LegacyBindings = append([]storage.LegacyBinding(nil), doc.Legacy...)
+	// THE PERSON'S ROUTE KNOWLEDGE, inherited the same way (the header's
+	// doctrine amendment): where the people this person knows can be
+	// reached. Timestamps are stamped NOW — LearnedAt on this device is
+	// when this device learned. The child's own entry is skipped: a
+	// device holds routes to its PEERS, and it is nobody's peer to
+	// itself. The child's SelfIngress stays empty — where IT listens is
+	// its own first Open's business (decision 6 intact).
+	now := time.Now().Unix()
+	for peerDev, routes := range doc.Routes {
+		if peerDev == dev.ID {
+			continue
+		}
+		cp := make([]storage.Route, 0, len(routes))
+		for _, rt := range routes {
+			rt.LearnedAt, rt.LastSeen = now, now
+			cp = append(cp, rt)
+		}
+		ks.PeerRoutes[peerDev] = cp
+	}
 	for _, sp := range doc.Spaces {
 		ks.Spaces[sp.Terminal] = storage.SpaceMeta{
 			Title: sp.Title, Visibility: sp.Visibility,

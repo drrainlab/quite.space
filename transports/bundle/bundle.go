@@ -32,6 +32,14 @@ const (
 	keyWants    = 5 // requested blob hashes (relay media fetch)
 	keyWanter   = 6 // requester device id — where to send the response
 	keyReplyBox = 7 // PH-1: the mailbox HINT to answer into (see below)
+	// keyReturnRoutes: where the WANTER states it can be answered — its own
+	// ingress endpoints, carried beside the wants they belong to. This is a
+	// STATED route (RT-0): a claim in the bundle body, attributed to the
+	// wanter the same way the wants themselves are — never derived from
+	// whichever connection the bundle happened to arrive through. It is
+	// the weak, unsigned form of T3's signed advertisements and will be
+	// retired by them. Old decoders skip it (append-only, ADR-009).
+	keyReturnRoutes = 8
 )
 
 // Encode serializes frames for one terminal (same bytes as the file form —
@@ -64,6 +72,16 @@ func EncodeWithWants(terminal id.TerminalID, frames, blobs, wants [][]byte, want
 // publicly fetchable ingress shard used to name the reader who asked, to
 // anyone who cared to look. A per-request random address names nobody.
 func EncodeWithReplyBox(terminal id.TerminalID, frames, blobs, wants [][]byte, wanter, replyBox []byte) []byte {
+	return EncodeWithReturnRoutes(terminal, frames, blobs, wants, wanter, replyBox, nil)
+}
+
+// EncodeWithReturnRoutes is the full form: wants plus the wanter's own
+// stated ingress. Routes ride only beside wants — a bundle that asks for
+// nothing has no answer to route.
+func EncodeWithReturnRoutes(terminal id.TerminalID, frames, blobs, wants [][]byte, wanter, replyBox []byte, returnRoutes []string) []byte {
+	if len(wants) == 0 {
+		returnRoutes = nil
+	}
 	n := 3
 	if len(blobs) > 0 {
 		n++
@@ -75,6 +93,9 @@ func EncodeWithReplyBox(terminal id.TerminalID, frames, blobs, wants [][]byte, w
 		n++
 	}
 	if len(replyBox) > 0 {
+		n++
+	}
+	if len(returnRoutes) > 0 {
 		n++
 	}
 	buf := []byte(magic)
@@ -109,6 +130,13 @@ func EncodeWithReplyBox(terminal id.TerminalID, frames, blobs, wants [][]byte, w
 	if len(replyBox) > 0 {
 		buf = codec.AppendUint(buf, keyReplyBox)
 		buf = codec.AppendBytes(buf, replyBox)
+	}
+	if len(returnRoutes) > 0 {
+		buf = codec.AppendUint(buf, keyReturnRoutes)
+		buf = codec.AppendArray(buf, len(returnRoutes))
+		for _, ep := range returnRoutes {
+			buf = codec.AppendText(buf, ep)
+		}
 	}
 	return buf
 }
@@ -148,6 +176,10 @@ type Parts struct {
 	// ReplyBox is the mailbox hint to answer into (PH-1). When set, a holder
 	// MUST use it instead of deriving an inbox from Wanter.
 	ReplyBox []byte
+	// ReturnRoutes: the wanter's own stated ingress endpoints, riding
+	// beside its wants. A claim by the wanter, never a fact about the
+	// connection — see keyReturnRoutes.
+	ReturnRoutes []string
 }
 
 // DecodeFull returns the terminal, frames, and carried asset blobs. Frames and
@@ -246,6 +278,18 @@ func DecodeParts(data []byte) (Parts, error) {
 				return p, e
 			}
 			p.ReplyBox = append([]byte(nil), b...)
+		case keyReturnRoutes:
+			n, e := d.ReadArray()
+			if e != nil {
+				return p, e
+			}
+			for range n {
+				ep, e := d.ReadText()
+				if e != nil {
+					return p, e
+				}
+				p.ReturnRoutes = append(p.ReturnRoutes, ep)
+			}
 		default:
 			if err := d.SkipItem(); err != nil {
 				return p, err

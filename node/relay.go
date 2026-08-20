@@ -8,6 +8,7 @@ package node
 import (
 	"errors"
 	"log"
+	"net"
 	"sort"
 	"time"
 
@@ -61,7 +62,7 @@ const bundleHeadroom = 8 << 10
 // Returns the bodies in order, and how many frames were too large to travel at
 // all. A frame bigger than one item cannot be split here: it is one signed
 // object, and cutting it would produce something no verifier would accept.
-func splitBundles(tid id.TerminalID, frames, blobs, wants [][]byte, wanter []byte) ([][]byte, int) {
+func splitBundles(tid id.TerminalID, frames, blobs, wants [][]byte, wanter []byte, returnRoutes []string) ([][]byte, int) {
 	limit := maxRelayItem - bundleHeadroom
 	var out [][]byte
 	var batch [][]byte
@@ -72,7 +73,7 @@ func splitBundles(tid id.TerminalID, frames, blobs, wants [][]byte, wanter []byt
 			return
 		}
 		if isFirst {
-			out = append(out, bundle.EncodeWithWants(tid, batch, nil, wants, wanter))
+			out = append(out, bundle.EncodeWithReturnRoutes(tid, batch, nil, wants, wanter, nil, returnRoutes))
 		} else {
 			out = append(out, bundle.Encode(tid, batch))
 		}
@@ -118,7 +119,7 @@ func splitBundles(tid id.TerminalID, frames, blobs, wants [][]byte, wanter []byt
 	// Nothing to send but a question still to ask: the wants must go anyway,
 	// or a node with no unacked frames could never request media at all.
 	if len(out) == 0 && (len(wants) > 0 || len(frames) > 0 || len(blobs) > 0) {
-		out = append(out, bundle.EncodeWithWants(tid, nil, nil, wants, wanter))
+		out = append(out, bundle.EncodeWithReturnRoutes(tid, nil, nil, wants, wanter, nil, returnRoutes))
 	}
 	return out, oversize
 }
@@ -298,6 +299,10 @@ func (r *Runtime) deliverSpace(tid id.TerminalID, policy AssetPolicy, syncingAt 
 // "" means no route is known and the recipient is skipped and counted.
 func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 	route func(id.DeviceID) (string, bool), lanOffload bool) (int, int, int, int, uint64, error) {
+	// Computed BEFORE the lock: SelfIngressRoutes takes r.mu itself, and
+	// the first draft of this line sat inside the locked section — a
+	// self-deadlock the two-relay gate caught in seven quiet minutes.
+	ownIngress := r.SelfIngressRoutes()
 	r.mu.Lock()
 	st, ok := r.spaces[tid]
 	if !ok {
@@ -410,12 +415,25 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 	if len(wants) > 0 {
 		wanter = self[:]
 	}
-	bodies, oversize := splitBundles(tid, frames, blobs, wants, wanter)
+	// THE WANT CARRIES ITS OWN RETURN ADDRESS. A wants-bearing bundle
+	// states where this device can be answered — up to three of its own
+	// ingress endpoints — because the Phase-0 table's terminal cell was a
+	// holder who WANTED to answer and had never been told where. Stated
+	// beside the wants, attributed to the same wanter, three at most:
+	// enough for a device mid-migration, useless as a spam vector.
+	var returnRoutes []string
+	if len(wants) > 0 {
+		returnRoutes = ownIngress
+		if len(returnRoutes) > 3 {
+			returnRoutes = returnRoutes[:3]
+		}
+	}
+	bodies, oversize := splitBundles(tid, frames, blobs, wants, wanter, returnRoutes)
 	// The fleeting frames get a bundle of their own, so their short deadline
 	// cannot land on anybody's messages.
 	var fleetingBodies [][]byte
 	if len(fleeting) > 0 {
-		fleetingBodies, _ = splitBundles(tid, fleeting, nil, nil, nil)
+		fleetingBodies, _ = splitBundles(tid, fleeting, nil, nil, nil, nil)
 	}
 	// Per-recipient dead-drop: hand a copy to every OTHER member's own relay
 	// inbox. The shared per-terminal mailbox is single-reader (destructive
@@ -534,9 +552,6 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 	guessed := map[id.DeviceID]bool{}
 	for _, dev := range recipients {
 		ep, guess := route(dev)
-		if routeProbe != nil { // SCRATCH
-			routeProbe(dev, ep)
-		}
 		if ep == "" {
 			noRoute++
 			continue
@@ -836,7 +851,7 @@ func (r *Runtime) answerWantsRouted(tid id.TerminalID, wanter []byte, wants [][]
 		// wanting to answer, saying nothing.
 		r.noteWantHold(WantHold{Space: tid, Wanter: dev, Wants: len(wants),
 			Reason: "held_no_route"})
-		if wantsProbe != nil { // SCRATCH (Phase 0 instrument)
+		if wantsProbe != nil { // test seam, see its declaration
 			wantsProbe(r, dev, "no_route")
 		}
 		// AND STILL TRIED, TENTATIVELY — the same shape frame delivery
@@ -854,7 +869,7 @@ func (r *Runtime) answerWantsRouted(tid id.TerminalID, wanter []byte, wants [][]
 		}
 		return
 	}
-	if wantsProbe != nil { // SCRATCH (Phase 0 instrument)
+	if wantsProbe != nil { // test seam, see its declaration
 		wantsProbe(r, dev, "answer→"+eps[0])
 	}
 	// Bulk lane: answers carry media blobs. The hold clears only once the
@@ -1080,6 +1095,26 @@ func (r *Runtime) applyHeldRelayItem(client *relay.Client, heldItem storage.Held
 	// and re-answering on every reconsideration would push the same blobs into
 	// somebody's inbox each time an unrelated certificate landed.
 	if client != nil && len(parts.Wants) > 0 {
+		// THE WANT'S RETURN ADDRESS BECOMES KNOWLEDGE — gated, bounded,
+		// and recorded BEFORE the answer is routed, so the very bundle
+		// that states "answer me at B" can be answered at B.
+		//
+		// Gated on a certificate this node ALREADY holds: a stated route
+		// is a claim by the wanter, and a claim is only worth recording
+		// when the claimant is a device somebody's root has named. If the
+		// wanter's certificate rides in THIS bundle it is not learned yet
+		// (learnBundleProofs runs under the lock below); the wants re-ride
+		// every cycle while the fetch lives, so the record lands one
+		// bundle later — deterministic, and never trust before proof.
+		//
+		// Recorded as RouteAdvertised: the reserved provenance, alive at
+		// last. Weaker than an invitation route (a knock's stated route is
+		// un-poisonable by mailbox injection), stronger than any guess —
+		// and it DISPLACES recorded legacy guesses, which is exactly the
+		// production poison cleanup. Content stays space-encrypted either
+		// way; a forged claim's ceiling is answer diversion, bounded by
+		// the cert gate, the endpoint cap, and the per-device book cap.
+		r.recordStatedReturnRoutes(parts.Wanter, parts.ReturnRoutes)
 		if len(parts.ReplyBox) > 0 {
 			r.answerWants(client, terminal, parts.Wanter, parts.Wants, parts.ReplyBox, false)
 		} else {
@@ -1542,8 +1577,49 @@ func (r *Runtime) replyBoxCaps(tids []id.TerminalID, bucket uint64) [][]byte {
 	return caps
 }
 
-// routeProbe — SCRATCH.
-var routeProbe func(dev id.DeviceID, ep string)
-
-// wantsProbe — SCRATCH (Phase 0): which branch a routed want-answer took.
+// wantsProbe is a TEST SEAM: which branch a routed want-answer took, and
+// at which holder. The media-matrix product invariant reads it to prove
+// the true holder saw the want — the exact cell Phase 0 found empty. Set
+// only by tests, before traffic exists; nil in production.
 var wantsProbe func(holder *Runtime, dev id.DeviceID, outcome string)
+
+// recordStatedReturnRoutes records a wanter's stated ingress (bundle key
+// 8) as RouteAdvertised — see the comment at its call site for the trust
+// model. Malformed endpoints are dropped one by one rather than the set.
+func (r *Runtime) recordStatedReturnRoutes(wanter []byte, eps []string) {
+	if len(eps) == 0 || len(wanter) != len(id.DeviceID{}) {
+		return
+	}
+	var dev id.DeviceID
+	copy(dev[:], wanter)
+	if dev == r.Device.ID {
+		return
+	}
+	if _, ok := r.ident.certificateFor(dev); !ok {
+		return // a claim from a device nobody's root has named: not knowledge
+	}
+	if len(eps) > 3 {
+		eps = eps[:3]
+	}
+	recorded := false
+	r.mu.Lock()
+	for _, ep := range eps {
+		host, port, err := net.SplitHostPort(ep)
+		if err != nil || host == "" || port == "" {
+			continue
+		}
+		r.recordPeerRouteLocked(dev, ep, "relay", storage.RouteAdvertised)
+		recorded = true
+	}
+	var saveErr error
+	if recorded {
+		// A pure want-bundle owes no other keystore commit, and a route
+		// that does not survive a restart is a route the next unlock
+		// forgets — persistence is the point of recording at all.
+		saveErr = r.saveKeystore()
+	}
+	r.mu.Unlock()
+	if saveErr != nil {
+		log.Printf("node: stated return route learned but not persisted: %v", saveErr)
+	}
+}

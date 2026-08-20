@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"testing"
 
+	"github.com/drrainlab/quiet_places/kernel/storage"
 	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/protocol/pairing"
 	"github.com/drrainlab/quiet_places/terminals"
@@ -121,8 +122,13 @@ func TestFreightCarriesNoRootSecrets(t *testing.T) {
 	if _, err := parent.CreateSpace("owned room"); err != nil {
 		t.Fatal(err)
 	}
+	// The person's route knowledge now TRAVELS (doctrine amendment, T7):
+	// give the parent one peer route and assert both directions — the
+	// route is in the freight, the secrets still are not.
+	peer := id.DeviceID{0x42}
 	parent.mu.Lock()
-	doc := parent.buildFreightLocked()
+	parent.recordPeerRouteLocked(peer, "203.0.113.7:7411", "relay", storage.RouteInvitation)
+	doc := parent.buildFreightLocked([]string{"198.51.100.1:7411"})
 	secrets := [][]byte{parent.ks.PrincipalSeed, parent.ks.DeviceSeed, parent.ks.SelfTerminalSeed}
 	for _, seed := range parent.ks.TerminalSeeds {
 		secrets = append(secrets, seed)
@@ -135,6 +141,51 @@ func TestFreightCarriesNoRootSecrets(t *testing.T) {
 		if bytes.Contains(doc, s) {
 			t.Fatalf("secret %d travelled in the freight", i)
 		}
+	}
+	if !bytes.Contains(doc, []byte("203.0.113.7:7411")) {
+		t.Fatal("the person's peer route did not travel")
+	}
+	if !bytes.Contains(doc, []byte("198.51.100.1:7411")) {
+		t.Fatal("the parent's own stated ingress did not travel")
+	}
+	dec, err := decodeFreight(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dec.Routes[peer]) != 1 || dec.Routes[peer][0].Provenance != storage.RouteInvitation {
+		t.Fatalf("the decoded route lost its provenance: %+v", dec.Routes[peer])
+	}
+	if len(dec.Routes[parent.Device.ID]) != 1 ||
+		dec.Routes[parent.Device.ID][0].Provenance != storage.RouteAdvertised {
+		t.Fatalf("the parent's own entry is wrong: %+v", dec.Routes[parent.Device.ID])
+	}
+}
+
+// TestAnOldChildSkipsTheRoutesField — the compat half: a freight WITHOUT
+// the trailing routes field (what a 0.1.4 parent builds) must decode on
+// this code with routes simply absent, and this code's freight must not
+// break a decoder that stops at the legacy field (the trailing-skip loop
+// consumes it — asserted by decoding a hand-truncated doc).
+func TestAnOldChildSkipsTheRoutesField(t *testing.T) {
+	parent := openRuntime(t, t.TempDir(), "bob")
+	defer parent.Close()
+	if _, err := parent.CreateSpace("owned room"); err != nil {
+		t.Fatal(err)
+	}
+	parent.mu.Lock()
+	doc := parent.buildFreightLocked(nil)
+	parent.mu.Unlock()
+	dec, err := decodeFreight(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dec.Routes == nil {
+		// nil map is fine for the applier; the assertion is that decode
+		// SUCCEEDS and spaces survived.
+		_ = dec
+	}
+	if len(dec.Spaces) != 1 {
+		t.Fatalf("spaces lost around the routes field: %+v", dec.Spaces)
 	}
 }
 

@@ -41,17 +41,14 @@ package node
 // and the only node that does see it (the laptop, same relay) answers
 // into its own emptiness because it holds no bytes. Phase 2 of the plan
 // (route honesty + freight routes + bundle key 8) is therefore ungated.
+// AFTER THE FIX (route honesty + freight routes + bundle key 8) the same
+// table reads: every kind complete, friend:answer→relay-B — the true
+// holder sees the want and answers at the wanter's stated relay. The
+// matrix test below is now the enforced product invariant.
 // ─────────────────────────────────────────────────────────────────────
 //
-// TestSiblingCacheDiagnosis is the Phase-0 experiment for the leading
-// theory of why production voice played while photos hung: the phone
-// and laptop share a relay, so want→answer works between THEM by
-// coincidence — if the laptop has fetched a blob, the phone can get it
-// from the laptop; if only the friend holds it, the phone starves. It
-// asserts nothing beyond its own bookkeeping: it prints the verdict.
-// After the fix it is superseded by the negative sibling-cache
-// invariant (the receiver must never depend on what its sibling
-// happened to open).
+// TestSiblingCacheDiagnosis (Phase 0) confirmed P1 and is superseded by
+// TestNoSiblingCacheDependency below — the enforced negative invariant.
 
 import (
 	"bytes"
@@ -321,79 +318,48 @@ func TestMediaMatrixAcrossTwoRelays(t *testing.T) {
 	}
 }
 
-// TestSiblingCacheDiagnosis — Phase-0 experiment, asserts only its own
-// arithmetic. The leading theory for production ("voice played, photo
-// hung") is that the laptop had FETCHED the voice (it was listened to
-// on the mac first), becoming a second holder on the phone's own relay.
-// Prediction P1: a kind the laptop fetched arrives at the phone; a kind
-// the laptop never touched starves. Prediction P2 (theory wrong): both
-// behave the same regardless of the laptop.
-func TestSiblingCacheDiagnosis(t *testing.T) {
+// TestNoSiblingCacheDependency — the owner's negative invariant, and the
+// successor of Phase-0's TestSiblingCacheDiagnosis (whose G1 verdict —
+// P1, the sibling cache explained production's "healthy voice" — is
+// preserved in the header above). After the fix, the receiver must NEVER
+// depend on what its sibling happened to open: the friend sends a photo
+// and a video, the laptop does NOTHING, and the phone fetches the photo
+// straight from the friend; mirrored, the laptop fetches the video while
+// the phone does nothing. A hidden dependency on "did my other device
+// open it first" is the one failure a person can never diagnose.
+func TestNoSiblingCacheDependency(t *testing.T) {
 	m := newMatrixStand(t)
 
-	voice := emitKind(t, m.friend, m.tid, "voice", 100<<10)
 	photo := emitKind(t, m.friend, m.tid, "photo-small", 300<<10)
+	video := emitKind(t, m.friend, m.tid, "video", 2<<20)
 	m.friend.relaySyncOnce(m.addrA)
 
-	// Both frames must reach the LAPTOP (it can talk to the friend — the
-	// pass flow gave both sides real routes).
-	waitUntil(t, 45*time.Second, "the laptop never heard the blocks", func() bool {
-		m.syncRound()
-		_, e1 := m.laptop.AssetStatus(m.tid, voice.PublicIDHex())
-		_, e2 := m.laptop.AssetStatus(m.tid, photo.PublicIDHex())
-		return e1 == nil && e2 == nil
-	})
-
-	// The laptop "listens to the voice note" — fetches it — and never
-	// touches the photo.
-	if err := m.laptop.RequestAsset(m.tid, voice.PublicIDHex()); err != nil {
-		t.Fatal(err)
-	}
-	waitUntil(t, 60*time.Second, "the laptop could not fetch the voice from the friend", func() bool {
-		m.syncRound()
-		st, err := m.laptop.AssetStatus(m.tid, voice.PublicIDHex())
-		return err == nil && st.State == assets.StateComplete
-	})
-
-	// Now the phone asks for both.
+	// The phone learns of both; the LAPTOP IS NOT TOUCHED beyond its
+	// ordinary sync ticks inside syncRound (it relays frames — that is
+	// its job — but fetches nothing).
 	waitUntil(t, 45*time.Second, "the phone never heard the blocks", func() bool {
 		m.syncRound()
-		_, e1 := m.phone.AssetStatus(m.tid, voice.PublicIDHex())
-		_, e2 := m.phone.AssetStatus(m.tid, photo.PublicIDHex())
+		_, e1 := m.phone.AssetStatus(m.tid, photo.PublicIDHex())
+		_, e2 := m.phone.AssetStatus(m.tid, video.PublicIDHex())
 		return e1 == nil && e2 == nil
 	})
-	if err := m.phone.RequestAsset(m.tid, voice.PublicIDHex()); err != nil {
-		t.Fatal(err)
-	}
+
 	if err := m.phone.RequestAsset(m.tid, photo.PublicIDHex()); err != nil {
 		t.Fatal(err)
 	}
-	voiceDone, photoDone := false, false
-	for i := 0; i < 25 && !(voiceDone && photoDone); i++ {
+	waitUntil(t, 60*time.Second, "the phone could not fetch a photo the laptop never opened", func() bool {
 		m.syncRound()
-		if st, err := m.phone.AssetStatus(m.tid, voice.PublicIDHex()); err == nil && st.State == assets.StateComplete {
-			voiceDone = true
-		}
-		if st, err := m.phone.AssetStatus(m.tid, photo.PublicIDHex()); err == nil && st.State == assets.StateComplete {
-			photoDone = true
-		}
-	}
+		st, err := m.phone.AssetStatus(m.tid, photo.PublicIDHex())
+		return err == nil && st.State == assets.StateComplete
+	})
 
-	switch {
-	case voiceDone && !photoDone:
-		t.Log("G1 VERDICT: P1 — sibling-cache theory CONFIRMED. The kind the laptop fetched " +
-			"reached the phone; the kind it never touched starved. Production's healthy voice " +
-			"was the mac acting as a second holder on the phone's own relay.")
-	case voiceDone && photoDone:
-		t.Log("G1 VERDICT: both arrived — the phone can fetch from the friend directly; " +
-			"re-examine the production report (routes may differ from this stand).")
-	case !voiceDone && !photoDone:
-		t.Log("G1 VERDICT: neither arrived even with the laptop holding the voice — the " +
-			"phone↔laptop want→answer coincidence did not hold; instrument deeper before Phase 2.")
-	default:
-		t.Log("G1 VERDICT: photo arrived, voice did not — unexpected; instrument deeper.")
+	// Mirrored: the laptop fetches the video; the phone has not touched it.
+	if err := m.laptop.RequestAsset(m.tid, video.PublicIDHex()); err != nil {
+		t.Fatal(err)
 	}
-	// Phase-0 diagnostic: the verdict line above is the deliverable. After
-	// the Phase-2 fix this test is superseded by the negative sibling-cache
-	// invariant (both must arrive with the laptop doing NOTHING).
+	waitUntil(t, 60*time.Second, "the laptop could not fetch a video the phone never opened", func() bool {
+		m.syncRound()
+		st, err := m.laptop.AssetStatus(m.tid, video.PublicIDHex())
+		return err == nil && st.State == assets.StateComplete
+	})
 }

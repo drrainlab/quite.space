@@ -5,8 +5,6 @@ import (
 	"time"
 
 	"github.com/drrainlab/quiet_places/kernel/assets"
-	"github.com/drrainlab/quiet_places/protocol/id"
-	"github.com/drrainlab/quiet_places/transports/relay"
 )
 
 // THE REPORTED SHAPE, EXACTLY: a friend and a person share a space over an
@@ -143,13 +141,18 @@ func TestAPairedPhoneFetchesAcrossTwoRelays(t *testing.T) {
 	laptop := openRuntime(t, t.TempDir(), "gleb")
 	defer laptop.Close()
 	setPersonalRelay(t, laptop, addrB)
-	invite, err := brother.MintInvite(tid, laptop.Device.ID, laptop.Device.X25519Pub)
+	// THE PASS FLOW, as in production: a direct MintInvite records no
+	// routes on either side, and this test's first red was measuring that
+	// separate hole rather than the reported one.
+	pass, err := brother.MintPass(tid, 1, 24, addrA)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := laptop.JoinInvite(invite); err != nil {
+	req, err := laptop.JoinByPass(pass.Link)
+	if err != nil {
 		t.Fatal(err)
 	}
+	waitJoin(t, laptop, req, JoinReady)
 	if _, err := laptop.Say(tid, "мы тут", SayOptions{}); err != nil {
 		t.Fatal(err)
 	}
@@ -167,51 +170,7 @@ func TestAPairedPhoneFetchesAcrossTwoRelays(t *testing.T) {
 
 	content := randBytes(t, 200_000)
 	ref := emitVisual(t, brother, tid, content, 4096)
-	routeProbe = func(dev id.DeviceID, ep string) { // SCRATCH
-		who := "?"
-		switch dev {
-		case brother.Device.ID:
-			who = "brother"
-		case laptop.Device.ID:
-			who = "laptop"
-		case phone.Device.ID:
-			who = "phone"
-		}
-		which := ep
-		if ep == addrA {
-			which = "RELAY-A(brother's)"
-		} else if ep == addrB {
-			which = "RELAY-B(person's)"
-		}
-		t.Logf("SCRATCH push routes %s -> %s", who, which)
-	}
-	defer func() { routeProbe = nil }()
 	brother.relaySyncOnce(addrA)
-	{ // SCRATCH: name every item on both relays
-		b := relay.Bucket(uint64(time.Now().Unix()))
-		name := func(h string) string {
-			for who, dev := range map[string]id.DeviceID{"brother": brother.Device.ID, "laptop": laptop.Device.ID, "phone": phone.Device.ID} {
-				for _, bb := range []uint64{b - 1, b, b + 1} {
-					if string(relay.HintFor(tid, dev, bb)) == h {
-						return who
-					}
-				}
-			}
-			return "?"
-		}
-		la := []string{}
-		for _, h := range srvA.HintsForTest() { la = append(la, name(h)) }
-		lb := []string{}
-		for _, h := range srvB.HintsForTest() { lb = append(lb, name(h)) }
-		t.Logf("SCRATCH relay A holds boxes for %v | relay B holds boxes for %v", la, lb)
-	}
-	{ // SCRATCH probe: what does the brother know, and what is he holding?
-		rs := brother.RelaySync()
-		t.Logf("SCRATCH brother: routes(laptop)=%v routes(phone)=%v held=%+v lastErr=%q",
-			brother.PeerRoutesFor(laptop.Device.ID), brother.PeerRoutesFor(phone.Device.ID), rs.Held, rs.LastErr)
-		t.Logf("SCRATCH laptop got the room? entries=%d | phone knows brother routes=%v",
-			msgCount(laptop, tid), phone.PeerRoutesFor(brother.Device.ID))
-	}
 
 	// A rate-limit answer here is the relay saying "later", not the test
 	// failing — the shipped budget is four collects a second and a polling
@@ -222,20 +181,13 @@ func TestAPairedPhoneFetchesAcrossTwoRelays(t *testing.T) {
 	// is not even a recipient he knows to hold for), so the phone hears
 	// about the photo only because the laptop relays what it received.
 	deadline := time.Now().Add(60 * time.Second)
-	tick := 0
 	for {
 		laptop.relaySyncOnce(addrB)
 		_, _ = phone.PullFromRelay(addrB)
 		if _, err := phone.AssetStatus(tid, ref.PublicIDHex()); err == nil {
 			break
 		}
-		tick++
-		if tick%7 == 0 { // SCRATCH
-			lrs := laptop.RelaySync()
-			t.Logf("SCRATCH t%d laptop: msgs=%d held=%+v err=%q routes(phone)=%v | phone msgs=%d",
-				tick, msgCount(laptop, tid), lrs.Held, lrs.LastErr,
-				laptop.PeerRoutesFor(phone.Device.ID), msgCount(phone, tid))
-		}
+
 		if time.Now().After(deadline) {
 			t.Fatal("the block frame never reached the phone across relays")
 		}

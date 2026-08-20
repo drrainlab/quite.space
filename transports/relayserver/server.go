@@ -487,6 +487,3 @@ func (s *Server) handle(m *relay.Msg, cs *connState) *relay.Msg {
 }
 
 // ---- Client ----
-
-// HintsForTest — SCRATCH.
-func (s *Server) HintsForTest() []string { return s.store.Hints() }
