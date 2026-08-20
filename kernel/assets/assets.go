@@ -527,3 +527,118 @@ func StateOf(store Store, ref *schemas.AssetRef) (State, MissingResult) {
 		return StateComplete, res
 	}
 }
+
+// ---- Streaming reader (Media Presence: playback without the buffer) ----
+
+// Reader is a lazy, seekable view of a locally complete asset. It decrypts
+// one chunk at a time, on demand — the shape a <video> element's Range
+// requests want. Before it existed every request for an asset's bytes
+// assembled and digest-verified the WHOLE file in memory; a player that
+// issues dozens of Range requests while buffering turned a 380 MB video
+// into hundreds of full-file decrypts, which read as "downloaded but
+// freezes when played" on every platform at once.
+//
+// Integrity: every chunk read here is opened through its position-bound
+// AAD (asset id, index, count, size, manifest version) under the asset
+// key — a swapped, truncated or reordered chunk fails authentication at
+// the exact read that touches it. The whole-plaintext digest is a second,
+// stricter pass; callers that serve media are expected to run
+// VerifyDigest once per asset first (cheap, local) and stream after.
+type Reader struct {
+	store       Store
+	ref         *schemas.AssetRef
+	chunks      []id.Hash
+	manifestVer uint16
+	pos         int64
+	// One decrypted chunk of cache: playback is overwhelmingly
+	// sequential-with-seeks, and a chunk is small (≤64 KiB).
+	cachedIdx int
+	cached    []byte
+}
+
+// Open resolves the chunk list and returns a reader positioned at 0.
+// The asset must be locally complete; a missing chunk surfaces as an
+// error on the read that needs it.
+func Open(store Store, ref *schemas.AssetRef) (*Reader, error) {
+	chunks, err := chunkList(store, ref)
+	if err != nil {
+		return nil, err
+	}
+	manifestVer := uint16(1)
+	if ref.ManifestWireID != nil {
+		manifestVer = uint16(ref.ManifestVer)
+	}
+	return &Reader{store: store, ref: ref, chunks: chunks,
+		manifestVer: manifestVer, cachedIdx: -1}, nil
+}
+
+// Size is the plaintext length, for Content-Length/Range arithmetic.
+func (r *Reader) Size() int64 { return int64(r.ref.Size) }
+
+func (r *Reader) chunkAt(idx int) ([]byte, error) {
+	if idx == r.cachedIdx {
+		return r.cached, nil
+	}
+	blob, err := r.store.GetBlob(r.chunks[idx])
+	if err != nil {
+		return nil, fmt.Errorf("assets: chunk %d not local: %w", idx, err)
+	}
+	want := r.ref.ChunkSize
+	if remaining := r.ref.Size - uint64(idx)*r.ref.ChunkSize; remaining < want {
+		want = remaining
+	}
+	aad := chunkAAD(r.ref.AssetID, uint32(idx), uint32(len(r.chunks)), uint32(want), r.manifestVer)
+	pt, err := openBlob(r.ref.Key, aad, blob)
+	if err != nil {
+		return nil, err
+	}
+	if uint64(len(pt)) != want {
+		return nil, errors.New("assets: chunk plaintext size mismatch")
+	}
+	r.cachedIdx, r.cached = idx, pt
+	return pt, nil
+}
+
+func (r *Reader) Read(p []byte) (int, error) {
+	if r.pos >= int64(r.ref.Size) {
+		return 0, io.EOF
+	}
+	total := 0
+	for total < len(p) && r.pos < int64(r.ref.Size) {
+		idx := int(r.pos / int64(r.ref.ChunkSize))
+		pt, err := r.chunkAt(idx)
+		if err != nil {
+			return total, err
+		}
+		off := int(r.pos - int64(idx)*int64(r.ref.ChunkSize))
+		n := copy(p[total:], pt[off:])
+		total += n
+		r.pos += int64(n)
+	}
+	return total, nil
+}
+
+func (r *Reader) Seek(offset int64, whence int) (int64, error) {
+	var next int64
+	switch whence {
+	case io.SeekStart:
+		next = offset
+	case io.SeekCurrent:
+		next = r.pos + offset
+	case io.SeekEnd:
+		next = int64(r.ref.Size) + offset
+	default:
+		return 0, errors.New("assets: bad whence")
+	}
+	if next < 0 {
+		return 0, errors.New("assets: negative seek")
+	}
+	r.pos = next
+	return next, nil
+}
+
+// VerifyDigest runs the strict whole-plaintext pass without keeping any
+// of it: the once-per-asset gate a server runs before streaming.
+func VerifyDigest(store Store, ref *schemas.AssetRef) error {
+	return RetrieveTo(store, ref, io.Discard)
+}

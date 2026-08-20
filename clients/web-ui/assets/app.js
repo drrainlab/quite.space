@@ -1866,7 +1866,7 @@ async function refreshSpace() {
   // after the hold cleared, or never applied at all.
   const spaceHeld = heldSpaceIds.has(current);
   const aSig = entries.map(e => (e.asset ? (e.asset.state + '/' + (e.asset.missing || 0) + '/' + (e.asset.total || 0)) : '') +
-    (spaceHeld && e.mine && e.asset ? '~R' : ''));
+    (entryReleasing(e, spaceHeld) ? '~R' : ''));
   const rSig = entries.map(e => resSig(e.resonance));
   const sig = contentSig.map((c, i) => c + '|' + aSig[i] + '|' + rSig[i]);
   const unchanged = !switched && sig.length === feedSig.length && sig.every((s, i) => s === feedSig[i]);
@@ -3237,17 +3237,26 @@ function renderEntryTiled(log, e, fresh, grouped, prev) {
   renderEntry(log, e, fresh, grouped);
 }
 
+// entryReleasing: one formula for the render AND the feed signature —
+// they must agree, or the surface freezes on whatever the row last wore.
+function entryReleasing(e, spaceHeld) {
+  return spaceHeld && !!e.mine && !!e.asset &&
+    (Date.now() / 1000 - (e.created_at || 0)) < 180;
+}
+
 function renderEntry(log, e, fresh, grouped) {
   const d = document.createElement('div');
   const own = !!e.mine;
   d.className = 'entry msg' + (own ? ' own' : ' other') +
     (grouped ? ' grouped' : '') + (fresh ? ' enter' : '');
-  // RELEASE (Media Presence): my media, while the transport still holds
-  // frames for this space, wears a faintly living edge — released into
-  // the space but not yet confirmed handed over as far as the transport
-  // can honestly confirm. Settles to stillness on its own: the feed
-  // re-renders from server state, so the class leaves when the hold does.
-  if (own && e.asset && heldSpaceIds.has(current)) {
+  // RELEASE (Media Presence): my recent media, while the transport still
+  // holds frames for this space, wears a faintly living surface —
+  // released into the space but not yet confirmed handed over as far as
+  // the transport can honestly confirm. Settles on its own: the class
+  // leaves when the hold clears — or when the entry stops being recent,
+  // because a room with an unreachable legacy member is held for WEEKS,
+  // and a photo breathing for weeks is an alarm, not a state.
+  if (entryReleasing(e, heldSpaceIds.has(current))) {
     d.classList.add('media-releasing');
   }
 

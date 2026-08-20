@@ -1273,30 +1273,33 @@
 
   /* RELEASE (Media Presence): my media while the transport still holds
      frames for its space. The object is fully visible — it exists, it was
-     never "undrawn" — but its edge is faintly alive until the hand-over
+     never "undrawn" — but its SURFACE is faintly alive until the hand-over
      is confirmed as far as the transport can confirm it. Then stillness:
-     movement means something is happening, stillness means the object
-     has landed. One animated property (box-shadow opacity via color),
-     slow, low-contrast — the same photosensitivity floor as everything
-     else in this file. */
+     movement means something is happening, stillness means the object has
+     landed.
+
+     A surface, deliberately not an outline: the first version drew a
+     breathing 1px edge and it read as a blinking alert — the exact
+     opposite of quiet. What is alive now is the media itself, barely: a
+     slow warmth in saturation and light, well inside the photosensitivity
+     floor (no flash, no luminance flip, 4.6s period, tiny amplitude). */
   .entry.media-releasing .thumb,
-  .entry.media-releasing .video-holder,
+  .entry.media-releasing .video-holder img,
   .entry.media-releasing .wave,
   .entry.media-releasing .aplayer {
-    box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent, #6cd3ff) 45%, transparent);
-    animation: media-release-breathe 3.4s ease-in-out infinite;
+    animation: media-release-surface 4.6s ease-in-out infinite;
   }
-  @keyframes media-release-breathe {
-    0%, 100% { box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent, #6cd3ff) 20%, transparent); }
-    50% { box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent, #6cd3ff) 55%, transparent); }
+  @keyframes media-release-surface {
+    0%, 100% { filter: saturate(1) brightness(1); }
+    50% { filter: saturate(1.10) brightness(1.03); }
   }
   @media (prefers-reduced-motion: reduce) {
     .entry.media-releasing .thumb,
-    .entry.media-releasing .video-holder,
+    .entry.media-releasing .video-holder img,
     .entry.media-releasing .wave,
     .entry.media-releasing .aplayer {
       animation: none;
-      box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent, #6cd3ff) 35%, transparent);
+      filter: saturate(1.06) brightness(1.015);
     }
   }
   @media (prefers-reduced-motion: reduce) {
@@ -1876,8 +1879,14 @@
   .video-dur { position: absolute; right: 6px; bottom: 6px; background: rgba(0,0,0,.6);
     color: #fff; font-size: 11px; font-family: var(--font-mono);
     padding: 1px 6px; border-radius: 999px; }
-  .video-player { max-width: 360px; max-height: 300px; border-radius: 8px;
+  .video-player { max-width: min(360px, 100%); width: 100%;
+    max-height: 300px; border-radius: 8px;
     margin-top: 4px; display: block; }
+  /* The bubble is the card's edge, and a mounted player must live inside
+     it: on a phone the fixed 360px overflowed the column the poster had
+     been laid out in, and the controls hung past the border. */
+  .entry .bubble video, .entry .bubble .video-holder,
+  .entry .bubble img.thumb { max-width: 100%; }
 
   /* ---- dialogs: centered, entering from above (reduced-motion: static) ---- */
   dialog { margin: auto; }

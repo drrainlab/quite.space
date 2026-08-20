@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"mime"
 	"net/http"
 	"strings"
@@ -265,7 +266,7 @@ func (a *APIServer) handleGetAsset(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusBadRequest, err)
 		return
 	}
-	data, ref, err := a.rt.RetrieveAsset(tid, aid)
+	content, ref, err := a.rt.OpenAsset(tid, aid)
 	if err != nil {
 		if ref == nil {
 			httpErr(w, http.StatusNotFound, err)
@@ -280,7 +281,7 @@ func (a *APIServer) handleGetAsset(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	serveAssetBytes(w, r, ref, aid, data)
+	serveAssetContent(w, r, ref, aid, content)
 }
 
 // serveAssetBytes writes verified asset bytes with the headers every asset
@@ -289,6 +290,14 @@ func (a *APIServer) handleGetAsset(w http.ResponseWriter, r *http.Request) {
 // space route and the preview route (PS-3) serve identically because they
 // serve HERE.
 func serveAssetBytes(w http.ResponseWriter, r *http.Request, ref *schemas.AssetRef, aid string, data []byte) {
+	serveAssetContent(w, r, ref, aid, bytes.NewReader(data))
+}
+
+// serveAssetContent is the streaming form: the space route hands it a lazy
+// chunk reader so a Range request decrypts only the chunks it touches —
+// a player buffering a 380 MB video used to cost one full-file assembly
+// PER RANGE REQUEST, which played as "downloaded but freezes".
+func serveAssetContent(w http.ResponseWriter, r *http.Request, ref *schemas.AssetRef, aid string, content io.ReadSeeker) {
 	// The declared type is parsed rather than trusted whole: parameters
 	// ("image/png; charset=…") must not smuggle a second opinion past the
 	// allowlist below, so the BASE type is what both the header and the
@@ -334,7 +343,7 @@ func serveAssetBytes(w http.ResponseWriter, r *http.Request, ref *schemas.AssetR
 	if w.Header().Get("Cache-Control") == "" {
 		w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
 	}
-	http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(data))
+	http.ServeContent(w, r, "", time.Time{}, content)
 }
 
 func (a *APIServer) handleFetchAsset(w http.ResponseWriter, r *http.Request) {

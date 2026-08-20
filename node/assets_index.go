@@ -99,6 +99,9 @@ type assetIndex struct {
 	// provisional state, not a verdict: the loop keeps asking, and any byte
 	// that arrives clears the entry.
 	silent map[AssetKey]time.Time
+	// verified: assets whose whole-plaintext digest passed once this
+	// process — the gate OpenAsset runs before streaming (see there).
+	verified map[AssetKey]bool
 }
 
 func newAssetIndex() *assetIndex {
@@ -211,6 +214,38 @@ func (r *Runtime) IngestAsset(src io.Reader, size int64, meta assets.Metadata) (
 
 // RetrieveAsset returns the decrypted, integrity-verified content of an
 // asset published in the given space.
+// OpenAsset returns a lazy, seekable view of a locally complete asset.
+// The strict whole-plaintext digest runs ONCE per asset per process
+// (cheap, local, and exactly what RetrieveAsset used to do on every
+// request); after that gate, streaming trusts each chunk's own
+// position-bound authentication.
+func (r *Runtime) OpenAsset(space id.TerminalID, asset string) (*assets.Reader, *schemas.AssetRef, error) {
+	key := AssetKey{Space: space, Asset: asset}
+	r.mu.Lock()
+	ref, ok := r.assetIdx.refs[key]
+	verified := r.assetIdx.verified[key]
+	r.mu.Unlock()
+	if !ok {
+		return nil, nil, errors.New("node: unknown asset in this space")
+	}
+	if !verified {
+		if err := assets.VerifyDigest(r.root, ref); err != nil {
+			return nil, ref, err
+		}
+		r.mu.Lock()
+		if r.assetIdx.verified == nil {
+			r.assetIdx.verified = map[AssetKey]bool{}
+		}
+		r.assetIdx.verified[key] = true
+		r.mu.Unlock()
+	}
+	rd, err := assets.Open(r.root, ref)
+	if err != nil {
+		return nil, ref, err
+	}
+	return rd, ref, nil
+}
+
 func (r *Runtime) RetrieveAsset(space id.TerminalID, asset string) ([]byte, *schemas.AssetRef, error) {
 	r.mu.Lock()
 	ref, ok := r.assetIdx.refs[AssetKey{Space: space, Asset: asset}]
