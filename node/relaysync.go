@@ -655,6 +655,14 @@ func (r *Runtime) relaySyncOnce(addr string) {
 		}
 	}
 
+	// THE IDENTITY PLANE rides the same heartbeat (ADR-024): offer the
+	// grants this device still owes its siblings, and fetch the ones its
+	// siblings owe it. Both are cheap when there is nothing to say — the
+	// pending set is derived and usually empty, and the fetch is one
+	// non-destructive round trip on the mailbox this device already owns.
+	r.offerGrants()
+	r.fetchGrants(addr)
+
 	rs.mu.Lock()
 	rs.lastErr = lastErr
 	// The retry schedule, kept here because this is the one place that knows

@@ -112,6 +112,24 @@ func NewReplyCap() ([]byte, error) {
 	return c, nil
 }
 
+// HintIdentityPlane is a device's identity mailbox: where its SIBLINGS —
+// other certified devices of the same principal — leave space grants
+// (ADR-024). Fetch-based, deliberately: Fetch does not drain, so knowing
+// the hint lets a stranger READ opaque sealed bytes but never destroy a
+// grant in flight; the relay's TTL is the only eviction. Contents are
+// HPKE-sealed to the recipient device's certified key and signed inside,
+// so the ceiling for an observer is traffic existence, which the
+// per-device inbox hints already concede.
+func HintIdentityPlane(dev id.DeviceID, bucket uint64) []byte {
+	h := sha256.New()
+	h.Write([]byte("qp-identity-plane-v0:"))
+	h.Write(dev[:])
+	var b [8]byte
+	binary.BigEndian.PutUint64(b[:], bucket)
+	h.Write(b[:])
+	return CollectHint(h.Sum(nil))
+}
+
 // Bucket returns the hint rotation bucket (6-hour windows, shared with LAN
 // discovery granularity).
 func Bucket(nowUnix uint64) uint64 { return nowUnix / (6 * 3600) }

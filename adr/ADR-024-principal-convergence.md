@@ -100,12 +100,14 @@ The identity mailbox is one new hint namespace,
 per-space caps in the ordinary pull. It is the continuation of the
 freight by other means — sibling-to-sibling, sealed, signed, bounded.
 
-**Delivery is HELD until OBSERVED (ADR-023).** The granting device
-keeps `pendingGrants[space][sibling]` and re-offers each cycle (the
-relay dedups identical bytes — 1A's re-offer idiom) until it OBSERVES
-the sibling inside the space: the sibling's certificate or manifest
-frame appearing in X's log is the acknowledgement, no ack message
-needed. A sibling offline past the mailbox TTL loses nothing: the
+**Delivery is HELD until OBSERVED (ADR-023) — and the pending set is
+DERIVED, never stored.** Each heartbeat re-derives the need from the
+current world: sibling certified? not revoked? not yet observed
+authoring in the space? — then offer. Nothing to persist, nothing to
+desync: the derivation survives restarts of either side by
+construction and heals pre-existing installs the moment they upgrade.
+The sibling's certificate appearing in X's log is the acknowledgement,
+no ack message needed. A sibling offline past the mailbox TTL loses nothing: the
 grant re-offers until the observation happens. Revoked siblings are
 skipped at send AND refused at receive (a grant signed by a device
 revoked at its clock does not install).
@@ -118,6 +120,41 @@ performed the join, or the graph becomes a gossip protocol nobody
 audits. If the granting device dies before any sibling observed the
 space, the person still holds the space on the device that joined it;
 re-pairing carries it in the freight as always — degraded, never lost.
+
+## Amendments from the pre-ship review (all gated by tests)
+
+- **"Pairing does not create a device with copied state; it introduces a
+  new device into an existing principal."** The 1B gate's step 4 found
+  the freight violating this: a child was born knowing only itself — no
+  sibling certificates — so it could not seal a grant to its own parent.
+  The freight now carries the person's certificate set (revocations
+  ride the IdentitySet and the space logs), and `node.Open` loads the whole of `ks.Certs` into
+  the identity store rather than only the self-certificate.
+- **The set converges transitively, not hub-and-spoke.** A second plane
+  message, the IdentitySet (certificates + revocations, signed, sealed,
+  same trust gate), re-offered when the set grows: A pairs C, and B
+  learns C without sharing a single space with A. Gate:
+  `TestSiblingSetConvergesTransitively`, including the decisive half —
+  grants flow between B and C while A is offline.
+- **Revocation, stated precisely:** revoke guarantees the absence of NEW
+  access after the point of revocation — never the unreadability of what
+  a device lawfully received before it. A revoked grantor's paper is
+  refused on CURRENT trust state regardless of its historical signature
+  (`TestRevokedGrantorIsRefused`); a revoked recipient stops appearing
+  in every derivation (offers, expansion) from the moment the
+  revocation is known.
+- **Stale replay is powerless.** The mailbox is deliberately
+  non-destructive, so old grants WILL be seen again; installation is
+  strictly monotonic — an attached space is untouched, epochs never
+  regress (`TestStaleIdentityGrantCannotRollbackSpace`).
+- **Mailbox growth is bounded twice.** Within a process, sealed bytes
+  are cached and the relay dedups them. Across restarts sealing is
+  randomized, so each envelope carries a deterministic tag of its
+  LOGICAL message; a sender reads the mailbox once per sibling per
+  process and skips what already lies there. 150 simulated restarts
+  leave a handful of physical copies, not a quota's worth
+  (`TestIdentityMailboxGrowthIsBounded`); the store's per-hint quota and
+  the TTL remain the outer walls.
 
 ## Security notes
 
