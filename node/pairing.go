@@ -90,6 +90,15 @@ type freightDoc struct {
 	// those devices exists anywhere to release them. Measured on the first
 	// live pairing as "no other people, no history, no media".
 	Legacy []storage.LegacyBinding
+	// Certs is the person's CERTIFIED SIBLING SET — every device
+	// certificate the parent holds for this principal, the child's own
+	// included. Without it a child knows only itself: it cannot seal a
+	// grant to its parent (no X25519), cannot count it as a sibling, and
+	// ADR-024's convergence dies at the first offline window. The
+	// certificates are root-signed and public by design (they ride space
+	// logs plaintext); the freight merely saves the child from having to
+	// meet each sibling in a space before it may speak to it.
+	Certs []storage.CertRecord
 	// Routes is the parent's PeerRoutes book — where the person's peers
 	// can be reached — plus one synthetic entry: the parent itself at its
 	// own ingress, provenance RouteAdvertised (the parent is literally
@@ -120,6 +129,7 @@ func (r *Runtime) buildFreightLocked(selfIngress []string) []byte {
 	}
 	doc.Legacy = append([]storage.LegacyBinding(nil), r.ks.LegacyBindings...)
 	doc.Routes = freightRoutesSnapshot(r, selfIngress)
+	doc.Certs = append([]storage.CertRecord(nil), r.ks.Certs...)
 	return encodeFreightDoc(&doc)
 }
 
@@ -130,7 +140,7 @@ func (r *Runtime) buildFreightLocked(selfIngress []string) []byte {
 // encoder, or the wire format forks the moment anyone adds a field.
 func encodeFreightDoc(doc *freightDoc) []byte {
 	var buf []byte
-	buf = codec.AppendArray(buf, freightFields+2)
+	buf = codec.AppendArray(buf, freightFields+3)
 	buf = codec.AppendUint(buf, freightVersion)
 	buf = codec.AppendBytes(buf, doc.Principal[:])
 	buf = codec.AppendBytes(buf, doc.CertFrame)
@@ -153,6 +163,12 @@ func encodeFreightDoc(doc *freightDoc) []byte {
 	}
 	buf = appendLegacyBindings(buf, doc.Legacy)
 	buf = appendRouteEntries(buf, doc.Routes)
+	buf = codec.AppendArray(buf, len(doc.Certs))
+	for _, c := range doc.Certs {
+		buf = codec.AppendArray(buf, 2)
+		buf = codec.AppendBytes(buf, c.Device[:])
+		buf = codec.AppendBytes(buf, c.Frame)
+	}
 	return buf
 }
 
@@ -384,7 +400,33 @@ func decodeFreight(data []byte) (*freightDoc, error) {
 			}
 		}
 	}
-	for k := freightFields + 2; k < n; k++ {
+	if n >= freightFields+3 {
+		cc, err := d.ReadArray()
+		if err != nil {
+			return nil, bad
+		}
+		for i := 0; i < cc; i++ {
+			fc, err := d.ReadArray()
+			if err != nil || fc < 2 {
+				return nil, bad
+			}
+			var rec storage.CertRecord
+			if raw, err = d.ReadBytes(); err != nil || len(raw) != len(rec.Device) {
+				return nil, bad
+			}
+			copy(rec.Device[:], raw)
+			if rec.Frame, err = d.ReadBytes(); err != nil {
+				return nil, bad
+			}
+			for k := 2; k < fc; k++ {
+				if err := d.SkipItem(); err != nil {
+					return nil, bad
+				}
+			}
+			doc.Certs = append(doc.Certs, rec)
+		}
+	}
+	for k := freightFields + 3; k < n; k++ {
 		if err := d.SkipItem(); err != nil {
 			return nil, bad
 		}
@@ -759,11 +801,17 @@ func JoinAsPairedDeviceVia(dir string, passphrase, offerBytes []byte,
 	if err != nil {
 		return err
 	}
+	certs := []storage.CertRecord{{Device: dev.ID, Frame: doc.CertFrame}}
+	for _, rec := range doc.Certs {
+		if rec.Device != dev.ID {
+			certs = append(certs, rec)
+		}
+	}
 	ks := &storage.Keystore{
 		DeviceSeed:    dev.Seed(),
 		DeviceX25519:  dev.X25519Priv(),
 		DisplayName:   doc.DisplayName,
-		Certs:         []storage.CertRecord{{Device: dev.ID, Frame: doc.CertFrame}},
+		Certs:         certs,
 		TerminalSeeds: map[id.TerminalID][]byte{},
 		Epochs:        map[id.TerminalID][]crypto.EpochKey{},
 		Spaces:        map[id.TerminalID]storage.SpaceMeta{},

@@ -98,6 +98,8 @@ type Runtime struct {
 	// routeKnowledgeGen ticks when a stated route displaces a legacy
 	// guess (routes.go); the sync loop re-offers legacy-basis deliveries.
 	routeKnowledgeGen uint64
+	// grants: the identity plane's in-memory half (grants.go, ADR-024).
+	grants *grantState
 	// Reconsideration is COALESCED, never recursive: a held frame may itself
 	// be the control event that changes admission state again.
 	// ingressArmed stays false throughout Open, so every change applied
@@ -453,6 +455,25 @@ func Open(dataDir string, passphrase []byte, displayName string) (rt *Runtime, e
 	}
 	if c, er := identity.DecodeCertificate(selfCert); er == nil {
 		_ = r.ident.store.AddCertificate(c)
+	}
+	// AND EVERY CERTIFICATE THE KEYSTORE HOLDS — not only our own. The
+	// store used to be fed from self plus whatever the space logs replayed,
+	// which quietly meant a paired child knew its sibling only after they
+	// met inside some shared space. A child whose parent owned no spaces
+	// never met it at all: ks.Certs said "this is my sibling" and the
+	// identity store said "never heard of it", so ADR-024's grants could
+	// not be sealed and convergence died at the first offline window —
+	// caught by the 1B gate, step 4. The keystore's records ARE the
+	// person's certified set; the store loads them like it loads the logs'.
+	for _, rec := range r.ks.Certs {
+		if c, er := identity.DecodeCertificate(rec.Frame); er == nil {
+			_ = r.ident.store.AddCertificate(c)
+		}
+	}
+	for _, rec := range r.ks.Revs {
+		if rv, er := identity.DecodeRevocation(rec.Frame); er == nil {
+			_ = r.ident.store.AddRevocation(rv)
+		}
 	}
 	_ = selfCertNew
 	r.selfCert = selfCert
