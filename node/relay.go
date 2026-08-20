@@ -463,11 +463,21 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 	// THE WANT CARRIES ITS OWN RETURN ADDRESS. A wants-bearing bundle
 	// states where this device can be answered — up to three of its own
 	// ingress endpoints — because the Phase-0 table's terminal cell was a
-	// holder who WANTED to answer and had never been told where. Stated
-	// beside the wants, attributed to the same wanter, three at most:
+	// holder who WANTED to answer and had never been told where.
+	//
+	// AND SO DOES EVERY CONTENT PUSH. Routes went stale two honest ways
+	// in one beta evening: automatic selection moved a phone to another
+	// relay and nobody told its peers, and a fresh join knocked before
+	// its own ingress existed, so the owner recorded nothing. Both heal
+	// the same way — a device states its current ingress whenever it has
+	// something to say, and the statement rides the frames it pushes.
+	// Three endpoints at most, attributed and cert-gated at the receiver:
 	// enough for a device mid-migration, useless as a spam vector.
 	var returnRoutes []string
-	if len(wants) > 0 {
+	if len(wants) > 0 || len(frames) > 0 {
+		if wanter == nil {
+			wanter = self[:]
+		}
 		returnRoutes = ownIngress
 		if len(returnRoutes) > 3 {
 			returnRoutes = returnRoutes[:3]
@@ -1177,10 +1187,18 @@ func (r *Runtime) applyHeldRelayItem(client *relay.Client, heldItem storage.Held
 	// want is answered exactly once: the bundle asked when it first arrived,
 	// and re-answering on every reconsideration would push the same blobs into
 	// somebody's inbox each time an unrelated certificate landed.
+	// THE STATED RETURN ADDRESS BECOMES KNOWLEDGE — with or without
+	// wants: since the relay-move fix every content push may carry its
+	// sender's current ingress, and a statement that only counted while
+	// asking for something would leave a moved device unreachable until
+	// it happened to want a file.
+	if client != nil && len(parts.ReturnRoutes) > 0 {
+		r.recordStatedReturnRoutes(parts.Wanter, parts.ReturnRoutes)
+	}
 	if client != nil && len(parts.Wants) > 0 {
-		// THE WANT'S RETURN ADDRESS BECOMES KNOWLEDGE — gated, bounded,
-		// and recorded BEFORE the answer is routed, so the very bundle
-		// that states "answer me at B" can be answered at B.
+		// Gated, bounded, and the routes above were recorded BEFORE the
+		// answer is routed, so the very bundle that states "answer me at
+		// B" can be answered at B.
 		//
 		// Gated on a certificate this node ALREADY holds: a stated route
 		// is a claim by the wanter, and a claim is only worth recording
@@ -1197,7 +1215,6 @@ func (r *Runtime) applyHeldRelayItem(client *relay.Client, heldItem storage.Held
 		// production poison cleanup. Content stays space-encrypted either
 		// way; a forged claim's ceiling is answer diversion, bounded by
 		// the cert gate, the endpoint cap, and the per-device book cap.
-		r.recordStatedReturnRoutes(parts.Wanter, parts.ReturnRoutes)
 		if len(parts.ReplyBox) > 0 {
 			_, _ = r.answerWants(client, terminal, parts.Wanter, parts.Wants, parts.ReplyBox, false)
 		} else {
@@ -1694,13 +1711,43 @@ func (r *Runtime) recordStatedReturnRoutes(wanter []byte, eps []string) {
 	if len(eps) > 3 {
 		eps = eps[:3]
 	}
-	recorded := false
-	r.mu.Lock()
+	// Validate first: the replacement below must never run for a bundle
+	// whose every endpoint is garbage.
+	valid := eps[:0]
 	for _, ep := range eps {
 		host, port, err := net.SplitHostPort(ep)
 		if err != nil || host == "" || port == "" {
 			continue
 		}
+		valid = append(valid, ep)
+	}
+	if len(valid) == 0 {
+		return
+	}
+	recorded := false
+	r.mu.Lock()
+	// THE LATEST SELF-STATEMENT WINS. An invitation route was also this
+	// device's own statement — made at knock time — and a device that has
+	// since moved relays is the one authority on where it listens now.
+	// Keeping the older statement above the newer one (invitation ranks
+	// over advertised) is how a phone that migrated stayed addressed at
+	// the relay it left. Stated provenances are replaced wholesale;
+	// manual entries are an operator's word, not the device's, and stay.
+	inNew := map[string]bool{}
+	for _, ep := range valid {
+		inNew[ep] = true
+	}
+	kept := r.ks.PeerRoutes[dev][:0]
+	for _, rt := range r.ks.PeerRoutes[dev] {
+		stated := rt.Provenance == storage.RouteInvitation ||
+			rt.Provenance == storage.RouteAdvertised
+		if stated && rt.Transport == "relay" && !inNew[rt.Endpoint] {
+			continue // superseded by the device's own newer statement
+		}
+		kept = append(kept, rt)
+	}
+	r.ks.PeerRoutes[dev] = kept
+	for _, ep := range valid {
 		r.recordPeerRouteLocked(dev, ep, "relay", storage.RouteAdvertised)
 		recorded = true
 	}

@@ -73,12 +73,17 @@ func (r *Runtime) recordPeerRouteLocked(dev id.DeviceID, endpoint, transport str
 		}
 		if len(kept) != len(routes) {
 			routes = append([]storage.Route(nil), kept...)
+			// STRONGER KNOWLEDGE INVALIDATES DELIVERY MADE ON WEAKER. Any
+			// space whose cursor last advanced on a legacy basis re-offers
+			// from zero — the RR-6 idiom (re-push is idempotent by EventID
+			// dedup), never a compensating decrement.
+			//
+			// Bumped only when a guess was actually displaced: since
+			// content pushes started announcing their sender's ingress,
+			// this records on every push — and a generation that ticks
+			// without knowledge changing re-offers the world for nothing.
+			r.routeKnowledgeGen++
 		}
-		// STRONGER KNOWLEDGE INVALIDATES DELIVERY MADE ON WEAKER. Any
-		// space whose cursor last advanced on a legacy basis re-offers
-		// from zero — the RR-6 idiom (re-push is idempotent by EventID
-		// dedup), never a compensating decrement.
-		r.routeKnowledgeGen++
 	}
 
 	for i := range routes {

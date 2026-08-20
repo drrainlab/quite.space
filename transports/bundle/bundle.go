@@ -75,13 +75,16 @@ func EncodeWithReplyBox(terminal id.TerminalID, frames, blobs, wants [][]byte, w
 	return EncodeWithReturnRoutes(terminal, frames, blobs, wants, wanter, replyBox, nil)
 }
 
-// EncodeWithReturnRoutes is the full form: wants plus the wanter's own
-// stated ingress. Routes ride only beside wants — a bundle that asks for
-// nothing has no answer to route.
+// EncodeWithReturnRoutes is the full form: the sender's own stated
+// ingress, riding beside wants OR beside plain frames. The first wire
+// rule here was "routes only beside wants — a bundle that asks for
+// nothing has no answer to route", and it was too narrow by exactly one
+// beta evening: a device that moves relays, or joins before its ingress
+// exists, must be able to state where it lives the next time it SAYS
+// anything — not the next time it happens to want a file. The statement
+// needs an author (wanter names the stating device, cert-gated at the
+// receiver); without one the routes still travel and are ignored there.
 func EncodeWithReturnRoutes(terminal id.TerminalID, frames, blobs, wants [][]byte, wanter, replyBox []byte, returnRoutes []string) []byte {
-	if len(wants) == 0 {
-		returnRoutes = nil
-	}
 	n := 3
 	if len(blobs) > 0 {
 		n++

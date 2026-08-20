@@ -37,17 +37,24 @@ func TestFullBundleRoundTrip(t *testing.T) {
 	}
 }
 
-// TestRoutesRideOnlyBesideWants — a bundle that asks for nothing has no
-// answer to route, and must not carry a gratuitous reachability claim.
-func TestRoutesRideOnlyBesideWants(t *testing.T) {
+// TestRoutesRideBesidePlainFrames — the rule this replaced was "routes
+// only beside wants", and it was too narrow by one beta evening: a
+// device that moved relays could not tell anybody until it happened to
+// want a file. A content push may state its sender's ingress; the
+// receiver's certificate gate is what keeps the claim from being free.
+func TestRoutesRideBesidePlainFrames(t *testing.T) {
 	tid := id.TerminalID{0x01}
-	p, err := DecodeParts(EncodeWithReturnRoutes(tid, [][]byte{[]byte("f")}, nil, nil, nil, nil,
+	wanter := bytes.Repeat([]byte{7}, 32)
+	p, err := DecodeParts(EncodeWithReturnRoutes(tid, [][]byte{[]byte("f")}, nil, nil, wanter, nil,
 		[]string{"203.0.113.9:7411"}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(p.ReturnRoutes) != 0 {
-		t.Fatalf("routes rode without wants: %v", p.ReturnRoutes)
+	if len(p.ReturnRoutes) != 1 || p.ReturnRoutes[0] != "203.0.113.9:7411" {
+		t.Fatalf("a frame push lost its sender's stated ingress: %v", p.ReturnRoutes)
+	}
+	if !bytes.Equal(p.Wanter, wanter) {
+		t.Fatal("the statement lost its author")
 	}
 }
 
