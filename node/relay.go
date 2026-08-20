@@ -514,6 +514,9 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 	noRoute := 0
 	for _, dev := range recipients {
 		ep := route(dev)
+		if routeProbe != nil { // SCRATCH
+			routeProbe(dev, ep)
+		}
 		if ep == "" {
 			noRoute++
 			continue
@@ -1410,3 +1413,6 @@ func (r *Runtime) replyBoxCaps(tids []id.TerminalID, bucket uint64) [][]byte {
 	}
 	return caps
 }
+
+// routeProbe — SCRATCH.
+var routeProbe func(dev id.DeviceID, ep string)
