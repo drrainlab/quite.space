@@ -26,6 +26,10 @@ type relaySyncState struct {
 	interval time.Duration
 	stop     chan struct{}
 	lastLen  map[id.TerminalID]int
+	// legacyBasis: spaces whose cursor last advanced on a recorded
+	// single-relay assumption; re-offered when stated knowledge arrives.
+	legacyBasis  map[id.TerminalID]bool
+	lastRouteGen uint64
 	lastErr  string
 	lastPush time.Time
 	lastPull time.Time
@@ -79,6 +83,14 @@ const (
 	// the routed members went ahead. The one thing this must never become
 	// is a silent Put onto the sender's own relay.
 	heldNoRoute     = "no route to some members yet"
+	// heldTentative: every addressable member's copy went out on the
+	// zero-knowledge bootstrap guess — put at this node's OWN relay in
+	// the hope the recipient shares it. In a single-relay world that hope
+	// is simply true; across relays it is a mailbox nobody drains. Either
+	// way it is a GUESS, and a guess is not delivery: the cursor stays,
+	// the space re-offers (the relay store dedups identical bytes), and
+	// the hold clears the moment a stated route carries a real copy.
+	heldTentative = "delivered on a guess — no stated route for some members"
 	heldNoRelay     = "no usable relay for this space"
 	heldNoReadRelay = "no usable relay to read this space from"
 )
@@ -129,6 +141,7 @@ func (r *Runtime) applyRelaySync(addr string, interval time.Duration) {
 	if r.relaySync == nil {
 		r.relaySync = &relaySyncState{
 			lastLen:        map[id.TerminalID]int{},
+			legacyBasis:    map[id.TerminalID]bool{},
 			lastPubLen:     map[id.TerminalID]int{},
 			lastPubBucket:  map[id.TerminalID]uint64{},
 			lastPubRefresh: map[id.TerminalID]time.Time{},
@@ -369,6 +382,22 @@ func (r *Runtime) relaySyncOnce(addr string) {
 	spaces = active
 
 	var lastErr string
+	// STRONGER KNOWLEDGE INVALIDATES WEAKER DELIVERY. If any stated route
+	// displaced a guess since the last cycle, every space whose cursor
+	// advanced on a legacy basis re-offers from zero — the whole log rides
+	// the push and EventID dedup makes reapplication a no-op, so the cost
+	// is one redundant bundle and the gain is that a copy parked on the
+	// wrong relay stops counting as history.
+	if gen := r.RouteKnowledgeGen(); gen != rs.lastRouteGenLocked() {
+		rs.mu.Lock()
+		for tid := range rs.legacyBasis {
+			rs.lastLen[tid] = 0
+			delete(rs.legacyBasis, tid)
+		}
+		rs.lastRouteGen = gen
+		rs.mu.Unlock()
+	}
+
 	// Why each space handed nothing over this cycle. Rebuilt from scratch
 	// every pass so a space that recovers stops reporting instantly.
 	held := map[id.TerminalID]heldReason{}
@@ -393,12 +422,12 @@ func (r *Runtime) relaySyncOnce(addr string) {
 		// member's own route, not to this node's relay. `addr` plays no
 		// part here any more — it survives below only for the public
 		// personal-fallback paths.
-		n, reached, noRoute, err := r.deliverSpace(sp.tid, AssetsManifests, addr)
+		n, reached, noRoute, tentative, legacyBasis, err := r.deliverSpace(sp.tid, AssetsManifests, addr)
 		if err != nil {
 			lastErr = err.Error()
 			continue
 		}
-		if reached == 0 && noRoute == 0 {
+		if reached == 0 && noRoute == 0 && tentative == 0 {
 			// Nobody addressable yet (fresh joiner before its first pull, or a
 			// solo space): leave lastLen untouched so we retry once we learn a
 			// peer device, instead of marking these frames as handed off.
@@ -417,9 +446,30 @@ func (r *Runtime) relaySyncOnce(addr string) {
 			}
 			continue
 		}
+		if tentative > 0 {
+			// TRANSPORT ACCEPTANCE ≠ DELIVERY. Copies went out on the
+			// bootstrap guess; the relay took the bytes and that proves
+			// nothing about the recipient. Held, cursor unmoved — the
+			// Phase-0 table's every starving asset came through here with
+			// the old code counting it delivered.
+			held[sp.tid] = heldReason{heldTentative, tentative}
+			if reached > 0 {
+				pushed += n
+			}
+			continue
+		}
 		pushed += n
 		rs.mu.Lock()
 		rs.lastLen[sp.tid] = sp.n
+		if legacyBasis {
+			// The cursor advanced on a RECORDED assumption (a legacy-
+			// provenance route: open-time backfill or pre-honesty
+			// history). Remembered — the moment stated knowledge arrives
+			// for anyone, these spaces re-offer from zero.
+			rs.legacyBasis[sp.tid] = true
+		} else {
+			delete(rs.legacyBasis, sp.tid)
+		}
 		rs.mu.Unlock()
 	}
 
@@ -857,4 +907,10 @@ func (r *Runtime) fillWantHolds(st *RelaySyncStatus) {
 			AgoSec: int(time.Since(h.At).Seconds()),
 		})
 	}
+}
+
+func (rs *relaySyncState) lastRouteGenLocked() uint64 {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	return rs.lastRouteGen
 }

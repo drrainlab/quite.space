@@ -2,6 +2,7 @@ package node
 
 import (
 	"fmt"
+	"github.com/drrainlab/quiet_places/kernel/storage"
 	"testing"
 
 	"github.com/drrainlab/quiet_places/transports/relayserver"
@@ -66,8 +67,13 @@ func TestASpaceThatCannotSendSaysSo(t *testing.T) {
 			"person acts on", h.Frames)
 	}
 
-	// And it stops saying it the moment it is no longer true: alice pushes,
-	// bob learns her device, and the hold clears on the next cycle.
+	// Alice pushes and bob learns her DEVICE — but a direct invite records
+	// no routes, so bob still does not know where alice LISTENS. The old
+	// code called the next delivery a success anyway: the bootstrap put the
+	// copy at bob's own relay, recorded that guess as if alice had stated
+	// it, and cleared the hold. On one shared relay the luck held; across
+	// two it was the black hole of BETA_AUDIT_2026-08-20. The honest report
+	// is a DIFFERENT hold: delivered on a guess, cursor unmoved.
 	if err := alice.SetSettings(Settings{Relay: addr}); err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +84,17 @@ func TestASpaceThatCannotSendSaysSo(t *testing.T) {
 		t.Fatal(err)
 	}
 	bob.relaySyncOnce(addr)
+	held := bob.RelaySync().Held
+	if len(held) != 1 || held[0].Reason != heldTentative {
+		t.Fatalf("delivery on a guess must be held as a guess: %+v", held)
+	}
+
+	// And the hold clears only for the real thing: a STATED route.
+	bob.mu.Lock()
+	bob.recordPeerRouteLocked(alice.Device.ID, addr, "relay", storage.RouteInvitation)
+	bob.mu.Unlock()
+	bob.relaySyncOnce(addr)
 	if held := bob.RelaySync().Held; len(held) != 0 {
-		t.Fatalf("still reporting a hold after the peer became addressable: %+v", held)
+		t.Fatalf("still holding after a stated route existed: %+v", held)
 	}
 }

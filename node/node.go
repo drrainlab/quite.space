@@ -95,6 +95,9 @@ type Runtime struct {
 	ingressRefusals []IngressRefusal
 	// wantHolds: media answers this node could not route yet (relay.go).
 	wantHolds []WantHold
+	// routeKnowledgeGen ticks when a stated route displaces a legacy
+	// guess (routes.go); the sync loop re-offers legacy-basis deliveries.
+	routeKnowledgeGen uint64
 	// Reconsideration is COALESCED, never recursive: a held frame may itself
 	// be the control event that changes admission state again.
 	// ingressArmed stays false throughout Open, so every change applied

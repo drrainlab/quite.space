@@ -214,8 +214,8 @@ func (r *Runtime) PushToRelay(addr string, tid id.TerminalID) (int, uint64, erro
 // manual push API and the single-relay tests. The background loop uses
 // deliverSpace instead, which routes per recipient.
 func (r *Runtime) pushToRelay(addr string, tid id.TerminalID, policy AssetPolicy) (int, int, uint64, error) {
-	pushed, reached, _, deadline, err := r.deliverSpaceRouted(tid, policy,
-		func(id.DeviceID) string { return addr }, false)
+	pushed, reached, _, _, deadline, err := r.deliverSpaceRouted(tid, policy,
+		func(id.DeviceID) (string, bool) { return addr, false }, false)
 	return pushed, reached, deadline, err
 }
 
@@ -247,29 +247,46 @@ func (r *Runtime) pushToRelay(addr string, tid id.TerminalID, policy AssetPolicy
 // the settings resolve to nothing, and it is never RouteBook knowledge: it
 // must not create PeerRoutes or SelfIngress entries, must not survive the
 // cycle, and is never returned by the general resolver.
-func (r *Runtime) deliverSpace(tid id.TerminalID, policy AssetPolicy, syncingAt string) (pushed, reached, noRoute int, err error) {
-	pushed, reached, noRoute, _, err = r.deliverSpaceRouted(tid, policy,
-		func(dev id.DeviceID) string {
-			r.mu.Lock()
-			known := len(r.ks.PeerRoutes[dev])
-			r.mu.Unlock()
-			if known > 0 {
-				if eps := r.PeerRoutesFor(dev); len(eps) > 0 {
-					return eps[0]
-				}
-				return "" // stated routes exist and are all down: HOLD (until T5)
+func (r *Runtime) deliverSpace(tid id.TerminalID, policy AssetPolicy, syncingAt string) (pushed, reached, noRoute, tentative int, legacyBasis bool, err error) {
+	route := func(dev id.DeviceID) (string, bool) {
+		if ranked := r.rankedPeerRoutes(dev); len(ranked) > 0 {
+			// A LEGACY ROUTE IS A RECORDED ASSUMPTION, NOT A STATEMENT —
+			// the open-time backfill for pre-RT0 directories, or history
+			// from before recording guesses was abolished. It still
+			// carries the copy (a single-relay install genuinely lives
+			// there), but delivery on it is a basis the cursor remembers:
+			// the moment anything stated arrives for this device, every
+			// legacy-basis space re-offers from zero.
+			if ranked[0].Provenance == storage.RouteLegacy {
+				legacyBasis = true
 			}
-			// Nothing known at all: the legacy bootstrap, recorded.
-			if ep := r.ResolvePersonalRelay(); ep != "" {
-				r.mu.Lock()
-				r.recordPeerRouteLocked(dev, ep, "relay", storage.RouteLegacy)
-				r.mu.Unlock()
-				return ep
-			}
-			// The cycle's explicit endpoint: used, never recorded.
-			return syncingAt
-		}, true)
-	return pushed, reached, noRoute, err
+			return ranked[0].Endpoint, false
+		}
+		r.mu.Lock()
+		known := len(r.ks.PeerRoutes[dev])
+		r.mu.Unlock()
+		if known > 0 {
+			return "", false // stated routes exist and are all down: HOLD (until T5)
+		}
+		// NOTHING KNOWN AT ALL: THE BOOTSTRAP GUESS — used, NEVER RECORDED,
+		// NEVER FINAL. The copy is still put at this node's own relay: in a
+		// single-relay world that is exactly where the recipient looks, and
+		// the relay store dedups an identical re-offer for free. What the
+		// guess may no longer do is either of the things it used to do
+		// quietly: write itself into the route book as if the peer had
+		// stated it (that poison outlived the mistake and satisfied the
+		// known>0 gate forever), or advance the delivery cursor as if a
+		// mailbox nobody drains were a delivery. Transport acceptance at
+		// SOME endpoint is not delivery to the intended recipient — the
+		// caller holds the space and re-offers until a stated route exists.
+		if ep := r.ResolvePersonalRelay(); ep != "" {
+			return ep, true
+		}
+		// The cycle's explicit endpoint: same rules, same honesty.
+		return syncingAt, true
+	}
+	pushed, reached, noRoute, tentative, _, err = r.deliverSpaceRouted(tid, policy, route, true)
+	return pushed, reached, noRoute, tentative, legacyBasis, err
 }
 
 // deliverSpaceRouted returns (framesPrepared, reached, noRoute, deadline,
@@ -280,12 +297,12 @@ func (r *Runtime) deliverSpace(tid id.TerminalID, policy AssetPolicy, syncingAt 
 // as sent. route answers "which endpoint carries this recipient's copy";
 // "" means no route is known and the recipient is skipped and counted.
 func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
-	route func(id.DeviceID) string, lanOffload bool) (int, int, int, uint64, error) {
+	route func(id.DeviceID) (string, bool), lanOffload bool) (int, int, int, int, uint64, error) {
 	r.mu.Lock()
 	st, ok := r.spaces[tid]
 	if !ok {
 		r.mu.Unlock()
-		return 0, 0, 0, 0, errors.New("node: unknown space")
+		return 0, 0, 0, 0, 0, errors.New("node: unknown space")
 	}
 	var frames [][]byte
 	var eventIDs []id.EventID
@@ -351,7 +368,7 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 		return nil
 	}); err != nil {
 		r.mu.Unlock()
-		return 0, 0, 0, 0, err
+		return 0, 0, 0, 0, 0, err
 	}
 	var fleeting [][]byte    // frames that carry their own deadline
 	var fleetingUntil uint64 // the earliest of those deadlines
@@ -431,7 +448,7 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 		// first pull). Frames were prepared but delivered to no one — a clean
 		// no-op. Reporting reached==0 lets the auto-sync loop retry rather
 		// than mark these frames as handed off.
-		return len(frames), 0, 0, 0, nil
+		return len(frames), 0, 0, 0, 0, nil
 	}
 	// THE LOCAL WIRE FIRST (T6-LAN). A recipient whose device is
 	// authenticated live on a local link gets its copy pushed over that
@@ -479,14 +496,14 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 	}
 	if len(recipients) == 0 {
 		// Everybody was on the wire. The relay is not even dialled.
-		return len(frames), lanReached, 0, 0, nil
+		return len(frames), lanReached, 0, 0, 0, nil
 	}
 	if err := r.relayGate(); err != nil {
 		if lanReached > 0 {
 			// The relay is refused by policy, but the room heard us.
-			return len(frames), lanReached, len(recipients), 0, nil
+			return len(frames), lanReached, len(recipients), 0, 0, nil
 		}
-		return 0, 0, 0, 0, err
+		return 0, 0, 0, 0, 0, err
 	}
 	now = uint64(time.Now().Unix())
 	bucket := relay.Bucket(now)
@@ -512,8 +529,11 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 	// so nothing about addressing changes — only which machine holds it.
 	byEndpoint := map[string][]id.DeviceID{}
 	noRoute := 0
+	// A copy sent on a bootstrap guess is counted apart from a routed one:
+	// the caller must know how much of this delivery is real.
+	guessed := map[id.DeviceID]bool{}
 	for _, dev := range recipients {
-		ep := route(dev)
+		ep, guess := route(dev)
 		if routeProbe != nil { // SCRATCH
 			routeProbe(dev, ep)
 		}
@@ -521,10 +541,13 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 			noRoute++
 			continue
 		}
+		if guess {
+			guessed[dev] = true
+		}
 		byEndpoint[ep] = append(byEndpoint[ep], dev)
 	}
 
-	relayReached := 0
+	relayReached, relayTentative := 0, 0
 	var sendErr error
 	// Deterministic endpoint order, so failures are stable to read.
 	eps := make([]string, 0, len(byEndpoint))
@@ -557,7 +580,11 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 						return err
 					}
 				}
-				relayReached++
+				if guessed[dev] {
+					relayTentative++
+				} else {
+					relayReached++
+				}
 			}
 			return nil
 		}); err != nil {
@@ -568,8 +595,8 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 			}
 		}
 	}
-	if relayReached == 0 && lanReached == 0 && sendErr != nil {
-		return 0, 0, noRoute, 0, sendErr
+	if relayReached == 0 && relayTentative == 0 && lanReached == 0 && sendErr != nil {
+		return 0, 0, noRoute, 0, 0, sendErr
 	}
 	if oversize > 0 {
 		// Said out loud rather than dropped in silence: a single frame past
@@ -591,7 +618,7 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 		}
 		r.mu.Unlock()
 	}
-	return len(frames), relayReached + lanReached, noRoute, deadline, sendErr
+	return len(frames), relayReached + lanReached, noRoute, relayTentative, deadline, sendErr
 }
 
 // addRelayWants records blob hashes to request over the relay for a space
@@ -811,6 +838,19 @@ func (r *Runtime) answerWantsRouted(tid id.TerminalID, wanter []byte, wants [][]
 			Reason: "held_no_route"})
 		if wantsProbe != nil { // SCRATCH (Phase 0 instrument)
 			wantsProbe(r, dev, "no_route")
+		}
+		// AND STILL TRIED, TENTATIVELY — the same shape frame delivery
+		// takes: put the answer at this node's OWN relay on the chance the
+		// wanter shares it. In a single-relay world that chance is simply
+		// true (it is how a paired sibling has always been answered);
+		// across relays it costs one deduped put. The hold above STAYS —
+		// a guess is an attempt, never the end of the wait — and clears
+		// only when a stated route carries an answer for real.
+		if own := r.ResolvePersonalRelay(); own != "" {
+			_ = r.withRelayBulk(own, func(client *relay.Client) error {
+				r.answerWants(client, tid, wanter, wants, nil, false)
+				return nil
+			})
 		}
 		return
 	}

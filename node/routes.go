@@ -56,6 +56,31 @@ func (r *Runtime) recordPeerRouteLocked(dev id.DeviceID, endpoint, transport str
 		r.ks.PeerRoutes = map[id.DeviceID][]storage.Route{}
 	}
 	routes := r.ks.PeerRoutes[dev]
+
+	// A STATEMENT DISPLACES EVERY GUESS. A legacy entry is not knowledge —
+	// it is the single-relay assumption written down (open-time backfill,
+	// or history from before this rule). Once anything real is known for
+	// this device, keeping the guess around would let PeerRoutesFor's
+	// health filter fall back to a healthy-but-wrong relay the moment the
+	// stated one blinks — RT-0's banned re-aim, wearing a fallback's
+	// clothes. Deleted, not merely outranked.
+	if routeRank(provenance) < routeRank(storage.RouteLegacy) {
+		kept := routes[:0]
+		for _, rt := range routes {
+			if rt.Provenance != storage.RouteLegacy {
+				kept = append(kept, rt)
+			}
+		}
+		if len(kept) != len(routes) {
+			routes = append([]storage.Route(nil), kept...)
+		}
+		// STRONGER KNOWLEDGE INVALIDATES DELIVERY MADE ON WEAKER. Any
+		// space whose cursor last advanced on a legacy basis re-offers
+		// from zero — the RR-6 idiom (re-push is idempotent by EventID
+		// dedup), never a compensating decrement.
+		r.routeKnowledgeGen++
+	}
+
 	for i := range routes {
 		if routes[i].Endpoint == endpoint && routes[i].Transport == transport {
 			if routeRank(provenance) < routeRank(routes[i].Provenance) {
@@ -66,10 +91,35 @@ func (r *Runtime) recordPeerRouteLocked(dev id.DeviceID, endpoint, transport str
 			return
 		}
 	}
+	// A book is a record, not a dumping ground: the list is bounded, and
+	// the guessy end of it is what gives way (mailbox-injected spam must
+	// not be able to grow it without limit).
+	const maxRoutesPerDevice = 6
+	if len(routes) >= maxRoutesPerDevice {
+		worst, at := -1, -1
+		for i, rt := range routes {
+			if rk := routeRank(rt.Provenance); rk > worst {
+				worst, at = rk, i
+			}
+		}
+		if at >= 0 && worst >= routeRank(provenance) {
+			routes = append(routes[:at], routes[at+1:]...)
+		} else {
+			return // the newcomer is the weakest of them all: not recorded
+		}
+	}
 	r.ks.PeerRoutes[dev] = append(routes, storage.Route{
 		Endpoint: endpoint, Transport: transport,
 		Provenance: provenance, LearnedAt: now, LastSeen: now,
 	})
+}
+
+// RouteKnowledgeGen ticks every time a stated route displaces guesswork;
+// the sync loop watches it to re-offer legacy-basis deliveries.
+func (r *Runtime) RouteKnowledgeGen() uint64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.routeKnowledgeGen
 }
 
 // recordSelfIngressLocked remembers that this device advertised (or was
@@ -96,6 +146,20 @@ func (r *Runtime) recordSelfIngressLocked(endpoint string, provenance uint8) {
 // means NO ROUTE — the caller holds, visibly; it never substitutes its own
 // relay and hopes.
 func (r *Runtime) PeerRoutesFor(dev id.DeviceID) []string {
+	ranked := r.rankedPeerRoutes(dev)
+	out := make([]string, 0, len(ranked))
+	for _, rt := range ranked {
+		out = append(out, rt.Endpoint)
+	}
+	return out
+}
+
+// rankedPeerRoutes is PeerRoutesFor with the provenance kept: stated
+// routes for one device, best knowledge first, dead relays filtered.
+// Delivery accounting needs the provenance — a copy sent on invitation
+// knowledge and a copy sent on a legacy assumption must not be recorded
+// as the same kind of success.
+func (r *Runtime) rankedPeerRoutes(dev id.DeviceID) []storage.Route {
 	r.mu.Lock()
 	routes := append([]storage.Route(nil), r.ks.PeerRoutes[dev]...)
 	r.mu.Unlock()
@@ -113,7 +177,7 @@ func (r *Runtime) PeerRoutesFor(dev id.DeviceID) []string {
 			routes[j-1], routes[j] = routes[j], routes[j-1]
 		}
 	}
-	out := make([]string, 0, len(routes))
+	out := make([]storage.Route, 0, len(routes))
 	for _, rt := range routes {
 		if rt.Transport != "relay" {
 			continue // LAN/radio candidates join the resolver in T6
@@ -122,7 +186,7 @@ func (r *Runtime) PeerRoutesFor(dev id.DeviceID) []string {
 		case "untrusted", "offline":
 			continue
 		}
-		out = append(out, rt.Endpoint)
+		out = append(out, rt)
 	}
 	return out
 }
