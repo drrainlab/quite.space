@@ -16,6 +16,9 @@ let hereMembers = new Set();
 // feedSig: per-entry signatures from the last render — the incremental feed
 // only touches the DOM when something actually changed (keeps players alive).
 let feedSig = [];
+// heldSpaceIds: spaces whose frames the relay sync is still holding —
+// the sender-side Release state, read off the existing status poll.
+let heldSpaceIds = new Set();
 // entriesTag: ETag of the last /entries body per space. The node answers
 // 304 when nothing changed — which, on a 2s poll, is almost every time —
 // so the webview stops parsing megabytes of unchanged base64 thumbnails.
@@ -1014,6 +1017,18 @@ async function refresh() {
       // instead of the largest one.
       try {
         const rs = await api('/api/relay/status');
+        // Release (Media Presence): which spaces still have frames the
+        // transport could not confirm handed over. An OWN media card in a
+        // held space keeps a faintly living surface; the moment the hold
+        // clears, it settles. Movement = something is happening;
+        // stillness = the object has landed. Fed from the poll that was
+        // happening anyway — no request of its own.
+        heldSpaceIds = new Set((rs.held || [])
+          // A solo space's "nobody to send to yet" is not an unfinished
+          // hand-over — there is no one to hand to, and an edge breathing
+          // forever in a room of one would be motion with nothing to say.
+          .filter(h => h.reason !== 'nobody to send to yet')
+          .map(h => h.space_id));
         // Authenticated local peers, only when policy lets the wire carry.
         const cm = (status.connectivity || {}).mode || 'auto';
         const room = (cm === 'auto' || cm === 'internet')
@@ -1845,7 +1860,13 @@ async function refreshSpace() {
   // Asset fetch state is part of what a row shows (poster → progress →
   // playable); without it here, a fetch completing never re-renders and you
   // only see the media after a full page reload.
-  const aSig = entries.map(e => e.asset ? (e.asset.state + '/' + (e.asset.missing || 0) + '/' + (e.asset.total || 0)) : '');
+  // The RELEASE edge is part of what an own media row shows, so the hold
+  // state joins the signature — without it, the edge would freeze on
+  // whatever the row wore at its last content change: applied forever
+  // after the hold cleared, or never applied at all.
+  const spaceHeld = heldSpaceIds.has(current);
+  const aSig = entries.map(e => (e.asset ? (e.asset.state + '/' + (e.asset.missing || 0) + '/' + (e.asset.total || 0)) : '') +
+    (spaceHeld && e.mine && e.asset ? '~R' : ''));
   const rSig = entries.map(e => resSig(e.resonance));
   const sig = contentSig.map((c, i) => c + '|' + aSig[i] + '|' + rSig[i]);
   const unchanged = !switched && sig.length === feedSig.length && sig.every((s, i) => s === feedSig[i]);
@@ -3221,6 +3242,14 @@ function renderEntry(log, e, fresh, grouped) {
   const own = !!e.mine;
   d.className = 'entry msg' + (own ? ' own' : ' other') +
     (grouped ? ' grouped' : '') + (fresh ? ' enter' : '');
+  // RELEASE (Media Presence): my media, while the transport still holds
+  // frames for this space, wears a faintly living edge — released into
+  // the space but not yet confirmed handed over as far as the transport
+  // can honestly confirm. Settles to stillness on its own: the feed
+  // re-renders from server state, so the class leaves when the hold does.
+  if (own && e.asset && heldSpaceIds.has(current)) {
+    d.classList.add('media-releasing');
+  }
 
   // Author head (shown once per group, hidden for grouped follow-ons via CSS).
   const who = document.createElement('div');
@@ -3684,10 +3713,21 @@ function mediaArriving(asset) {
     asset.reason !== 'no_source';
 }
 
-/** Mark a preview as a stand-in for bytes that are still coming. */
+/** Mark a preview as a stand-in for bytes that are still coming.
+ *
+ * Progress rides as a CSS custom property so the SURFACE of the media
+ * resolves with the bytes — the Media Presence contract's Arrival: the
+ * stand-in sharpens as the real thing lands, and the number is a hover
+ * detail, not the show. Progress only ever grows (chunks arrive, never
+ * un-arrive), so a one-way mapping needs no guard against rollback. */
 function markArriving(el, asset, sheen) {
   if (!el) return;
-  el.classList.toggle('media-arriving', mediaArriving(asset));
+  const on = mediaArriving(asset);
+  el.classList.toggle('media-arriving', on);
+  if (on && asset.total > 0) {
+    const got = Math.max(0, asset.total - (asset.missing || 0));
+    el.style.setProperty('--arrive', (got / asset.total).toFixed(3));
+  }
   if (sheen) el.classList.add('qs-sheen');
 }
 
@@ -4067,8 +4107,12 @@ function renderVoiceAudio(e) {
   } else {
     if (e.waveform_b64) {
       // The waveform is a sound's thumbnail — the same materialisation, on
-      // the preview this block happens to carry.
-      const wave = renderWave(e.waveform_b64);
+      // the preview this block happens to carry: bars solidify with the
+      // bytes, ghosts hold the shape.
+      const a = e.asset || {};
+      const prog = a.state === 'fetching' && a.total > 0
+        ? (a.total - (a.missing || 0)) / a.total : 0;
+      const wave = renderWave(e.waveform_b64, prog);
       markArriving(wave, e.asset);
       wrap.appendChild(wave);
     } else {
@@ -4244,13 +4288,19 @@ function renderLink(e) {
   return card;
 }
 
-function renderWave(b64) {
+function renderWave(b64, progress) {
   const bytes = atob(b64);
   const w = document.createElement('div');
   w.className = 'wave';
+  // Arrival for a sound: the waveform materialises bar by bar with the
+  // real bytes. Ghost bars keep the layout honest — the shape is known
+  // from the preview, only its substance is still travelling.
+  const solid = progress === undefined ? bytes.length
+    : Math.floor(bytes.length * Math.max(0, Math.min(1, progress)));
   for (let i = 0; i < bytes.length; i++) {
     const bar = document.createElement('i');
     bar.style.height = Math.max(2, (bytes.charCodeAt(i) / 255) * 32) + 'px';
+    if (i >= solid) bar.className = 'ghost';
     w.appendChild(bar);
   }
   return w;

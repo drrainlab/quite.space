@@ -1225,9 +1225,19 @@
   .media-arriving { opacity: .82; }
   /* An <img> takes the blur directly — ::after does not render on a
      replaced element, and wrapping every thumbnail to hang one sheen on it
-     would rebuild three renderers for a decoration. */
+     would rebuild three renderers for a decoration.
+
+     THE SURFACE RESOLVES WITH THE BYTES (Media Presence: Arrival). The
+     fetch writes --arrive (0..1, real chunks over total) onto the element,
+     and the blur is simply what remains of the distance: a photo at half
+     its bytes stands at half its softness. Progress only grows, so the
+     mapping never runs backwards; each step is a discrete sharpening —
+     the feed re-renders the node per poll, and that chunkiness is honest
+     (a relay round IS a step). No --arrive set means nothing has come. */
   img.media-arriving, .thumb.media-arriving {
-    filter: blur(7px) saturate(.9); transform: scale(1.015);
+    filter: blur(calc(7px * (1 - var(--arrive, 0))))
+      saturate(calc(.9 + .1 * var(--arrive, 0)));
+    transform: scale(1.015);
     /* Softening is a STATE, not an event: a preview is a stand-in from the
        first frame it is painted. Only the resolve is worth watching, and a
        transition declared here would run in both directions — so a picture
@@ -1255,6 +1265,39 @@
      says for free. */
   .media-arriving.qs-sheen {
     background: color-mix(in srgb, var(--accent, #6cd3ff) 10%, transparent);
+  }
+  /* Arrival for a sound: bars beyond the arrived fraction are ghosts —
+     the shape is known from the signed preview, the substance is still
+     travelling. Layout never moves; only presence fills in. */
+  .wave i.ghost { opacity: .22; }
+
+  /* RELEASE (Media Presence): my media while the transport still holds
+     frames for its space. The object is fully visible — it exists, it was
+     never "undrawn" — but its edge is faintly alive until the hand-over
+     is confirmed as far as the transport can confirm it. Then stillness:
+     movement means something is happening, stillness means the object
+     has landed. One animated property (box-shadow opacity via color),
+     slow, low-contrast — the same photosensitivity floor as everything
+     else in this file. */
+  .entry.media-releasing .thumb,
+  .entry.media-releasing .video-holder,
+  .entry.media-releasing .wave,
+  .entry.media-releasing .aplayer {
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent, #6cd3ff) 45%, transparent);
+    animation: media-release-breathe 3.4s ease-in-out infinite;
+  }
+  @keyframes media-release-breathe {
+    0%, 100% { box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent, #6cd3ff) 20%, transparent); }
+    50% { box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent, #6cd3ff) 55%, transparent); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .entry.media-releasing .thumb,
+    .entry.media-releasing .video-holder,
+    .entry.media-releasing .wave,
+    .entry.media-releasing .aplayer {
+      animation: none;
+      box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent, #6cd3ff) 35%, transparent);
+    }
   }
   @media (prefers-reduced-motion: reduce) {
     .thumb, .pub-cover img, .pub-block img { transition: none; }
