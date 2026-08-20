@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/drrainlab/quiet_places/kernel/assets"
 	"github.com/drrainlab/quiet_places/kernel/storage"
 )
 
@@ -70,6 +71,11 @@ type FetchBrief struct {
 	State string `json:"state"` // fetching | silent | failed
 	// Reason is the fetch verdict for failed entries (no_peers, …).
 	Reason string `json:"reason,omitempty"`
+	// Missing/Total chunks — two diagnostics snapshots a few seconds
+	// apart show whether a fetch is flowing or frozen, which is the
+	// exact question a stalled progress bar raises.
+	Missing int `json:"missing,omitempty"`
+	Total   int `json:"total,omitempty"`
 }
 
 // PeerRouteBrief is one peer device's delivery picture, for diagnostics.
@@ -178,8 +184,18 @@ func (r *Runtime) RelayDiagnosticsSnapshot() RelayDiagnostics {
 		if _, quiet := r.assetIdx.silent[key]; quiet {
 			st = "silent"
 		}
-		d.Fetches = append(d.Fetches, FetchBrief{
-			Space: key.Space.Hex()[:8], Asset: shortAsset(key.Asset), State: st})
+		fb := FetchBrief{
+			Space: key.Space.Hex()[:8], Asset: shortAsset(key.Asset), State: st}
+		if ref := r.assetIdx.refs[key]; ref != nil {
+			if res, err := assets.Missing(r.root, ref); err == nil {
+				fb.Missing = len(res.MissingChunks)
+				if res.ManifestMissing {
+					fb.Missing = -1 // not even the manifest yet
+				}
+				fb.Total = res.TotalChunks
+			}
+		}
+		d.Fetches = append(d.Fetches, fb)
 	}
 	for key, why := range r.assetIdx.failed {
 		d.Fetches = append(d.Fetches, FetchBrief{
