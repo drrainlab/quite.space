@@ -4743,6 +4743,27 @@ function makeThumb(file) {
 }
 
 async function sendAttachment() {
+  // ONE PRESS IS ONE MESSAGE, AND THE PRESS IS ANSWERED. A 380 MB video
+  // spends real seconds being chunked and sealed (PREPARING in the Media
+  // Presence contract), and the dialog used to spend them frozen with a
+  // live send button — the exact window for an accidental double post.
+  if (sendAttachment._busy) return;
+  sendAttachment._busy = true;
+  const dlgButtons = [...dlgAttach.querySelectorAll('button')];
+  const sendBtn = dlgButtons.find(b => (b.dataset.i18n || '') === 'ui.attach.send');
+  const sentLabel = sendBtn ? sendBtn.textContent : '';
+  dlgButtons.forEach(b => { b.disabled = true; });
+  if (sendBtn) sendBtn.textContent = t('ui.attach.preparing');
+  try {
+    await sendAttachmentInner();
+  } finally {
+    sendAttachment._busy = false;
+    dlgButtons.forEach(b => { b.disabled = false; });
+    if (sendBtn) sendBtn.textContent = sentLabel;
+  }
+}
+
+async function sendAttachmentInner() {
   const meta = {
     kind: pendingKind, size: pendingFile.size, media_type: pendingFile.type || 'application/octet-stream',
   };
