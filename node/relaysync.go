@@ -657,6 +657,9 @@ func (r *Runtime) relaySyncOnce(addr string) {
 		}
 	}
 
+	if r.stopped() {
+		return // shutting down: no new legs, no new writes, no bookkeeping
+	}
 	// THE IDENTITY PLANE rides the same heartbeat (ADR-024): offer the
 	// grants this device still owes its siblings, and fetch the ones its
 	// siblings owe it. Both are cheap when there is nothing to say — the

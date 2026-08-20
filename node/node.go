@@ -940,7 +940,33 @@ func (r *Runtime) attach(tid id.TerminalID, s *terminals.Space) {
 }
 
 // saveKeystore persists key material; callers hold r.mu or are in setup.
-func (r *Runtime) saveKeystore() error { return r.root.SaveKeystore(r.ks) }
+func (r *Runtime) saveKeystore() error {
+	// A DYING RUNTIME DOES NOT WRITE. Close waits closeGrace for the
+	// background loops, then leaves — and a sync pass stuck in a dial to
+	// a dead relay outlives that grace, finishes its round, and used to
+	// write the keystore straight under whoever was removing the data
+	// directory (the suite's TempDir cleanup caught it in the act).
+	// Everything a skipped save loses — a learned route, a noted deadline
+	// — is knowledge the next run re-earns; a write racing teardown is a
+	// corruption nobody re-earns anything from.
+	select {
+	case <-r.stop:
+		return nil
+	default:
+	}
+	return r.root.SaveKeystore(r.ks)
+}
+
+// stopped reports whether Close has been asked for. Long passes consult
+// it at section boundaries so a shutdown does not wait out a full round.
+func (r *Runtime) stopped() bool {
+	select {
+	case <-r.stop:
+		return true
+	default:
+		return false
+	}
+}
 
 func (r *Runtime) persistEpochsLocked(tid id.TerminalID, s *terminals.Space) {
 	r.ks.Epochs[tid] = s.ExportEpochs()
