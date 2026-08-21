@@ -282,6 +282,14 @@ const UI_HANDLERS = [
   /* 235 click    */ (event, el) => { cancelPairingUI(); },
   /* 236 click    */ (event, el) => { bindPasscode(); },
   /* 237 click    */ (event, el) => { forgetPasscode(); },
+  /* 238 click    */ (event, el) => { chimeSet('tick', true); },
+  /* 239 click    */ (event, el) => { chimeSet('tick', false); },
+  /* 240 click    */ (event, el) => { chimeSet('room', true); },
+  /* 241 click    */ (event, el) => { chimeSet('room', false); },
+  /* 242 click    */ (event, el) => { chimeSet('signal', true); },
+  /* 243 click    */ (event, el) => { chimeSet('signal', false); },
+  /* 244 click    */ (event, el) => { chimeSet('personal', true); },
+  /* 245 click    */ (event, el) => { chimeSet('personal', false); },
 ];
 
 /** Attach every handler declared in the markup.

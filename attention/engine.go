@@ -31,6 +31,11 @@ type Context struct {
 	SpaceTitle  string
 	AuthorName  string
 	AuthorKnown bool
+	// AuthorKind is the author's declared terminal kind (human, sensor,
+	// bot, …) from their member card — a claim, like the name beside it.
+	// It bends the chime's timbre client-side and is deliberately NOT a
+	// ranking feature: what something is must not buy it attention.
+	AuthorKind string
 	// SpacePriority nudges spaces the person actually cares about.
 	SpacePriority float64
 	// ViewingNow suppresses signals for the space that is open right now —
@@ -95,11 +100,22 @@ func (e *Engine) Judge(c Candidate, ctx Context, now int64) (Signal, bool) {
 		return Signal{}, false
 	}
 
+	// Personal ≠ Hard. Personal means somebody called YOU — a signed
+	// mention or a reply to your own words. Hard is a rank of the verdict
+	// and deliberately does not exist for the chime layer: a hard but
+	// impersonal signal sounds like any other.
+	personal := false
+	for _, rn := range reasons {
+		if rn.Code == ReasonMention || rn.Code == ReasonReplyToMe {
+			personal = true
+		}
+	}
 	sig := Signal{
 		ID:          signalID(c.EventID),
 		SourceSpace: c.SpaceID, SourceEvent: c.EventID,
 		SpaceHex: spaceHex, EventHex: c.EventID.Hex(),
 		SpaceTitle: ctx.SpaceTitle, Author: ctx.AuthorName,
+		AuthorKind: ctx.AuthorKind, Personal: personal,
 		Excerpt:  excerpt(c.Text),
 		Delivery: delivery, Hard: hard, Reasons: reasons, Score: score,
 		CreatedAt: c.CreatedAt, ReceivedAt: receivedAt, Layer: layer,

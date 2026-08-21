@@ -13,6 +13,10 @@ let seenSpace = null;
 // Members known to be "here" last render — used to fire the arrival pulse
 // exactly once, on the transition into presence (never as an idle loop).
 let hereMembers = new Set();
+// The first members render after a space switch sees EVERYONE as newly
+// present; the visual pulse tolerates that, a chime must not — walking
+// into a room is not the room filling up.
+let hereFirstLook = true;
 // Which instrument cards are expanded. Held OUTSIDE the DOM because the
 // members panel is rebuilt on every poll — the hereMembers pattern.
 let openInstruments = new Set();
@@ -242,6 +246,22 @@ function setEffectsMode(m) {
   localStorage.setItem('qp.effects', m); syncSettingsUI();
   feedSig = []; feedContentSig = []; refreshSpace(); // re-apply residue at the new mode
 }
+// Quiet Chimes settings. Turning a row ON plays that chime once — the
+// settings screen is the demo: you hear exactly what you just allowed to
+// interrupt your time.
+const CHIME_SEG = { tick: 'chimeTick', room: 'chimeRoom',
+  signal: 'chimeSignal', personal: 'chimePersonal' };
+function chimeSet(tier, on) {
+  CHIME.setEnabled(tier, on);
+  pickSeg(CHIME_SEG[tier], on ? 'on' : 'off');
+  if (on) CHIME.preview(tier, null);
+}
+function chimeSyncUI() {
+  for (const [tier, seg] of Object.entries(CHIME_SEG)) {
+    pickSeg(seg, CHIME.enabled(tier) ? 'on' : 'off');
+  }
+}
+
 function pickSeg(groupId, v) {
   document.querySelectorAll('#' + groupId + ' button').forEach(b =>
     b.classList.toggle('sel', b.dataset.v === v));
@@ -557,6 +577,7 @@ function relayIntervalField() {
   return Math.min(n, 3600);
 }
 function syncSettingsUI() {
+  if (typeof chimeSyncUI === 'function') chimeSyncUI();
   const lang = (typeof localeName === 'function') ? localeName() : 'en';
   document.querySelectorAll('#setLang button').forEach(b =>
     b.classList.toggle('sel', b.dataset.v === lang));
@@ -1832,6 +1853,7 @@ async function refreshSpace() {
   const switched = seenSpace !== current;
   if (switched) {
     seenSpace = current; seenEntries = new Set(); hereMembers = new Set();
+    hereFirstLook = true;
     feedSig = []; feedContentSig = []; feedResCounts = new Map();
     // Presence is per-space, so the countdown does not follow you into a
     // room where it was never posted.
@@ -2050,6 +2072,12 @@ async function refreshSpace() {
     // (static). The gentle pulse fires ONCE, only on the transition into
     // presence — never as an idle loop. Reduced-motion drops the pulse.
     const arriving = here && !hereMembers.has(m.terminal);
+    // The same transition the visual pulse fires on — somebody ARRIVED
+    // into presence — is a space event to the chime layer. Own arrivals
+    // stay silent: walking into your own room is not an event.
+    if (arriving && !m.mine && !hereFirstLook && typeof CHIME !== 'undefined') {
+      CHIME.play('room');
+    }
     const glyphCls = 'glyph g24' + (here ? ' present' : '') + (arriving ? ' pulse-in' : '');
     let inner =
       `<div class="mhead"><span class="${glyphCls}">${glyphSVG(m.principal || m.terminal, glyphType, 24)}</span>` +
@@ -2064,6 +2092,7 @@ async function refreshSpace() {
     mbox.appendChild(d);
   }
   hereMembers = nextHere;
+  hereFirstLook = false;
 
   // ---- Instruments: the place's physical panel (QI-2) ----
   //
@@ -3287,6 +3316,10 @@ function cssId(v) {
 // finds rows by [data-eid] at any depth, and append/rebuild paths all come
 // through here with the same prev they already computed for `grouped`.
 function renderEntryTiled(log, e, fresh, grouped, prev) {
+  // A fresh arrival that is not my own asks the chime layer for a tick.
+  // Coalescing, tier ranking and the person's own enables all live in
+  // CHIME — this line states only the fact: something new arrived here.
+  if (fresh && !e.mine && typeof CHIME !== 'undefined') CHIME.play('tick');
   if (grouped && prev && e.kind === 'visual' && prev.kind === 'visual') {
     let run = log.lastElementChild;
     if (!run || !run.classList.contains('media-run')) {

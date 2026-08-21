@@ -103,6 +103,14 @@ type NotificationCandidate struct {
 	SpaceLabel  string
 	SenderLabel string
 	PreviewText string
+
+	// Personal is the CORE saying "somebody called you": the event's SIGNED
+	// mentions include this runtime's principal. This is the field the
+	// Android side's own comment has been waiting for — a candidate fact,
+	// not a host-side guess — and it routes a notification to the personal
+	// signals channel. Structural only: reply-to-me needs an authorship
+	// lookup and is deliberately not v1.
+	Personal bool
 }
 
 // notifySink is the runtime's attached notification plane.
@@ -346,6 +354,11 @@ func (r *Runtime) decorateLocked(s *terminals.Space, a eventlog.Applied, c *Noti
 	// it belongs to whoever is rendering.
 	if entry.Content.Text != nil {
 		c.PreviewText = clipRunes(entry.Content.Text.Text, maxPreviewRunes)
+		for _, m := range entry.Content.Text.Mentions {
+			if m == r.PrincipalID {
+				c.Personal = true
+			}
+		}
 	}
 
 	if entry.Author == r.PrincipalID {

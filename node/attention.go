@@ -146,6 +146,7 @@ type attentionSpaceInfo struct {
 	space  *terminals.Space
 	title  string
 	names  map[id.PrincipalID]string
+	kinds  map[id.PrincipalID]string
 	scope  attention.Scope
 	myself id.PrincipalID
 }
@@ -162,14 +163,18 @@ func (r *Runtime) attentionSpaces() []attentionSpaceInfo {
 		}
 		meta := r.ks.Spaces[tid]
 		names := map[id.PrincipalID]string{}
+		kinds := map[id.PrincipalID]string{}
 		for _, c := range st.space.MemberCards(0) {
 			if c.Name != "" {
 				names[c.Principal] = c.Name
 			}
+			if c.Kind != "" {
+				kinds[c.Principal] = c.Kind
+			}
 		}
 		out = append(out, attentionSpaceInfo{
 			tid: tid, space: st.space, title: meta.Title,
-			names: names, scope: scope, myself: r.PrincipalID,
+			names: names, kinds: kinds, scope: scope, myself: r.PrincipalID,
 		})
 	}
 	return out
@@ -214,6 +219,7 @@ func (r *Runtime) scanSpace(st *attentionState, info attentionSpaceInfo, full bo
 		ctx := attention.Context{
 			Viewer: viewer, SpaceTitle: info.title,
 			AuthorName:  info.names[e.Author],
+			AuthorKind:  info.kinds[e.Author],
 			AuthorKnown: info.names[e.Author] != "",
 			ViewingNow:  info.tid == viewing,
 		}

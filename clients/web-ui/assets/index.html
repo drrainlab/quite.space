@@ -797,6 +797,39 @@
           <button data-v="never" data-i18n="ui.set.atmosound.never" data-on-click="144">Never</button>
         </div>
       </div>
+      <!-- Quiet Chimes: what has the RIGHT to sound. Each row, when turned
+           on, plays its own chime once — the settings screen is the demo.
+           Off is not "muted in shame": ordinary messages default to quiet,
+           and the person decides what may interrupt their time. -->
+      <p class="sec-label" data-i18n="ui.set.chime.label">Sounds</p>
+      <div class="list-row">
+        <span class="lr-label" data-i18n="ui.set.chime.tick">Messages</span>
+        <div class="segmented" id="chimeTick">
+          <button data-v="on" data-i18n="ui.set.chime.on" data-on-click="238">On</button>
+          <button data-v="off" data-i18n="ui.set.chime.off" data-on-click="239">Quiet</button>
+        </div>
+      </div>
+      <div class="list-row">
+        <span class="lr-label" data-i18n="ui.set.chime.room">Space events</span>
+        <div class="segmented" id="chimeRoom">
+          <button data-v="on" data-i18n="ui.set.chime.on" data-on-click="240">On</button>
+          <button data-v="off" data-i18n="ui.set.chime.off" data-on-click="241">Quiet</button>
+        </div>
+      </div>
+      <div class="list-row">
+        <span class="lr-label" data-i18n="ui.set.chime.signal">Signals</span>
+        <div class="segmented" id="chimeSignal">
+          <button data-v="on" data-i18n="ui.set.chime.on" data-on-click="242">On</button>
+          <button data-v="off" data-i18n="ui.set.chime.off" data-on-click="243">Quiet</button>
+        </div>
+      </div>
+      <div class="list-row">
+        <span class="lr-label" data-i18n="ui.set.chime.personal">Personal signals</span>
+        <div class="segmented" id="chimePersonal">
+          <button data-v="on" data-i18n="ui.set.chime.on" data-on-click="244">On</button>
+          <button data-v="off" data-i18n="ui.set.chime.off" data-on-click="245">Quiet</button>
+        </div>
+      </div>
       <!-- The technical layer. It used to be a word above every conversation
            for a mode almost nobody turns on; whoever needs to read a
            capability set knows to come looking, and everybody else was
@@ -1337,6 +1370,8 @@
 </dialog>
 
 <script src="i18n.js"></script>
+<script src="chime-dsp.js"></script>
+<script src="chime.js"></script>
 <script src="glyphs.js"></script>
 <script src="modes.js"></script>
 <script src="registry.js"></script>
