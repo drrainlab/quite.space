@@ -93,6 +93,11 @@ type Candidate struct {
 	SpaceLabel  string
 	SenderLabel string
 	PreviewText string
+
+	// Personal is the core saying "somebody called you" — the event's signed
+	// mentions include this person's principal. Routes the notification to
+	// the personal signals channel; the host never guesses this.
+	Personal bool
 }
 
 // NotificationSink is implemented in JAVA. Two obligations, stated because
@@ -206,6 +211,7 @@ func armRuntime(r *node.Runtime) {
 			SpaceLabel:         c.SpaceLabel,
 			SenderLabel:        c.SenderLabel,
 			PreviewText:        c.PreviewText,
+			Personal:           c.Personal,
 		}}:
 		default:
 			// Drop, count, and never block: this runs inside the absorb path,

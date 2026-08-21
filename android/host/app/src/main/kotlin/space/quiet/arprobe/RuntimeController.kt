@@ -141,6 +141,7 @@ class RuntimeController private constructor(appContext: Context) {
                 spaceLabel = c.spaceLabel,
                 senderLabel = c.senderLabel,
                 previewText = c.previewText,
+                personal = c.personal,
             )
         )
         }

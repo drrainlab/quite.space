@@ -42,8 +42,13 @@ package space.quiet.arprobe
  */
 internal object NotificationPolicy {
 
-    /** The two product channels of AR-1b.2. Ids are frozen once created. */
-    const val CHANNEL_MESSAGES = "quite.messages"
+    /**
+     * The product channels. Ids are frozen once created — these are the v2
+     * generation, born when the channels gained the Quiet Chimes voice
+     * (a channel's sound is immutable after creation, so a new voice means
+     * new ids; ensure() deletes the v1 rows so nobody keeps two).
+     */
+    const val CHANNEL_MESSAGES = "quite.messages.v2"
 
     /**
      * AR-1c — the "staying connected" mode's own channel.
@@ -55,7 +60,15 @@ internal object NotificationPolicy {
      * shade, which is where a state belongs.
      */
     const val CHANNEL_CONNECTION = "quite.connection"
-    const val CHANNEL_SIGNALS = "quite.signals"
+    const val CHANNEL_SIGNALS = "quite.signals.v2"
+
+    /**
+     * Personal signals — somebody CALLED this person (a signed mention; the
+     * core says so, this side never guesses). Its own channel so Android
+     * settings give the person separate switches for ordinary signals and
+     * personal ones — the product's whole philosophy as two system rows.
+     */
+    const val CHANNEL_SIGNALS_PERSONAL = "quite.signals.personal.v1"
 
     private val NOTIFIABLE = setOf(
         "message.text.v1",
@@ -70,10 +83,14 @@ internal object NotificationPolicy {
     fun notifiable(schema: String?): Boolean = schema != null && schema in NOTIFIABLE
 
     /**
-     * Which channel a candidate belongs to. Always messages today — see the
-     * comment above: nothing in the candidate can distinguish a signal, and
-     * inventing the distinction here would be a claim this side cannot back.
+     * Which channel a candidate belongs to. `personal` is the CORE's word
+     * (the event's signed mentions include this person) — the field this
+     * file's own comment spent a release waiting for. The plain signals
+     * channel starts receiving traffic when a future candidate field
+     * carries the non-personal attention verdict; its id and sound are
+     * fixed NOW so that landing needs no second migration.
      */
     @Suppress("UNUSED_PARAMETER")
-    fun channelFor(schema: String): String = CHANNEL_MESSAGES
+    fun channelFor(schema: String, personal: Boolean): String =
+        if (personal) CHANNEL_SIGNALS_PERSONAL else CHANNEL_MESSAGES
 }

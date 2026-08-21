@@ -183,6 +183,9 @@ class NotificationCoordinator(
         val occurredAtUnixMs: Long,
         val senderLabel: String,
         val previewText: String,
+        // The core's word: this event carries a signed mention of the
+        // person. Routes its presentation to the personal signals channel.
+        val personal: Boolean = false,
     )
 
     /**
@@ -205,6 +208,7 @@ class NotificationCoordinator(
         val spaceLabel: String = "",
         val senderLabel: String = "",
         val previewText: String = "",
+        val personal: Boolean = false,
     )
 
     /**
