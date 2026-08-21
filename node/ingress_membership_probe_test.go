@@ -34,11 +34,14 @@ func TestWhetherABundleForAnUnjoinedSpaceCanLaterBeAdmitted(t *testing.T) {
 	if _, err := alice.Say(tid, "written before bob was a member", SayOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	asp, ok := alice.spaceForTest(tid)
-	if !ok {
+	// alice is live too (relay sync runs) — read her log under the lock.
+	var mine [][]byte
+	if err := alice.withSpace(tid, func(st *spaceState) error {
+		mine = st.space.Log.FramesInRange(alice.Device.ID, 1, 1000)
+		return nil
+	}); err != nil {
 		t.Fatal("alice lost the space")
 	}
-	mine := asp.Log.FramesInRange(alice.Device.ID, 1, 1000)
 	if len(mine) == 0 {
 		t.Fatal("nothing on alice's chain")
 	}
@@ -85,11 +88,20 @@ func TestWhetherABundleForAnUnjoinedSpaceCanLaterBeAdmitted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bsp, ok := bob.spaceForTest(tid)
-	if !ok {
-		t.Fatal("bob has no space after joining")
+	// bob is a LIVE runtime here — its relay-sync goroutine judges frames
+	// into this same log, so every read goes through the judge's lock.
+	// (spaceForTest is only for tests that are the sole goroutine.)
+	logHas := func() bool {
+		var v bool
+		if err := bob.withSpace(tid, func(st *spaceState) error {
+			v = st.space.Log.Has(eid)
+			return nil
+		}); err != nil {
+			t.Fatalf("bob has no space after joining: %v", err)
+		}
+		return v
 	}
-	alreadySynced := bsp.Log.Has(eid)
+	alreadySynced := logHas()
 	applied, release2 := bob.applyHeldRelayItem(nil, storage.HeldIngress{ID: hid, Raw: item})
 
 	// THE CRITERION IS THE CHANGE OF VERDICT, not full admission. What the
@@ -98,7 +110,7 @@ func TestWhetherABundleForAnUnjoinedSpaceCanLaterBeAdmitted(t *testing.T) {
 	// ordering machinery to wait for predecessors bob does not have. Two
 	// verdicts on one unchanged frame is the whole question — and the answer is
 	// why the refusal above is now a keep rather than a delete.
-	if release2 && !bsp.Log.Has(eid) {
+	if release2 && !logHas() {
 		t.Fatalf("MEASURED: membership changed and the verdict did not — the same "+
 			"bytes are still let go (applied=%d), so not_a_member is terminal", applied)
 	}
@@ -107,7 +119,7 @@ func TestWhetherABundleForAnUnjoinedSpaceCanLaterBeAdmitted(t *testing.T) {
 		t.Log("MEASURED: once joined the same bytes are admissible — ordinary sync " +
 			"delivered this copy first, which is the same verdict reached by a " +
 			"second path")
-	case bsp.Log.Has(eid):
+	case logHas():
 		t.Logf("MEASURED: after joining, the held bytes themselves were applied "+
 			"(applied=%d) — not_a_member is TRANSIENT", applied)
 	default:
