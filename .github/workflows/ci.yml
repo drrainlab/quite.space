@@ -85,6 +85,9 @@ jobs:
         run: |
           set -o pipefail
           go test -race -timeout 30m ./... 2>&1 | tee race.log || {
-            grep -aE "^--- FAIL|^FAIL|panic:|WARNING: DATA RACE|test timed out" race.log | head -40 |               while IFS= read -r l; do echo "::error::${l}"; done
+            grep -aE "^--- FAIL|^FAIL|panic:|test timed out" race.log | head -10 | while IFS= read -r l; do echo "::error::${l}"; done
+            # The first race REPORT, with its stacks — the warning line
+            # alone names nothing, and the full log needs a login to read.
+            awk '/WARNING: DATA RACE/{c=26} c && c--' race.log | head -30 | while IFS= read -r l; do echo "::error::${l}"; done
             exit 1
           }
