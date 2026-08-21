@@ -277,6 +277,17 @@ func TestProjectionRecoveryReconcilesAgainstOwnLog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// AND THE LIVE PROJECTOR MUST BE DONE FIRST. ConnectorRoute kicks it;
+	// on slow iron its one pass is still in flight while this test stages
+	// records by hand, and it grabs a record between Ingest and the
+	// Emitting update — emitting "the letter whose emit succeeded" a
+	// second time before any crash happened. Nothing below kicks it again
+	// (the journal is driven directly), so quiescence here is quiescence.
+	waitUntil(t, 5*time.Second, "the live projector never went quiet", func() bool {
+		rt.mu.Lock()
+		defer rt.mu.Unlock()
+		return !cs.running
+	})
 	gen, _, _ := cs.journal.Binding()
 	stall := func(extID, text string) [32]byte {
 		env := fixtureEnv(extID, text)

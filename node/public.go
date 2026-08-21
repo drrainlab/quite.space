@@ -272,7 +272,10 @@ func (r *Runtime) ComposePublicLink(tid id.TerminalID, doc *[16]byte) (string, e
 	// refused to compose ANY share link on a node in automatic mode — where
 	// that field is empty by design. The resolver covers both, in order,
 	// and takes r.mu itself, so it is called after the read above.
-	relayAddr := r.ResolvePublicReadRelay(tid)
+	//
+	// The ADDRESS form: a link is for somebody else, later — this node's
+	// dial breaker being open right now is not a fact about the address.
+	relayAddr := r.PublicReadRelayAddress(tid)
 	if relayAddr == "" {
 		return "", errors.New(
 			"node: this space has no reachable relay yet — the link carries one, " +

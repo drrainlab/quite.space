@@ -69,6 +69,22 @@ func (r *Runtime) ResolvePersonalRelay() string {
 	return r.pickHealthy(r.personalRelayLadder())
 }
 
+// PersonalRelayAddress is the relay this node would NAME to others — the
+// configured or selected address, health not consulted. An address in a
+// reference or a card is a place to look LATER, from another machine and
+// another moment; filtering it through this node's dial breaker composed
+// cards with no way back whenever the relay blinked — measured as a card
+// whose reference (and with it the source's name) simply vanished when
+// the suite ran on slow iron and the breaker outpaced the share.
+func (r *Runtime) PersonalRelayAddress() string {
+	for _, a := range r.personalRelayLadder() {
+		if a != "" {
+			return a
+		}
+	}
+	return ""
+}
+
 // policyRelaysOf returns the space's signed relay set (verified policy),
 // resolved to dialable endpoints IN ORDER (first = primary). present
 // reports whether the policy CARRIES a set at all — because "the set
@@ -130,6 +146,27 @@ func (r *Runtime) ResolvePublicReadRelay(tid id.TerminalID) string {
 		return "" // an unresolvable set never routes to a personal relay
 	}
 	return r.ResolvePersonalRelay()
+}
+
+// PublicReadRelayAddress is the ADDRESS form of ResolvePublicReadRelay:
+// the same ladder, health not consulted — for composing links and
+// references, which are read by somebody else, later, from a machine
+// whose breakers are its own. This node's open breaker was refusing to
+// mint links to a perfectly good address whenever the relay blinked.
+func (r *Runtime) PublicReadRelayAddress(tid id.TerminalID) string {
+	addrs, present := r.policyRelaysOf(tid)
+	for _, a := range addrs {
+		if a != "" {
+			return a
+		}
+	}
+	if a := r.sourceRelayOf(tid); a != "" {
+		return a
+	}
+	if present {
+		return "" // an unresolvable set never routes to a personal relay
+	}
+	return r.PersonalRelayAddress()
 }
 
 // ResolvePublicWriteRelay picks where a public space's data is PUBLISHED

@@ -476,7 +476,7 @@ func (r *Runtime) reconcileEmitting(cs *connState) {
 		return
 	}
 	found := map[[32]byte]id.EventID{}
-	_ = r.withSpace(target, func(st *spaceState) error {
+	if err := r.withSpace(target, func(st *spaceState) error {
 		for _, e := range st.space.State.Entries() {
 			if e.Content.Text == nil || e.Content.Text.External == nil {
 				continue
@@ -488,7 +488,15 @@ func (r *Runtime) reconcileEmitting(cs *connState) {
 			found[sha256.Sum256([]byte(ref))] = e.ID
 		}
 		return nil
-	})
+	}); err != nil {
+		// THE AUTHORITY IS NOT READABLE YET — the space has not attached
+		// (open-time ordering; the projector can start first on slow
+		// iron). Judging with an empty index would downgrade every
+		// mid-emit record to Received and re-emit mail that LANDED — the
+		// exact duplication this pass exists to prevent. Wait for the
+		// next round; the loop already parks and returns here.
+		return
+	}
 	now := time.Now().Unix()
 	for _, rec := range stuck {
 		if eid, hit := found[rec.RefHash]; hit {

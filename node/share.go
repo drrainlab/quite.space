@@ -163,7 +163,11 @@ func (r *Runtime) quotationOf(source id.TerminalID, ref quoteRef,
 	// ready-made deadlock. It is the resolver rather than the raw setting
 	// because in automatic mode that setting is empty by design, and a card
 	// would have gone out with no way back on a perfectly connected node.
-	globalRelay := r.ResolvePersonalRelay()
+	//
+	// The ADDRESS form, not the healthy one: a reference is for somebody
+	// else, later — this node's dial breaker being open right now says
+	// nothing about whether the address is worth writing down.
+	globalRelay := r.PersonalRelayAddress()
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
