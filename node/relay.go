@@ -1705,9 +1705,6 @@ func (r *Runtime) recordStatedReturnRoutes(wanter []byte, eps []string) {
 	if dev == r.Device.ID {
 		return
 	}
-	if _, ok := r.ident.certificateFor(dev); !ok {
-		return // a claim from a device nobody's root has named: not knowledge
-	}
 	if len(eps) > 3 {
 		eps = eps[:3]
 	}
@@ -1726,6 +1723,15 @@ func (r *Runtime) recordStatedReturnRoutes(wanter []byte, eps []string) {
 	}
 	recorded := false
 	r.mu.Lock()
+	// The certificate gate, UNDER THE LOCK: the identity store is guarded
+	// by r.mu everywhere else (observe, install, admit), and this one
+	// reader used to peek without it — survivable while routes rode only
+	// beside wants, a reliable race once every content push carried them
+	// and the reconsider loop learned proofs in parallel.
+	if _, ok := r.ident.certificateFor(dev); !ok {
+		r.mu.Unlock()
+		return // a claim from a device nobody's root has named: not knowledge
+	}
 	// THE LATEST SELF-STATEMENT WINS. An invitation route was also this
 	// device's own statement — made at knock time — and a device that has
 	// since moved relays is the one authority on where it listens now.
