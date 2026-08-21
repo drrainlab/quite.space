@@ -289,3 +289,25 @@ func TestNoRemoteValueReachesAJavaScriptContext(t *testing.T) {
 	}
 	t.Logf("%s", out)
 }
+
+// TestQuietChimesVoiceAndLaw runs the sound harness: the DSP contract
+// (every tier renders inside ONE peak budget; the signature keeps its
+// 300–700 ms identity; personal is longer, never louder) and the
+// arbitration law (one meaningful chime per window; families cool down on
+// their own clocks). The design constants live in chime-dsp.js and the
+// law in chime.js — this test is what keeps both honest as they evolve.
+func TestQuietChimesVoiceAndLaw(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not available")
+	}
+	script := filepath.Join("..", "..", "scripts", "sound", "chimes.cjs")
+	if _, err := os.Stat(script); err != nil {
+		t.Fatalf("the chimes harness is missing: %v", err)
+	}
+	out, err := exec.Command(node, script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("the voice or the law is broken: %v\n%s", err, out)
+	}
+	t.Logf("%s", out)
+}
