@@ -143,6 +143,8 @@ type Keystore struct {
 	// the second key ring. Losing it on restart would silently blind a
 	// member to every reading until the next rotation.
 	InstrEpochs map[id.TerminalID][]crypto.EpochKey
+	// Instruments are this node's attached instrument participants (QI-1).
+	Instruments []InstrumentRecord
 	// SelfTerminalSeed is the user's participant terminal key.
 	SelfTerminalSeed []byte
 	// DisplayName is the user's chosen name; empty until onboarding sets it.
@@ -387,6 +389,7 @@ const (
 	ksKeyCerts     = 20 // MD-0 device certificates AND revocations (one store)
 	ksKeyLegacy    = 21 // MD-0 the frozen pre-certification allowlist
 	ksKeyInstrEp   = 22 // QI-0 instrument-epoch keys per space
+	ksKeyInstrs    = 23 // QI-1 attached instrument participants
 )
 
 // ksMapArity is how many top-level pairs encode() writes, and it MUST equal
@@ -394,7 +397,7 @@ const (
 // which is a poor place for a number that bricks every keystore when it is
 // wrong: too few and the trailing pair goes unread, so Done() fails and
 // nobody can open their data again. Named here, next to the keys it counts.
-const ksMapArity = 22
+const ksMapArity = 23
 
 func (k *Keystore) encode() []byte {
 	buf := codec.AppendMap(nil, ksMapArity)
@@ -504,6 +507,11 @@ func (k *Keystore) encode() []byte {
 			buf = codec.AppendUint(buf, e.N)
 			buf = codec.AppendBytes(buf, e.Key[:])
 		}
+	}
+	buf = codec.AppendUint(buf, ksKeyInstrs)
+	buf = codec.AppendArray(buf, len(k.Instruments))
+	for _, ir := range k.Instruments {
+		buf = appendInstrumentRecord(buf, ir)
 	}
 	return buf
 }
@@ -751,6 +759,19 @@ func decodeKeystore(data []byte) (*Keystore, error) {
 					copy(e.Key[:], kb)
 					k.InstrEpochs[tid] = append(k.InstrEpochs[tid], e)
 				}
+			}
+		case ksKeyInstrs:
+			var cnt int
+			cnt, er = d.ReadArray()
+			if er != nil {
+				return nil, er
+			}
+			for range cnt {
+				var ir InstrumentRecord
+				if ir, er = readInstrumentRecord(d); er != nil {
+					return nil, er
+				}
+				k.Instruments = append(k.Instruments, ir)
 			}
 		case ksKeySelfTerm:
 			var b []byte

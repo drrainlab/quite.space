@@ -604,6 +604,10 @@ func (a *PairingAttempt) Approve(nowUnix uint64) error {
 			r.mu.Unlock()
 			return fmt.Errorf("node: rotating %s for the new device: %w", tid, err)
 		}
+		if _, err := r.Self.RotateInstrumentEpoch(st.space); err != nil {
+			r.mu.Unlock()
+			return fmt.Errorf("node: rotating instruments of %s for the new device: %w", tid, err)
+		}
 		r.persistEpochsLocked(tid, st.space)
 		// A CURATED space keys its writers on (principal, DEVICE), so the
 		// person's new device must be written into its own owned rooms or it

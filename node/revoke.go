@@ -86,6 +86,9 @@ func (r *Runtime) RevokeDevice(dev id.DeviceID) error {
 			if _, err := r.Self.RotateEpoch(st.space); err != nil {
 				return fmt.Errorf("node: rotating %s after revocation: %w", tid, err)
 			}
+			if _, err := r.Self.RotateInstrumentEpoch(st.space); err != nil {
+				return fmt.Errorf("node: rotating instruments of %s after revocation: %w", tid, err)
+			}
 			r.persistEpochsLocked(tid, st.space)
 		}
 	}

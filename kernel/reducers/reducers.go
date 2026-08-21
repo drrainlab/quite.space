@@ -119,6 +119,10 @@ type State struct {
 	orphanTombs map[id.EventID]struct{}
 	cards       map[id.EventID]*Card
 	observation *Observation
+	// valueObs is the instrument plane's materialized view (QI-1): one
+	// LWW slot per (instrument, channel). Latest-value state, never feed
+	// entries — the reducer twin of the presence map.
+	valueObs map[ValueObsKey]*ValueObservation
 
 	// resonance (RP-1, resonance.go): target → per-actor single-slot LWW
 	// registers (unresolved targets stay unprojected, never evicted), plus
@@ -172,6 +176,23 @@ type Card struct {
 // Observation is the latest telemetry value per space.
 type Observation struct {
 	Value      schemas.Observation
+	Author     id.PrincipalID
+	ObservedAt uint64
+	Clock      uint64
+}
+
+// ValueObsKey names one instrument channel. The instrument id is the
+// SourceTerminal of the emitting participant — the stable identity the
+// owner's plan insists on; never a device key, never called a terminal
+// in any new API.
+type ValueObsKey struct {
+	Instrument id.TerminalID
+	Channel    string
+}
+
+// ValueObservation is the latest reading of one channel.
+type ValueObservation struct {
+	Value      schemas.ValueObservation
 	Author     id.PrincipalID
 	ObservedAt uint64
 	Clock      uint64
@@ -378,6 +399,24 @@ func (s *State) Apply(env *signal.Envelope, eid id.EventID) {
 			s.observation = &Observation{Value: *o, Author: env.Principal,
 				ObservedAt: o.ObservedAt, Clock: env.LogicalClock}
 		}
+	case schemas.ObservationValue:
+		vo, err := schemas.DecodeValueObservation(env.Payload)
+		if err != nil {
+			s.Unsupported["malformed:"+env.Schema]++
+			return
+		}
+		if env.SourceTerminal == nil {
+			return // a reading with no instrument behind it names nothing
+		}
+		key := ValueObsKey{Instrument: *env.SourceTerminal, Channel: vo.Channel}
+		if s.valueObs == nil {
+			s.valueObs = map[ValueObsKey]*ValueObservation{}
+		}
+		cur := s.valueObs[key]
+		if cur == nil || later(env.LogicalClock, eid, cur.Clock, id.EventID{}) {
+			s.valueObs[key] = &ValueObservation{Value: *vo, Author: env.Principal,
+				ObservedAt: vo.ObservedAt, Clock: env.LogicalClock}
+		}
 	default:
 		if schemas.IsBlockSchema(env.Schema) {
 			// A block type from the future: keep it in the feed via the
@@ -500,6 +539,19 @@ func (s *State) Cards() []Card {
 	sort.Slice(out, func(i, j int) bool {
 		return !later(out[i].Clock, out[i].ID, out[j].Clock, out[j].ID)
 	})
+	return out
+}
+
+// ValueObservations returns the instrument plane's latest readings,
+// keyed by (instrument, channel). The map is a copy: state stays private.
+func (s *State) ValueObservations() map[ValueObsKey]ValueObservation {
+	if len(s.valueObs) == 0 {
+		return nil
+	}
+	out := make(map[ValueObsKey]ValueObservation, len(s.valueObs))
+	for k, v := range s.valueObs {
+		out[k] = *v
+	}
 	return out
 }
 

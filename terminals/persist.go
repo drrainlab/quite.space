@@ -183,6 +183,19 @@ func NewParticipantFrom(prin id.PrincipalID, dev *identity.Device,
 	return p, priv.Seed(), nil
 }
 
+// ParticipantIDFromSeed derives the participant's terminal id from its
+// stored seed — the InstrumentID a keystore record names without having
+// to rebuild the whole participant.
+func ParticipantIDFromSeed(terminalSeed []byte) (id.TerminalID, error) {
+	if len(terminalSeed) != ed25519.SeedSize {
+		return id.TerminalID{}, errors.New("terminals: bad terminal seed length")
+	}
+	priv := ed25519.NewKeyFromSeed(terminalSeed)
+	var tid id.TerminalID
+	copy(tid[:], priv.Public().(ed25519.PublicKey))
+	return tid, nil
+}
+
 // NewParticipantFromManifest adopts a previously-signed self manifest frame
 // (persisted across restarts) so its revision chain stays intact.
 func NewParticipantFromManifest(prin id.PrincipalID, dev *identity.Device,

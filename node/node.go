@@ -210,6 +210,9 @@ type Runtime struct {
 	// into a pocket. One-shot and bounded (rideAheadMaxBytes); anything
 	// bigger, and any re-offer, travels on demand as before.
 	rideAhead map[id.TerminalID]map[AssetKey]struct{}
+	// instruments are the attached instrument participants (QI-1),
+	// keyed by InstrumentID.
+	instruments map[id.TerminalID]*instrumentRuntime
 	stopOnce     sync.Once
 	wg           sync.WaitGroup
 
@@ -713,6 +716,7 @@ func Open(dataDir string, passphrase []byte, displayName string) (rt *Runtime, e
 	// Connector journals restore their intent to act the same way the join
 	// saga does: reopened and re-driven, never merely present on disk.
 	r.resumeConnectors()
+	r.restoreInstruments()
 	// The radio this device was last attached to, brought back on its own.
 	// Best effort by design — see restoreRadio: a radio that is unplugged, or
 	// that came back under a different serial path, must never stop somebody
@@ -1144,6 +1148,9 @@ func (r *Runtime) CreateSpaceWithOptions(title string, o CreateOptions) (id.Term
 		if _, err := r.Self.RotateEpoch(s); err != nil {
 			return id.TerminalID{}, err
 		}
+		if _, err := r.Self.RotateInstrumentEpoch(s); err != nil {
+			return id.TerminalID{}, err
+		}
 	}
 	seed, err := s.TerminalSeed()
 	if err != nil {
@@ -1187,6 +1194,12 @@ func (r *Runtime) MintInvite(tid id.TerminalID, dev id.DeviceID, xpub [32]byte) 
 	// person was invited, and the person is all of their devices.
 	r.expandMembersLocked(st.space)
 	if _, err := r.Self.RotateEpoch(st.space); err != nil {
+		return "", err
+	}
+	// The instrument lineage turns with every membership change
+	// (owner's amendment 5) — a new member must read the greenhouse too,
+	// and a removed one must stop.
+	if _, err := r.Self.RotateInstrumentEpoch(st.space); err != nil {
 		return "", err
 	}
 	r.persistEpochsLocked(tid, st.space)
