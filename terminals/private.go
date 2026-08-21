@@ -123,6 +123,14 @@ func (p *Participant) DefaultAuthorship() signal.Authorship {
 	case manifest.AgencyHuman:
 		return signal.AuthorshipHuman
 	case manifest.AgencyDeterministic:
+		// An instrument's deterministic frames are SENSOR frames — the
+		// mark ADR-008 reserved for it. Before this arm, a sensor's own
+		// manifest and certificate went out stamped deterministic_bot,
+		// because only the hand-written telemetry call passed the honest
+		// mark explicitly.
+		if IsInstrumentKind(p.Manifest.Kind) {
+			return signal.AuthorshipSensor
+		}
 		return signal.AuthorshipDeterministicBot
 	case manifest.AgencyAIAgent:
 		return signal.AuthorshipAIAgent

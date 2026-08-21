@@ -94,7 +94,8 @@ func DefaultProjectionLimits() PublicProjectionLimits {
 func prunable(schema string) bool {
 	switch schema {
 	case schemas.MessageText, schemas.MessageRevised, schemas.MessageTombstoned,
-		schemas.PresenceUpdate, schemas.ObservationTemp:
+		schemas.PresenceUpdate, schemas.ObservationTemp,
+		schemas.ObservationValue:
 		return true
 	}
 	// Block media entries age out with their messages; resonance ages with

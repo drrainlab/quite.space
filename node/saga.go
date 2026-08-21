@@ -108,6 +108,9 @@ func (r *Runtime) commitSagaLocked() error {
 func (r *Runtime) commitAdmissionLocked(tid id.TerminalID, sp *terminals.Space) error {
 	if sp != nil {
 		r.ks.Epochs[tid] = sp.ExportEpochs()
+		if ie := sp.ExportInstrumentEpochs(); len(ie) > 0 {
+			r.ks.InstrEpochs[tid] = ie
+		}
 		if meta, ok := r.ks.Spaces[tid]; ok && meta.Owned {
 			meta.Members = sp.Members()
 			r.ks.Spaces[tid] = meta

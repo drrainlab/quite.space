@@ -80,6 +80,10 @@ type Space struct {
 	// priv is held only by the creating node (the controller's replica).
 	priv          ed25519.PrivateKey
 	priv2         *privateState
+	// instr is the instrument-epoch lineage (QI-0) — see
+	// instrument_epoch.go for the doctrine. Separate from priv2 so
+	// same-numbered epochs can never be looked up in the wrong lineage.
+	instr *instrState
 	ManifestFrame []byte
 	maxClock      uint64
 	// projSeen dedups projection-applied events on reader replicas.
@@ -181,7 +185,20 @@ func (s *Space) absorb(a eventlog.Applied) {
 		s.absorbEpoch(env)
 		return // key distribution is not user-visible state
 	}
-	if env.PayloadEncoding == signal.PayloadEncrypted {
+	if env.Schema == schemas.InstrumentEpoch {
+		s.absorbInstrumentEpoch(env)
+		return // the second lineage's key distribution, same rule
+	}
+	if env.PayloadEncoding == signal.PayloadInstrumentSealed {
+		pt, ok := s.openInstrument(env)
+		if !ok {
+			s.Undecryptable++
+			return
+		}
+		clone := *env
+		clone.Payload = pt
+		env = &clone
+	} else if env.PayloadEncoding == signal.PayloadEncrypted {
 		pt, ok := s.openForAbsorb(env)
 		if !ok {
 			s.Undecryptable++
@@ -347,6 +364,23 @@ func (p *Participant) Emit(s *Space, schema string, payload []byte,
 		}
 	case schemas.ObservationTemp:
 		priority = signal.PriorityTelemetry
+	case schemas.ObservationValue:
+		priority = signal.PriorityTelemetry
+		// A reading is CURRENT or it is nothing: mirror its own staleness
+		// into the custody-expiry header and declare NoCustody, exactly as
+		// presence does — a relay holding yesterday's temperature is not
+		// preserving history, it is aging inventory.
+		//
+		// NOTE (owner's amendment 7): maxForwards is a QUIET forwarding
+		// class, not a bearer hop budget. A LoRa mesh may rebroadcast one
+		// carrier frame across many physical hops and that is the BEARER's
+		// business; what this header says is that no Quiet custodian
+		// (relay, bridge) stores-and-forwards a stale reading onward. The
+		// two must never be conflated when instruments live behind radio.
+		if vo, err := schemas.DecodeValueObservation(payload); err == nil {
+			headerExpiry = vo.ObservedAt + vo.StaleAfter
+			maxForwards = 1
+		}
 	}
 	// Epoch distribution stays plaintext (its wraps are already encrypted
 	// per device); everything else in a private space gets sealed.
@@ -361,8 +395,24 @@ func (p *Participant) Emit(s *Space, schema string, payload []byte,
 	// What a relay learns from the plaintext is nothing it could not already
 	// read off every envelope header (principal, device — the bundle adds
 	// integrity, not confidentiality).
-	if s.Private && schema != schemas.MembershipEpoch &&
-		schema != schemas.DeviceCertified && schema != schemas.DeviceRevoked {
+	switch {
+	case s.Private && schema == schemas.ObservationValue:
+		// THE INSTRUMENT PLANE (QI-0). A reading seals to the instrument
+		// epoch, never the conversation one: members and instruments can
+		// open it, the relay cannot, and an instrument that has never
+		// seen the conversation key can still speak. The exemptions below
+		// do not apply here — telemetry is content, and the certificate
+		// precedent's defence ("nothing the envelope header does not
+		// already show") does not transfer to a temperature.
+		sealed, err := s.sealForInstrument(schema, payload)
+		if err != nil {
+			return eventlog.Applied{}, err
+		}
+		wirePayload = sealed
+		encoding = signal.PayloadInstrumentSealed
+	case s.Private && schema != schemas.MembershipEpoch &&
+		schema != schemas.InstrumentEpoch &&
+		schema != schemas.DeviceCertified && schema != schemas.DeviceRevoked:
 		sealed, err := s.sealForEmit(schema, payload)
 		if err != nil {
 			return eventlog.Applied{}, err

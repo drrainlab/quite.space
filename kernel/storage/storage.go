@@ -139,6 +139,10 @@ type Keystore struct {
 	TerminalSeeds map[id.TerminalID][]byte
 	// Epochs holds known epoch keys per private space.
 	Epochs map[id.TerminalID][]crypto.EpochKey
+	// InstrEpochs holds the instrument-epoch lineage per space (QI-0) —
+	// the second key ring. Losing it on restart would silently blind a
+	// member to every reading until the next rotation.
+	InstrEpochs map[id.TerminalID][]crypto.EpochKey
 	// SelfTerminalSeed is the user's participant terminal key.
 	SelfTerminalSeed []byte
 	// DisplayName is the user's chosen name; empty until onboarding sets it.
@@ -297,6 +301,7 @@ func NewKeystore(p *identity.Principal, d *identity.Device) *Keystore {
 		PublicPublish: map[id.TerminalID]PublicPublishState{},
 		TerminalSeeds: map[id.TerminalID][]byte{},
 		Epochs:        map[id.TerminalID][]crypto.EpochKey{},
+		InstrEpochs:   map[id.TerminalID][]crypto.EpochKey{},
 		Spaces:        map[id.TerminalID]SpaceMeta{},
 		Forgotten:     map[id.TerminalID]int64{},
 		PeerRoutes:    map[id.DeviceID][]Route{},
@@ -381,6 +386,7 @@ const (
 	ksKeyGateway   = 19 // TR-0 the external-boundary participant
 	ksKeyCerts     = 20 // MD-0 device certificates AND revocations (one store)
 	ksKeyLegacy    = 21 // MD-0 the frozen pre-certification allowlist
+	ksKeyInstrEp   = 22 // QI-0 instrument-epoch keys per space
 )
 
 // ksMapArity is how many top-level pairs encode() writes, and it MUST equal
@@ -388,7 +394,7 @@ const (
 // which is a poor place for a number that bricks every keystore when it is
 // wrong: too few and the trailing pair goes unread, so Done() fails and
 // nobody can open their data again. Named here, next to the keys it counts.
-const ksMapArity = 21
+const ksMapArity = 22
 
 func (k *Keystore) encode() []byte {
 	buf := codec.AppendMap(nil, ksMapArity)
@@ -484,6 +490,21 @@ func (k *Keystore) encode() []byte {
 	buf = appendTrustStore(buf, k.Certs, k.Revs)
 	buf = codec.AppendUint(buf, ksKeyLegacy)
 	buf = appendLegacyBindings(buf, k.LegacyBindings)
+	// QI-0: the instrument-epoch ring, unconditionally — ksMapArity is a
+	// fixed contract and the decoder's default arm lets an old build skip
+	// a key it has never heard of.
+	buf = codec.AppendUint(buf, ksKeyInstrEp)
+	buf = codec.AppendArray(buf, len(k.InstrEpochs))
+	for _, ep := range sortedEpochs(k.InstrEpochs) {
+		buf = codec.AppendArray(buf, 2)
+		buf = codec.AppendBytes(buf, ep.id[:])
+		buf = codec.AppendArray(buf, len(ep.keys))
+		for _, e := range ep.keys {
+			buf = codec.AppendArray(buf, 2)
+			buf = codec.AppendUint(buf, e.N)
+			buf = codec.AppendBytes(buf, e.Key[:])
+		}
+	}
 	return buf
 }
 
@@ -595,6 +616,7 @@ func decodeKeystore(data []byte) (*Keystore, error) {
 	k := &Keystore{
 		TerminalSeeds: map[id.TerminalID][]byte{},
 		Epochs:        map[id.TerminalID][]crypto.EpochKey{},
+		InstrEpochs:   map[id.TerminalID][]crypto.EpochKey{},
 		Spaces:        map[id.TerminalID]SpaceMeta{},
 		Forgotten:     map[id.TerminalID]int64{},
 		PeerRoutes:    map[id.DeviceID][]Route{},
@@ -686,6 +708,48 @@ func decodeKeystore(data []byte) (*Keystore, error) {
 					}
 					copy(e.Key[:], kb)
 					k.Epochs[tid] = append(k.Epochs[tid], e)
+				}
+			}
+		case ksKeyInstrEp:
+			var cnt int
+			cnt, er = d.ReadArray()
+			if er != nil {
+				return nil, er
+			}
+			for range cnt {
+				if _, er = d.ReadArray(); er != nil {
+					return nil, er
+				}
+				var tidB []byte
+				if tidB, er = d.ReadBytes(); er != nil {
+					return nil, er
+				}
+				if len(tidB) != id.Size {
+					return nil, errors.New("storage: bad terminal id in instrument epochs")
+				}
+				var tid id.TerminalID
+				copy(tid[:], tidB)
+				var ecnt int
+				if ecnt, er = d.ReadArray(); er != nil {
+					return nil, er
+				}
+				for range ecnt {
+					if _, er = d.ReadArray(); er != nil {
+						return nil, er
+					}
+					var e crypto.EpochKey
+					if e.N, er = d.ReadUint(); er != nil {
+						return nil, er
+					}
+					var kb []byte
+					if kb, er = d.ReadBytes(); er != nil {
+						return nil, er
+					}
+					if len(kb) != crypto.KeySize {
+						return nil, errors.New("storage: bad instrument epoch key length")
+					}
+					copy(e.Key[:], kb)
+					k.InstrEpochs[tid] = append(k.InstrEpochs[tid], e)
 				}
 			}
 		case ksKeySelfTerm:

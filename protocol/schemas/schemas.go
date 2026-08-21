@@ -21,6 +21,7 @@ const (
 	CardUpdated       = "card.updated.v1"
 	PresenceUpdate    = "presence.update.v1"
 	ObservationTemp   = "observation.temperature.v1"
+	ObservationValue  = "observation.value.v1"
 	ReceiptDelivery   = "receipt.delivery.v1"
 	DeviceCertified   = "identity.device_certified.v1"
 	DeviceRevoked     = "identity.device_revoked.v1"
@@ -28,6 +29,7 @@ const (
 	MemberJoined      = "membership.joined.v1"
 	MemberLeft        = "membership.left.v1"
 	MembershipEpoch   = "membership.epoch.v1"
+	InstrumentEpoch   = "membership.instrument_epoch.v1"
 	MemberAdded       = "membership.member_added.v1"
 )
 
@@ -921,6 +923,200 @@ type EpochPayload struct {
 	Wraps []EpochWrap
 }
 
+
+// ---- observation.value.v1 (QI-0) ----
+//
+// The general reading of one INSTRUMENT CHANNEL. Three amendments from the
+// owner's plan review are load-bearing here:
+//
+//   - The value is a TAGGED FIXED-POINT, not "hundredths": a magnitude and
+//     a decimal count (value = ±magnitude / 10^decimals). No float ever
+//     enters a signed structure (ADR-003), and no precision is cemented —
+//     12.734 V and 101325 Pa and 824 ppm all encode without ceremony.
+//   - kind and unit are NOT in the frame. The signed manifest's channel
+//     declaration (qp.instr) is the single source of truth for what a
+//     channel means; a frame that could restate them could also contradict
+//     them, and the receiver would have to pick a winner. Smaller on the
+//     radio, too.
+//   - stale_after is mandatory, exactly as observation.temperature.v1
+//     insists: a reading that cannot say when it stops being current is a
+//     reading that will one day be displayed as fresher than it is.
+//
+// {1: channel, 2: magnitude, 3: negative, 4: decimals,
+//  5: bool_value, 6: enum_value, 7: observed_at, 8: stale_after,
+//  9: simulated}. Exactly ONE of {magnitude(+3,4), bool_value, enum_value}
+// families is present — the tag is the presence.
+type ValueObservation struct {
+	Channel string // paramNameRe grammar, same as live_signal params
+
+	HasNumber bool
+	Magnitude uint64 // absolute value
+	Negative  bool
+	Decimals  uint64 // value = ±Magnitude / 10^Decimals; ≤ 18
+
+	HasBool   bool
+	BoolValue bool
+
+	EnumValue string // non-empty = the enum tag
+
+	ObservedAt uint64
+	StaleAfter uint64 // seconds; freshness honesty
+	Simulated  bool   // must be declared, never inferred
+}
+
+// MaxEnumValueLen bounds an enum reading; a state word, not a paragraph.
+const MaxEnumValueLen = 48
+
+func (o *ValueObservation) tags() int {
+	n := 0
+	if o.HasNumber {
+		n++
+	}
+	if o.HasBool {
+		n++
+	}
+	if o.EnumValue != "" {
+		n++
+	}
+	return n
+}
+
+func (o *ValueObservation) Encode() ([]byte, error) {
+	if !paramNameRe.MatchString(o.Channel) {
+		return nil, errors.New("schemas: observation channel does not parse")
+	}
+	if o.tags() != 1 {
+		return nil, errors.New("schemas: observation carries exactly one value kind")
+	}
+	if o.HasNumber && o.Decimals > 18 {
+		return nil, errors.New("schemas: observation decimals out of range")
+	}
+	if len(o.EnumValue) > MaxEnumValueLen {
+		return nil, errors.New("schemas: observation enum value too long")
+	}
+	if o.ObservedAt == 0 {
+		return nil, errors.New("schemas: observation requires observed_at")
+	}
+	if o.StaleAfter == 0 {
+		return nil, errors.New("schemas: observation requires stale_after")
+	}
+	n := 3 // channel, observed_at, stale_after
+	if o.HasNumber {
+		n++
+		if o.Negative {
+			n++
+		}
+		if o.Decimals > 0 {
+			n++
+		}
+	}
+	if o.HasBool {
+		n++
+	}
+	if o.EnumValue != "" {
+		n++
+	}
+	if o.Simulated {
+		n++
+	}
+	buf := codec.AppendMap(nil, n)
+	buf = codec.AppendUint(buf, 1)
+	buf = codec.AppendText(buf, o.Channel)
+	if o.HasNumber {
+		buf = codec.AppendUint(buf, 2)
+		buf = codec.AppendUint(buf, o.Magnitude)
+		if o.Negative {
+			buf = codec.AppendUint(buf, 3)
+			buf = codec.AppendBool(buf, true)
+		}
+		if o.Decimals > 0 {
+			buf = codec.AppendUint(buf, 4)
+			buf = codec.AppendUint(buf, o.Decimals)
+		}
+	}
+	if o.HasBool {
+		buf = codec.AppendUint(buf, 5)
+		buf = codec.AppendBool(buf, o.BoolValue)
+	}
+	if o.EnumValue != "" {
+		buf = codec.AppendUint(buf, 6)
+		buf = codec.AppendText(buf, o.EnumValue)
+	}
+	buf = codec.AppendUint(buf, 7)
+	buf = codec.AppendUint(buf, o.ObservedAt)
+	buf = codec.AppendUint(buf, 8)
+	buf = codec.AppendUint(buf, o.StaleAfter)
+	if o.Simulated {
+		buf = codec.AppendUint(buf, 9)
+		buf = codec.AppendBool(buf, true)
+	}
+	return buf, nil
+}
+
+func DecodeValueObservation(payload []byte) (*ValueObservation, error) {
+	d := codec.NewDecoder(payload)
+	m, err := d.ReadMapHeader()
+	if err != nil {
+		return nil, err
+	}
+	o := &ValueObservation{}
+	for {
+		k, ok, err := m.Next()
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			break
+		}
+		switch k {
+		case 1:
+			o.Channel, err = d.ReadText()
+		case 2:
+			o.Magnitude, err = d.ReadUint()
+			o.HasNumber = true
+		case 3:
+			o.Negative, err = d.ReadBool()
+		case 4:
+			o.Decimals, err = d.ReadUint()
+		case 5:
+			o.BoolValue, err = d.ReadBool()
+			o.HasBool = true
+		case 6:
+			o.EnumValue, err = d.ReadText()
+		case 7:
+			o.ObservedAt, err = d.ReadUint()
+		case 8:
+			o.StaleAfter, err = d.ReadUint()
+		case 9:
+			o.Simulated, err = d.ReadBool()
+		default:
+			err = d.SkipItem()
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err := d.Done(); err != nil {
+		return nil, err
+	}
+	if !paramNameRe.MatchString(o.Channel) {
+		return nil, errors.New("schemas: observation channel does not parse")
+	}
+	if o.tags() != 1 {
+		return nil, errors.New("schemas: observation carries exactly one value kind")
+	}
+	if o.HasNumber && o.Decimals > 18 {
+		return nil, errors.New("schemas: observation decimals out of range")
+	}
+	if len(o.EnumValue) > MaxEnumValueLen {
+		return nil, errors.New("schemas: observation enum value too long")
+	}
+	if o.ObservedAt == 0 || o.StaleAfter == 0 {
+		return nil, errors.New("schemas: observation requires observed_at and stale_after")
+	}
+	return o, nil
+}
+
 func (e *EpochPayload) Encode() ([]byte, error) {
 	if e.N == 0 {
 		return nil, errors.New("schemas: epoch numbers start at 1")
@@ -1081,5 +1277,7 @@ func init() {
 	Register(CardUpdated, func(p []byte) error { _, err := DecodeCard(p); return err })
 	Register(PresenceUpdate, func(p []byte) error { _, err := DecodePresence(p); return err })
 	Register(ObservationTemp, func(p []byte) error { _, err := DecodeObservation(p); return err })
+	Register(ObservationValue, func(p []byte) error { _, err := DecodeValueObservation(p); return err })
+	Register(InstrumentEpoch, func(p []byte) error { _, err := DecodeEpochPayload(p); return err })
 	Register(MembershipEpoch, func(p []byte) error { _, err := DecodeEpochPayload(p); return err })
 }

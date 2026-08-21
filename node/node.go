@@ -567,6 +567,7 @@ func Open(dataDir string, passphrase []byte, displayName string) (rt *Runtime, e
 			// no-manifest member replica): today's encrypted runtime.
 			s.EnablePrivate(r.Device)
 			s.RestoreEpochs(r.ks.Epochs[tid])
+			s.RestoreInstrumentEpochs(r.ks.InstrEpochs[tid])
 		}
 		if meta.Owned {
 			if err := s.RestoreController(r.ks.TerminalSeeds[tid], meta.ManifestFrame, meta.Members); err != nil {
@@ -970,6 +971,9 @@ func (r *Runtime) stopped() bool {
 
 func (r *Runtime) persistEpochsLocked(tid id.TerminalID, s *terminals.Space) {
 	r.ks.Epochs[tid] = s.ExportEpochs()
+	if ie := s.ExportInstrumentEpochs(); len(ie) > 0 {
+		r.ks.InstrEpochs[tid] = ie
+	}
 	if meta, ok := r.ks.Spaces[tid]; ok && meta.Owned {
 		meta.Members = s.Members()
 		r.ks.Spaces[tid] = meta

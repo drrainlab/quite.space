@@ -91,6 +91,17 @@ const (
 	// PayloadEncrypted is XChaCha20-Poly1305 ciphertext under an epoch key
 	// (ADR-005).
 	PayloadEncrypted PayloadEncoding = 2
+	// PayloadInstrumentSealed is ciphertext under the INSTRUMENT epoch —
+	// the space's second key lineage (QI-0, ADR-025). It exists so an
+	// instrument can speak into a private space without ever holding the
+	// conversation epoch: telemetry is sealed to a key that members and
+	// instruments share and the relay does not, while the human
+	// conversation stays sealed to a key no instrument has seen. The
+	// envelope names the lineage precisely because two lineages may reuse
+	// the same epoch NUMBERS; a decoder must never guess which map to
+	// consult. Old builds fall through their encrypted-branch and treat
+	// the payload as opaque — tolerated, never fatal (compat-pinned).
+	PayloadInstrumentSealed PayloadEncoding = 3
 )
 
 // MaxFrameLen bounds a full envelope frame (M0.1 size limits).
