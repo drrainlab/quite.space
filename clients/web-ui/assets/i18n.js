@@ -457,6 +457,9 @@ const I18N = {
     'presence.is_here': ({ who }) => `${who} is here`,
     'presence.pick': 'presence…',
 
+    // instruments (QI-2)
+    'instr.title': 'Instruments',
+
     // device
     'device.title': 'This device',
     'device.trusted': 'Trusted device',
@@ -1372,6 +1375,9 @@ const I18N = {
     'presence.last_seen': ({ who, ago }) => `${who} последний раз здесь ${ago}`,
     'presence.is_here': ({ who }) => `${who} здесь`,
     'presence.pick': 'присутствие…',
+
+    // instruments (QI-2)
+    'instr.title': 'Инструменты',
     'device.title': 'Это устройство',
     'device.trusted': 'Доверенное устройство',
     'device.verification': 'Код проверки',

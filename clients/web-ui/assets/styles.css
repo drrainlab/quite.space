@@ -508,6 +508,15 @@
   .member .pres.current { color: var(--acc); }
   .member .pres.stale { color: var(--dim); }
   .member .ai-note { color: var(--ai); font-size: 10px; }
+  /* Instrument cards (QI-2): tap to expand the declared panel. */
+  .member.instr { cursor: pointer; }
+  .instr-row {
+    display: flex; justify-content: space-between; gap: 8px;
+    font-size: 11px; margin-top: 3px;
+  }
+  .instr-row .instr-label { color: var(--dim); }
+  .instr-row .instr-val { color: var(--fg); font-variant-numeric: tabular-nums; }
+  .instr-row.stale .instr-val { color: var(--dim); }
   #qrBox img { width: 220px; height: 220px; image-rendering: pixelated;
     background: #fff; padding: 8px; border-radius: 4px; margin-top: 8px; }
   .ic { border: 0; border-right: 1px solid var(--line); border-radius: 0;

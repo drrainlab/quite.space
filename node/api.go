@@ -24,9 +24,11 @@ import (
 	"github.com/drrainlab/quiet_places/kernel/assets"
 	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/protocol/manifest"
+	"github.com/drrainlab/quiet_places/protocol/schemas"
 	"github.com/drrainlab/quiet_places/protocol/signal"
 	"github.com/drrainlab/quiet_places/terminals"
 	qrcode "github.com/skip2/go-qrcode"
+	"strconv"
 )
 
 // APIServer wraps a Runtime for local HTTP access.
@@ -200,6 +202,8 @@ func (a *APIServer) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/spaces/{id}/resonance/palette", a.auth(a.handleSetResonancePalette))
 	mux.HandleFunc("GET /api/spaces/{id}/resonance/{target}/actors", a.auth(a.handleResonanceActors))
 	mux.HandleFunc("POST /api/spaces/{id}/presence", a.auth(a.handlePresence))
+	mux.HandleFunc("POST /api/spaces/{id}/instruments/simulate", a.auth(a.handleSimulateInstrument))
+	mux.HandleFunc("DELETE /api/spaces/{id}/instruments/{iid}", a.auth(a.handleDetachInstrument))
 	mux.HandleFunc("POST /api/invites/accept", a.auth(a.handleJoin))
 	mux.HandleFunc("POST /api/public/open", a.auth(a.handlePublicOpen))
 	// The transient post preview (PS-3): a card invites a look, and looking
@@ -940,6 +944,18 @@ type stateResp struct {
 	Observation   *observationResp `json:"observation,omitempty"`
 	Undecryptable int              `json:"undecryptable"`
 	Events        int              `json:"events"`
+	// Observations is the instrument plane's latest state (QI-2):
+	// instrument_id → channel → reading. Display text is composed HERE,
+	// from the fixed-point value and the manifest's declared unit — the
+	// frame carries neither unit nor kind by design.
+	Observations map[string]map[string]valueObsResp `json:"observations,omitempty"`
+}
+
+type valueObsResp struct {
+	Display   string `json:"display"`
+	Freshness string `json:"freshness"`
+	AgeSec    uint64 `json:"age_seconds"`
+	Simulated bool   `json:"simulated,omitempty"`
 }
 
 func (a *APIServer) handleState(w http.ResponseWriter, r *http.Request) {
@@ -953,6 +969,48 @@ func (a *APIServer) handleState(w http.ResponseWriter, r *http.Request) {
 		resp.Undecryptable, resp.Events = st.space.Undecryptable, st.space.Log.Len()
 		for _, c := range st.space.State.Cards() {
 			resp.Cards = append(resp.Cards, cardResp{ID: c.ID.Hex(), Title: c.Title, Status: c.Status})
+		}
+		// The instrument plane (QI-2). Units come from each instrument's
+		// signed declaration; a reading whose channel was never declared
+		// shows bare — defensive, not fatal.
+		if vos := st.space.State.ValueObservations(); len(vos) > 0 {
+			decls := map[string]map[string]terminals.ChannelDecl{}
+			for _, m := range st.space.Registry.All() {
+				if m.Manifest == nil || !terminals.IsInstrumentKind(m.Manifest.Kind) {
+					continue
+				}
+				per := map[string]terminals.ChannelDecl{}
+				for _, d := range terminals.ParseInstruments(m.Manifest.DeclaredLabels) {
+					per[d.Channel] = d
+				}
+				decls[m.ID.Hex()] = per
+			}
+			now := uint64(time.Now().Unix())
+			resp.Observations = map[string]map[string]valueObsResp{}
+			for key, vo := range vos {
+				iid := key.Instrument.Hex()
+				if resp.Observations[iid] == nil {
+					resp.Observations[iid] = map[string]valueObsResp{}
+				}
+				unit := ""
+				if d, ok := decls[iid][key.Channel]; ok {
+					unit = d.Unit
+				}
+				age := uint64(0)
+				if now > vo.ObservedAt {
+					age = now - vo.ObservedAt
+				}
+				fresh := "current"
+				if age > vo.Value.StaleAfter {
+					fresh = "stale"
+				}
+				resp.Observations[iid][key.Channel] = valueObsResp{
+					Display:   formatValueObs(vo.Value, unit),
+					Freshness: fresh,
+					AgeSec:    age,
+					Simulated: vo.Value.Simulated,
+				}
+			}
 		}
 		o, ok := st.space.State.LatestObservation()
 		if !ok {
@@ -987,6 +1045,90 @@ func (a *APIServer) handleState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, resp)
+}
+
+// formatValueObs renders a tagged fixed-point reading for humans:
+// magnitude/10^decimals with the declared unit, on/off for booleans,
+// the word itself for enums.
+func formatValueObs(v schemas.ValueObservation, unit string) string {
+	switch {
+	case v.HasBool:
+		if v.BoolValue {
+			return "on"
+		}
+		return "off"
+	case v.EnumValue != "":
+		return v.EnumValue
+	case v.HasNumber:
+		sign := ""
+		if v.Negative {
+			sign = "-"
+		}
+		if v.Decimals == 0 {
+			out := sign + uitoa(v.Magnitude)
+			if unit != "" {
+				out += " " + unit
+			}
+			return out
+		}
+		div := uint64(1)
+		for i := uint64(0); i < v.Decimals; i++ {
+			div *= 10
+		}
+		frac := uitoa(v.Magnitude % div)
+		for uint64(len(frac)) < v.Decimals {
+			frac = "0" + frac
+		}
+		out := sign + uitoa(v.Magnitude/div) + "." + frac
+		if unit != "" {
+			out += " " + unit
+		}
+		return out
+	}
+	return ""
+}
+
+func uitoa(v uint64) string { return strconv.FormatUint(v, 10) }
+
+// handleSimulateInstrument attaches the reference greenhouse (QI-1).
+func (a *APIServer) handleSimulateInstrument(w http.ResponseWriter, r *http.Request) {
+	tid, err := a.spaceID(r)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	body, err := readBody[struct {
+		Label string `json:"label"`
+		Seed  uint64 `json:"seed"`
+	}](r)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	iid, err := a.rt.AttachSimulatedInstrument(tid, body.Label, body.Seed)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, map[string]string{"instrument_id": iid.Hex()})
+}
+
+func (a *APIServer) handleDetachInstrument(w http.ResponseWriter, r *http.Request) {
+	tid, err := a.spaceID(r)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	iid, err := id.ParseTerminalID(r.PathValue("iid"))
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := a.rt.DetachInstrument(tid, iid); err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
 }
 
 func pad2(n int) string {
@@ -1111,6 +1253,11 @@ type memberResp struct {
 	DeclaredLabels []string `json:"declared_labels"`
 	SysLabels      []string `json:"sys_labels"`
 	Commandable    bool     `json:"commandable"`
+	// InstrumentID + Instruments: set only on instrument cards (QI-2).
+	// The id repeats Terminal under the name every new API must use —
+	// nothing physical is ever called a terminal in this protocol.
+	InstrumentID string          `json:"instrument_id,omitempty"`
+	Instruments  []instrChanResp `json:"instruments,omitempty"`
 	// Mine marks this node's own card, so a UI can show you your own state
 	// without having to guess which member you are.
 	Mine     bool `json:"mine"`
@@ -1123,6 +1270,13 @@ type memberResp struct {
 		// local assumption about how long presence lasts.
 		LeftSec uint64 `json:"remaining_seconds,omitempty"`
 	} `json:"presence"`
+}
+
+type instrChanResp struct {
+	Channel string `json:"channel"`
+	Kind    string `json:"kind"`
+	Unit    string `json:"unit,omitempty"`
+	Label   string `json:"label,omitempty"`
 }
 
 func (a *APIServer) handleMembers(w http.ResponseWriter, r *http.Request) {
@@ -1186,6 +1340,16 @@ func (a *APIServer) handleMembers(w http.ResponseWriter, r *http.Request) {
 		m.Presence.State = c.Presence.State
 		m.Presence.AgeSec = c.Presence.AgeSeconds
 		m.Presence.LeftSec = c.Presence.RemainingSeconds
+		// Instrument cards carry their declaration (QI-2) — and the id
+		// under the one name new APIs use for physical endpoints.
+		if c.Kind == "sensor" || c.Kind == "actuator" {
+			m.InstrumentID = c.Terminal.Hex()
+			for _, d := range terminals.ParseInstruments(c.DeclaredLabels) {
+				m.Instruments = append(m.Instruments, instrChanResp{
+					Channel: d.Channel, Kind: d.Kind, Unit: d.Unit, Label: d.Label,
+				})
+			}
+		}
 		out = append(out, m)
 	}
 	writeJSON(w, out)

@@ -13,6 +13,9 @@ let seenSpace = null;
 // Members known to be "here" last render — used to fire the arrival pulse
 // exactly once, on the transition into presence (never as an idle loop).
 let hereMembers = new Set();
+// Which instrument cards are expanded. Held OUTSIDE the DOM because the
+// members panel is rebuilt on every poll — the hereMembers pattern.
+let openInstruments = new Set();
 // feedSig: per-entry signatures from the last render — the incremental feed
 // only touches the DOM when something actually changed (keeps players alive).
 let feedSig = [];
@@ -1991,6 +1994,11 @@ async function refreshSpace() {
   // Our own card is the source of truth for the composer's presence button,
   // including on a tab that has only just opened.
   presenceAdopt(members);
+  // The projection splits here (QI-2): a sensor or an actuator is a
+  // subject of the space but not a person — it renders once, in the
+  // Instruments section, never in the member list.
+  const people = members.filter(m => m.kind !== 'sensor' && m.kind !== 'actuator');
+  const instrCards = members.filter(m => m.kind === 'sensor' || m.kind === 'actuator');
   const mbox = document.getElementById('members');
   mbox.innerHTML = '';
   // the relic: grown from shared life, identical on every replica.
@@ -2005,7 +2013,7 @@ async function refreshSpace() {
   mbox.appendChild(note);
 
   const h = document.createElement('h3'); h.textContent = t('conv.member') + 's'; mbox.appendChild(h);
-  const summary = presenceSummary(members);
+  const summary = presenceSummary(people);
   if (summary) {
     const ps = document.createElement('div');
     ps.className = 'presence-summary'; ps.setAttribute('aria-live', 'polite');
@@ -2013,7 +2021,7 @@ async function refreshSpace() {
     mbox.appendChild(ps);
   }
   const nextHere = new Set();
-  for (const m of members) {
+  for (const m of people) {
     const d = document.createElement('div');
     d.className = 'member';
     let pres;
@@ -2056,6 +2064,63 @@ async function refreshSpace() {
     mbox.appendChild(d);
   }
   hereMembers = nextHere;
+
+  // ---- Instruments: the place's physical panel (QI-2) ----
+  //
+  // Values come from the volatile observation plane, meaning comes from
+  // each instrument's SIGNED declaration; the two meet only here. The
+  // renderer is an allowlist by declared kind — an unknown kind shows its
+  // label and no value (defensive, never fatal), exactly the live_signal
+  // discipline.
+  if (instrCards.length) {
+    const ih = document.createElement('h3');
+    ih.textContent = t('instr.title');
+    mbox.appendChild(ih);
+    for (const m of instrCards) {
+      const iid = m.instrument_id;
+      const obs = (st.observations || {})[iid] || {};
+      const open = openInstruments.has(iid);
+      const decls = m.instruments || [];
+      const d = document.createElement('div');
+      d.className = 'member instr' + (open ? ' open' : '');
+      const name = m.name || (m.terminal || '').slice(0, 10);
+      const anySim = Object.values(obs).some(o => o.simulated);
+      const live = Object.values(obs).some(o => o.freshness === 'current');
+      // Collapsed line: ● Greenhouse · 21.4 °C · 48 % — the first two
+      // CURRENT number readings; a silent instrument shows its kind.
+      const brief = [];
+      for (const ch of decls) {
+        const o = obs[ch.channel];
+        if (ch.kind === 'number' && o && o.freshness === 'current' && brief.length < 2)
+          brief.push(o.display);
+      }
+      let inner =
+        `<div class="mhead"><span class="glyph g24">${glyphSVG(m.principal || m.terminal, memberGlyphType(m), 24)}</span>` +
+        `<span class="mname">${esc(name)}</span>` +
+        (anySim ? `<span class="badge kind b-deterministic_bot" title="${esc(t('honesty.simulated'))}">${esc(t('honesty.simulated'))}</span>` : '') +
+        `</div>` +
+        `<div class="pres ${live ? 'current' : 'stale'}">${live ? '●' : '○'} ${brief.map(esc).join(' · ') || esc(m.kind)}</div>`;
+      if (open) {
+        for (const ch of decls) {
+          const o = obs[ch.channel];
+          const label = ch.label || ch.channel;
+          const known = ch.kind === 'number' || ch.kind === 'boolean' || ch.kind === 'enum';
+          const stale = !!(o && o.freshness !== 'current');
+          inner += `<div class="instr-row${stale ? ' stale' : ''}">` +
+            `<span class="instr-label">${esc(label)}</span>` +
+            `<span class="instr-val">${known && o ? esc(o.display) : '—'}` +
+            `${stale ? ` · ${esc(relTime(o.age_seconds))}` : ''}</span></div>`;
+        }
+      }
+      d.innerHTML = inner;
+      d.onclick = () => {
+        if (openInstruments.has(iid)) openInstruments.delete(iid);
+        else openInstruments.add(iid);
+        refreshSpace();
+      };
+      mbox.appendChild(d);
+    }
+  }
 
   // ON A PHONE, THIS PANEL IS WHERE A SPACE'S OWN CONTROLS LIVE.
   //
