@@ -21,7 +21,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	_ "net/http/pprof" // registers /debug/pprof on DefaultServeMux (debug flag only)
 	"os"
+	"time"
 
 	webui "github.com/drrainlab/quiet_places/clients/web-ui"
 	"github.com/drrainlab/quiet_places/cmd/desktop/internal/wailsx"
@@ -67,6 +69,26 @@ func main() {
 	if debug {
 		handler = withRequestLog(shell)
 		fmt.Println("debug: web inspector enabled, logging every request")
+		// WHERE THE TIME GOES, when a person says "it runs warm".
+		//
+		// A shipped build is stripped, and `sample` renders every Go frame
+		// as ??? — so an energy question that the outside cannot answer
+		// stays a guess. pprof answers it with names. Loopback only, and
+		// only under the flag that already opens the inspector and prints
+		// every request: this is the debugging surface, not a new one.
+		//
+		//	go tool pprof -http=: http://127.0.0.1:6060/debug/pprof/profile?seconds=30
+		go func() {
+			fmt.Println("debug: profiler at http://127.0.0.1:6060/debug/pprof/")
+			srv := &http.Server{
+				Addr:              "127.0.0.1:6060",
+				Handler:           http.DefaultServeMux, // net/http/pprof registers here
+				ReadHeaderTimeout: 5 * time.Second,
+			}
+			if err := srv.ListenAndServe(); err != nil {
+				log.Printf("quite space: profiler: %v", err)
+			}
+		}()
 	}
 
 	// OFF the UI thread, deliberately. node.Open is a scrypt derivation plus a
