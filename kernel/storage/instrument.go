@@ -37,9 +37,17 @@ type InstrumentRecord struct {
 	Simulated bool
 	// SimSeed makes the simulator deterministic (owner's amendment 8).
 	SimSeed uint64
+	// External marks an instrument whose private keys live ON THE DEVICE
+	// (QI-M, ADR-026): this node holds only the public halves below and
+	// can neither sign nor seal for it. Seeds above are empty for such a
+	// record — by construction, not by convention.
+	External    bool
+	DevicePub   id.DeviceID
+	X25519Pub   [32]byte
+	TerminalPub id.TerminalID
 }
 
-func (i InstrumentRecord) Exists() bool { return len(i.TerminalSeed) > 0 }
+func (i InstrumentRecord) Exists() bool { return len(i.TerminalSeed) > 0 || i.External }
 
 // instrFields is the record's positional arity; append-only forever.
 const instrFields = 9
@@ -59,9 +67,15 @@ func appendInstrumentRecord(buf []byte, r InstrumentRecord) []byte {
 	buf = codec.AppendBytes(buf, r.ManifestFrame)
 	// The two simulator fields ride one nested array so the outer arity
 	// stays a clean count of concerns.
-	buf = codec.AppendArray(buf, 2)
+	// Items 2–5 (QI-M) carry the external device's public halves; an
+	// older reader skips them by the tail rule below.
+	buf = codec.AppendArray(buf, 6)
 	buf = codec.AppendBool(buf, r.Simulated)
 	buf = codec.AppendUint(buf, r.SimSeed)
+	buf = codec.AppendBool(buf, r.External)
+	buf = codec.AppendBytes(buf, r.DevicePub[:])
+	buf = codec.AppendBytes(buf, r.X25519Pub[:])
+	buf = codec.AppendBytes(buf, r.TerminalPub[:])
 	return buf
 }
 
@@ -119,7 +133,21 @@ func readInstrumentRecord(d *codec.Decoder) (InstrumentRecord, error) {
 			return r, err
 		}
 	}
-	for i := 2; i < simN; i++ {
+	read := 2
+	if simN >= 6 {
+		if r.External, err = d.ReadBool(); err != nil {
+			return r, err
+		}
+		for _, dst := range [][]byte{r.DevicePub[:], r.X25519Pub[:], r.TerminalPub[:]} {
+			b, err := d.ReadBytes()
+			if err != nil {
+				return r, err
+			}
+			copy(dst, b)
+		}
+		read = 6
+	}
+	for i := read; i < simN; i++ {
 		if e := d.SkipItem(); e != nil {
 			return r, e
 		}

@@ -213,8 +213,11 @@ type Runtime struct {
 	// instruments are the attached instrument participants (QI-1),
 	// keyed by InstrumentID.
 	instruments map[id.TerminalID]*instrumentRuntime
-	stopOnce     sync.Once
-	wg           sync.WaitGroup
+	// DevIngest opens the dev-only frame ingest for EXTERNAL instruments
+	// (QI-M3 stand). Off by default; a bearer decision is not made here.
+	DevIngest bool
+	stopOnce  sync.Once
+	wg        sync.WaitGroup
 
 	// lock is this process's exclusive hold on the data directory. Two nodes
 	// on one directory both hold a Keystore and both write it back through
@@ -418,7 +421,7 @@ func Open(dataDir string, passphrase []byte, displayName string) (rt *Runtime, e
 		notifyLedger: newNotifyLedger(dataDir),
 		assetIdx:     newAssetIndex(), passes: newPassRegistry(),
 		joins: map[string]*joinAttempt{}, stop: make(chan struct{}),
-		syncKick: make(chan struct{}, 1),
+		syncKick:            make(chan struct{}, 1),
 		startupReconsidered: make(chan struct{}),
 		relayWants:          map[id.TerminalID]map[id.Hash]struct{}{},
 		// Radios ask for retransmission unless told otherwise. See

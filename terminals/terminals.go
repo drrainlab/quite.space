@@ -43,6 +43,13 @@ type Space struct {
 	// events this replica received but could not read — shown, not hidden.
 	Private       bool
 	Undecryptable int
+	// UnauthorizedInstrument counts instrument-sealed frames whose device
+	// the CURRENT instrument epoch does not address (ADR-025 + QI-M
+	// amendment 4). Kept apart from Undecryptable on purpose: "we lack
+	// the key" and "this device is no longer an instrument here" are
+	// different facts, and a detached device holding an old key is the
+	// second one, never the first.
+	UnauthorizedInstrument int
 
 	// ReadOnly marks a public-space reader replica (PA-0): it may absorb
 	// and materialize, but local emits are refused at the low-level gate
@@ -190,6 +197,12 @@ func (s *Space) absorb(a eventlog.Applied) {
 		return // the second lineage's key distribution, same rule
 	}
 	if env.PayloadEncoding == signal.PayloadInstrumentSealed {
+		// Authority before secrecy: the device must be addressed by the
+		// current instrument epoch, whatever keys it happens to hold.
+		if !s.InstrumentAuthorized(env.Device) {
+			s.UnauthorizedInstrument++
+			return
+		}
 		pt, ok := s.openInstrument(env)
 		if !ok {
 			s.Undecryptable++

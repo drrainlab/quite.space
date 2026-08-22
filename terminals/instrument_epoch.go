@@ -38,9 +38,11 @@ import (
 	"github.com/drrainlab/quiet_places/protocol/signal"
 )
 
-// instrPlaneID derives the instrument lineage's binding id from the space
-// id — the domain separation both wraps and seals use.
-func instrPlaneID(space id.TerminalID) id.TerminalID {
+// InstrumentPlaneID derives the instrument lineage's binding id from the
+// space id — the domain separation both wraps and seals use. Exported
+// because it is part of the wire contract a second implementation (the
+// C core, QI-M) must reproduce: SHA256("qp.instrument-plane.v1" ‖ space).
+func InstrumentPlaneID(space id.TerminalID) id.TerminalID {
 	sum := sha256.Sum256(append([]byte("qp.instrument-plane.v1"), space[:]...))
 	var out id.TerminalID
 	copy(out[:], sum[:])
@@ -56,6 +58,23 @@ type instrState struct {
 	// instruments is the controller-side wrap ADDITION: instrument devices
 	// joined with the conversation member list at rotation time.
 	instruments map[id.DeviceID][32]byte
+	// authorized is the receiver-side AUTHORIZATION SET: the devices the
+	// CURRENT instrument epoch addresses. Detachment is a boundary of
+	// authority, not merely of secrecy (owner's QI-M amendment 4): a
+	// detached device may well still hold an older epoch key — members
+	// keep old keys for delayed delivery — so "it cannot read the new
+	// secret" is not the revocation. "Its identity is no longer addressed
+	// by the current epoch" is. The set only ever moves FORWARD with the
+	// epoch number (amendment 13): a late-arriving lower epoch never
+	// rolls it back.
+	authorized map[id.DeviceID]bool
+	// authEpoch is the epoch the authorization set was taken from. Kept
+	// APART from current on purpose: RestoreInstrumentEpochs raises
+	// current from the keystore before the log is replayed, and if the
+	// set were keyed to current, replay would never install it — a
+	// restarted member refused every reading until the next rotation.
+	// The node restart test found exactly that.
+	authEpoch uint64
 }
 
 func (s *Space) instrInit() {
@@ -150,7 +169,7 @@ func (p *Participant) RotateInstrumentEpoch(s *Space) (eventlog.Applied, error) 
 	if err != nil {
 		return eventlog.Applied{}, err
 	}
-	wraps, err := crypto.WrapEpoch(instrPlaneID(s.ID), key, recipients)
+	wraps, err := crypto.WrapEpoch(InstrumentPlaneID(s.ID), key, recipients)
 	if err != nil {
 		return eventlog.Applied{}, err
 	}
@@ -160,6 +179,14 @@ func (p *Participant) RotateInstrumentEpoch(s *Space) (eventlog.Applied, error) 
 	}
 	s.instr.epochs[n] = key
 	s.instr.current = n
+	// The controller's own absorb will see ep.N == current and leave the
+	// authorization set alone, so it is installed here, from the same
+	// recipient list the wraps were minted for.
+	auth := make(map[id.DeviceID]bool, len(recipients))
+	for dev := range recipients {
+		auth[dev] = true
+	}
+	s.instr.authorized, s.instr.authEpoch = auth, n
 	return p.Emit(s, schemas.InstrumentEpoch, payload, p.DefaultAuthorship(), 0)
 }
 
@@ -176,15 +203,40 @@ func (s *Space) absorbInstrumentEpoch(env *signal.Envelope) {
 	if ep.N > s.instr.current {
 		s.instr.current = ep.N
 	}
+	if ep.N > s.instr.authEpoch {
+		// The newest epoch's recipients ARE the authorization set — the
+		// owner signed this list, and a guest learns who may speak on
+		// the plane from exactly this frame. Strictly greater: an older
+		// epoch arriving late (a second authority device, a replay)
+		// keeps its key usable for delayed opens but never re-authorizes
+		// a device the newer epoch dropped.
+		auth := make(map[id.DeviceID]bool, len(ep.Wraps))
+		for _, w := range ep.Wraps {
+			auth[w.Device] = true
+		}
+		s.instr.authorized, s.instr.authEpoch = auth, ep.N
+	}
 	self := s.instrSelf()
 	if self == nil {
 		return
 	}
-	key, err := crypto.UnwrapEpoch(instrPlaneID(s.ID), ep.N, ep.Wraps, self.ID, self.X25519Priv())
+	key, err := crypto.UnwrapEpoch(InstrumentPlaneID(s.ID), ep.N, ep.Wraps, self.ID, self.X25519Priv())
 	if err != nil {
 		return
 	}
 	s.instr.epochs[ep.N] = key
+}
+
+// InstrumentAuthorized reports whether a device is addressed by the
+// current instrument epoch — the receiver-side authority check every
+// instrument-sealed frame passes BEFORE any key is tried. A replica that
+// has not yet seen an instrument epoch authorizes nobody: fail closed,
+// and the reading is fleeting — the next tick arrives after the epoch.
+func (s *Space) InstrumentAuthorized(dev id.DeviceID) bool {
+	if s.instr == nil || s.instr.authorized == nil {
+		return false
+	}
+	return s.instr.authorized[dev]
 }
 
 // instrSelf is the device that unwraps for THIS replica — the same device
@@ -208,7 +260,7 @@ func (s *Space) sealForInstrument(schema string, plaintext []byte) ([]byte, erro
 	if !ok || s.instr.current == 0 {
 		return nil, errors.New("terminals: no current instrument epoch key")
 	}
-	return crypto.SealPayload(key, instrPlaneID(s.ID), schema, plaintext)
+	return crypto.SealPayload(key, InstrumentPlaneID(s.ID), schema, plaintext)
 }
 
 // openInstrument tries to decrypt an instrument-sealed payload.
@@ -225,7 +277,7 @@ func (s *Space) openInstrument(env *signal.Envelope) ([]byte, bool) {
 	if !ok {
 		return nil, false
 	}
-	pt, err := crypto.OpenPayload(key, instrPlaneID(s.ID), env.Schema, env.Payload)
+	pt, err := crypto.OpenPayload(key, InstrumentPlaneID(s.ID), env.Schema, env.Payload)
 	if err != nil {
 		return nil, false
 	}
@@ -259,4 +311,40 @@ func (s *Space) RestoreInstrumentEpochs(keys []crypto.EpochKey) {
 			s.instr.current = k.N
 		}
 	}
+}
+
+// AbsorbInstrumentEpochFrame is the DEVICE'S way of learning an epoch —
+// what a firmware does, modelled here so the Go side can play one (QI-M).
+//
+// An instrument is not a replica: it does not carry the owner's chain,
+// the space manifest, or anybody's history, so the ordinary Absorb would
+// park an owner frame with an unseen predecessor as pending forever. It
+// checks what a device CAN check — the envelope's signature, that the
+// frame is for this space, carries this lineage's schema and was issued
+// by the principal the device was provisioned to — and absorbs the key
+// distribution chain-free. The sender's device certificate is not
+// verified here: a device holds no certificate store, and the bearer that
+// will one day deliver rotations is where that trust gets decided.
+func (s *Space) AbsorbInstrumentEpochFrame(frame []byte, principal id.PrincipalID) error {
+	env, err := signal.Decode(frame)
+	if err != nil {
+		return err
+	}
+	if err := signal.VerifyFrame(frame, env); err != nil {
+		return err
+	}
+	if env.Terminal != s.ID {
+		return errors.New("terminals: epoch frame is for another space")
+	}
+	if env.Schema != schemas.InstrumentEpoch {
+		return errors.New("terminals: not an instrument epoch frame")
+	}
+	if env.Principal != principal {
+		return errors.New("terminals: epoch frame is not from this instrument's principal")
+	}
+	if env.LogicalClock > s.maxClock {
+		s.maxClock = env.LogicalClock
+	}
+	s.absorbInstrumentEpoch(env)
+	return nil
 }

@@ -272,3 +272,41 @@ func TestFramesInRange(t *testing.T) {
 		t.Fatal("range start wrong")
 	}
 }
+
+// A HOLE IN A CHAIN IS NEVER APPLIED — the load-bearing property every
+// autonomous instrument must build on (QI-M, owner's amendment 1). If a
+// device persists (seq, tip) and then loses power before its frame N
+// leaves, frame N+1 references a predecessor nobody has: it is buffered
+// as pending forever and everything after it piles up behind. There is
+// no "fleeting frames may skip" exemption, and this test is here so that
+// nobody adds one by accident: the cure is a persistent outbox on the
+// device, not leniency in the log.
+func TestAHoleInTheChainIsNeverApplied(t *testing.T) {
+	var term id.TerminalID
+	term[0] = 9
+	log := New(term, nil)
+	a := newAuthor(t, term, 0x0B)
+	f1 := a.next(t, "one")
+	_ = a.next(t, "two — lost to a power cut before it was ever sent")
+	f3 := a.next(t, "three")
+	f4 := a.next(t, "four")
+
+	if _, err := log.Ingest(f1); err != nil {
+		t.Fatal(err)
+	}
+	applied, err := log.Ingest(f3)
+	if err != nil || len(applied) != 0 {
+		t.Fatalf("frame 3 with a missing predecessor: applied=%d err=%v (want buffered, nothing applied)", len(applied), err)
+	}
+	applied, err = log.Ingest(f4)
+	if err != nil || len(applied) != 0 {
+		t.Fatalf("frame 4 behind the hole: applied=%d err=%v", len(applied), err)
+	}
+	if log.Len() != 1 {
+		t.Fatalf("log holds %d applied frames, want exactly 1 — the hole stops the chain", log.Len())
+	}
+	seq, _, _ := log.ChainTip(a.dev)
+	if seq != 1 {
+		t.Fatalf("chain tip advanced past the hole: seq=%d", seq)
+	}
+}

@@ -31,6 +31,36 @@ func (p *Participant) PublishManifest(s *Space) (eventlog.Applied, bool, error) 
 	return a, true, nil
 }
 
+// PublishManifestFrameOnBehalf carries ANOTHER terminal's signed manifest
+// into the space inside this participant's envelope (QI-M, ADR-026). Two
+// levels of authorship, named so nobody "fixes" them apart later:
+//
+//	content author      = the instrument (its terminal key signed the manifest)
+//	transport publisher = this participant (its device key signed the envelope)
+//
+// The registry verifies the manifest by manifest.Terminal and never asks
+// who carried it — envelope.Device == manifest device is NOT a rule and
+// must never become one: an instrument holds no conversation key, so its
+// manifest can only reach a private space in a member's envelope.
+// Idempotent per revision, like PublishManifest.
+func (p *Participant) PublishManifestFrameOnBehalf(s *Space, frame []byte) (eventlog.Applied, bool, error) {
+	m, err := manifest.Decode(frame)
+	if err != nil {
+		return eventlog.Applied{}, false, err
+	}
+	if err := manifest.VerifyFrame(frame, m); err != nil {
+		return eventlog.Applied{}, false, err
+	}
+	if t, ok := s.Registry.Get(m.Terminal); ok && t.Manifest.Revision >= m.Revision {
+		return eventlog.Applied{}, false, nil
+	}
+	a, err := p.Emit(s, schemas.ManifestUpdated, frame, p.DefaultAuthorship(), 0)
+	if err != nil {
+		return eventlog.Applied{}, false, err
+	}
+	return a, true, nil
+}
+
 // MemberCard is the projection one replica can honestly render about a
 // member terminal (plan §M1.3/M1.4).
 type MemberCard struct {

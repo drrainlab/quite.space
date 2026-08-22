@@ -87,6 +87,9 @@ func runUI(args []string, withUI bool) error {
 	if err != nil {
 		return err
 	}
+	// Dev-only door for external instrument frames (QI-M3 stand). Not a
+	// bearer: off unless asked for by name.
+	rt.DevIngest = flags["dev-ingest"] != ""
 	defer rt.Close()
 	fmt.Println("node open — principal", rt.Principal.Fingerprint())
 	fmt.Println("data root:", dataDir)

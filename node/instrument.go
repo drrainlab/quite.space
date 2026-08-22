@@ -16,15 +16,19 @@ package node
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"math"
 	"time"
 
+	"github.com/drrainlab/quiet_places/kernel/eventlog"
 	"github.com/drrainlab/quiet_places/kernel/identity"
 	"github.com/drrainlab/quiet_places/kernel/storage"
+	"github.com/drrainlab/quiet_places/protocol/enrollment"
 	"github.com/drrainlab/quiet_places/protocol/id"
+	"github.com/drrainlab/quiet_places/protocol/manifest"
 	"github.com/drrainlab/quiet_places/protocol/schemas"
 	"github.com/drrainlab/quiet_places/protocol/signal"
 	"github.com/drrainlab/quiet_places/terminals"
@@ -134,9 +138,11 @@ func (r *Runtime) DetachInstrument(space, instrumentID id.TerminalID) error {
 	}
 	kept := r.ks.Instruments[:0]
 	found := false
+	var detachedDev id.DeviceID
 	for _, rec := range r.ks.Instruments {
 		if rec.Space == space && terminalOfRecord(rec) == instrumentID {
 			found = true
+			detachedDev = rec.DevicePub
 			continue
 		}
 		kept = append(kept, rec)
@@ -149,7 +155,14 @@ func (r *Runtime) DetachInstrument(space, instrumentID id.TerminalID) error {
 	if !found && ir == nil {
 		return errors.New("node: unknown instrument")
 	}
-	dev := ir.part.Device.ID
+	var dev id.DeviceID
+	if ir != nil {
+		dev = ir.part.Device.ID
+	} else {
+		// External (QI-M): no runtime, the record carries the public
+		// device id the wrap list knows it by.
+		dev = detachedDev
+	}
 	return r.withSpace(space, func(st *spaceState) error {
 		st.space.RemoveInstrument(dev)
 		if _, err := r.Self.RotateInstrumentEpoch(st.space); err != nil {
@@ -162,6 +175,9 @@ func (r *Runtime) DetachInstrument(space, instrumentID id.TerminalID) error {
 
 // terminalOfRecord recovers the InstrumentID from a stored record.
 func terminalOfRecord(rec storage.InstrumentRecord) id.TerminalID {
+	if rec.External {
+		return rec.TerminalPub
+	}
 	p, err := terminals.ParticipantIDFromSeed(rec.TerminalSeed)
 	if err != nil {
 		return id.TerminalID{}
@@ -177,6 +193,9 @@ func (r *Runtime) restoreInstruments() {
 	recs := append([]storage.InstrumentRecord(nil), r.ks.Instruments...)
 	r.mu.Unlock()
 	for _, rec := range recs {
+		if rec.External {
+			continue // its keys live on the device; nothing runs here
+		}
 		dev, err := identity.NewDeviceFromKeys(rec.DeviceSeed, rec.DeviceX25519)
 		if err != nil {
 			continue
@@ -294,4 +313,195 @@ func (r *Runtime) Instruments(space id.TerminalID) []storage.InstrumentRecord {
 		}
 	}
 	return out
+}
+
+// ---- external instruments (QI-M, ADR-026) ----
+
+// ErrEnrollmentConflict: the same instrument identity arrived with a
+// DIFFERENT binding (another terminal, another manifest) — refused, never
+// silently re-bound. The same binding twice is not a conflict: see
+// AttachInstrumentByEnrollment.
+var ErrEnrollmentConflict = errors.New("node: enrollment conflicts with an attached instrument's binding")
+
+// ErrDevIngestClosed: the dev-only frame ingest is off (the default).
+var ErrDevIngestClosed = errors.New("node: dev instrument ingest is not enabled (--dev-ingest)")
+
+// AttachInstrumentByEnrollment admits a device whose keys were minted ON
+// THE DEVICE: it verifies the enrollment (both signatures and the
+// manifest), certifies the public halves with the root this node holds,
+// adds the device to the INSTRUMENT wrap list, turns the instrument key,
+// republishes the device's manifest on its behalf, and returns the
+// provision the device needs to speak — its certificate and the current
+// instrument epoch frame. Nothing private crosses in either direction.
+//
+// IDEMPOTENT (owner's amendment 5): the same (device, terminal, manifest)
+// enrolled again — a serial link that dropped, a QR scanned twice —
+// returns a fresh provision with no second certificate, no second
+// rotation and no second record. A different binding for a known
+// identity is ErrEnrollmentConflict.
+func (r *Runtime) AttachInstrumentByEnrollment(space id.TerminalID, enrollBytes []byte, nowUnix uint64) ([]byte, id.TerminalID, error) {
+	e, err := enrollment.Decode(enrollBytes)
+	if err != nil {
+		return nil, id.TerminalID{}, err
+	}
+	m, err := manifest.Decode(e.ManifestFrame)
+	if err != nil {
+		return nil, id.TerminalID{}, err
+	}
+	if !terminals.IsInstrumentKind(m.Kind) {
+		return nil, id.TerminalID{}, errors.New("node: enrollment manifest is not an instrument")
+	}
+	var provision []byte
+	err = r.withSpace(space, func(st *spaceState) error {
+		if r.Principal == nil {
+			return ErrNotAuthority
+		}
+		// Known identity? Same binding → idempotent; different → conflict.
+		for _, rec := range r.ks.Instruments {
+			if rec.Space != space || !rec.External {
+				continue
+			}
+			sameDev, sameTerm := rec.DevicePub == e.Device, rec.TerminalPub == e.Terminal
+			if !sameDev && !sameTerm {
+				continue
+			}
+			if sameDev && sameTerm && rec.X25519Pub == e.X25519Pub &&
+				sha256.Sum256(rec.ManifestFrame) == sha256.Sum256(e.ManifestFrame) {
+				p, err := r.provisionLocked(st, space, rec)
+				provision = p
+				return err
+			}
+			return ErrEnrollmentConflict
+		}
+		// Certify the public halves; store the certificate where every
+		// owned device's lives so publishCertLocked carries it.
+		cert := r.Principal.CertifyPublic(e.Device, e.X25519Pub, nowUnix, 0)
+		certFrame, err := cert.Encode()
+		if err != nil {
+			return err
+		}
+		r.ks.Certs = append(r.ks.Certs, storage.CertRecord{Device: e.Device, Frame: certFrame, Label: e.Label})
+		_ = r.ident.store.AddCertificate(cert)
+		for _, other := range r.spaces {
+			r.publishCertLocked(other.space)
+		}
+		st.space.AddInstrument(e.Device, e.X25519Pub)
+		if _, err := r.Self.RotateInstrumentEpoch(st.space); err != nil {
+			return err
+		}
+		if _, _, err := r.Self.PublishManifestFrameOnBehalf(st.space, e.ManifestFrame); err != nil {
+			return err
+		}
+		rec := storage.InstrumentRecord{
+			Space: space, Label: e.Label, Kind: m.Kind.String(),
+			Channels:      terminals.InstrumentLabelsOf(m.DeclaredLabels),
+			ManifestFrame: e.ManifestFrame,
+			External:      true, DevicePub: e.Device, X25519Pub: e.X25519Pub, TerminalPub: e.Terminal,
+		}
+		r.ks.Instruments = append(r.ks.Instruments, rec)
+		r.persistEpochsLocked(space, st.space)
+		if err := r.saveKeystore(); err != nil {
+			return err
+		}
+		p, err := r.provisionLocked(st, space, rec)
+		provision = p
+		return err
+	})
+	if err != nil {
+		return nil, id.TerminalID{}, err
+	}
+	r.kickRelaySync()
+	return provision, e.Terminal, nil
+}
+
+// provisionLocked assembles the device's freight from what the log and
+// the keystore already hold: its certificate and the CURRENT instrument
+// epoch frame (older epochs never addressed it). Callers hold r.mu.
+func (r *Runtime) provisionLocked(st *spaceState, space id.TerminalID, rec storage.InstrumentRecord) ([]byte, error) {
+	var certFrame []byte
+	for _, c := range r.ks.Certs {
+		if c.Device == rec.DevicePub {
+			certFrame = c.Frame
+		}
+	}
+	var epochFrame []byte
+	_ = st.space.Log.Replay(func(a eventlog.Applied) error {
+		if a.Env.Schema == schemas.InstrumentEpoch {
+			epochFrame = a.Frame // last one wins: the current epoch
+		}
+		return nil
+	})
+	if certFrame == nil || epochFrame == nil {
+		return nil, errors.New("node: provision incomplete — certificate or epoch missing")
+	}
+	p := &enrollment.Provision{Space: space, Principal: r.PrincipalID,
+		CertFrame: certFrame, EpochFrames: [][]byte{epochFrame},
+		ManifestAck: sha256.Sum256(rec.ManifestFrame)}
+	return p.Encode()
+}
+
+// IngestInstrumentFrames is the DEV STAND's door (QI-M3): frames an
+// external instrument produced, handed in over whatever the stand uses
+// (USB serial today). It is not a bearer and must not grow into one —
+// it is bound to ONE instrument's identity (owner's amendment 12): every
+// frame must be signed by that instrument's certified device and name
+// that instrument as its source, and the door is shut unless the runtime
+// was opened with DevIngest. Returns how many frames applied.
+func (r *Runtime) IngestInstrumentFrames(space, instrumentID id.TerminalID, frames [][]byte) (int, error) {
+	if !r.DevIngest {
+		return 0, ErrDevIngestClosed
+	}
+	applied := 0
+	err := r.withSpace(space, func(st *spaceState) error {
+		var rec *storage.InstrumentRecord
+		for i := range r.ks.Instruments {
+			c := &r.ks.Instruments[i]
+			if c.Space == space && c.External && c.TerminalPub == instrumentID {
+				rec = c
+			}
+		}
+		if rec == nil {
+			return errors.New("node: no external instrument with that id here")
+		}
+		for _, f := range frames {
+			env, err := signal.Decode(f)
+			if err != nil {
+				return err
+			}
+			if env.Device != rec.DevicePub || env.SourceTerminal == nil || *env.SourceTerminal != instrumentID {
+				return errors.New("node: frame is not from this instrument")
+			}
+			n, err := st.space.Absorb(f)
+			if err != nil {
+				return err
+			}
+			applied += n
+		}
+		return nil
+	})
+	if err == nil && applied > 0 {
+		r.kickRelaySync()
+	}
+	return applied, err
+}
+
+// ExternalInstrumentEpochFrames returns the current instrument epoch
+// frame(s) of a space — what the dev stand pushes back to a device after
+// a rotation so it keeps speaking.
+func (r *Runtime) ExternalInstrumentEpochFrames(space id.TerminalID) ([][]byte, error) {
+	var out [][]byte
+	err := r.withSpace(space, func(st *spaceState) error {
+		var last []byte
+		_ = st.space.Log.Replay(func(a eventlog.Applied) error {
+			if a.Env.Schema == schemas.InstrumentEpoch {
+				last = a.Frame
+			}
+			return nil
+		})
+		if last != nil {
+			out = [][]byte{last}
+		}
+		return nil
+	})
+	return out, err
 }

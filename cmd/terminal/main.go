@@ -68,6 +68,8 @@ func usage() {
 
 usage:
   terminal ui   --passphrase P [--data DIR] [--name N] [--no-browser] [--no-lan]
+                [--dev-ingest]           (dev stand: accept frames from an
+                                          enrolled external instrument)
                 [--rnode /dev/PATH --mesh-seed "segment phrase"]
                 [--mesh tcp:HOST[:PORT] | --mesh serial:/dev/PATH]
                 [--radio-profile FILE] [--mesh-network ID] [--mesh-channel N]

@@ -204,6 +204,9 @@ func (a *APIServer) Handler() http.Handler {
 	mux.HandleFunc("POST /api/spaces/{id}/presence", a.auth(a.handlePresence))
 	mux.HandleFunc("POST /api/spaces/{id}/instruments/simulate", a.auth(a.handleSimulateInstrument))
 	mux.HandleFunc("DELETE /api/spaces/{id}/instruments/{iid}", a.auth(a.handleDetachInstrument))
+	mux.HandleFunc("POST /api/spaces/{id}/instruments/enroll", a.auth(a.handleEnrollInstrument))
+	mux.HandleFunc("POST /api/spaces/{id}/instruments/{iid}/ingest", a.auth(a.handleIngestInstrument))
+	mux.HandleFunc("GET /api/spaces/{id}/instruments/epochs", a.auth(a.handleInstrumentEpochs))
 	mux.HandleFunc("POST /api/invites/accept", a.auth(a.handleJoin))
 	mux.HandleFunc("POST /api/public/open", a.auth(a.handlePublicOpen))
 	// The transient post preview (PS-3): a card invites a look, and looking
@@ -1578,4 +1581,98 @@ func (a *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// handleEnrollInstrument admits an EXTERNAL instrument by its enrollment
+// bytes (QI-M, ADR-026) and returns its provision. Idempotent for the
+// same binding; 409 for a conflicting one.
+func (a *APIServer) handleEnrollInstrument(w http.ResponseWriter, r *http.Request) {
+	tid, err := a.spaceID(r)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	body, err := readBody[struct {
+		EnrollmentHex string `json:"enrollment_hex"`
+	}](r)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	enroll, err := hex.DecodeString(body.EnrollmentHex)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	prov, iid, err := a.rt.AttachInstrumentByEnrollment(tid, enroll, uint64(time.Now().Unix()))
+	if err != nil {
+		code := http.StatusBadRequest
+		if errors.Is(err, ErrEnrollmentConflict) {
+			code = http.StatusConflict
+		}
+		httpErr(w, code, err)
+		return
+	}
+	writeJSON(w, map[string]string{"instrument_id": iid.Hex(), "provision_hex": hex.EncodeToString(prov)})
+}
+
+// handleIngestInstrument is the dev stand's door (QI-M3): frames from ONE
+// external instrument, bound to its identity, only under --dev-ingest.
+func (a *APIServer) handleIngestInstrument(w http.ResponseWriter, r *http.Request) {
+	tid, err := a.spaceID(r)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	iid, err := id.ParseTerminalID(r.PathValue("iid"))
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	body, err := readBody[struct {
+		FramesHex []string `json:"frames_hex"`
+	}](r)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	frames := make([][]byte, 0, len(body.FramesHex))
+	for _, h := range body.FramesHex {
+		f, err := hex.DecodeString(h)
+		if err != nil {
+			httpErr(w, http.StatusBadRequest, err)
+			return
+		}
+		frames = append(frames, f)
+	}
+	n, err := a.rt.IngestInstrumentFrames(tid, iid, frames)
+	if err != nil {
+		code := http.StatusBadRequest
+		if errors.Is(err, ErrDevIngestClosed) {
+			code = http.StatusForbidden
+		}
+		httpErr(w, code, err)
+		return
+	}
+	writeJSON(w, map[string]int{"applied": n})
+}
+
+// handleInstrumentEpochs hands the current instrument epoch frame(s) to the
+// dev stand so it can push them to a device after a rotation.
+func (a *APIServer) handleInstrumentEpochs(w http.ResponseWriter, r *http.Request) {
+	tid, err := a.spaceID(r)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	frames, err := a.rt.ExternalInstrumentEpochFrames(tid)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	out := make([]string, 0, len(frames))
+	for _, f := range frames {
+		out = append(out, hex.EncodeToString(f))
+	}
+	writeJSON(w, map[string][]string{"frames_hex": out})
 }

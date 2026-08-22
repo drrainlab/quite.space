@@ -149,3 +149,15 @@ func IsInstrumentKind(kind manifest.Kind) bool {
 	return kind == manifest.KindSensor || kind == manifest.KindActuator
 }
 
+// InstrumentLabelsOf filters a manifest's declared labels down to its
+// qp.instr channel declarations, verbatim — the strings a keystore record
+// keeps beside an external instrument's manifest.
+func InstrumentLabelsOf(declared []string) []string {
+	var out []string
+	for _, l := range declared {
+		if strings.HasPrefix(l, instrLabel+"=") {
+			out = append(out, l)
+		}
+	}
+	return out
+}

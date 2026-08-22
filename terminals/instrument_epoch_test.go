@@ -12,10 +12,14 @@ package terminals_test
 // restart via export/restore.
 
 import (
+	"crypto/sha256"
 	"testing"
 
+	"github.com/drrainlab/quiet_places/kernel/crypto"
 	"github.com/drrainlab/quiet_places/kernel/identity"
+	"github.com/drrainlab/quiet_places/kernel/reducers"
 	"github.com/drrainlab/quiet_places/protocol/capability"
+	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/protocol/manifest"
 	"github.com/drrainlab/quiet_places/protocol/schemas"
 	"github.com/drrainlab/quiet_places/protocol/signal"
@@ -204,5 +208,80 @@ func TestInstrumentDeclGrammar(t *testing.T) {
 	got := terminals.ParseInstruments([]string{"qp.instr=", "qp.instr=BAD:number", "qp.instr=ok:number"})
 	if len(got) != 1 || got[0].Channel != "ok" {
 		t.Fatalf("tolerant parse failed: %+v", got)
+	}
+}
+
+// DETACHMENT IS A BOUNDARY OF AUTHORITY, NOT ONLY OF SECRECY (QI-M,
+// owner's amendment 4). Members keep old epoch keys for delayed delivery,
+// so a detached device that still holds epoch 1 can produce a perfectly
+// valid, perfectly sealed observation. The receiver must refuse it anyway:
+// the device is no longer addressed by the current epoch, and THAT is the
+// revocation. Counted apart from Undecryptable — this is not "we lack a
+// key", it is "you are not an instrument here any more".
+func TestADetachedInstrumentIsRefusedEvenWithTheOldKey(t *testing.T) {
+	owner, home, instr, instrSpace, _ := instrumentStand(t)
+
+	// Before: a reading through the instrument's own replica is accepted
+	// and lands in the member's reducer.
+	if _, err := instr.Emit(instrSpace, schemas.ObservationValue, reading(t, 214, 100),
+		signal.AuthorshipSensor, 11); err != nil {
+		t.Fatal(err)
+	}
+	pipe(t, instrSpace, home)
+	if home.UnauthorizedInstrument != 0 {
+		t.Fatalf("an attached instrument was refused: %d", home.UnauthorizedInstrument)
+	}
+	if v, ok := home.State.ValueObservations()[reducers.ValueObsKey{
+		Instrument: instr.TerminalID, Channel: "temperature"}]; !ok || v.Value.Magnitude != 214 {
+		t.Fatalf("the attached reading never reduced: %+v ok=%v", v, ok)
+	}
+	oldKeys := instrSpace.ExportInstrumentEpochs()
+	if len(oldKeys) != 1 {
+		t.Fatalf("the instrument should hold exactly epoch 1, has %d", len(oldKeys))
+	}
+
+	// Detach and turn the key. The instrument learns epoch 2 exists but
+	// is not addressed — and keeps epoch 1, as any replica would.
+	home.RemoveInstrument(instr.Device.ID)
+	if _, err := owner.RotateInstrumentEpoch(home); err != nil {
+		t.Fatal(err)
+	}
+	pipe(t, home, instrSpace)
+
+	// The detached device forges ahead with the key it still has: a valid
+	// chain continuation, a valid signature, a valid seal under epoch 1.
+	plane := sha256.Sum256(append([]byte("qp.instrument-plane.v1"), home.ID[:]...))
+	var planeID id.TerminalID
+	copy(planeID[:], plane[:])
+	sealed, err := crypto.SealPayload(oldKeys[0], planeID, schemas.ObservationValue, reading(t, 999, 300))
+	if err != nil {
+		t.Fatal(err)
+	}
+	seq, tip, ok := home.Log.ChainTip(instr.Device.ID)
+	if !ok {
+		t.Fatal("the member has no chain for the instrument")
+	}
+	src := instr.TerminalID
+	env := &signal.Envelope{
+		Terminal: home.ID, Principal: instr.Principal, Device: instr.Device.ID,
+		Sequence: seq + 1, Previous: &tip,
+		Schema: schemas.ObservationValue, CreatedAt: 300, LogicalClock: 1000,
+		ProducedBy: signal.AuthorshipSensor, SourceTerminal: &src,
+		PayloadEncoding: signal.PayloadInstrumentSealed, Payload: sealed,
+		Priority: signal.PriorityTelemetry, ExpiresAt: 900, MaxForwards: 1,
+	}
+	frame, err := env.Sign(instr.Device.SignKey())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := home.Absorb(frame); err != nil {
+		t.Fatalf("the log itself should accept a well-formed frame: %v", err)
+	}
+	if home.UnauthorizedInstrument != 1 {
+		t.Fatalf("the detached device's reading was not refused as unauthorized: %d", home.UnauthorizedInstrument)
+	}
+	if v := home.State.ValueObservations()[reducers.ValueObsKey{
+		Instrument: instr.TerminalID, Channel: "temperature"}]; v.Value.Magnitude != 214 {
+		t.Fatalf("the forged reading reached the reducer: %+v", v)
 	}
 }
