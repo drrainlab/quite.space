@@ -375,11 +375,20 @@ function renderListeningRoom(box, inst) {
 
   if (SYNC_CLOCK.offset == null) SYNC_CLOCK.calibrate();
   refreshSession();
+  // BOTH TIMERS ANSWER TO THE ROOM AND TO THE WINDOW. A listening block
+  // sitting in a feed used to keep a 2s network poll and a 500ms drift
+  // timer alive with nothing playing and the window hidden — heat for a
+  // room nobody was in. The session poll skips a hidden window (the room
+  // is re-read the moment it comes back); drift correction, which exists
+  // to keep two ears together, is meaningless when nobody is listening.
   const pollT = setInterval(() => {
     if (!box.isConnected) { clearInterval(pollT); clearInterval(driftT); progPause(); return; }
+    if (document.hidden) return;
     refreshSession();
   }, 2000);
-  const driftT = setInterval(() => { if (box.isConnected) driftTick(); }, 500);
+  const driftT = setInterval(() => {
+    if (box.isConnected && !document.hidden) driftTick();
+  }, 500);
 
   return box;
 }

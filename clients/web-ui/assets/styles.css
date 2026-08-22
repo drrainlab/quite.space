@@ -499,25 +499,30 @@
      starfield.js): the same --glass tokens the dialogs use, so the presets
      that turn blur off for dialogs turn it off here too. The sky below is
      what shimmers through — nothing is painted behind the panel itself. */
+  /* THE SAME NOTHING AS THE SIDEBAR. The two panels flank the same room and
+     used to disagree about what they are: the left one lets the sky through
+     untouched, the right one was a pane of glass with a hairline down its
+     edge. On a desktop the sky IS the surface — a panel over it needs no
+     tint, no blur and no border, and the room then reads as one place with
+     columns rather than three boxes. It is also the largest blurred surface
+     in the app, so this is the cheapest paint in the file. */
   #members {
     padding: var(--pad-panel, 12px); font-size: 12px;
     overflow: hidden auto; min-width: 0;
-    /* Thinner than a dialog's glass: a dialog sits over content and must
-       read on its own, the panel sits over the sky and should let it
-       through. Blur does the legibility work; the tint only warms it. */
-    background: color-mix(in srgb, var(--glass) 55%, transparent);
-    backdrop-filter: blur(var(--glass-blur)) saturate(1.3);
-    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.3);
-    border-left: 1px solid var(--glass-border);
+    background: transparent;
+    backdrop-filter: none; -webkit-backdrop-filter: none;
+    border-left: 0;
   }
   #members h3 {
     font-size: 10px; letter-spacing: .12em; text-transform: uppercase;
     color: var(--dim); margin: 14px 2px 8px; font-weight: 600;
   }
+  /* A card without a drawn edge. With the panel gone to air, an outlined box
+     inside it reads as a form control on a wall; the faint fill and the space
+     around it are enough to say "this is one person". */
   .member {
-    border: 1px solid var(--glass-border); border-radius: var(--radius-md);
-    background: color-mix(in srgb, var(--panel) 42%, transparent);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05);
+    border: 0; border-radius: var(--radius-md);
+    background: color-mix(in srgb, var(--panel) 30%, transparent);
     padding: 9px 11px; margin-bottom: 8px;
   }
   #members .presence-summary, #members .pane-persona, #members .space-acts {
@@ -1525,11 +1530,24 @@
        the fold is then a TRANSFORM, which clears the whole panel however
        wide the screen makes it and costs the compositor alone. */
     main { position: relative; grid-template-columns: minmax(0, 1fr); }
+    /* ON A PHONE BOTH PANELS SLIDE OVER THE ROOM, so here they do need a
+       surface of their own — but glass, not a slab: the conversation stays
+       faintly present underneath instead of being replaced by a wall. No
+       border either; depth comes from the blur and from the movement. */
     #sidebar, #members {
       position: absolute; top: 0; bottom: 0; z-index: 30;
       width: 78vw; max-width: 300px;
-      background: var(--bg); box-shadow: var(--shadow);
+      background: color-mix(in srgb, var(--bg) 78%, transparent);
+      backdrop-filter: blur(var(--glass-blur)) saturate(1.2);
+      -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.2);
+      border: 0; box-shadow: var(--shadow);
       transition: transform .2s ease;
+    }
+    /* Somebody who asked for less transparency gets the slab back — the
+       same accommodation the bubbles and dialogs already make. */
+    @media (prefers-reduced-transparency: reduce) {
+      #sidebar, #members { background: var(--bg);
+        backdrop-filter: none; -webkit-backdrop-filter: none; }
     }
     #sidebar { left: 0; }
     #members { right: 0; }
@@ -2553,7 +2571,22 @@
    it crosses and then lets it go, so stars catch light one at a time. That is
    the twinkle: no per-star animation, no canvas redraw, just one more tile
    moving at a different speed. */
-:root[data-sky="drift"] .sky { animation: sky-drift 220s linear infinite; }
+:root[data-sky="drift"] .sky {
+    animation: sky-drift 220s steps(2200, end) infinite;
+  }
+
+  /* WHY steps() AND NOT linear — measured, not guessed.
+     `background-position` is not a compositor property: every changed value
+     repaints the whole stage, and with the glass above it every pane
+     re-blurs too. Smooth meant a repaint of the entire viewport at the
+     display's refresh rate, forever: 15.4% of a renderer core at idle on
+     this machine, and the reason an old laptop ran warm holding a room
+     nobody was looking at.
+     The field travels 3120px in 220s — fourteen pixels a second. Sampling
+     that ten times a second moves it 1.4px per step, which no eye resolves
+     on a soft starfield, and the repaint count drops from ~120/s to 10/s:
+     6.0% measured, against 4.8% for no sky at all. The drift is kept; only
+     the pretence of continuity is spent. */
 
 @keyframes sky-drift {
   from { background-position: 0 0, 0 0, 0 0, 0 0; }
@@ -2565,8 +2598,12 @@
 @media (prefers-reduced-motion: reduce) {
   .sky { animation: none !important; }
 }
-/* A hidden tab animates nothing. */
-body.hidden-tab .sky { animation-play-state: paused; }
+/* A hidden tab animates nothing. And neither does a window nobody is in:
+   the app is often open beside the work it is not, and a sky drifting
+   behind another window is heat spent on an empty room. It resumes on
+   focus, where somebody is looking. */
+body.hidden-tab .sky,
+body.unfocused .sky { animation-play-state: paused; }
 
 /* ---- nav row: five instruments on a panel ----
    These were five identical pills, so the eye had to read every label to

@@ -105,7 +105,37 @@ const MODES = (() => {
     document.body.classList.toggle('hidden-tab', document.hidden);
   }
 
-  return { min, resolve, reducedMotion, reducedTransparency, onPreferenceChange, onVisibilityChange };
+  /**
+   * The FOCUS edge, which is not the hide edge.
+   *
+   * A window can be perfectly visible and still be a room nobody is in —
+   * open beside the work it is not, on a second screen, behind a browser.
+   * `document.hidden` says nothing about that case, and it is the common
+   * one: measured, the drifting sky alone cost 15.4% of a renderer core
+   * there, holding a conversation nobody was reading.
+   *
+   * Sets `body.unfocused` (the CSS hook) and reports the edge. Focus is
+   * assumed at load: a page that starts by declaring itself unattended
+   * would freeze the first paint somebody is actually watching.
+   * @param {(unfocused: boolean) => void} fn
+   */
+  function onFocusChange(fn) {
+    const set = (unfocused) => {
+      document.body.classList.toggle('unfocused', unfocused);
+      fn(unfocused);
+    };
+    window.addEventListener('blur', () => set(true));
+    window.addEventListener('focus', () => set(false));
+    document.body.classList.toggle('unfocused', !document.hasFocus());
+  }
+
+  /** Whether anybody is plausibly looking at this window right now. */
+  function attended() {
+    return !document.hidden && document.hasFocus();
+  }
+
+  return { min, resolve, reducedMotion, reducedTransparency, onPreferenceChange,
+    onVisibilityChange, onFocusChange, attended };
 })();
 
 if (typeof window !== 'undefined') window.MODES = MODES;

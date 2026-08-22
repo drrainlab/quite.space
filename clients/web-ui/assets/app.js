@@ -13,6 +13,8 @@ let seenSpace = null;
 // Members known to be "here" last render — used to fire the arrival pulse
 // exactly once, on the transition into presence (never as an idle loop).
 let hereMembers = new Set();
+// The info panel's last drawn signature — its equivalent of feedSig.
+let lastPanelSig = '';
 // The first members render after a space switch sees EVERYONE as newly
 // present; the visual pulse tolerates that, a chime must not — walking
 // into a room is not the room filling up.
@@ -1806,7 +1808,10 @@ async function refreshSpace() {
   loadSpaceAppearance(current);
   // Conversation header: title + invite (owned private) + info toggle.
   const convTitleEl = document.getElementById('convTitle');
-  convTitleEl.textContent = sp ? spaceName(sp) : '';
+  const convTitleText = sp ? spaceName(sp) : '';
+  // Written only when it differs: the same string is still a mutation, and
+  // this line ran on every poll tick.
+  if (convTitleEl.textContent !== convTitleText) convTitleEl.textContent = convTitleText;
   // Click to rename — owner only, and local only. The note under the input
   // says so; nothing here touches the space itself.
   convTitleEl.style.cursor = sp?.owned ? 'text' : '';
@@ -2016,6 +2021,23 @@ async function refreshSpace() {
   // Our own card is the source of truth for the composer's presence button,
   // including on a tab that has only just opened.
   presenceAdopt(members);
+
+  // NOTHING CHANGED, NOTHING REBUILT. Everything below demolishes the info
+  // panel and builds it again — 51 DOM mutations a tick, a fresh <canvas>
+  // for the relic and a getComputedStyle that forces style recalc, all to
+  // redraw the identical picture every two seconds. The feed has had a
+  // signature diff for a long time; the panel beside it had none.
+  //
+  // The signature covers every input this block reads: the members and
+  // their presence, the instrument readings, the relic's event count, the
+  // space and its name, the view mode, and the locale — a language switch
+  // must still redraw.
+  const panelSig = JSON.stringify([current, st.events, st.observations,
+    char?.relic, members, PROTOCOL, [...openInstruments].sort(),
+    spaceName(currentSpace() || {}),
+    typeof localeName === 'function' ? localeName() : '']);
+  if (panelSig === lastPanelSig) return;
+  lastPanelSig = panelSig;
   // The projection splits here (QI-2): a sensor or an actuator is a
   // subject of the space but not a person — it renders once, in the
   // Instruments section, never in the member list.
@@ -2521,12 +2543,19 @@ const PRESENCE_GLYPHS = {
   monitoring_the_air: '📡',
 };
 let presenceGlyphMap = {}; // the open space's declared glyphs
+let presenceStatesSig = null; // last vocabulary drawn into the menu
 
 function presenceGlyph(state) {
   return presenceGlyphMap[state] || PRESENCE_GLYPHS[state] || '';
 }
 
 function presenceSetStates(states, glyphs) {
+  // The vocabulary changes when the SPACE changes, not every two seconds —
+  // but this ran on every poll tick, rebuilding the whole menu (13 DOM
+  // mutations a tick for a list nobody had touched).
+  const sig = JSON.stringify([states, glyphs]);
+  if (sig === presenceStatesSig) return;
+  presenceStatesSig = sig;
   presenceGlyphMap = glyphs || {};
   presenceStates = states;
   const menu = document.getElementById('presenceMenu');
@@ -5409,12 +5438,44 @@ NAV.onOpen = (id) => {
 checkOnboarding();
 checkPassDeepLink();
 refresh();
-setInterval(refresh, 2000);
+
+// THE POLL, PACED BY WHETHER ANYBODY IS THERE.
+//
+// It used to be an unconditional 2s tick: ~6.6 requests a second and ~96 DOM
+// mutations per idle tick, forever, including while the window sat hidden in
+// the tray. Nothing is lost by pausing it — the NODE keeps syncing on its own
+// cadence, and this loop only refreshes what is on a screen. So:
+//
+//   hidden          → nothing at all, and one immediate refresh on return
+//   visible, unfocused → every 10s: still current for a glance, a fifth of
+//                        the wakeups
+//   focused         → the live 2s tick, unchanged
+//
+// Deliberately NOT an idle timer while focused: somebody reading a live
+// conversation without touching the keyboard must not watch it go stale.
+const POLL_FAST = 2000, POLL_SLOW = 10000;
+let pollTimer = null, pollEvery = 0;
+function pollCadence() {
+  if (document.hidden) return 0;
+  return document.hasFocus() ? POLL_FAST : POLL_SLOW;
+}
+function armPoll() {
+  const every = pollCadence();
+  if (every === pollEvery) return;
+  pollEvery = every;
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  if (every > 0) pollTimer = setInterval(refresh, every);
+}
+armPoll();
+MODES.onVisibilityChange((hidden) => { armPoll(); if (!hidden) refresh(); });
+MODES.onFocusChange((unfocused) => { armPoll(); if (!unfocused) refresh(); });
 // QuietRank rides a slower tick of its own: attention is not a live feed,
 // and scanning every two seconds would burn CPU for nothing.
 if (typeof qrRefreshBadge === 'function') {
   qrRefreshBadge();
-  setInterval(qrRefreshBadge, 8000);
+  // Attention is not a live feed, and /api/signals forces a full scan on the
+  // node — so it rides the same "is anybody there" rule as the poll above.
+  setInterval(() => { if (!document.hidden) qrRefreshBadge(); }, 8000);
 }
 initDropZone();
 initClipboardPaste();

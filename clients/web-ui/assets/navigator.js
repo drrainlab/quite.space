@@ -153,7 +153,15 @@ const NAV = (() => {
   function reconcile(box, rows) {
     const index = new Map();
     for (const el of Array.from(box.children)) {
-      index.set(/** @type {HTMLElement} */(el).dataset.navKey, el);
+      const key = /** @type {HTMLElement} */(el).dataset.navKey;
+      // ONLY ROWS ARE RECONCILED. A section body also holds things that are
+      // not rows — the empty-state note, the "Open Quite AI" action — and
+      // they carry no row key. Indexing them under `undefined` swept them
+      // away on every paint, and whoever owns them put them back: a remove
+      // and an add per section per 2s tick, forever, for words that had not
+      // changed. They are left where their owner placed them.
+      if (key === undefined) continue;
+      index.set(key, el);
     }
     const want = new Set(rows.map(r => r.key));
     for (const [k, el] of index) {
@@ -773,13 +781,19 @@ const NAV = (() => {
       const sec = /** @type {HTMLElement} */(v.root.querySelector(`.nav-sec[data-sec="${id}"]`));
       const head = /** @type {HTMLElement} */(sec.querySelector('.nav-sec-head'));
       const body = /** @type {HTMLElement} */(sec.querySelector('.nav-sec-body'));
-      /** @type {HTMLElement} */(head.querySelector('.nav-sec-t')).textContent = t('nav.sec.' + id);
+      // Rewritten on every paint so a language change reaches it through the
+    // ordinary tick — but only when the words actually differ.
+    const secT = /** @type {HTMLElement} */(head.querySelector('.nav-sec-t'));
+    const secLabel = t('nav.sec.' + id);
+    if (secT.textContent !== secLabel) secT.textContent = secLabel;
 
       if (id === 'groups') { paintGroups(v, body, q); }
       else { reconcile(body, content[id].rows); }
 
       const n = id === 'groups' ? state.groups.length : content[id].rows.length;
-      /** @type {HTMLElement} */(head.querySelector('.nav-count')).textContent = n ? String(n) : '';
+      const cnt = /** @type {HTMLElement} */(head.querySelector('.nav-count'));
+    const cntText = n ? String(n) : '';
+    if (cnt.textContent !== cntText) cnt.textContent = cntText;
       // A query never hides a section: somebody must be able to see WHERE
       // their thing is not. It dims and shows a zero instead.
       sec.classList.toggle('nav-empty', n === 0);
@@ -820,7 +834,8 @@ const NAV = (() => {
           toggleGroup(g.id);
         };
       }
-      /** @type {HTMLElement} */(box.querySelector('.nav-group-t')).textContent = g.title;
+      const gt = /** @type {HTMLElement} */(box.querySelector('.nav-group-t'));
+      if (gt.textContent !== g.title) gt.textContent = g.title;
       const more = /** @type {HTMLElement} */(box.querySelector('.nav-more'));
       more.hidden = v.select;
       more.onclick = (e) => {
@@ -849,23 +864,35 @@ const NAV = (() => {
         v.root.querySelector(`.nav-sec[data-sec="${secId}"] .nav-sec-body`));
       if (!body) return;
       let n = /** @type {HTMLElement|null} */(body.querySelector('.nav-note'));
-      if (!text) { if (n) n.remove(); return; }
+      // KEPT, NOT REBUILT. Every paint used to clear all sections
+      // (note(id, '')) and then fill the ones that speak — remove-then-add,
+      // which is two DOM mutations per section per 2s tick for words that
+      // had not changed. The element stays and hides instead, and the text
+      // is written only when it actually differs.
+      if (!text) { if (n && !n.hidden) n.hidden = true; return; }
       if (!n) { n = document.createElement('div'); n.className = 'nav-note'; body.appendChild(n); }
-      n.textContent = text;
-      body.appendChild(n); // keep it last
+      if (n.hidden) n.hidden = false;
+      if (n.textContent !== text) n.textContent = text;
+      if (body.lastElementChild !== n) body.appendChild(n);
     };
-    for (const id of v.sections) note(id, '');
+    // DECIDE FIRST, TOUCH ONCE. Clearing every section and then filling the
+    // ones that speak meant two DOM writes per section per 2s tick — hide,
+    // then show, for words that had not changed since the app opened.
+    const want = {};
+    for (const id of v.sections) want[id] = '';
     if (v.query) {
       const any = v.root.querySelectorAll('.nav-sec-body .space').length;
-      note('spaces', any ? '' : t('nav.search.none'));
+      want.spaces = any ? '' : t('nav.search.none');
+      for (const id of v.sections) note(id, want[id]);
       return;
     }
-    note('pinned', state.pins.length ? '' : t('nav.pinned.empty'));
-    note('groups', state.groups.length ? '' : t('nav.groups.empty'));
-    note('people', spaces.some(s => s.dyad) ? '' : t('nav.people.empty'));
-    note('catalogs', spaces.some(s => s.kind === 'directory') ? '' : t('nav.catalogs.empty'));
-    note('spaces', spaces.length ? '' : t('spaces.empty.body'));
-    note('recent', state.recent.length ? '' : t('share.recent.empty'));
+    want.pinned = state.pins.length ? '' : t('nav.pinned.empty');
+    want.groups = state.groups.length ? '' : t('nav.groups.empty');
+    want.people = spaces.some(s => s.dyad) ? '' : t('nav.people.empty');
+    want.catalogs = spaces.some(s => s.kind === 'directory') ? '' : t('nav.catalogs.empty');
+    want.spaces = spaces.length ? '' : t('spaces.empty.body');
+    want.recent = state.recent.length ? '' : t('share.recent.empty');
+    for (const id of v.sections) if (id !== 'ai') note(id, want[id]);
     // No assistant yet is a different sentence from an empty list: it is
     // something a person can act on, and it says where to go. And once a
     // provider IS set up, "set one up" would be a lie — the room simply does
@@ -873,7 +900,21 @@ const NAV = (() => {
     // So the note becomes the ask: one row that makes the room and opens it.
     if (!spaces.some(s => s.ai)) {
       const body = v.root.querySelector('.nav-sec[data-sec="ai"] .nav-sec-body');
-      const old = body && body.querySelector('.nav-note, .nav-ai-open');
+      // Rebuilt only when the answer changed: this row used to be removed
+      // and recreated on every paint, which is a mutation per tick for a
+      // button that never moves.
+      const existing = body && body.querySelector('.nav-ai-open');
+      const wantOpen = !!(body && aiConfigured);
+      if (!!existing === wantOpen) {
+        // The row is already in the state this paint wants. Anything else
+        // here — the note, the section's own visibility — is idempotent
+        // below, so leaving early costs nothing and saves the churn.
+        if (!wantOpen) note('ai', t('share.ai.empty'));
+        const sec0 = v.root.querySelector('.nav-sec[data-sec="ai"]');
+        if (sec0 && !v.select) sec0.hidden = !aiConfigured;
+        return;
+      }
+      const old = body && body.querySelector('.nav-ai-open');
       if (old) old.remove();
       // In the SIDEBAR an assistant nobody set up is not a section, it is
       // noise on every screen: hide it until there is a provider or a room.

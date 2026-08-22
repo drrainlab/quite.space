@@ -146,6 +146,19 @@ async function approvePairingUI() {
   catch (e) { setPairStage('Approve failed: ' + String(e.message || e)); }
 }
 
+// A DIALOG THAT CLOSES STOPS ASKING. The pair poll runs at 500ms; before
+// this, closing Settings mid-ceremony left it running for the life of the
+// page — two requests a second, forever, for a screen nobody could see.
+// (gateway.js and radiomeet.js already did exactly this; devices.js did not.)
+if (typeof document !== 'undefined') {
+  document.addEventListener('DOMContentLoaded', () => {
+    const dlg = document.getElementById('dlgSettings');
+    if (dlg) dlg.addEventListener('close', () => {
+      if (pairPollTimer) { clearInterval(pairPollTimer); pairPollTimer = null; }
+    });
+  });
+}
+
 async function cancelPairingUI() {
   if (pairPollTimer) { clearInterval(pairPollTimer); pairPollTimer = null; }
   try { await api('/api/pairing', { method: 'DELETE' }); } catch { /* gone is gone */ }
