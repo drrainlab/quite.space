@@ -126,12 +126,23 @@ const MODES = (() => {
     };
     window.addEventListener('blur', () => set(true));
     window.addEventListener('focus', () => set(false));
-    document.body.classList.toggle('unfocused', !document.hasFocus());
+    // A native shell may have set the class before this ran; do not undo it.
+    if (!document.body.classList.contains('unfocused')) {
+      document.body.classList.toggle('unfocused', !document.hasFocus());
+    }
   }
 
-  /** Whether anybody is plausibly looking at this window right now. */
+  /**
+   * Whether anybody is plausibly looking at this window right now.
+   *
+   * READ FROM THE CLASS, not from document.hasFocus(): inside a native
+   * shell the document can hold focus while the WINDOW sits behind an
+   * editor, and the shell is the one that knows — it forwards the
+   * key-window edge as blur/focus and sets the class itself. One source of
+   * truth, and it is the one the CSS already obeys.
+   */
   function attended() {
-    return !document.hidden && document.hasFocus();
+    return !document.hidden && !document.body.classList.contains('unfocused');
   }
 
   return { min, resolve, reducedMotion, reducedTransparency, onPreferenceChange,

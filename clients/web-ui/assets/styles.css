@@ -145,9 +145,17 @@
      (--sync-pulse is set from relay status when the relay carries us;
      otherwise a calm default). Not connected: steady red — a problem is a
      state to notice, not something that should blink for attention. */
+  /* THE ONE ANIMATION THAT IS ALWAYS ON, so it is the one that keeps the
+     compositor's display link alive — and a display link alive is a wakeup
+     every frame, 120 times a second on a ProMotion screen, for a dot that
+     changes opacity over four seconds. Sampled at 20 steps a second it
+     looks the same (each step is 1/80th of the range) and asks for a frame
+     six times less often. It rests entirely when nobody is here. */
   .conn-chip.up .dot {
-    animation: conn-breathe var(--sync-pulse, 4s) ease-in-out infinite;
+    animation: conn-breathe var(--sync-pulse, 4s) steps(80, end) infinite;
   }
+  body.hidden-tab .conn-chip.up .dot,
+  body.unfocused .conn-chip.up .dot { animation-play-state: paused; }
   .conn-chip.off .dot { background: var(--critical, #e05c5c); animation: none; }
   @keyframes conn-breathe {
     0%, 100% { opacity: .35; }

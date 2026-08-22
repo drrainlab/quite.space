@@ -5457,7 +5457,7 @@ const POLL_FAST = 2000, POLL_SLOW = 10000;
 let pollTimer = null, pollEvery = 0;
 function pollCadence() {
   if (document.hidden) return 0;
-  return document.hasFocus() ? POLL_FAST : POLL_SLOW;
+  return MODES.attended() ? POLL_FAST : POLL_SLOW;
 }
 function armPoll() {
   const every = pollCadence();
