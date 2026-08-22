@@ -21,6 +21,12 @@ if(QI_SANITIZE)
   target_compile_options(qi PRIVATE ${SAN})
   target_link_options(qi PUBLIC ${SAN})
 endif()
+if(QI_FUZZ)
+  # The library itself must carry coverage instrumentation, or the fuzzer
+  # only sees the harness and degenerates into blind random input.
+  target_compile_options(qi PRIVATE -fsanitize=fuzzer-no-link,address,undefined)
+  target_link_options(qi PUBLIC -fsanitize=address,undefined)
+endif()
 
 enable_testing()
 set(VEC ${CMAKE_CURRENT_SOURCE_DIR}/../../testvectors/instrument_v1.json)
