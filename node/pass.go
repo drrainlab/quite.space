@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/drrainlab/quiet_places/kernel/crypto"
+	"github.com/drrainlab/quiet_places/kernel/identity"
 	"github.com/drrainlab/quiet_places/kernel/storage"
 	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/terminals"
@@ -276,6 +277,11 @@ func (r *Runtime) acceptOne(client *relay.Client, recs []*passRecord, sealed []b
 		if err != nil {
 			continue // not for this pass (or not decryptable by us)
 		}
+		// The knocker's certified set becomes trust BEFORE admission, each
+		// certificate on its own root signature — so the rotation below can
+		// wrap the epoch to the whole person, and the sibling frames that
+		// follow are admitted as the principal they are.
+		r.learnCertificates(req.Certs)
 		r.passes.mu.Lock()
 		// Idempotent: a re-delivered request gets the SAME fate it already
 		// had. The fate is stored, not the sealed bytes — a grant is
@@ -344,7 +350,8 @@ func (r *Runtime) acceptOne(client *relay.Client, recs []*passRecord, sealed []b
 		var resp []byte
 		if st != nil {
 			epochN, epochKey, mf, err := st.space.AcceptIntoSpace(r.Self,
-				req.Device, req.DeviceXpub, req.DisplayName, r.PrincipalID, now)
+				req.Device, req.DeviceXpub, req.DisplayName, r.PrincipalID, now,
+				r.expandMembersLocked)
 			if err == nil {
 				// The route exchange, both directions, in the one moment
 				// both sides are talking (RT-0). The guest said where to
@@ -463,9 +470,10 @@ func (r *Runtime) JoinByPass(shared string) (string, error) {
 	// which advertisedRoutesLocked records in the same breath.
 	r.mu.Lock()
 	returnRoutes := r.advertisedRoutesLocked()
+	certs := r.ownCertFramesLocked()
 	r.mu.Unlock()
-	reqID, sealedReq, err := terminals.BuildJoinRequestWithSecret(pass, secret,
-		r.Device, r.DisplayName(), nonce, r.Device.SignKey(), returnRoutes...)
+	reqID, sealedReq, err := terminals.BuildJoinRequestWithCerts(pass, secret,
+		r.Device, r.DisplayName(), nonce, r.Device.SignKey(), certs, returnRoutes...)
 	if err != nil {
 		return "", err
 	}
@@ -622,4 +630,41 @@ func (r *Runtime) adoptAccepted(at *joinAttempt, acc *terminals.Accepted) error 
 	r.publishCertLocked(s)
 	r.persistEpochsLocked(at.space, s)
 	return nil
+}
+
+// ownCertFramesLocked is this person's certified set as raw certificate
+// encodings, own device first — what a knock hands the host so it can admit
+// the whole person. Caller holds r.mu.
+func (r *Runtime) ownCertFramesLocked() [][]byte {
+	out := make([][]byte, 0, len(r.ks.Certs))
+	for _, rec := range r.ks.Certs {
+		if rec.Device == r.Device.ID && len(rec.Frame) > 0 {
+			out = append(out, rec.Frame)
+		}
+	}
+	for _, rec := range r.ks.Certs {
+		if rec.Device != r.Device.ID && len(rec.Frame) > 0 {
+			out = append(out, rec.Frame)
+		}
+	}
+	return out
+}
+
+// learnCertificates admits root-signed certificates a knocker carried.
+// Each verifies on its own root signature inside AddCertificate; a forged
+// or foreign-rooted one simply fails to become trust. Public facts only —
+// the same certificates ride every space log in plaintext.
+func (r *Runtime) learnCertificates(raw [][]byte) {
+	if len(raw) == 0 {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, b := range raw {
+		c, err := identity.DecodeCertificate(b)
+		if err != nil {
+			continue
+		}
+		_ = r.ident.store.AddCertificate(c)
+	}
 }

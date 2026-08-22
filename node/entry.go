@@ -54,6 +54,7 @@ func (r *Runtime) parkAtTheDoor(client *relay.Client, rec *passRecord,
 		rec.entries = append(rec.entries, storage.EntryRecord{
 			Request: req.RequestID, Device: req.Device, Xpub: req.DeviceXpub,
 			Name: req.DisplayName, AskedAt: now, State: storage.EntryPending,
+			Certs: req.Certs,
 			// The knocker's return routes, kept with the knock: approval may
 			// come hours later, and admitting somebody whose return address
 			// was forgotten grants a membership nobody can deliver to (RT-0).
@@ -302,20 +303,23 @@ func (r *Runtime) admitFromDoor(client *relay.Client, rec *passRecord,
 
 	// The knocker's return routes, held with the entry since the knock.
 	var guestRoutes []string
+	var guestCerts [][]byte
 	r.passes.mu.Lock()
 	for i := range rec.entries {
 		if rec.entries[i].Request == reqID {
 			guestRoutes = append([]string(nil), rec.entries[i].Routes...)
+			guestCerts = rec.entries[i].Certs
 		}
 	}
 	r.passes.mu.Unlock()
+	r.learnCertificates(guestCerts)
 
 	r.mu.Lock()
 	st := r.spaces[space]
 	var resp []byte
 	if st != nil {
 		epochN, epochKey, mf, err := st.space.AcceptIntoSpace(r.Self,
-			device, xpub, name, r.PrincipalID, now)
+			device, xpub, name, r.PrincipalID, now, r.expandMembersLocked)
 		if err == nil {
 			// The route exchange, both directions (RT-0) — same as the
 			// automatic accept path; persistence rides the admission commit.

@@ -78,3 +78,28 @@ func TestAKeystoreWithoutASagaStillOpens(t *testing.T) {
 		t.Fatal("records appeared from nowhere")
 	}
 }
+
+// A knock's certified set is held with the knock (arity 9 → 10, appended),
+// and a record written before the field existed still reads.
+func TestEntryRecordCarriesTheKnockersCerts(t *testing.T) {
+	k := &Keystore{Passes: []PassRecord{{
+		Space: id.TerminalID{7}, Frame: []byte("f"),
+		Entries: []EntryRecord{{
+			Request: [32]byte{3}, Device: id.DeviceID{9}, Name: "bob",
+			AskedAt: 300, State: EntryPending,
+			Routes: []string{"relay.example:7411"},
+			Certs:  [][]byte{[]byte("cert-phone"), []byte("cert-mac")},
+		}},
+	}}}
+	got, err := decodeKeystore(k.encode())
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := got.Passes[0].Entries[0]
+	if len(e.Certs) != 2 || string(e.Certs[1]) != "cert-mac" {
+		t.Fatalf("the knocker's certs did not survive: %q", e.Certs)
+	}
+	if len(e.Routes) != 1 {
+		t.Fatalf("routes changed beside the new field: %+v", e.Routes)
+	}
+}

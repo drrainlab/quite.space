@@ -30,11 +30,11 @@ type relaySyncState struct {
 	// single-relay assumption; re-offered when stated knowledge arrives.
 	legacyBasis  map[id.TerminalID]bool
 	lastRouteGen uint64
-	lastErr  string
-	lastPush time.Time
-	lastPull time.Time
-	pushed   int
-	pulled   int
+	lastErr      string
+	lastPush     time.Time
+	lastPull     time.Time
+	pushed       int
+	pulled       int
 	// Public projection publishing triggers (PA-0.4B): authorized log
 	// growth, bucket rotation, or a stale heartbeat each force a Replace.
 	lastPubLen     map[id.TerminalID]int
@@ -82,7 +82,7 @@ const (
 	// some of them is known. The frames stay durable and local; delivery to
 	// the routed members went ahead. The one thing this must never become
 	// is a silent Put onto the sender's own relay.
-	heldNoRoute     = "no route to some members yet"
+	heldNoRoute = "no route to some members yet"
 	// heldTentative: every addressable member's copy went out on the
 	// zero-knowledge bootstrap guess — put at this node's OWN relay in
 	// the hope the recipient shares it. In a single-relay world that hope
@@ -90,7 +90,7 @@ const (
 	// way it is a GUESS, and a guess is not delivery: the cursor stays,
 	// the space re-offers (the relay store dedups identical bytes), and
 	// the hold clears the moment a stated route carries a real copy.
-	heldTentative = "delivered on a guess — no stated route for some members"
+	heldTentative   = "delivered on a guess — no stated route for some members"
 	heldNoRelay     = "no usable relay for this space"
 	heldNoReadRelay = "no usable relay to read this space from"
 )
@@ -666,7 +666,15 @@ func (r *Runtime) relaySyncOnce(addr string) {
 	// pending set is derived and usually empty, and the fetch is one
 	// non-destructive round trip on the mailbox this device already owns.
 	r.offerGrants()
-	r.fetchGrants(addr)
+	// SYMMETRIC WITH THE PULL ABOVE, deliberately: every once-advertised
+	// ingress stays live for space mailboxes, so it must stay live for
+	// the identity mailbox too. Reading only the armed address was
+	// measured as "the phone's grant sat on the relay the Mac had moved
+	// away from" — a sibling that changed relays drained its old space
+	// mailboxes and silently stopped draining its old identity one.
+	for _, ingress := range ingresses {
+		r.fetchGrants(ingress)
+	}
 
 	rs.mu.Lock()
 	rs.lastErr = lastErr

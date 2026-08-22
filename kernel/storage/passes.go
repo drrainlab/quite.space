@@ -79,6 +79,10 @@ type EntryRecord struct {
 	// somebody whose return address was already forgotten would grant a
 	// membership nobody can deliver to.
 	Routes []string
+	// Certs is the knocker's certified set, held with the knock for the
+	// same reason Routes is: approval may come hours later, and the host
+	// must still be able to admit the whole person at that moment.
+	Certs [][]byte
 }
 
 // PassRecord is the owner's durable acceptance state for one pass.
@@ -136,7 +140,7 @@ func appendPassRecords(buf []byte, recs []PassRecord) []byte {
 		}
 		buf = codec.AppendArray(buf, len(r.Entries))
 		for _, e := range r.Entries {
-			buf = codec.AppendArray(buf, 9)
+			buf = codec.AppendArray(buf, 10)
 			buf = codec.AppendBytes(buf, e.Request[:])
 			buf = codec.AppendBytes(buf, e.Device[:])
 			buf = codec.AppendBytes(buf, e.Xpub[:])
@@ -148,6 +152,10 @@ func appendPassRecords(buf []byte, recs []PassRecord) []byte {
 			buf = codec.AppendArray(buf, len(e.Routes))
 			for _, rt := range e.Routes {
 				buf = codec.AppendText(buf, rt)
+			}
+			buf = codec.AppendArray(buf, len(e.Certs))
+			for _, c := range e.Certs {
+				buf = codec.AppendBytes(buf, c)
 			}
 		}
 	}
@@ -267,8 +275,21 @@ func readPassRecords(d *codec.Decoder) ([]PassRecord, error) {
 					ent.Routes = append(ent.Routes, rt)
 				}
 			}
+			if ec >= 10 {
+				cc, e := d.ReadArray()
+				if e != nil {
+					return nil, e
+				}
+				for j := 0; j < cc; j++ {
+					c, e := d.ReadBytes()
+					if e != nil {
+						return nil, e
+					}
+					ent.Certs = append(ent.Certs, append([]byte(nil), c...))
+				}
+			}
 			// Forward compatibility: a newer build may write more fields.
-			for i := 9; i < ec; i++ {
+			for i := 10; i < ec; i++ {
 				if e := d.SkipItem(); e != nil {
 					return nil, e
 				}

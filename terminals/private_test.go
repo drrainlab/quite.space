@@ -213,14 +213,14 @@ func TestAcceptingAnExistingMemberIsANoOp(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, _, _, err := space.AcceptIntoSpace(alice, bob.Device.ID,
-		bob.Device.X25519Pub, "bob", alice.Principal, 100); err != nil {
+		bob.Device.X25519Pub, "bob", alice.Principal, 100, nil); err != nil {
 		t.Fatal(err)
 	}
 	events, epoch := space.Log.Len(), space.CurrentEpoch()
 
 	// The same device again — a second link, a re-sent request, a double click.
 	n, key, mf, err := space.AcceptIntoSpace(alice, bob.Device.ID,
-		bob.Device.X25519Pub, "bob", alice.Principal, 200)
+		bob.Device.X25519Pub, "bob", alice.Principal, 200, nil)
 	if err != nil {
 		t.Fatalf("re-admitting an existing member failed: %v", err)
 	}

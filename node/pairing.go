@@ -582,6 +582,16 @@ func (a *PairingAttempt) Approve(nowUnix uint64) error {
 		r.mu.Unlock()
 		return ErrNotAuthority
 	}
+	// ADVERTISING CREATES THE OBLIGATION TO LISTEN — the rule every other
+	// advertisement already keeps (advertisedRoutesLocked records what it
+	// names). The freight tells the child "answer me here", so these
+	// endpoints are this device's ingress from now on: a relay move later
+	// keeps them in the pull list, which is exactly where the child's
+	// grants will be waiting. Measured as "the Mac moved relays and the
+	// phone's grant sat at the old one forever" — SelfIngress was empty.
+	for _, ep := range selfIngress {
+		r.recordSelfIngressLocked(ep, storage.RouteAdvertised)
+	}
 	// 2 — certify the public halves; the child's private keys never left it.
 	cert := r.Principal.CertifyPublic(childDev, childX, nowUnix, 0)
 	frame, err := cert.Encode()

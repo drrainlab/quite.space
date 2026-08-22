@@ -106,9 +106,28 @@ type DeviceInfo struct {
 	Label   string `json:"label"`  // human name; hex is the fallback, never the face
 	This    bool   `json:"this"`
 	Revoked bool   `json:"revoked"`
+	// Pending: spaces THIS device holds that the sibling has not yet been
+	// observed in — the identity plane's derived hold, made visible. An
+	// empty list is convergence; a non-empty one names what is still owed
+	// and where the offer is being left (ADR-023: a hold is reported, not
+	// silent).
+	Pending []PendingGrant `json:"pending,omitempty"`
+}
+
+// PendingGrant is one space still owed to one sibling.
+type PendingGrant struct {
+	Space string `json:"space"`
+	Title string `json:"title,omitempty"`
+	// Via is the relay the offer is left at; Guessed says it is THIS
+	// device's own relay used as a courtesy because the book states no
+	// route for the sibling — the first thing to suspect when a hold
+	// never clears.
+	Via     string `json:"via,omitempty"`
+	Guessed bool   `json:"guessed,omitempty"`
 }
 
 func (r *Runtime) Devices() []DeviceInfo {
+	own := r.PersonalRelayAddress() // before r.mu: it reads through its own gate
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	revoked := map[id.DeviceID]bool{}
@@ -129,12 +148,66 @@ func (r *Runtime) Devices() []DeviceInfo {
 		if label == "" && rec.Device == r.Device.ID {
 			label = deviceName()
 		}
-		out = append(out, DeviceInfo{
+		info := DeviceInfo{
 			Device:  rec.Device.Hex(),
 			Label:   label,
 			This:    rec.Device == r.Device.ID,
 			Revoked: revoked[rec.Device],
-		})
+		}
+		if !info.This && !info.Revoked {
+			info.Pending = r.pendingGrantsLocked(rec.Device, own)
+		}
+		out = append(out, info)
+	}
+	return out
+}
+
+// pendingGrantsLocked derives what this device still owes one sibling —
+// the same derivation offerGrants runs, read instead of acted on. Caller
+// holds r.mu.
+func (r *Runtime) pendingGrantsLocked(dev id.DeviceID, own string) []PendingGrant {
+	r.grantsInit()
+	var out []PendingGrant
+	for tid, meta := range r.ks.Spaces {
+		if meta.LocalOnly {
+			continue
+		}
+		st, ok := r.spaces[tid]
+		if !ok {
+			continue
+		}
+		r.refreshGrantSeenLocked(tid, st)
+		if r.grants.seen[tid][dev] {
+			continue
+		}
+		pg := PendingGrant{Space: tid.Hex(), Title: meta.Title, Guessed: true}
+		for _, rt := range r.ks.PeerRoutes[dev] {
+			if rt.Transport == "relay" && rt.Endpoint != "" {
+				pg.Via, pg.Guessed = rt.Endpoint, false
+				break
+			}
+		}
+		if pg.Guessed {
+			pg.Via = own
+		}
+		out = append(out, pg)
+	}
+	return out
+}
+
+// GrantRefusals lists why this device refused sibling grants it fetched —
+// distinct reasons, not counts. Empty is the ordinary answer.
+func (r *Runtime) GrantRefusals() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.grantsInit()
+	seen := map[string]bool{}
+	var out []string
+	for _, why := range r.grants.refused {
+		if !seen[why] {
+			seen[why] = true
+			out = append(out, why)
+		}
 	}
 	return out
 }

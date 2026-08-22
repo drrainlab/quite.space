@@ -10,8 +10,16 @@ async function loadDevices() {
   const box = document.getElementById('devList');
   if (!box) return;
   try {
-    const { devices } = await api('/api/devices');
+    const { devices, grant_refusals } = await api('/api/devices');
     box.innerHTML = '';
+    // What THIS device would not take from its siblings, if anything —
+    // the other half of the convergence picture (pending is what it owes).
+    if (grant_refusals && grant_refusals.length) {
+      const warn = document.createElement('p');
+      warn.className = 'hint warn';
+      warn.textContent = t('ui.dev.refusals') + ' ' + grant_refusals.join(' · ');
+      box.appendChild(warn);
+    }
     for (const d of devices) {
       const row = document.createElement('div');
       row.className = 'list-row';
@@ -20,6 +28,19 @@ async function loadDevices() {
       label.textContent = (d.label || d.device.slice(0, 12) + '…') +
         (d.this ? ' — this device' : '') + (d.revoked ? ' — revoked' : '');
       label.title = d.device;
+      // THE HOLD IS REPORTED, NOT SILENT: spaces this device still owes
+      // the sibling, and where the offer is being left. "Guessed" means
+      // our own relay as a courtesy — the first suspect when it never
+      // clears.
+      if (d.pending && d.pending.length) {
+        const owed = document.createElement('span');
+        owed.className = 'hint';
+        owed.style.display = 'block';
+        const vias = [...new Set(d.pending.map(p => p.via + (p.guessed ? ' (' + t('ui.dev.guessed') + ')' : '')))];
+        owed.textContent = t('ui.dev.pending', { n: d.pending.length }) + ' · ' + vias.join(', ');
+        owed.title = d.pending.map(p => p.title || p.space.slice(0, 12)).join('\n');
+        label.appendChild(owed);
+      }
       row.appendChild(label);
       // The one revocation that is always a mistake is not offered at all.
       if (!d.this && !d.revoked) {
