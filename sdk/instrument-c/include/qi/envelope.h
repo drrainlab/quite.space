@@ -16,6 +16,10 @@
 #include <stdbool.h>
 #include "qi/status.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 enum {
   QI_AUTHORSHIP_HUMAN = 1, QI_AUTHORSHIP_SENSOR = 5,
   QI_PAYLOAD_CBOR = 1, QI_PAYLOAD_ENCRYPTED = 2, QI_PAYLOAD_INSTRUMENT_SEALED = 3,
@@ -50,5 +54,9 @@ qi_status qi_envelope_sign(const qi_envelope *e, const uint8_t device_sk[64],
  * the device key it names. Refuses non-canonical input, a missing
  * required field, or a bad signature. */
 qi_status qi_envelope_decode_verify(const uint8_t *frame, size_t n, qi_envelope *e);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

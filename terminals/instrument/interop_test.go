@@ -178,3 +178,45 @@ func readLines(t *testing.T, path string) []string {
 	}
 	return out
 }
+
+// The negative half of the gate: the same C frames, damaged the way a
+// bad firmware would damage them. A frame whose predecessor never
+// arrived is buffered, not applied (the hole rule); a frame with a
+// flipped byte fails signature verification at the log's door.
+func TestDamagedCFramesAreRefusedByGo(t *testing.T) {
+	matches, _ := filepath.Glob(filepath.Join(emittedDir, "greenhouse.frames"))
+	if len(matches) == 0 {
+		t.Skip("interop gate: no C-produced frames checked in yet")
+	}
+	raw, err := os.ReadFile(vectorsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var v interopVectors
+	if err := json.Unmarshal(raw, &v); err != nil {
+		t.Fatal(err)
+	}
+	lines := readLines(t, matches[0])
+	if len(lines) < 3 {
+		t.Fatal("need at least three frames")
+	}
+	// Skip frame 2: frame 3 references a predecessor Go never saw.
+	s, _ := memberSpace(t, v)
+	f1, f3 := mustHex(t, lines[0]), mustHex(t, lines[2])
+	if n, err := s.Absorb(f1); err != nil || n != 1 {
+		t.Fatalf("frame 1: n=%d err=%v", n, err)
+	}
+	if n, err := s.Absorb(f3); err != nil || n != 0 {
+		t.Fatalf("frame 3 with a hole before it: applied=%d err=%v (want buffered)", n, err)
+	}
+	if s.Log.Len() != 2 { // the owner's epoch frame + frame 1
+		t.Fatalf("log applied %d frames across a hole", s.Log.Len())
+	}
+	// A flipped byte in the payload breaks the device signature.
+	s2, _ := memberSpace(t, v)
+	bad := append([]byte(nil), f1...)
+	bad[len(bad)/2] ^= 0x01
+	if _, err := s2.Absorb(bad); err == nil {
+		t.Fatal("a tampered C frame was admitted")
+	}
+}

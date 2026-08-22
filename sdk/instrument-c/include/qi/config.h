@@ -7,6 +7,10 @@
 #ifndef QI_CONFIG_H
 #define QI_CONFIG_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define QI_MAX_FRAME            2048  /* one signed envelope, bytes */
 #define QI_MAX_PAYLOAD          1024  /* plaintext payload inside a frame */
 #define QI_MAX_MANIFEST         1536  /* a signed manifest frame */
@@ -19,5 +23,9 @@
 #define QI_MAX_ENROLLMENT       (QI_MAX_MANIFEST + 512)
 #define QI_MAX_PROVISION        (QI_MAX_FRAME * 2 + 512)
 #define QI_MAX_SPACES           2     /* spaces one instrument speaks in */
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

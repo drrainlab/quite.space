@@ -14,6 +14,10 @@
 #include <stdbool.h>
 #include "qi/status.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef enum { QI_VALUE_NUMBER = 1, QI_VALUE_BOOL = 2, QI_VALUE_ENUM = 3 } qi_value_kind;
 
 typedef struct qi_observation {
@@ -28,5 +32,9 @@ typedef struct qi_observation {
 } qi_observation;
 
 qi_status qi_observation_encode(const qi_observation *o, uint8_t *out, size_t cap, size_t *n);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

@@ -12,6 +12,10 @@
 #include <stdbool.h>
 #include "qi/status.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef struct qi_cbor_w {
   uint8_t *buf;
   size_t cap;
@@ -65,5 +69,9 @@ qi_status qi_map_begin(qi_cbor_r *r, qi_cbor_map *m);
 /* Next key: QI_OK with *more=true and the key, QI_OK with *more=false at
  * the end, or an error for a key out of order. */
 qi_status qi_map_next(qi_cbor_map *m, uint64_t *key, bool *more);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

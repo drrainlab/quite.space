@@ -38,6 +38,12 @@ foreach(t ${QI_TESTS})
   add_test(NAME ${name} COMMAND ${name} ${VEC} ${VEC0})
 endforeach()
 
+add_executable(qi-emit tools/qi_emit.c tests/vectors.c)
+target_link_libraries(qi-emit qi)
+if(QI_SANITIZE)
+  target_compile_options(qi-emit PRIVATE ${SAN})
+endif()
+
 if(QI_FUZZ)
   file(GLOB QI_FUZZERS ${CMAKE_CURRENT_SOURCE_DIR}/tests/fuzz_*.c)
   foreach(f ${QI_FUZZERS})

@@ -12,6 +12,10 @@
 #include <stddef.h>
 #include "qi/status.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 enum { QI_KIND_SENSOR = 5, QI_KIND_ACTUATOR = 6 };
 
 typedef struct qi_channel_decl {
@@ -30,5 +34,9 @@ qi_status qi_manifest_sign(const uint8_t terminal[32], const uint8_t controller[
                            uint64_t revision, const uint8_t *previous_hash /* or NULL */,
                            const uint8_t terminal_sk[64],
                            uint8_t *out, size_t cap, size_t *n);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

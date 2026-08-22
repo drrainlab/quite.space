@@ -1,0 +1,5 @@
+# channel=value the C side intended
+temperature=-2.5
+humidity=48.0
+door=true
+light=37

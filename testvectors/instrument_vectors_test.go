@@ -27,6 +27,7 @@ import (
 	"github.com/drrainlab/quiet_places/kernel/crypto"
 	"github.com/drrainlab/quiet_places/kernel/identity"
 	"github.com/drrainlab/quiet_places/protocol/codec"
+	"github.com/drrainlab/quiet_places/protocol/enrollment"
 	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/protocol/manifest"
 	"github.com/drrainlab/quiet_places/protocol/schemas"
@@ -70,6 +71,8 @@ type instrumentVectors struct {
 	EnvelopeFrame   string `json:"instrument_envelope_frame"`
 	EnvelopeID      string `json:"instrument_envelope_event_id"`
 	EpochPayloadHdr string `json:"epoch_payload_without_wraps"`
+	EnrollmentNonce string `json:"enrollment_nonce"`
+	EnrollmentBytes string `json:"enrollment_v1"`
 
 	// Captured once (randomized KEM); verified in the open direction.
 	EpochWrapEnc     string `json:"epoch_wrap_enc"`
@@ -199,7 +202,23 @@ func buildInstrumentVectors(t *testing.T) instrumentVectors {
 	hdr = codec.AppendUint(hdr, 2)
 	hdr = codec.AppendArray(hdr, 1)
 
+	// The enrollment the device would hand over: both signatures over one
+	// body, the manifest inside. Deterministic given the fixed nonce.
+	enr := &enrollment.Enrollment{Device: dev.ID, X25519Pub: dev.X25519Pub, Terminal: term,
+		ManifestFrame: manFrame, ManifestHash: manifest.Hash(manFrame), Label: "Greenhouse"}
+	for i := range enr.Nonce {
+		enr.Nonce[i] = 0x88
+	}
+	if err := enr.Sign(dev.SignKey(), termPriv); err != nil {
+		t.Fatal(err)
+	}
+	enrBytes, err := enr.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	return instrumentVectors{
+		EnrollmentNonce: hex.EncodeToString(enr.Nonce[:]), EnrollmentBytes: hex.EncodeToString(enrBytes),
 		Note: "Instrument plane known-answer vectors (QI-M0). Fixed test seeds, never real identities. " +
 			"epoch_wrap_* are captured once (HPKE encapsulation is randomized) and verified by unwrapping.",
 		DeviceSeed: hex.EncodeToString(deviceSeed), DeviceX25519: hex.EncodeToString(xScalar[:]),
@@ -348,6 +367,16 @@ func TestInstrumentVectorsOpenIndependently(t *testing.T) {
 	decl := terminals.ParseInstruments(man.DeclaredLabels)
 	if len(decl) != 4 || decl[1].Unit != "%" || decl[0].Label != "Температура" {
 		t.Fatalf("manifest declaration did not round-trip: %+v", decl)
+	}
+
+	// The enrollment verifies through the public path (both signatures,
+	// manifest hash, manifest signature, terminal binding).
+	enr, err := enrollment.Decode(mustHex(t, v.EnrollmentBytes))
+	if err != nil {
+		t.Fatalf("golden enrollment does not verify: %v", err)
+	}
+	if enr.Device.Hex() != v.DeviceID || enr.Terminal.Hex() != v.TerminalID {
+		t.Fatal("enrollment identity drifted")
 	}
 
 	// The certificate verifies under the principal.

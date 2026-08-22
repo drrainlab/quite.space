@@ -1,6 +1,10 @@
 #ifndef QI_STATUS_H
 #define QI_STATUS_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* Every qi-core call answers with one of these. The doctrine is the
  * protocol's own (ADR-023): inability is never success, never silence —
  * a missing epoch, a missing clock, a buffer too small are named, not
@@ -20,5 +24,9 @@ typedef enum qi_status {
 } qi_status;
 
 const char *qi_status_str(qi_status s);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

@@ -11,6 +11,10 @@
 #include <stdint.h>
 #include "qi/status.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define QI_ID_SIZE 32
 #define QI_SIG_SIZE 64
 #define QI_SEED_SIZE 32
@@ -56,5 +60,9 @@ qi_status qi_xchacha_open(const uint8_t key[32], const uint8_t nonce[24],
                           uint8_t *pt, size_t pt_cap, size_t *pt_n);
 
 qi_status qi_random(uint8_t *out, size_t n);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif
