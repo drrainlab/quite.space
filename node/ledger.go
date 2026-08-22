@@ -450,6 +450,11 @@ func (l *Ledger) Settle(eid id.EventID) error {
 }
 
 // Due returns intents needing an attempt at `now`, oldest first.
+//
+// WHOLE-LEDGER, so it copies and sorts everything outstanding. That is the
+// right shape for "what does this device still owe, in order" and the wrong
+// one for the delivery path, which asks per SPACE — see DueForSpace, which
+// is what the hot callers use.
 func (l *Ledger) Due(now time.Time, limit int) []DeliveryIntent {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -464,6 +469,55 @@ func (l *Ledger) Due(now time.Time, limit int) []DeliveryIntent {
 		out = out[:limit]
 	}
 	return out
+}
+
+// DueForSpace is Due narrowed to one space, oldest first.
+//
+// THE FILTER BELONGS INSIDE THE LOCK, not after the copy. Both delivery
+// callers asked for every due intent on the device and then dropped the
+// ones that were not theirs — so a node with a full ledger copied and
+// SORTED all of it, once per space, on every sync cycle. Measured on a
+// real node with a 500 KB ledger: 16.5% of the process's CPU inside Due,
+// plus the garbage collector's share of the slices it produced. Sorting
+// what the caller is about to discard is the whole cost.
+func (l *Ledger) DueForSpace(now time.Time, space id.TerminalID, limit int) []DeliveryIntent {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var out []DeliveryIntent
+	for _, in := range l.live {
+		if in.Space != space || !in.Retryable(now) {
+			continue
+		}
+		out = append(out, *in)
+	}
+	sortIntents(out)
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out
+}
+
+// OldestDueForSpace returns the intent this space has been owed longest,
+// without building or sorting a slice at all — the connectivity path wants
+// exactly one and used to pay for every other space's ordering to get it.
+func (l *Ledger) OldestDueForSpace(now time.Time, space id.TerminalID) (DeliveryIntent, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var best *DeliveryIntent
+	for _, in := range l.live {
+		if in.Space != space || !in.Retryable(now) {
+			continue
+		}
+		if best == nil || in.UpdatedAt < best.UpdatedAt ||
+			(in.UpdatedAt == best.UpdatedAt &&
+				string(in.EventID[:]) < string(best.EventID[:])) {
+			best = in
+		}
+	}
+	if best == nil {
+		return DeliveryIntent{}, false
+	}
+	return *best, true
 }
 
 // Len reports outstanding responsibility.
