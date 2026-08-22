@@ -82,3 +82,18 @@ No unix time → no readings (the stand or NTP must set it). No current
 epoch → no readings. A detached board's frames are refused by every
 member even if it still holds an old key. Nothing is ever simulated
 unless the driver says so.
+
+## Quick start: LilyGo T3-S3 + DHT22 (`examples/ClimateDHT`)
+
+One command from sketch to a running board — build, flash, serial monitor:
+
+```bash
+sdk/instrument-arduino/qi-flash.sh ClimateDHT
+```
+
+(`PORT=/dev/cu.usbmodemXXXX` to force a port; second argument picks the
+env, e.g. `heltec_wifi_lora_32_V3`; `--no-monitor` to skip the monitor.)
+Wiring: DHT22 DATA → GPIO 38 (`-DDHT_PIN` in platformio.ini), VCC 3V3,
+GND. The board's OLED shows the quiet.space mark at boot, then the two
+readings and the instrument's state (waiting for owner → enrolling… →
+in the space).
