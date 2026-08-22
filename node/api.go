@@ -421,6 +421,9 @@ func (a *APIServer) spaceID(r *http.Request) (id.TerminalID, error) {
 
 type statusResp struct {
 	Fingerprint string `json:"fingerprint"`
+	// PrincipalID is the raw id an external instrument names as its
+	// controller (QI-M): the dev stand hands it to the board.
+	PrincipalID string `json:"principal_id"`
 	DeviceID    string `json:"device_id"`
 	DeviceXPub  string `json:"device_xpub"`
 	LAN         struct {
@@ -522,6 +525,7 @@ func deviceName() string {
 func (a *APIServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 	var resp statusResp
 	resp.Fingerprint = a.rt.Fingerprint()
+	resp.PrincipalID = a.rt.PrincipalID.Hex()
 	resp.DeviceID = a.rt.Device.ID.Hex()
 	resp.DeviceXPub = hex.EncodeToString(a.rt.Device.X25519Pub[:])
 	l := a.rt.LAN()
