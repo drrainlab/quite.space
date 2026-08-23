@@ -100,6 +100,10 @@ type Runtime struct {
 	routeKnowledgeGen uint64
 	// grants: the identity plane's in-memory half (grants.go, ADR-024).
 	grants *grantState
+	// knocks: requests for a conversation waiting for this person to
+	// answer (knock.go, ADR-027). In memory by design — a knock is a
+	// question, not a record, and one nobody answers simply expires.
+	knocks *knockState
 	// Reconsideration is COALESCED, never recursive: a held frame may itself
 	// be the control event that changes admission state again.
 	// ingressArmed stays false throughout Open, so every change applied

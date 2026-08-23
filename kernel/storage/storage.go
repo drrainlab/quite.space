@@ -217,6 +217,10 @@ type Keystore struct {
 	// Empty and nil mean the same thing and both mean "nobody": absence is
 	// never permission.
 	LegacyBindings []LegacyBinding
+	// Refusals are the people this person declined to hear from (ADR-027).
+	// Principal-scoped and convergent: declining on the phone must silence
+	// the laptop, so this travels the identity plane like a space grant.
+	Refusals []RefusalRecord
 }
 
 // PublicPublishState is the publisher-side durable projection counter.
@@ -390,6 +394,7 @@ const (
 	ksKeyLegacy    = 21 // MD-0 the frozen pre-certification allowlist
 	ksKeyInstrEp   = 22 // QI-0 instrument-epoch keys per space
 	ksKeyInstrs    = 23 // QI-1 attached instrument participants
+	ksKeyRefusals  = 24 // ADR-027 people this person declined to hear from
 )
 
 // ksMapArity is how many top-level pairs encode() writes, and it MUST equal
@@ -397,7 +402,7 @@ const (
 // which is a poor place for a number that bricks every keystore when it is
 // wrong: too few and the trailing pair goes unread, so Done() fails and
 // nobody can open their data again. Named here, next to the keys it counts.
-const ksMapArity = 23
+const ksMapArity = 24
 
 func (k *Keystore) encode() []byte {
 	buf := codec.AppendMap(nil, ksMapArity)
@@ -512,6 +517,14 @@ func (k *Keystore) encode() []byte {
 	buf = codec.AppendArray(buf, len(k.Instruments))
 	for _, ir := range k.Instruments {
 		buf = appendInstrumentRecord(buf, ir)
+	}
+	buf = codec.AppendUint(buf, ksKeyRefusals)
+	buf = codec.AppendArray(buf, len(k.Refusals))
+	for _, rf := range k.Refusals {
+		buf = codec.AppendArray(buf, 3)
+		buf = codec.AppendBytes(buf, rf.Principal[:])
+		buf = codec.AppendText(buf, rf.Reason)
+		buf = codec.AppendUint(buf, uint64(rf.At))
 	}
 	return buf
 }
@@ -772,6 +785,38 @@ func decodeKeystore(data []byte) (*Keystore, error) {
 					return nil, er
 				}
 				k.Instruments = append(k.Instruments, ir)
+			}
+		case ksKeyRefusals:
+			var cnt int
+			cnt, er = d.ReadArray()
+			if er != nil {
+				return nil, er
+			}
+			for range cnt {
+				var fields int
+				if fields, er = d.ReadArray(); er != nil || fields < 3 {
+					return nil, errors.New("storage: bad refusal record")
+				}
+				var rf RefusalRecord
+				var pb []byte
+				if pb, er = d.ReadBytes(); er != nil || len(pb) != len(rf.Principal) {
+					return nil, errors.New("storage: bad refusal principal")
+				}
+				copy(rf.Principal[:], pb)
+				if rf.Reason, er = d.ReadText(); er != nil {
+					return nil, er
+				}
+				var at uint64
+				if at, er = d.ReadUint(); er != nil {
+					return nil, er
+				}
+				rf.At = int64(at)
+				for i := 3; i < fields; i++ {
+					if er = d.SkipItem(); er != nil {
+						return nil, er
+					}
+				}
+				k.Refusals = append(k.Refusals, rf)
 			}
 		case ksKeySelfTerm:
 			var b []byte

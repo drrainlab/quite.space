@@ -130,6 +130,23 @@ func HintIdentityPlane(dev id.DeviceID, bucket uint64) []byte {
 	return CollectHint(h.Sum(nil))
 }
 
+// HintKnock is a device's KNOCK mailbox: where somebody who is not this
+// person leaves a request for a conversation (ADR-027). Separate from the
+// identity plane on purpose — that plane carries a person's own state
+// between their own devices, and a stranger's envelope must never land in
+// the same box as a space grant, where one confused parser away it would
+// be read as one. Fetch-based like the identity plane, and for the same
+// reason: knowing the hint must not let anybody destroy a knock in flight.
+func HintKnock(dev id.DeviceID, bucket uint64) []byte {
+	h := sha256.New()
+	h.Write([]byte("qp-knock-v0:"))
+	h.Write(dev[:])
+	var b [8]byte
+	binary.BigEndian.PutUint64(b[:], bucket)
+	h.Write(b[:])
+	return CollectHint(h.Sum(nil))
+}
+
 // Bucket returns the hint rotation bucket (6-hour windows, shared with LAN
 // discovery granularity).
 func Bucket(nowUnix uint64) uint64 { return nowUnix / (6 * 3600) }

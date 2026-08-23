@@ -40,6 +40,22 @@ type CertRecord struct {
 	Label string
 }
 
+// RefusalRecord is a person this device's owner declined to hear from
+// (ADR-027). It holds the PRINCIPAL and the sentence the owner wrote once
+// — never a device, because a person who is refused is refused whatever
+// hardware they pick up next.
+//
+// The sentence is kept so the refusal can go on answering on the owner's
+// behalf, unchanged, forever: it was written once, and the person who
+// wrote it never has to look at that name again to keep meaning it.
+type RefusalRecord struct {
+	Principal id.PrincipalID
+	// Reason is the owner's own words, sent back verbatim. Empty is
+	// allowed and renders as the plain refusal the door already uses.
+	Reason string
+	At     int64 // unix seconds, for pruning the oldest
+}
+
 // RevRecord is one revocation, same shape and for the same reason.
 type RevRecord struct {
 	Device id.DeviceID

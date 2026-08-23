@@ -674,6 +674,11 @@ func (r *Runtime) relaySyncOnce(addr string) {
 	// mailboxes and silently stopped draining its old identity one.
 	for _, ingress := range ingresses {
 		r.fetchGrants(ingress)
+		// The knock mailbox rides the same heartbeat and the same
+		// every-ingress rule (ADR-027): somebody asking to talk must not
+		// be lost because this device moved relays since they last heard
+		// where to find it.
+		r.fetchKnocks(ingress)
 	}
 
 	rs.mu.Lock()
