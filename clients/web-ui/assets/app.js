@@ -1132,6 +1132,21 @@ async function refresh() {
 
 function currentSpace() { return spacesCache.find(s => s.id === current); }
 
+// ASKING SOMEBODY FOR A CONVERSATION (ADR-027). One line, and the screen
+// is honest about what happens: they are asked, not added, and they may
+// simply say no — which this side will hear, once, and then stop.
+async function openKnock(principal, name) {
+  if (!principal || !current) return;
+  const line = prompt(t('knock.prompt', { name }), '');
+  if (line === null) return;              // changed their mind
+  try {
+    await api(`/api/spaces/${current}/knock`, {
+      method: 'POST', body: JSON.stringify({ principal, line: line.trim() }),
+    });
+    alert(t('knock.asked', { name }));
+  } catch (err) { alert(err.message); }
+}
+
 // The assistant's own strip: what it is, where a question goes, and what
 // went wrong if anything did.
 //
@@ -2111,6 +2126,17 @@ async function refreshSpace() {
       inner += `<div class="caps">${esc(m.io_mode)} · ${esc((m.capabilities || []).join(' '))}` +
         `${m.commandable ? '' : ' · no command surface'}</div>`;
     d.innerHTML = inner;
+    // THE VERB THAT WAS MISSING (ADR-027). A person you already share this
+    // room with can be asked — once — for a conversation of your own. Not
+    // offered for yourself, for a machine, or for somebody already met
+    // one-to-one: the ask exists to create that room, not to repeat it.
+    if (!m.mine && m.kind === 'human' && !currentSpace()?.dyad) {
+      const ask = document.createElement('button');
+      ask.className = 'btn-plain member-knock';
+      ask.textContent = t('knock.ask');
+      ask.onclick = () => openKnock(m.principal, name);
+      d.appendChild(ask);
+    }
     mbox.appendChild(d);
   }
   hereMembers = nextHere;

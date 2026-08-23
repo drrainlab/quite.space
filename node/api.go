@@ -243,6 +243,12 @@ func (a *APIServer) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/spaces/{id}/name", a.auth(a.handleSetLocalTitle))
 	mux.HandleFunc("GET /api/entry-requests", a.auth(a.handleEntryRequests))
 	mux.HandleFunc("POST /api/entry-requests/{req}/decide", a.auth(a.handleDecideEntry))
+	// Knocking on a PERSON (ADR-027): the same door shape, one floor up.
+	mux.HandleFunc("GET /api/knocks", a.auth(a.handleKnocks))
+	mux.HandleFunc("POST /api/knocks/{id}/answer", a.auth(a.handleAnswerKnock))
+	mux.HandleFunc("POST /api/spaces/{id}/knock", a.auth(a.handleKnockOn))
+	mux.HandleFunc("GET /api/refusals", a.auth(a.handleRefusals))
+	mux.HandleFunc("DELETE /api/refusals/{principal}", a.auth(a.handleUnrefuse))
 	// QuietRank (AT-0): device-local attention layer.
 	mux.HandleFunc("GET /api/signals", a.auth(a.handleSignals))
 	mux.HandleFunc("POST /api/signals/{id}/seen", a.auth(a.handleSignalSeen))

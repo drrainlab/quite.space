@@ -879,6 +879,12 @@
      The row is a flex child of #log like any entry; the photos inside give
      up their bubble chrome and full width for a thumbnail grid. The first
      tile keeps the author head; followers are .grouped and hide it. */
+  /* A stranger's sentence in the door strip is THEIR words: quoted,
+     dimmer than the product's own voice, and never styled as a heading. */
+  .door-strip .knock-line { color: var(--dim); font-style: italic; }
+  .member-knock { padding: 2px 0; font-size: 11px; color: var(--dim); }
+  .member:hover .member-knock, .member-knock:focus { color: var(--fg); }
+
   .media-run { display: flex; flex-wrap: wrap; gap: 4px;
     align-self: flex-start; align-items: flex-end; max-width: 78%; }
   .media-run.own { align-self: flex-end; justify-content: flex-end; }
