@@ -509,6 +509,20 @@ func (s *Store) CertifiedDevices(principal id.PrincipalID) []*Certificate {
 	return out
 }
 
+// Revoked reports whether ANY revocation is on record for a device.
+//
+// It exists for the callers that must not consult a clock: an event's
+// logical clock is written by its author, and a revoked device is exactly
+// the author whose claims stopped being trustworthy. Admission of LIVE
+// traffic keys on this; Admit's clock comparison below serves replay of
+// history a log already holds.
+func (s *Store) Revoked(dev id.DeviceID) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	_, ok := s.revs[dev]
+	return ok
+}
+
 // Admit decides whether an event from (principal, device) at the given
 // logical time is acceptable: certified, principal matches, not revoked at
 // that time. Unknown devices fail closed (invariant §2.7).

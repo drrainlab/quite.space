@@ -32,6 +32,22 @@ func TestARevokedDeviceIsRejectedAndNeverHeld(t *testing.T) {
 	if got.Reason != ReasonRevoked {
 		t.Fatalf("wrong reason, and the reason is what decides holding: %v", got.Reason)
 	}
+
+	// AND AT ANY CLOCK THE AUTHOR CARES TO CLAIM. The stamp is written by
+	// the event's author, and this author is exactly the one whose claims
+	// stopped being trustworthy: a live frame stamped "before" the
+	// revocation is indistinguishable from a thief backdating one, so
+	// both are refused. (What a log already HOLDS still stands — replay
+	// runs before this gate is installed.) This assertion is the pinned
+	// form of a hole CI caught end-to-end: a revoked device whose lamport
+	// clock lagged the authority's minted a fresh message that the old
+	// clock comparison filed under history.
+	for _, clk := range []uint64{1, 9, 10} {
+		got := s.classify(&signal.Envelope{Principal: p.ID, Device: d.ID, LogicalClock: clk})
+		if got.Verdict != Reject || got.Reason != ReasonRevoked {
+			t.Fatalf("a backdated frame (clock %d) from a revoked device was not rejected: %+v", clk, got)
+		}
+	}
 }
 
 // The ONE transient case this wave knows about. It is a HOLD because the

@@ -115,10 +115,29 @@ func (s *identityState) classify(env *signal.Envelope) AdmissionResult {
 		// certificate that ever arrives makes this true.
 		return AdmissionResult{Verdict: Reject, Reason: ReasonPrincipalMismatch}
 	}
-	if err := s.store.Admit(env.Principal, env.Device, env.LogicalClock); err != nil {
-		// Certified and matching, so the only remaining refusal is
-		// revocation — and a revoked device must never be held, or being
-		// forbidden becomes a way to fill somebody's disk.
+	// REVOKED MEANS REVOKED, at any clock — and the clock is why.
+	//
+	// This used to compare the event's logical clock against RevokedAt,
+	// reading "history stands" as "anything stamped earlier than the
+	// revocation". But the stamp is written by the event's AUTHOR, and a
+	// revoked device is precisely the author whose claims stopped being
+	// trustworthy: a thief whose clock lags the authority's — which it
+	// always does, the authority just emitted the rotation — mints a
+	// fresh message that arithmetic files under history. CI caught it as
+	// a one-line assertion; the hole was the semantics.
+	//
+	// A genuinely old unheld frame and that forgery are THE SAME BYTES —
+	// no admission rule can tell them apart — so the protocol errs on the
+	// side ADR-002 already chose: a revoked device stops SPEAKING at
+	// once. What a log already HOLDS still stands, because replay runs
+	// before this gate is installed (eventlog.Open takes nil hooks;
+	// attachSpace wires them after) — this function only ever judges
+	// frames arriving LIVE. The cost is real and accepted: pre-revocation
+	// words this replica never held cannot be backfilled to it — the same
+	// bargain CertifiedDevices already strikes for epochs.
+	if s.store.Revoked(env.Device) {
+		// And never held: being forbidden must not become a way to fill
+		// somebody's disk.
 		return AdmissionResult{Verdict: Reject, Reason: ReasonRevoked}
 	}
 	return AdmissionResult{Verdict: Admit}

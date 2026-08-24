@@ -47,9 +47,24 @@ Principal root key  (rare use: certify / revoke / recover)
 - A **revocation record** is signed by the root key: `{principal_id,
   device_id, revoked_at_logical}`. It propagates through the event log like
   any Signal, in the highest priority lane (plan §17.4).
-- On seeing a revocation, a node rejects any Signal from that device whose
-  `logical_clock` is greater than `revoked_at_logical`. Earlier events remain
-  valid (history is not retroactively broken).
+- On seeing a revocation, a node refuses every Signal that ARRIVES from
+  that device thereafter — at any `logical_clock` the frame claims.
+  History is still not retroactively broken: everything a log already
+  holds stands, and replays as valid forever. The distinction is
+  arrival, not the stamp.
+
+  *(Amended 2026-08-24, v0.1.6.)* The original rule compared the frame's
+  `logical_clock` against `revoked_at_logical` and admitted the earlier
+  ones as history. But the clock is written by the frame's author, and a
+  revoked device is precisely the author whose claims stopped being
+  trustworthy: a stolen device's clock naturally lags the authority's,
+  so its next message — stamped with its own honest-looking low clock —
+  filed itself under history and was admitted. A genuinely old unheld
+  frame and that forgery are the same bytes; no rule can tell them
+  apart, so admission errs on the side decision 3 already chose: the
+  device stops speaking at once. The accepted cost is that a
+  pre-revocation frame a replica never held cannot be backfilled to it
+  after the revocation is known.
 - Revocation is eventually consistent by nature; UI must present device trust
   as a claim with an origin, never as global truth (ADR-008).
 
