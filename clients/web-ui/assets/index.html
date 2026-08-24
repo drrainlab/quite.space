@@ -115,6 +115,10 @@
     <!-- Where a question goes belongs beside the box you type it into,
          not in Settings and not above the title (AI-0). -->
     <div id="aiBar" class="ai-bar" hidden></div>
+    <!-- The card that will travel, shown BEFORE it does. Your node
+         fetched it; the people who read it will fetch nothing. The ✕
+         drops the card, never the message. -->
+    <div id="linkStage" class="link-stage" hidden></div>
     <form id="composer" data-on-submit="19">
       <div id="attachWrap">
         <button type="button" class="ic" data-on-click="20" title="attach" aria-label="Attach" data-i18n-title="ui.composer.attach.title">
@@ -830,6 +834,18 @@
           <button data-v="off" data-i18n="ui.set.chime.off" data-on-click="245">Quiet</button>
         </div>
       </div>
+      <p class="sec-label" data-i18n="ui.set.links.label">Links</p>
+      <!-- A link preview is fetched by YOUR node, once, when you send the
+           link — never by the people who read it. That is the whole reason
+           the switch is here rather than assumed: going out to a stranger's
+           server is something a person should be able to decline. -->
+      <div class="list-row">
+        <span class="lr-label" data-i18n="ui.set.linkprev">Link previews<span class="lr-sub" data-i18n="ui.set.linkprev.sub"> · your node fetches once; readers fetch nothing</span></span>
+        <div class="segmented" id="setLinkPreview">
+          <button data-v="on" data-i18n="ui.set.linkprev.on" data-on-click="246">On</button>
+          <button data-v="off" data-i18n="ui.set.linkprev.off" data-on-click="247">Off</button>
+        </div>
+      </div>
       <!-- The technical layer. It used to be a word above every conversation
            for a mode almost nobody turns on; whoever needs to read a
            capability set knows to come looking, and everybody else was
@@ -1377,6 +1393,7 @@
 <script src="registry.js"></script>
 <script src="renderers.js"></script>
 <script src="markdown.js"></script>
+<script src="linkcard.js"></script>
 <script src="publications.js"></script>
 <script src="apps.js"></script>
 <script src="listening.js"></script>

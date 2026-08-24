@@ -249,6 +249,16 @@ func (a *APIServer) Handler() http.Handler {
 	mux.HandleFunc("POST /api/spaces/{id}/knock", a.auth(a.handleKnockOn))
 	mux.HandleFunc("GET /api/refusals", a.auth(a.handleRefusals))
 	mux.HandleFunc("DELETE /api/refusals/{principal}", a.auth(a.handleUnrefuse))
+
+	// A link preview is fetched by the SENDER, once, before the send —
+	// never by a reader opening a room (node/unfurl.go).
+	mux.HandleFunc("POST /api/unfurl", a.auth(a.handleUnfurl))
+
+	// The video window (node/player.go). Deliberately unauthenticated and
+	// deliberately not part of the interface document: it exists so a video
+	// can play WITHOUT relaxing this origin's frame-src for everyone.
+	mux.HandleFunc("GET /player", a.handlePlayer)
+	mux.HandleFunc("POST /api/player/open", a.auth(a.handleOpenPlayer))
 	// QuietRank (AT-0): device-local attention layer.
 	mux.HandleFunc("GET /api/signals", a.auth(a.handleSignals))
 	mux.HandleFunc("POST /api/signals/{id}/seen", a.auth(a.handleSignalSeen))

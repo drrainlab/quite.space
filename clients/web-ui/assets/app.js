@@ -580,6 +580,7 @@ function relayIntervalField() {
 }
 function syncSettingsUI() {
   if (typeof chimeSyncUI === 'function') chimeSyncUI();
+  if (typeof LINKS !== 'undefined') LINKS.syncUI();
   const lang = (typeof localeName === 'function') ? localeName() : 'en';
   document.querySelectorAll('#setLang button').forEach(b =>
     b.classList.toggle('sel', b.dataset.v === lang));
@@ -2488,13 +2489,34 @@ async function say(e) {
       refreshAI();
       return false;
     }
-    await api(`/api/spaces/${current}/messages`, {
-      method: 'POST',
-      body: JSON.stringify(body),
-    });
+    // A link card, when one is staged, is a BLOCK of its own — the
+    // protocol has no "text with an attachment", and inventing one here
+    // would mean a reader that has never heard of cards losing the
+    // message too.
+    //
+    // So: a message that is nothing but its address becomes the card
+    // alone (one paste, one entry — the ordinary case). A message with
+    // words keeps the words as the message and the card follows them.
+    // A REPLY always sends the text, because the reply edge lives on the
+    // message and a card cannot carry it: dropping the text would drop
+    // the answer's connection to what it answered.
+    const link = typeof LINKS !== 'undefined' ? LINKS.pending(inp.value) : null;
+    const textToo = !link || !link.bare || !!replyTarget;
+    if (textToo) {
+      await api(`/api/spaces/${current}/messages`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
+    }
+    if (link) {
+      // The card is best-effort: the message is already said, and a block
+      // the space will not take must not read as a failure to send.
+      try { await LINKS.send(link.card); } catch (cardErr) { console.warn('link card', cardErr); }
+    }
     inp.value = '';
     growComposer(inp);
     cancelReply();
+    if (typeof LINKS !== 'undefined') LINKS.reset();
     if (typeof mentionsReset === 'function') mentionsReset();
     await refreshSpace();
   } catch (err) { alert(err.message); }
@@ -3956,7 +3978,9 @@ function makeProgress(have, total) {
 const FEED_RENDERERS = {
   // Mentions come resolved from the node (signed field); mentionText only
   // decorates the names, it never re-parses the message for addressing.
-  text: (e) => (typeof mentionText === 'function' ? mentionText(e) : textNode('txt', e.text)),
+  // …and a plain message that is a video address gets a play control.
+  // Nothing is fetched for it: LINKS.decorate adds a verb, not a card.
+  text: (e) => LINKS.decorate(typeof mentionText === 'function' ? mentionText(e) : textNode('txt', e.text)),
   visual: (e) => renderVisual(e),
   video: (e) => renderVideo(e),
   voice: (e) => renderVoiceAudio(e),
@@ -4431,24 +4455,12 @@ function renderFile(e) {
   return wrap;
 }
 
-function renderLink(e) {
-  const card = document.createElement('div');
-  card.className = 'linkcard';
-  // e.url is whoever posted the entry's string. Through the same scheme
-  // check as every other link the client draws — a refused address stays
-  // readable and stops being clickable, rather than disappearing.
-  const href = MD.safeHref(e.url);
-  const a = document.createElement(href ? 'a' : 'span');
-  if (href) {
-    a.setAttribute('href', href);
-    a.setAttribute('target', '_blank');
-    a.setAttribute('rel', 'noopener noreferrer');
-  }
-  a.textContent = e.title || e.url;
-  card.appendChild(a);
-  if (e.description) card.appendChild(textNode('meta', e.description));
-  return card;
-}
+// A link card renders from the bytes that ARRIVED with it and asks the
+// network for nothing — linkcard.js holds the whole rule and the drawing.
+// Whether the card wears a play control is decided HERE, by the reader,
+// from the address; a sender does not get to declare that their link
+// deserves one.
+function renderLink(e) { return LINKS.build(e); }
 
 function renderWave(b64, progress) {
   const bytes = atob(b64);
