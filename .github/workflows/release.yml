@@ -100,11 +100,20 @@ jobs:
           # failure when it does not reads to a person as a corrupt download.
           # Deriving it arithmetically from the tag is monotonic for as long
           # as the tags are, which is a property a human bump does not have.
+          #
+          # The scale is one order wider than the obvious MAJ*10000+MIN*100+PAT,
+          # and the widening is load-bearing: hand-built release candidates
+          # (scripts/android/beta-apk.sh) already shipped to testers' phones
+          # with codes 110–124, and under the old formula v0.1.6 would have
+          # come out as 106 — a DOWNGRADE to every phone that ever carried an
+          # rc, refusable only by uninstalling the node with it. 0.1.6 → 1060
+          # leaves ten codes of room per patch for exactly those rc builds
+          # (rcN of the NEXT patch = its base code + N, capped at +9).
           BASE="${NAME%%-*}"
           MAJ="$(echo "$BASE" | cut -d. -f1)"
           MIN="$(echo "$BASE" | cut -d. -f2)"
           PAT="$(echo "$BASE" | cut -d. -f3)"
-          CODE=$(( ${MAJ:-0} * 10000 + ${MIN:-0} * 100 + ${PAT:-0} ))
+          CODE=$(( ${MAJ:-0} * 100000 + ${MIN:-0} * 1000 + ${PAT:-0} * 10 ))
           if [ "$CODE" -le 0 ]; then CODE=1; fi
           echo "tag=$TAG"   >> "$GITHUB_OUTPUT"
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
