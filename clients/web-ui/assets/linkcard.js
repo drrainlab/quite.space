@@ -92,6 +92,41 @@ const LINKS = (() => {
     return '';
   }
 
+  /**
+   * A SoundCloud track or set, as the path its own widget resolves:
+   * "artist/track" or "artist/sets/name". Short on.soundcloud.com links
+   * are NOT recognised — they redirect, and following a redirect to find
+   * out what something is would be a fetch this file promised never to
+   * make.
+   */
+  function soundcloudPath(raw) {
+    let u;
+    try { u = new URL(raw); } catch { return ''; }
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return '';
+    const h = u.hostname.toLowerCase().replace(/^(www\.|m\.)/, '');
+    if (h !== 'soundcloud.com') return '';
+    const segs = u.pathname.replace(/^\/+|\/+$/g, '').split('/');
+    if (segs.length < 2 || segs.length > 3) return '';
+    for (const seg of segs) {
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(seg)) return '';
+    }
+    const path = segs.join('/');
+    return path.length <= 200 ? path : '';
+  }
+
+  /**
+   * What an address can PLAY as, or null. One place, so the card, the
+   * chip and the mount all agree on what deserves the control — and on
+   * which site's name the first-time question wears.
+   */
+  function playTarget(raw) {
+    const v = youtubeID(raw);
+    if (v) return { q: 'v=' + encodeURIComponent(v), site: 'YouTube', timed: true };
+    const sc = soundcloudPath(raw);
+    if (sc) return { q: 'sc=' + encodeURIComponent(sc), site: 'SoundCloud', timed: false };
+    return null;
+  }
+
   /** Seconds into a video, when the address carries a timestamp. */
   function startAt(raw) {
     let u;
@@ -257,7 +292,7 @@ const LINKS = (() => {
   function build(e, opts) {
     const compact = !!(opts && opts.compact);
     const url = e.url || '';
-    const vid = youtubeID(url);
+    const target = playTarget(url);
     const card = document.createElement('div');
     card.className = 'linkcard' + (compact ? ' compact' : '');
 
@@ -271,13 +306,13 @@ const LINKS = (() => {
       img.alt = '';
       img.loading = 'lazy';
       holder.appendChild(img);
-      if (vid) {
+      if (target) {
         const play = document.createElement('button');
         play.type = 'button';
         play.className = 'link-play';
         play.setAttribute('aria-label', t('link.play'));
         play.textContent = '▶';
-        play.onclick = (ev) => { ev.preventDefault(); ev.stopPropagation(); watch(url, vid, card, holder); };
+        play.onclick = (ev) => { ev.preventDefault(); ev.stopPropagation(); watch(url, target, card, holder); };
         holder.appendChild(play);
       }
       card.appendChild(holder);
@@ -315,6 +350,18 @@ const LINKS = (() => {
       d.textContent = e.description;
       body.appendChild(d);
     }
+    // A playable address whose card has NO picture still deserves the
+    // verb — the control lived on the poster, so a posterless card was
+    // silently inert. The chip mounts the same frame at the top of the
+    // card.
+    if (target && !e.thumb_b64 && !compact) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'link-watch';
+      b.textContent = '▶ ' + t('link.play');
+      b.onclick = (ev) => { ev.preventDefault(); ev.stopPropagation(); watch(url, target, card, null); };
+      body.appendChild(b);
+    }
     card.appendChild(body);
     return card;
   }
@@ -331,17 +378,17 @@ const LINKS = (() => {
    * re-asked forever is a question nobody reads.
    *
    * @param {string} url  the address, read for its timestamp
-   * @param {string} vid  the video id, already through the alphabet check
+   * @param {{q:string,site:string,timed:boolean}} target  what playTarget recognised
    * @param {Element} host  where the frame will be mounted
    * @param {Element} [replace]  the element the frame takes the place of
    */
-  function watch(url, vid, host, replace) {
-    if (localStorage.getItem(PLAY_OK) === 'yes') { mount(vid, url, host, replace); return; }
+  function watch(url, target, host, replace) {
+    if (localStorage.getItem(PLAY_OK) === 'yes') { mount(target, url, host, replace); return; }
     if (host.querySelector('.link-ask')) return;
     const ask = document.createElement('div');
     ask.className = 'link-ask';
     const line = document.createElement('span');
-    line.textContent = t('link.playAsk');
+    line.textContent = t('link.playAsk', { site: target.site });
     ask.appendChild(line);
     const no = document.createElement('button');
     no.type = 'button'; no.className = 'btn-plain';
@@ -353,7 +400,7 @@ const LINKS = (() => {
     yes.onclick = () => {
       localStorage.setItem(PLAY_OK, 'yes');
       ask.remove();
-      mount(vid, url, host, replace);
+      mount(target, url, host, replace);
     };
     ask.append(no, yes);
     host.appendChild(ask);
@@ -372,8 +419,8 @@ const LINKS = (() => {
    * the embed loses it silently — autoplay first, which is the difference
    * between a video that starts and a black rectangle.
    */
-  function mount(vid, url, host, replace) {
-    const t0 = startAt(url);
+  function mount(target, url, host, replace) {
+    const t0 = target.timed ? startAt(url) : '';
     const frame = document.createElement('iframe');
     frame.className = 'link-player';
     // Relative here, absolute in a shell that has no http origin of its
@@ -381,7 +428,7 @@ const LINKS = (() => {
     // refuses a page whose identity cannot travel in a Referer header. The
     // node says where its player listens; empty means "right here".
     const origin = (typeof status === 'object' && status && status.player_origin) || '';
-    frame.src = origin + '/player?v=' + encodeURIComponent(vid) +
+    frame.src = origin + '/player?' + target.q +
       (t0 ? '&t=' + encodeURIComponent(t0) : '');
     frame.setAttribute('allow', 'autoplay; encrypted-media; picture-in-picture; fullscreen');
     frame.setAttribute('allowfullscreen', '');
@@ -406,22 +453,22 @@ const LINKS = (() => {
     if (!node || !node.querySelectorAll) return node;
     for (const a of node.querySelectorAll('a[href]')) {
       const href = a.getAttribute('href') || '';
-      const vid = youtubeID(href);
-      if (!vid) continue;
+      const target = playTarget(href);
+      if (!target) continue;
       const next = a.nextElementSibling;
       if (next && next.classList && next.classList.contains('link-watch')) continue;
       const b = document.createElement('button');
       b.type = 'button';
       b.className = 'link-watch';
       b.textContent = '▶ ' + t('link.play');
-      b.onclick = (ev) => { ev.preventDefault(); ev.stopPropagation(); watch(href, vid, node, b); };
+      b.onclick = (ev) => { ev.preventDefault(); ev.stopPropagation(); watch(href, target, node, b); };
       a.after(b);
     }
     return node;
   }
 
   return { enabled, setEnabled, syncUI, onInput, pending, settle, send, reset, drop,
-    build, decorate, youtubeID, firstURL, _startAt: startAt };
+    build, decorate, youtubeID, soundcloudPath, playTarget, firstURL, _startAt: startAt };
 })();
 
 if (typeof window !== 'undefined') window.LINKS = LINKS;

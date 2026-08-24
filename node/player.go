@@ -39,12 +39,12 @@ import (
 	"time"
 )
 
-// playerPolicy is the player's own policy: 'none' by default, one frame
-// source, one image host, and no script at all — including ours.
+// playerPolicy is the player's own policy: 'none' by default, the named
+// embed hosts, one image host, and no script at all — including ours.
 //
 // script-src 'none' is the load-bearing line. Everything permitted here is
 // passive: a frame and a poster. Whatever runs, runs one level further
-// down under Google's own policy, in a document this one cannot read.
+// down under the provider's own policy, in a document this one cannot read.
 //
 // img-src names the poster host because the embed draws its still frame
 // from it, and under `default-src 'none'` that was refused — the video
@@ -52,17 +52,29 @@ import (
 // it and the interface is not: an image loaded HERE is loaded by a page
 // carrying no token, only after somebody pressed play.
 //
-// frame-ancestors is 'self' because being framed by the conversation is
-// the point. Nobody else can: this page is only ever served from loopback,
-// to a document from the same origin.
+// frame-ancestors names TWO ancestors, and the second is a lesson paid
+// for in the field. 'self' covers the browser and the phone, where the
+// conversation and this page share a loopback origin. The DESKTOP is the
+// whole reason this page can be served from a separate listener — its
+// conversation lives at wails://localhost, which is NOT the same origin
+// as http://127.0.0.1:PORT — so 'self' alone made the shell refuse the
+// very nesting the listener exists for ("Refused to load … does not
+// appear in the frame-ancestors directive"). The wails: scheme-source
+// admits that one shell and nothing routable: no web page has a wails://
+// ancestor to claim.
+//
+// X-Frame-Options is deliberately NOT set: it cannot express "same
+// origin, or our own shell's scheme", and a header that says less than
+// the policy while browsers honour the stricter of the two would
+// re-break the desktop silently.
 const playerPolicy = "default-src 'none'; " +
-	"frame-src https://www.youtube-nocookie.com; " +
+	"frame-src https://www.youtube-nocookie.com https://w.soundcloud.com; " +
 	"img-src https://i.ytimg.com https://i9.ytimg.com; " +
 	"style-src 'unsafe-inline'; " +
 	"script-src 'none'; " +
 	"base-uri 'none'; " +
 	"form-action 'none'; " +
-	"frame-ancestors 'self'"
+	"frame-ancestors 'self' wails:"
 
 func (a *APIServer) handlePlayer(w http.ResponseWriter, r *http.Request) {
 	// The id goes through the same alphabet check the card was built with,
@@ -85,39 +97,80 @@ func (a *APIServer) handlePlayer(w http.ResponseWriter, r *http.Request) {
 	// did not already say. The interface itself keeps no-referrer.
 	h.Set("Referrer-Policy", "origin")
 	h.Set("Content-Type", "text/html; charset=utf-8")
-	// X-Frame-Options has no "same origin plus a policy" mode that agrees
-	// with frame-ancestors, and where the two disagree browsers take the
-	// stricter. SAMEORIGIN is what this page means.
-	h.Set("X-Frame-Options", "SAMEORIGIN")
-	if vid == "" {
+	sc := validSoundcloudPath(r.URL.Query().Get("sc"))
+	if vid == "" && sc == "" {
 		w.WriteHeader(http.StatusBadRequest)
 		w.Write([]byte(`<!doctype html><title>—</title><body style="background:#0b0910;color:#8a8296;` +
 			`font:14px/1.6 ui-sans-serif,system-ui;display:grid;place-items:center;height:100vh;margin:0">` +
 			`that address is not a video`))
 		return
 	}
-	q := url.Values{
-		"autoplay": {"1"},
-		"rel":      {"0"},
-		// modestbranding is the small courtesy: this frame is a player,
-		// not a place.
-		"modestbranding": {"1"},
+	var src, title string
+	if vid != "" {
+		q := url.Values{
+			"autoplay": {"1"},
+			"rel":      {"0"},
+			// modestbranding is the small courtesy: this frame is a player,
+			// not a place.
+			"modestbranding": {"1"},
+		}
+		// Start time, when the person pasted one. Digits only.
+		if t := digitsOnly(r.URL.Query().Get("t"), 7); t != "" {
+			q.Set("start", t)
+		}
+		src = "https://www.youtube-nocookie.com/embed/" + vid + "?" + q.Encode()
+		title = vid
+	} else {
+		// SoundCloud's widget takes the TRACK PAGE's address and resolves
+		// it itself; what this route accepts is only the path, through its
+		// own alphabet check, so the widest thing a caller can name is a
+		// page on soundcloud.com.
+		q := url.Values{
+			"url":       {"https://soundcloud.com/" + sc},
+			"auto_play": {"true"},
+			"visual":    {"true"},
+		}
+		src = "https://w.soundcloud.com/player/?" + q.Encode()
+		title = sc
 	}
-	// Start time, when the person pasted one. Digits only.
-	if t := digitsOnly(r.URL.Query().Get("t"), 7); t != "" {
-		q.Set("start", t)
-	}
-	src := "https://www.youtube-nocookie.com/embed/" + vid + "?" + q.Encode()
 	// The permissions are delegated a level at a time: this frame was
 	// granted them by the conversation, and hands the same set down. Miss
 	// one here and the embed silently loses it — autoplay first.
 	w.Write([]byte(`<!doctype html><html><head><meta charset="utf-8">` +
 		`<meta name="viewport" content="width=device-width,initial-scale=1">` +
-		`<title>` + vid + `</title>` +
+		`<title>` + title + `</title>` +
 		`<style>html,body{margin:0;height:100%;background:#000;overflow:hidden}` +
 		`iframe{border:0;width:100%;height:100%;display:block}</style>` +
 		`</head><body><iframe src="` + src + `" ` +
 		`allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe></body></html>`))
+}
+
+// validSoundcloudPath keeps a track reference a path: two or three plain
+// segments ("artist/track", "artist/sets/name"), each in the alphabet
+// SoundCloud's own slugs use. It is spliced into a URL, so anything it
+// returns must be inert there — same doctrine as validVideoID.
+func validSoundcloudPath(s string) string {
+	if s == "" || len(s) > 200 {
+		return ""
+	}
+	segs := strings.Split(s, "/")
+	if len(segs) < 2 || len(segs) > 3 {
+		return ""
+	}
+	for _, seg := range segs {
+		if seg == "" || seg == "." || seg == ".." {
+			return ""
+		}
+		for i := 0; i < len(seg); i++ {
+			c := seg[i]
+			ok := c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' ||
+				c >= '0' && c <= '9' || c == '-' || c == '_' || c == '.'
+			if !ok {
+				return ""
+			}
+		}
+	}
+	return s
 }
 
 func digitsOnly(s string, max int) string {

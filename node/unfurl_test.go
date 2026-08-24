@@ -125,6 +125,12 @@ func TestCleanIsAlwaysOneReadableLine(t *testing.T) {
 	if got := clean("null\x00byte\x07bell", 300); got != "nullbytebell" {
 		t.Errorf("control bytes survived: %q", got)
 	}
+	// The wild's entity soup and markup fragments: double-escaped spaces
+	// resolve, complete tags vanish, and a tag the SITE truncated mid-way
+	// does not survive as a dangling bracket.
+	if got := clean("From the album,&amp;nbsp;featured in <a href=\"x\">this ad</a> and <a", 300); got != "From the album, featured in this ad and" {
+		t.Errorf("markup fragments survived: %q", got)
+	}
 	if n := len(clean(strings.Repeat("я", 400), 10)); n > 10 {
 		t.Errorf("clip left %d bytes", n)
 	}

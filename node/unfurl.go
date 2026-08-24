@@ -44,6 +44,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -548,8 +549,25 @@ func pick(m map[string]string, keys ...string) string {
 // clean turns whatever a page declared into one line of readable text:
 // entities resolved, whitespace collapsed, invalid encoding dropped, and
 // clipped to a length the block format accepts.
+var (
+	// A markup fragment inside a page's self-description is noise, not
+	// meaning: og:description is supposed to be text, and sites that put
+	// "<a href=…>" in it clipped it themselves. The second pattern is a
+	// tag the SITE truncated mid-way ("… in this ad <a"), which would
+	// otherwise survive as a dangling bracket.
+	tagRe     = regexp.MustCompile(`<[^<>]{0,200}>`)
+	openTagRe = regexp.MustCompile(`<[^<>]{0,200}$`)
+)
+
 func clean(s string, max int) string {
-	s = html.UnescapeString(s)
+	// Twice, because the wild double-escapes: a page that writes
+	// "&amp;nbsp;" in its own description meant a space, and one pass
+	// leaves "&nbsp;" on screen as seven characters of noise. A site that
+	// genuinely meant to DISPLAY "&amp;" loses it — a smaller lie than
+	// the entity soup real pages produce.
+	s = html.UnescapeString(html.UnescapeString(s))
+	s = tagRe.ReplaceAllString(s, " ")
+	s = openTagRe.ReplaceAllString(s, "")
 	s = strings.Map(func(r rune) rune {
 		if r == '\n' || r == '\r' || r == '\t' {
 			return ' '

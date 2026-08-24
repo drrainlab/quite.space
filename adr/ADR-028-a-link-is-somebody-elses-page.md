@@ -132,6 +132,14 @@ Three consequences worth writing down, because each looked like a bug first:
   loopback form beside `'self'`: still our page, still token-free, still
   one frame from the embed. Every other shell reaches this node over
   http already and uses the plain relative path.
+
+  The same fact cuts once more, from the other side: the player's
+  `frame-ancestors` cannot be `'self'` alone, because on the desktop the
+  ANCESTOR is `wails://localhost` and the player is the loopback
+  listener — different origins by definition, so `'self'` refused the
+  very nesting the listener exists for. The policy is `'self' wails:`,
+  and X-Frame-Options is deliberately absent: it cannot express that
+  pair, and browsers honour the stricter of the two.
 - **A subframe's navigation is not the top frame leaving.** The phone's
   WebView client redirects non-loopback addresses to the system, and it
   fires for every frame — so the embed's own load looked like an escape
@@ -163,6 +171,8 @@ answer. A question re-asked forever is a question nobody reads.
 - Accepted: a card can be a lie, because a page can lie about itself. It is
   drawn as a quotation for that reason, and the address under it is the
   part that cannot.
-- Not decided here: previews for anything but pages and YouTube. Other
-  providers would each be a recognisor of their own, and the general
-  OpenGraph path already covers most of what people paste.
+- Not decided here: players for anything but YouTube and SoundCloud.
+  Each provider is a recognisor plus one named host in the player's
+  policy — deliberately a short list, grown one measured need at a time.
+  Previews need no such list: the general OpenGraph path already covers
+  most of what people paste.

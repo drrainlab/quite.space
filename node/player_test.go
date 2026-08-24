@@ -50,8 +50,19 @@ func TestPlayerPageFramesOnlyTheOneHost(t *testing.T) {
 			t.Errorf("the interface's frame-src names %q -- only this node's own origins belong here", src)
 		}
 	}
-	if !strings.Contains(csp, "frame-ancestors 'self'") {
-		t.Error("the player refuses to be framed by the conversation")
+	// Both ancestors, by name. 'self' is the browser and the phone;
+	// wails: is the desktop shell, whose conversation lives at
+	// wails://localhost — NOT the same origin as the loopback listener
+	// this page is served from there. 'self' alone made the desktop
+	// refuse the very nesting the listener exists for.
+	if !strings.Contains(csp, "frame-ancestors 'self' wails:") {
+		t.Errorf("the player's ancestors regressed: %s", csp)
+	}
+	// And no X-Frame-Options beside it: XFO cannot express that pair, and
+	// browsers honour the stricter of the two — a SAMEORIGIN here would
+	// re-break the desktop silently.
+	if rec.Header().Get("X-Frame-Options") != "" {
+		t.Error("X-Frame-Options is set -- it would override frame-ancestors with less than the policy means")
 	}
 	body := rec.Body.String()
 	if !strings.Contains(body, "https://www.youtube-nocookie.com/embed/7ZrcTh2-uvQ?") {
@@ -100,6 +111,39 @@ func TestPlayerRefusesAnythingButAnID(t *testing.T) {
 		}
 		if strings.Contains(rec.Body.String(), "youtube-nocookie") {
 			t.Errorf("%q reached an embed", bad)
+		}
+	}
+}
+
+// The other provider, through the same door: a SoundCloud reference is a
+// PATH on soundcloud.com, checked by its own alphabet before it may be
+// spliced anywhere.
+func TestPlayerSoundcloud(t *testing.T) {
+	a := &APIServer{}
+	rec := httptest.NewRecorder()
+	a.handlePlayer(rec, httptest.NewRequest("GET", "/player?sc="+url.QueryEscape("artist/sets/mix"), nil))
+	if rec.Code != 200 {
+		t.Fatalf("refused a good path: %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "https://w.soundcloud.com/player/?") ||
+		!strings.Contains(body, "soundcloud.com%2Fartist%2Fsets%2Fmix") {
+		t.Errorf("no widget for the path: %s", body)
+	}
+	if !strings.Contains(rec.Header().Get("Content-Security-Policy"), "https://w.soundcloud.com") {
+		t.Error("the policy does not admit the widget host it embeds")
+	}
+	for _, bad := range []string{
+		"artist", "a/b/c/d", "../etc/passwd", "artist/..", "a//b",
+		`a"quote/track`, "artist/tr ack", strings.Repeat("a", 120) + "/" + strings.Repeat("b", 120),
+	} {
+		rec := httptest.NewRecorder()
+		a.handlePlayer(rec, httptest.NewRequest("GET", "/player?sc="+url.QueryEscape(bad), nil))
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("%q was accepted (%d)", bad, rec.Code)
+		}
+		if strings.Contains(rec.Body.String(), "w.soundcloud.com") {
+			t.Errorf("%q reached the widget", bad)
 		}
 	}
 }
