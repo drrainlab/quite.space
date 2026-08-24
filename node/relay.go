@@ -10,6 +10,7 @@ import (
 	"log"
 	"net"
 	"sort"
+	"sync/atomic"
 	"time"
 
 	"github.com/drrainlab/quiet_places/kernel/assets"
@@ -906,9 +907,7 @@ func (r *Runtime) answerWantsRouted(tid id.TerminalID, wanter []byte, wants [][]
 		// wanting to answer, saying nothing.
 		r.noteWantHold(WantHold{Space: tid, Wanter: dev, Wants: len(wants),
 			Reason: "held_no_route"})
-		if wantsProbe != nil { // test seam, see its declaration
-			wantsProbe(r, dev, "no_route")
-		}
+		probeWants(r, dev, "no_route")
 		// AND STILL TRIED, TENTATIVELY — the same shape frame delivery
 		// takes: put the answer at this node's OWN relay on the chance the
 		// wanter shares it. In a single-relay world that chance is simply
@@ -924,9 +923,7 @@ func (r *Runtime) answerWantsRouted(tid id.TerminalID, wanter []byte, wants [][]
 		}
 		return
 	}
-	if wantsProbe != nil { // test seam, see its declaration
-		wantsProbe(r, dev, "answer→"+eps[0])
-	}
+	probeWants(r, dev, "answer→"+eps[0])
 	// Bulk lane: answers carry media blobs. The hold clears only once the
 	// lane actually carried the answer out — clearing on the way in would
 	// erase "waiting for a route" a moment before a dead relay proved the
@@ -958,9 +955,7 @@ func (r *Runtime) answerWantsRouted(tid id.TerminalID, wanter []byte, wants [][]
 	}
 	r.noteWantHold(WantHold{Space: tid, Wanter: dev, Wants: len(wants),
 		Reason: reason})
-	if wantsProbe != nil { // test seam, see its declaration
-		wantsProbe(r, dev, "answer_failed")
-	}
+	probeWants(r, dev, "answer_failed")
 }
 
 // answerWants ships the requested blobs and reports what happened: bytes
@@ -1690,8 +1685,22 @@ func (r *Runtime) replyBoxCaps(tids []id.TerminalID, bucket uint64) [][]byte {
 // wantsProbe is a TEST SEAM: which branch a routed want-answer took, and
 // at which holder. The media-matrix product invariant reads it to prove
 // the true holder saw the want — the exact cell Phase 0 found empty. Set
-// only by tests, before traffic exists; nil in production.
-var wantsProbe func(holder *Runtime, dev id.DeviceID, outcome string)
+// only by tests; nil in production.
+//
+// An ATOMIC, because "set only by tests, before traffic exists" was a
+// promise the suite could not keep: the runtimes of the PREVIOUS test are
+// still draining their relay goroutines when the next test assigns this,
+// and the race detector caught that read against the assignment on a CI
+// run that then took a release hostage. Production pays one atomic load
+// of a pointer that is forever nil.
+var wantsProbe atomic.Pointer[func(holder *Runtime, dev id.DeviceID, outcome string)]
+
+// probeWants fires the seam if a test armed it.
+func probeWants(holder *Runtime, dev id.DeviceID, outcome string) {
+	if p := wantsProbe.Load(); p != nil {
+		(*p)(holder, dev, outcome)
+	}
+}
 
 // recordStatedReturnRoutes records a wanter's stated ingress (bundle key
 // 8) as RouteAdvertised — see the comment at its call site for the trust
