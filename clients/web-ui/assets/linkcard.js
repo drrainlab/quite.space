@@ -32,6 +32,13 @@
  * The play control is decided HERE, from the address, by the reader —
  * never from a flag in the event. A sender does not get to declare that
  * their link deserves a play button.
+ *
+ * PRESSING IT IS THE ONE OUTBOUND MOMENT, and it plays in place, inside
+ * the conversation. What gets mounted is our own /player, which frames
+ * the embed one level further down: this document never frames
+ * youtube.com, so its policy permits nothing but 'self' and a third
+ * party's script never stands beside the session token (node/player.go
+ * carries the argument in full).
  */
 const LINKS = (() => {
   /** Device-local, like every other switch about what this screen does. */
@@ -45,6 +52,13 @@ const LINKS = (() => {
   /** What we last asked the node about, so one paste asks once. */
   let asked = '';
   let timer = null;
+  /** The lookup in flight, so a send can wait for the one already running. */
+  let inflight = null;
+
+  /** How long typing must stop before the node goes out to the network. */
+  const TYPING_PAUSE = 260;
+  /** The longest a send will wait for a card before going without one. */
+  const SETTLE_CAP = 2500;
 
   const enabled = () => localStorage.getItem(KEY) !== 'off';
 
@@ -110,28 +124,67 @@ const LINKS = (() => {
     if (!url) { drop(); asked = ''; return; }
     if (url === stagedFor || url === asked) return;
     clearTimeout(timer);
-    timer = setTimeout(() => look(url), 450);
+    timer = setTimeout(() => look(url), TYPING_PAUSE);
   }
 
-  async function look(url) {
+  /**
+   * look never rejects and never leaves `inflight` set: settle() waits on
+   * it at send time, and a send that hangs on a page that will not answer
+   * would be a worse bug than a missing card.
+   */
+  function look(url, opts) {
     asked = url;
+    const keep = !!(opts && opts.keep);
     const stage = document.getElementById('linkStage');
-    if (!stage) return;
-    stage.hidden = false;
-    stage.className = 'link-stage waiting';
-    stage.textContent = t('link.looking');
-    try {
-      const card = await api('/api/unfurl', { method: 'POST', body: JSON.stringify({ url }) });
-      // The box may have moved on while the page was answering.
-      const box = document.getElementById('text');
-      if (firstURL(box && box.value) !== url) { drop(); return; }
-      staged = card; stagedFor = url;
-      draw(stage);
-    } catch {
-      // A site that will not answer is not an error worth a dialog: the
-      // address itself was always readable, and that is what will be sent.
-      drop();
+    if (stage) {
+      stage.hidden = false;
+      stage.className = 'link-stage waiting';
+      stage.textContent = t('link.looking');
     }
+    inflight = (async () => {
+      try {
+        const card = await api('/api/unfurl', { method: 'POST', body: JSON.stringify({ url }) });
+        // The box may have moved on while the page was answering — unless
+        // this is the send itself, which has the text it is sending and is
+        // about to empty the box anyway.
+        const box = document.getElementById('text');
+        if (!keep && firstURL(box && box.value) !== url) { drop(); return; }
+        staged = card; stagedFor = url;
+        if (stage) draw(stage);
+      } catch {
+        // A site that will not answer is not an error worth a dialog: the
+        // address itself was always readable, and that is what will be
+        // sent.
+        drop();
+      } finally {
+        inflight = null;
+      }
+    })();
+    return inflight;
+  }
+
+  /**
+   * SEND WAITS FOR THE CARD IT IS ABOUT TO NEED.
+   *
+   * The obvious flow — paste, press send — is faster than a round trip to
+   * a stranger's server, so the first build of this shipped a feature that
+   * only worked for people who hesitated. Nobody hesitates.
+   *
+   * So a send with an address in it settles first: it waits for a lookup
+   * already running, or starts one, and gives up after SETTLE_CAP. The cap
+   * is what keeps this honest — a slow page delays a message by at most
+   * that, and then the message goes as the plain address it always was.
+   */
+  async function settle(text) {
+    if (!enabled()) return null;
+    const url = firstURL(text);
+    if (!url) return null;
+    if (stagedFor !== url) {
+      clearTimeout(timer);
+      const work = inflight && asked === url ? inflight : look(url, { keep: true });
+      await Promise.race([work, new Promise((r) => setTimeout(r, SETTLE_CAP))]);
+    }
+    return pending(text);
   }
 
   function draw(stage) {
@@ -224,7 +277,7 @@ const LINKS = (() => {
         play.className = 'link-play';
         play.setAttribute('aria-label', t('link.play'));
         play.textContent = '▶';
-        play.onclick = (ev) => { ev.preventDefault(); ev.stopPropagation(); watch(url, vid, card); };
+        play.onclick = (ev) => { ev.preventDefault(); ev.stopPropagation(); watch(url, vid, card, holder); };
         holder.appendChild(play);
       }
       card.appendChild(holder);
@@ -269,20 +322,22 @@ const LINKS = (() => {
   // ---- watching ----------------------------------------------------------
 
   /**
-   * Play, and say what playing costs.
+   * Play, and say once what playing costs.
    *
-   * Everything above this line is local. Pressing play is the one moment
-   * the person deliberately reaches out to YouTube, so the first time it
-   * is asked rather than assumed — once, and remembered, because a
-   * question re-asked forever is a question nobody reads.
+   * Everything above this line is local: the card was drawn from bytes
+   * that arrived with the message. Pressing play is the one moment
+   * somebody deliberately reaches out to YouTube, so the first time it is
+   * asked rather than assumed — once, and remembered, because a question
+   * re-asked forever is a question nobody reads.
    *
-   * The video opens in a window of its own (node/player.go): a document
-   * with no token, no application script and a policy that permits one
-   * frame. The interface's own `frame-src 'none'` is not relaxed for it.
+   * @param {string} url  the address, read for its timestamp
+   * @param {string} vid  the video id, already through the alphabet check
+   * @param {Element} host  where the frame will be mounted
+   * @param {Element} [replace]  the element the frame takes the place of
    */
-  function watch(url, vid, card) {
-    if (localStorage.getItem(PLAY_OK) === 'yes') { open(vid, url); return; }
-    if (card.querySelector('.link-ask')) return;
+  function watch(url, vid, host, replace) {
+    if (localStorage.getItem(PLAY_OK) === 'yes') { mount(vid, url, host, replace); return; }
+    if (host.querySelector('.link-ask')) return;
     const ask = document.createElement('div');
     ask.className = 'link-ask';
     const line = document.createElement('span');
@@ -298,56 +353,41 @@ const LINKS = (() => {
     yes.onclick = () => {
       localStorage.setItem(PLAY_OK, 'yes');
       ask.remove();
-      open(vid, url);
+      mount(vid, url, host, replace);
     };
     ask.append(no, yes);
-    card.appendChild(ask);
+    host.appendChild(ask);
   }
 
   /**
-   * Three shells, three ways a window opens, and none of them is a
-   * fallback for a bug — each is what its platform actually does.
+   * Mount the player where the poster was.
    *
-   *   THE PHONE hands foreign addresses to the system (QuietActivity's
-   *     LocalOnlyClient does exactly that for any non-loopback host), so
-   *     the ordinary video address goes out and YouTube's own app —
-   *     or the browser — takes it. Sending it to /player instead would
-   *     load the player INSIDE the app's only WebView and replace the
-   *     conversation with a video.
+   * The frame is OUR OWN /player, not youtube.com — that page frames the
+   * embed under a policy of its own, in a document carrying no token and
+   * no script of ours. One frame of distance, and it is the reason the
+   * interface's own policy needs to permit nothing but 'self'
+   * (node/player.go says the rest).
    *
-   *   A BROWSER opens a window, which is the whole point of the player
-   *     route: a document with no token beside it.
-   *
-   *   THE DESKTOP SHELL opens nothing. The macOS webview implements no
-   *     delegate for new windows, so `window.open` and target=_blank are
-   *     silently inert there — a fact about the shell, not about this
-   *     card. So the node is asked to open it with the host's own
-   *     opener, the same way it opened the interface at startup.
+   * The permissions are handed down a level at a time. Miss one here and
+   * the embed loses it silently — autoplay first, which is the difference
+   * between a video that starts and a black rectangle.
    */
-  function open(vid, url) {
+  function mount(vid, url, host, replace) {
     const t0 = startAt(url);
-    if (typeof window !== 'undefined' && window.QuietHost) {
-      const href = typeof MD !== 'undefined' ? MD.safeHref(url) : '';
-      if (href) {
-        const a = document.createElement('a');
-        a.href = href; a.target = '_blank'; a.rel = 'noopener noreferrer';
-        a.style.display = 'none';
-        document.body.appendChild(a); a.click(); a.remove();
-      }
-      return;
-    }
-    const at = t0 ? '&t=' + encodeURIComponent(t0) : '';
-    // NOT `noopener` in the feature string: that makes window.open return
-    // null by specification, which would make "the shell refused" and "it
-    // worked" indistinguishable. The handle is severed after the fact
-    // instead — same result, and now the null means what it says.
-    const w = window.open('/player?v=' + encodeURIComponent(vid) + at, '_blank',
-      'width=900,height=560');
-    if (w) { try { w.opener = null; } catch { /* cross-origin, already safe */ } }
-    else {
-      api('/api/player/open', { method: 'POST',
-        body: JSON.stringify({ v: vid, t: t0 }) }).catch(() => {});
-    }
+    const frame = document.createElement('iframe');
+    frame.className = 'link-player';
+    // Relative here, absolute in a shell that has no http origin of its
+    // own: the desktop serves this interface over wails://, and an embed
+    // refuses a page whose identity cannot travel in a Referer header. The
+    // node says where its player listens; empty means "right here".
+    const origin = (typeof status === 'object' && status && status.player_origin) || '';
+    frame.src = origin + '/player?v=' + encodeURIComponent(vid) +
+      (t0 ? '&t=' + encodeURIComponent(t0) : '');
+    frame.setAttribute('allow', 'autoplay; encrypted-media; picture-in-picture; fullscreen');
+    frame.setAttribute('allowfullscreen', '');
+    frame.title = t('link.play');
+    if (replace && replace.parentNode) replace.replaceWith(frame);
+    else host.insertBefore(frame, host.firstChild);
   }
 
   /**
@@ -374,13 +414,13 @@ const LINKS = (() => {
       b.type = 'button';
       b.className = 'link-watch';
       b.textContent = '▶ ' + t('link.play');
-      b.onclick = (ev) => { ev.preventDefault(); ev.stopPropagation(); watch(href, vid, node); };
+      b.onclick = (ev) => { ev.preventDefault(); ev.stopPropagation(); watch(href, vid, node, b); };
       a.after(b);
     }
     return node;
   }
 
-  return { enabled, setEnabled, syncUI, onInput, pending, send, reset, drop,
+  return { enabled, setEnabled, syncUI, onInput, pending, settle, send, reset, drop,
     build, decorate, youtubeID, firstURL, _startAt: startAt };
 })();
 

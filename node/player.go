@@ -1,48 +1,68 @@
 package node
 
-// THE PLAYER WINDOW — watching a video without letting the video into the
-// room where the keys are.
+// THE PLAYER — a video plays inside the conversation, and the code that
+// plays it never stands next to the session token.
 //
-// The interface's Content-Security-Policy says `frame-src 'none'`, and the
-// comment above it says why: this origin holds the session token and can
-// drive every route on the node, so the policy's job is to make an
-// injection worth as little as possible. Embedding a video player INTO
-// that document would put a third party's code beside the token — which
-// is survivable (a cross-origin frame cannot read its parent) but is
-// exactly the kind of "survivable" a security policy exists to not rely
-// on, and it would mean relaxing the app's own policy for everyone,
-// forever, so that one card can play.
+// The obvious way to put a video in a chat is to drop an iframe into the
+// page. The obvious way is wrong HERE, and not by a little: this origin
+// holds the token and can drive every route on the node, which is why its
+// policy says script-src 'self' and connect-src 'self' and why the comment
+// above uiPolicy calls script execution "the whole game". A third party's
+// player loaded into that document is a permission granted forever so that
+// one card can play.
 //
-// So the video gets a room of its own. This route serves a document with
-// NO token, NO application script and a policy of its own that permits
-// exactly one thing: a frame from youtube-nocookie.com. Even a wholly
-// compromised embed here has nothing next to it to take.
+// So the frame is NESTED, and the nesting is the entire design:
+//
+//	the interface frames THIS PAGE — same origin, so its policy needs to
+//	  permit nothing but 'self', and an injection that abuses the
+//	  directive can frame a page of ours it could already have opened;
+//	this page frames the EMBED — under its own policy, in a document with
+//	  no token, no application script and no way back up (the interface
+//	  is cross-origin to nothing here, but there is nothing here to reach
+//	  for either).
+//
+// One frame of distance, bought for one word in one directive. That is the
+// difference between "youtube.com may run beside your keys" and "youtube
+// .com may run inside a blank page we serve".
 //
 // It is deliberately unauthenticated. It holds nothing, reads nothing and
 // says nothing about this node — its entire content is a video id that the
 // person watching just clicked. Requiring the token would only mean
-// putting the token in a URL that then travels to a window whose whole
-// purpose is to talk to somebody else.
+// putting the token in a URL bound for a document whose whole purpose is
+// to talk to somebody else.
 
 import (
-	"errors"
 	"net"
 	"net/http"
 	"net/url"
-	"os/exec"
-	"runtime"
 	"strings"
+	"time"
 )
 
-// playerPolicy is the video window's own policy. 'none' by default, one
-// frame source, and no script at all — including ours.
+// playerPolicy is the player's own policy: 'none' by default, one frame
+// source, one image host, and no script at all — including ours.
+//
+// script-src 'none' is the load-bearing line. Everything permitted here is
+// passive: a frame and a poster. Whatever runs, runs one level further
+// down under Google's own policy, in a document this one cannot read.
+//
+// img-src names the poster host because the embed draws its still frame
+// from it, and under `default-src 'none'` that was refused — the video
+// played, but from a black rectangle. This is the right place to permit
+// it and the interface is not: an image loaded HERE is loaded by a page
+// carrying no token, only after somebody pressed play.
+//
+// frame-ancestors is 'self' because being framed by the conversation is
+// the point. Nobody else can: this page is only ever served from loopback,
+// to a document from the same origin.
 const playerPolicy = "default-src 'none'; " +
 	"frame-src https://www.youtube-nocookie.com; " +
+	"img-src https://i.ytimg.com https://i9.ytimg.com; " +
 	"style-src 'unsafe-inline'; " +
 	"script-src 'none'; " +
 	"base-uri 'none'; " +
 	"form-action 'none'; " +
-	"frame-ancestors 'none'"
+	"frame-ancestors 'self'"
 
 func (a *APIServer) handlePlayer(w http.ResponseWriter, r *http.Request) {
 	// The id goes through the same alphabet check the card was built with,
@@ -52,8 +72,23 @@ func (a *APIServer) handlePlayer(w http.ResponseWriter, r *http.Request) {
 	h := w.Header()
 	h.Set("Content-Security-Policy", playerPolicy)
 	h.Set("X-Content-Type-Options", "nosniff")
-	h.Set("Referrer-Policy", "no-referrer")
+	// THE ONE PLACE IN THIS TREE THAT SENDS A REFERRER, and it has to.
+	//
+	// no-referrer here produced YouTube error 153 — "video player
+	// configuration error" — which is what its embed says when it cannot
+	// tell who is embedding it. An embed is a contract between a page and
+	// a host, and a host that is shown nothing refuses.
+	//
+	// `origin` sends the ORIGIN and never the path: "http://127.0.0.1:PORT".
+	// That is a loopback address, true of every copy of this app, and it
+	// says nothing about this person that the request for a specific video
+	// did not already say. The interface itself keeps no-referrer.
+	h.Set("Referrer-Policy", "origin")
 	h.Set("Content-Type", "text/html; charset=utf-8")
+	// X-Frame-Options has no "same origin plus a policy" mode that agrees
+	// with frame-ancestors, and where the two disagree browsers take the
+	// stricter. SAMEORIGIN is what this page means.
+	h.Set("X-Frame-Options", "SAMEORIGIN")
 	if vid == "" {
 		w.WriteHeader(http.StatusBadRequest)
 		w.Write([]byte(`<!doctype html><title>—</title><body style="background:#0b0910;color:#8a8296;` +
@@ -64,7 +99,7 @@ func (a *APIServer) handlePlayer(w http.ResponseWriter, r *http.Request) {
 	q := url.Values{
 		"autoplay": {"1"},
 		"rel":      {"0"},
-		// modestbranding is the small courtesy: this window is a player,
+		// modestbranding is the small courtesy: this frame is a player,
 		// not a place.
 		"modestbranding": {"1"},
 	}
@@ -73,11 +108,16 @@ func (a *APIServer) handlePlayer(w http.ResponseWriter, r *http.Request) {
 		q.Set("start", t)
 	}
 	src := "https://www.youtube-nocookie.com/embed/" + vid + "?" + q.Encode()
+	// The permissions are delegated a level at a time: this frame was
+	// granted them by the conversation, and hands the same set down. Miss
+	// one here and the embed silently loses it — autoplay first.
 	w.Write([]byte(`<!doctype html><html><head><meta charset="utf-8">` +
 		`<meta name="viewport" content="width=device-width,initial-scale=1">` +
 		`<title>` + vid + `</title>` +
-		`<style>html,body{margin:0;height:100%;background:#000}iframe{border:0;width:100%;height:100%;display:block}</style>` +
-		`</head><body><iframe src="` + src + `" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe></body></html>`))
+		`<style>html,body{margin:0;height:100%;background:#000;overflow:hidden}` +
+		`iframe{border:0;width:100%;height:100%;display:block}</style>` +
+		`</head><body><iframe src="` + src + `" ` +
+		`allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe></body></html>`))
 }
 
 func digitsOnly(s string, max int) string {
@@ -90,97 +130,43 @@ func digitsOnly(s string, max int) string {
 	return s
 }
 
-// ---- opening the window ----
+// ---- an http origin for shells that have none ----
 
-// handleOpenPlayer opens the video window through the HOST's own opener.
+// ListenPlayer starts a loopback listener that serves the player page and
+// NOTHING else, and returns its origin.
 //
-// It exists because of a fact about the desktop shell that is easy to
-// mistake for a bug in this feature: the macOS webview implements no
-// WKUIDelegate for new windows, so `target="_blank"` and `window.open` do
-// NOTHING there — silently. A play control that worked in a browser and
-// was inert in the app would be the worst of both.
+// This exists for one measured fact. The desktop shell serves the whole
+// interface over a custom scheme — cmd/wails-probe reports
+// `origin=wails://localhost` — and an embed refuses a page whose identity
+// cannot travel in a Referer header, which a custom scheme's cannot. The
+// browser and the phone both reach this node over http on loopback and
+// need none of this; the desktop cannot get an http origin any other way,
+// because it deliberately opens no port at all.
 //
-// The seam is deliberately not "open this URL". It takes a VIDEO ID,
-// checks it against the same alphabet as everything else here, and builds
-// the address itself, at this node's own origin. So the widest thing a
-// caller can ask for is "show the player window for some video" — never
-// "make the host machine open an address of my choosing", which is what
-// an open-url endpoint would have been.
-func (a *APIServer) handleOpenPlayer(w http.ResponseWriter, r *http.Request) {
-	body, err := readBody[struct {
-		V string `json:"v"`
-		T string `json:"t"`
-	}](r)
+// So it opens the smallest one that can exist. The mux has ONE route. There
+// is no token here and nothing a token would protect: whoever can reach
+// this port gets a blank page that frames a video they named — which they
+// could have opened in a browser without asking this process. Everything
+// the node actually holds stays where it was, behind the handler this
+// listener is not.
+//
+// The port is ephemeral and the listener lives as long as the process.
+func (a *APIServer) ListenPlayer() (string, error) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		httpErr(w, http.StatusBadRequest, err)
-		return
+		return "", err
 	}
-	vid := validVideoID(body.V)
-	if vid == "" {
-		httpErr(w, http.StatusBadRequest, errRefusedVideoID)
-		return
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /player", a.handlePlayer)
+	srv := &http.Server{
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
 	}
-	// The origin is the one this very request arrived at — the page asking
-	// is the page we serve — and it must be a local one, because that is
-	// the only kind this node is ever reached at.
-	host := r.Host
-	if !isLocalHostPort(host) {
-		httpErr(w, http.StatusBadRequest, errNotLocalOrigin)
-		return
-	}
-	q := "v=" + url.QueryEscape(vid)
-	if t := digitsOnly(body.T, 7); t != "" {
-		q += "&t=" + t
-	}
-	hostOpener("http://" + host + "/player?" + q)
-	writeJSON(w, map[string]string{"opened": vid})
-}
-
-var (
-	errRefusedVideoID = errors.New("that is not a video id")
-	errNotLocalOrigin = errors.New("the player opens only at this node's own origin")
-)
-
-// isLocalHostPort accepts only the names this node is actually reached at.
-// A host with NO port is the case that matters: SplitHostPort fails on it,
-// and an early version treated that failure as "nothing to check" — so a
-// bare "evil.example" passed straight through into the address the host
-// was told to open. Anything unparsable is refused now, in both shapes.
-func isLocalHostPort(host string) bool {
-	h := host
-	if x, _, err := net.SplitHostPort(host); err == nil {
-		h = x
-	}
-	if h == "localhost" {
-		return true
-	}
-	ip := net.ParseIP(strings.Trim(h, "[]"))
-	return ip != nil && ip.IsLoopback()
-}
-
-// hostOpener is the seam a test replaces: everything above it decides
-// WHICH address may be opened, and that decision is what is worth testing
-// — launching a browser to prove it would be testing the operating system.
-var hostOpener = openOnHost
-
-// openOnHost hands one address to the operating system's opener.
-// Best-effort by design: a headless box has nothing to open with, and that
-// is not a failure the person needs a dialog about.
-func openOnHost(target string) {
-	var cmd string
-	var args []string
-	switch runtime.GOOS {
-	case "darwin":
-		cmd = "open"
-	case "windows":
-		cmd, args = "rundll32", []string{"url.dll,FileProtocolHandler"}
-	case "android", "ios":
-		// The phone shells hand an address to the system themselves —
-		// there is no opener to exec here, and pretending otherwise would
-		// spawn a process that cannot exist.
-		return
-	default: // linux, *bsd
-		cmd = "xdg-open"
-	}
-	_ = exec.Command(cmd, append(args, target)...).Start()
+	go func() { _ = srv.Serve(ln) }()
+	// The interface learns the origin the way it learns everything else
+	// about its own node: from /api/status. It is a fact about this
+	// process, not a secret, and threading it through the shell's window
+	// would mean a second channel for one string.
+	a.playerOrigin = "http://" + ln.Addr().String()
+	return a.playerOrigin, nil
 }

@@ -140,6 +140,20 @@ func (s *Shell) open(c lockgate.Credentials) error {
 		fmt.Println("LAN disabled:", err)
 	}
 
+	// AN HTTP ORIGIN FOR THE VIDEO PLAYER, and only for it.
+	//
+	// This window serves the whole interface over a custom scheme —
+	// cmd/wails-probe measures `origin=wails://localhost` — and an embed
+	// refuses a page whose identity cannot travel in a Referer header,
+	// which a custom scheme's cannot. So the node opens the smallest
+	// listener that can exist: one route, no token, nothing behind it
+	// (node/player.go). Best effort, and quiet about it: a machine that
+	// will not give out a loopback port loses inline video and nothing
+	// else.
+	if _, err := api.ListenPlayer(); err != nil {
+		fmt.Println("video player disabled:", err)
+	}
+
 	s.swap(api.Handler())
 	return nil
 }

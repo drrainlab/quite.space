@@ -253,6 +253,16 @@ class QuietActivity : ComponentActivity() {
             // another app's content provider.
             settings.allowFileAccess = false
             settings.allowContentAccess = false
+            // A VIDEO STARTS BECAUSE SOMEBODY PRESSED PLAY, and Android
+            // cannot see that it did. The tap lands on our button, the
+            // player frame is mounted, and the embed inside it begins a
+            // moment later — by then the gesture has expired, and the
+            // default here would leave a black rectangle with no error.
+            //
+            // Loosened for the one page this WebView is allowed to load:
+            // its own interface, over loopback, whose player mounts only
+            // after a press and asks before the first one.
+            settings.mediaPlaybackRequiresUserGesture = false
             webChromeClient = object : WebChromeClient() {
                 override fun onShowFileChooser(
                     view: WebView?,
@@ -1523,6 +1533,25 @@ class QuietActivity : ComponentActivity() {
             view: WebView,
             request: WebResourceRequest,
         ): Boolean {
+            // SUBFRAMES ARE NOT THIS METHOD'S BUSINESS, and saying so is the
+            // difference between a video that plays and one that throws the
+            // person out into a browser.
+            //
+            // This callback fires for every frame, not only the top one. The
+            // conversation frames the node's own /player, which frames the
+            // video embed — so without this line the embed's navigation
+            // looked exactly like "the page is trying to leave", and was
+            // answered by launching an Intent and leaving the frame blank.
+            //
+            // What may be framed is decided by the Content-Security-Policy
+            // the node serves (frame-src 'self' on the interface, one named
+            // host on the player), which is where that rule belongs: a
+            // policy the browser enforces on every load, rather than a
+            // string comparison in a callback that only sees navigations.
+            //
+            // The lock this method exists for is untouched — the TOP frame
+            // still cannot go anywhere but loopback.
+            if (!request.isForMainFrame) return false
             val host = request.url.host
             if (host == "127.0.0.1" || host == "localhost") return false
             startActivity(Intent(Intent.ACTION_VIEW, request.url as Uri))

@@ -5,6 +5,7 @@ package node
 // and not a hole in the interface's own frame policy.
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -27,9 +28,30 @@ func TestPlayerPageFramesOnlyTheOneHost(t *testing.T) {
 			t.Errorf("the player's policy lost %q: %s", want, csp)
 		}
 	}
-	// The app's own policy must be untouched by this route existing.
-	if !strings.Contains(uiPolicy, "frame-src 'none'") {
-		t.Error("the interface's frame-src was relaxed -- the player window exists so it never has to be")
+	// The nesting, stated as two assertions because it is the whole
+	// design: the conversation may frame OUR page and nothing else, and
+	// this page is the only one allowed to name the embed's host.
+	//
+	// Every source the interface may frame must be OURS: 'self', or the
+	// loopback origin the node lends a shell that has no http identity of
+	// its own. An external host here would put a third party's script
+	// beside the session token, which is the one thing uiPolicy exists to
+	// prevent -- so this asserts on the whole source list rather than on
+	// the presence of one word.
+	srcs := strings.Fields(afterFrameSrc(uiPolicy))
+	if len(srcs) == 0 {
+		t.Fatal("the interface has no frame-src at all")
+	}
+	if srcs[0] != "'self'" {
+		t.Errorf("the interface's frame-src does not start at 'self': %q", srcs)
+	}
+	for _, src := range srcs[1:] {
+		if !strings.HasPrefix(src, "http://127.0.0.1:") && !strings.HasPrefix(src, "http://localhost:") {
+			t.Errorf("the interface's frame-src names %q -- only this node's own origins belong here", src)
+		}
+	}
+	if !strings.Contains(csp, "frame-ancestors 'self'") {
+		t.Error("the player refuses to be framed by the conversation")
 	}
 	body := rec.Body.String()
 	if !strings.Contains(body, "https://www.youtube-nocookie.com/embed/7ZrcTh2-uvQ?") {
@@ -39,8 +61,28 @@ func TestPlayerPageFramesOnlyTheOneHost(t *testing.T) {
 		t.Errorf("the timestamp did not survive: %s", body)
 	}
 	if strings.Contains(body, "token") {
-		t.Error("the player window carries a token")
+		t.Error("the player carries a token")
 	}
+	// Permissions are delegated one level at a time; a set that stops here
+	// leaves the embed silently unable to start.
+	if !strings.Contains(body, `allow="autoplay;`) {
+		t.Errorf("the embed was not granted autoplay: %s", body)
+	}
+}
+
+// afterFrameSrc returns what the policy's frame-src directive says, so a
+// host named in some OTHER directive (img-src, media-src) cannot make the
+// assertion above fail for the wrong reason.
+func afterFrameSrc(policy string) string {
+	i := strings.Index(policy, "frame-src ")
+	if i < 0 {
+		return ""
+	}
+	rest := policy[i+len("frame-src "):]
+	if j := strings.Index(rest, ";"); j >= 0 {
+		return rest[:j]
+	}
+	return rest
 }
 
 // An id is spliced into a URL and into the document, so anything outside
@@ -62,50 +104,41 @@ func TestPlayerRefusesAnythingButAnID(t *testing.T) {
 	}
 }
 
-// The open seam takes an id, never an address: the widest thing a caller
-// can ask the host to open is this node's own player.
-func TestOpenPlayerBuildsItsOwnAddress(t *testing.T) {
-	opened := ""
-	old := hostOpener
-	hostOpener = func(target string) { opened = target }
-	defer func() { hostOpener = old }()
-
+// The loopback listener exists so a shell with no http origin can still
+// lend the embed an identity. What matters is that it serves the PLAYER
+// and nothing else — it has no token, so anything else behind it would be
+// an unauthenticated door into the node.
+func TestListenPlayerServesOnlyThePlayer(t *testing.T) {
 	a := &APIServer{}
-	post := func(host, body string) *httptest.ResponseRecorder {
-		opened = ""
-		r := httptest.NewRequest("POST", "/api/player/open", strings.NewReader(body))
-		r.Host = host
-		rec := httptest.NewRecorder()
-		a.handleOpenPlayer(rec, r)
-		return rec
+	origin, err := a.ListenPlayer()
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	if rec := post("127.0.0.1:8899", `{"v":"7ZrcTh2-uvQ","t":"90"}`); rec.Code != 200 {
-		t.Fatalf("a good call was refused: %d %s", rec.Code, rec.Body)
+	if !strings.HasPrefix(origin, "http://127.0.0.1:") {
+		t.Fatalf("origin %q is not loopback http", origin)
 	}
-	if opened != "http://127.0.0.1:8899/player?v=7ZrcTh2-uvQ&t=90" {
-		t.Fatalf("opened %q", opened)
+	if a.playerOrigin != origin {
+		t.Errorf("status would report %q, not %q", a.playerOrigin, origin)
 	}
-
-	// Not an id, not an address, not somewhere else's host.
-	for _, c := range []struct{ host, body string }{
-		{"127.0.0.1:8899", `{"v":"https://evil.example/"}`},
-		{"127.0.0.1:8899", `{"v":"../../"}`},
-		{"evil.example", `{"v":"7ZrcTh2-uvQ"}`},
-	} {
-		if rec := post(c.host, c.body); rec.Code == 200 {
-			t.Errorf("host=%s body=%s was accepted", c.host, c.body)
+	res, err := http.Get(origin + "/player?v=7ZrcTh2-uvQ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != 200 || !strings.Contains(string(body), "youtube-nocookie") {
+		t.Fatalf("the player did not answer: %d %s", res.StatusCode, body)
+	}
+	// Every other route the node has must be absent here, including the
+	// ones that would otherwise answer without a token.
+	for _, path := range []string{"/", "/api/status", "/api/spaces", "/api/unfurl"} {
+		r, err := http.Get(origin + path)
+		if err != nil {
+			t.Fatalf("%s: %v", path, err)
 		}
-		if opened != "" {
-			t.Errorf("host=%s body=%s opened %q", c.host, c.body, opened)
+		r.Body.Close()
+		if r.StatusCode != http.StatusNotFound {
+			t.Errorf("%s answered %d on the player listener -- it must serve one route", path, r.StatusCode)
 		}
-	}
-
-	// A timestamp that is not a number is dropped, never spliced.
-	if rec := post("localhost:8899", `{"v":"7ZrcTh2-uvQ","t":"90&x=1"}`); rec.Code != 200 {
-		t.Fatalf("refused: %d", rec.Code)
-	}
-	if strings.Contains(opened, "x=1") {
-		t.Errorf("a query rode in on the timestamp: %q", opened)
 	}
 }

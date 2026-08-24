@@ -37,6 +37,10 @@ only deliberately, and re-run the checklist on every bump.
 | voice-in-app                 | pass | hand-verified: a voice message records inside the shell |
 | uploads-in-app               | pass | hand-verified after the postMultipart fix: cover image, atmosphere audio, chat attachment |
 | bundles                      | pending | DS-4 territory (local unsigned .app works via bundle-macos.sh) |
+| player-listen                | pass | the node's loopback player origin starts (ADR-028 §5) |
+| player-origin                | manual | this window speaks as `wails://localhost` — no http identity to lend an embed |
+| player-origin-api            | pass | `/api/status` carries `player_origin` |
+| player-frame                 | manual | frames `http://127.0.0.1:PORT/player` — a human says whether the video plays or shows error 153 |
 
 macOS hand-run, 2026-07-30: every gate above is green. One recorded
 observation: MediaRecorder DEFAULTS to `audio/mp4` (AAC) despite claiming

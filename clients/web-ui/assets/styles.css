@@ -673,6 +673,18 @@
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
     overflow: hidden;
   }
+  /* The player, mounted where the poster was. It is OUR /player, which
+     frames the embed one level further down — the interface never frames
+     youtube.com itself (node/player.go). */
+  .link-player {
+    display: block; width: 100%; aspect-ratio: 16 / 9;
+    border: 0; background: #000;
+  }
+  .linkcard .link-player { border-radius: 10px 10px 0 0; }
+  .txt .link-player, .entry .link-player {
+    margin-top: 6px; border-radius: 8px; max-width: 420px;
+  }
+
   /* A plain message that is a video address: a verb, not a card. */
   .link-watch {
     display: inline-block; margin-left: 6px; padding: 1px 8px 2px;

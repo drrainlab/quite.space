@@ -2443,9 +2443,17 @@ function growComposer(el) {
   box.style.height = box.scrollHeight + 'px';
 }
 
+// ONE SEND AT A TIME. The box is emptied when the send returns, and a
+// send can now WAIT — for a link card the node is still fetching — so the
+// window in which a second Enter finds the same text still sitting there
+// grew from a blink to a second. Without this, one impatient double-tap
+// posted the message twice.
+let sending = false;
+
 async function say(e) {
   e.preventDefault();
   const inp = document.getElementById('text');
+  if (sending) return false;
   if (!inp.value.trim() || !current) return false;
   if (inp.value.length > MAX_MESSAGE_CHARS) {
     alert(t('conv.too_long', { n: inp.value.length, max: MAX_MESSAGE_CHARS }));
@@ -2500,7 +2508,11 @@ async function say(e) {
     // A REPLY always sends the text, because the reply edge lives on the
     // message and a card cannot carry it: dropping the text would drop
     // the answer's connection to what it answered.
-    const link = typeof LINKS !== 'undefined' ? LINKS.pending(inp.value) : null;
+    // settle, not pending: pasting a link and pressing send is faster
+    // than a round trip to a stranger's server, so the send waits for
+    // the card it is about to need — briefly, and then goes without it.
+    sending = true;
+    const link = typeof LINKS !== 'undefined' ? await LINKS.settle(inp.value) : null;
     const textToo = !link || !link.bare || !!replyTarget;
     if (textToo) {
       await api(`/api/spaces/${current}/messages`, {
@@ -2520,6 +2532,7 @@ async function say(e) {
     if (typeof mentionsReset === 'function') mentionsReset();
     await refreshSpace();
   } catch (err) { alert(err.message); }
+  finally { sending = false; }
   return false;
 }
 

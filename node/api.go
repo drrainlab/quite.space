@@ -40,6 +40,11 @@ type APIServer struct {
 	// One pairing flow at a time (MD-1): the UI's poll-driven view of it.
 	pairingMu sync.Mutex
 	pairing   *pairingUI
+
+	// playerOrigin is set once, at startup, by a shell that asked for a
+	// loopback listener because its own origin cannot lend an embed an
+	// identity. Written before the window loads and never again.
+	playerOrigin string
 }
 
 // NewAPIServer creates the server with a fresh session token.
@@ -254,11 +259,10 @@ func (a *APIServer) Handler() http.Handler {
 	// never by a reader opening a room (node/unfurl.go).
 	mux.HandleFunc("POST /api/unfurl", a.auth(a.handleUnfurl))
 
-	// The video window (node/player.go). Deliberately unauthenticated and
-	// deliberately not part of the interface document: it exists so a video
-	// can play WITHOUT relaxing this origin's frame-src for everyone.
+	// The player (node/player.go). Framed BY the interface and carrying no
+	// token of its own: the embed it holds is a third party's code kept one
+	// frame away from everything worth taking.
 	mux.HandleFunc("GET /player", a.handlePlayer)
-	mux.HandleFunc("POST /api/player/open", a.auth(a.handleOpenPlayer))
 	// QuietRank (AT-0): device-local attention layer.
 	mux.HandleFunc("GET /api/signals", a.auth(a.handleSignals))
 	mux.HandleFunc("POST /api/signals/{id}/seen", a.auth(a.handleSignalSeen))
@@ -368,6 +372,30 @@ func (a *APIServer) Handler() http.Handler {
 // style attributes plus the renderers' own el.style writes). CSS injection
 // is a far smaller prize than script, and the palette/tint values that
 // reach a style are hex-validated at renderers.js:115.
+//
+// frame-src IS 'self', and the distance between that and a permissive one
+// is the whole design of the video player (node/player.go).
+//
+// A video plays inside the conversation, which means this document frames
+// something. What it frames is OUR OWN /player — never youtube.com. That
+// page then frames the embed under a policy of its own, in a document with
+// no token and no application script. So the code belonging to a third
+// party sits one frame FURTHER from everything worth taking, and the
+// widest thing this directive permits an injection to do is frame a page
+// of this node's that it could already have opened.
+//
+// The loopback form beside it is the same page reached the only other way
+// it can be. A shell that serves this interface over a CUSTOM SCHEME has
+// no http origin to lend the embed, and an embed refuses a page whose
+// identity cannot travel (node/player.go's ListenPlayer says the rest), so
+// there the player is framed at http://127.0.0.1:<port> instead. Still
+// ours, still token-free, still one frame away from the embed.
+//
+// What must NEVER appear here is an external host: that would put a third
+// party's script beside the session token, which is the one thing this
+// policy exists to prevent. A frame is not readable across origins, so
+// what the loopback form grants an injection is the ability to display a
+// local page it cannot read.
 const uiPolicy = "default-src 'self'; " +
 	"script-src 'self'; " +
 	"style-src 'self' 'unsafe-inline'; " +
@@ -376,7 +404,7 @@ const uiPolicy = "default-src 'self'; " +
 	"font-src 'self'; " +
 	"connect-src 'self'; " +
 	"object-src 'none'; " +
-	"frame-src 'none'; " +
+	"frame-src 'self' http://127.0.0.1:*; " +
 	"worker-src 'none'; " +
 	"base-uri 'self'; " +
 	"form-action 'self'; " +
@@ -494,6 +522,12 @@ type statusResp struct {
 	// two copies of a limit are one limit and one bug waiting for the day
 	// they differ.
 	MaxAssetBytes int64 `json:"max_asset_bytes"`
+	// PlayerOrigin is where the video player is reachable over http, and
+	// is set ONLY by a shell that has no http origin of its own (the
+	// desktop's wails:// scheme). Empty everywhere else, and empty means
+	// "the ordinary relative path" — node/player.go's ListenPlayer says
+	// why the difference exists.
+	PlayerOrigin string `json:"player_origin,omitempty"`
 }
 
 func (a *APIServer) handleOnboarding(w http.ResponseWriter, r *http.Request) {
@@ -556,6 +590,7 @@ func (a *APIServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 	resp.Radio.Detail = nil
 	resp.Connectivity = a.rt.Connectivity()
 	resp.MaxAssetBytes = assets.MaxAssetSize
+	resp.PlayerOrigin = a.playerOrigin
 
 	m := a.rt.Mesh()
 	resp.Mesh.Connected, resp.Mesh.NodeNum = m.Connected, m.NodeNum

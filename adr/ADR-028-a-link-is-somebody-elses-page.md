@@ -87,35 +87,60 @@ itself. This also means a plain text message that is a video address gets
 the control — no picture, no fetch, just the ability to act on an address
 already in hand.
 
-### 5. Watching happens in a window of its own
+### 5. Watching happens one frame further down
 
-The interface's policy says `frame-src 'none'`, and the comment above it
-says why: that origin holds the session token and can drive every route on
-the node, so the policy's job is to make an injection worth as little as
-possible. Embedding a player INTO that document is survivable — a
-cross-origin frame cannot read its parent — but "survivable" is exactly
-what a security policy exists not to rely on, and it would mean relaxing
-the app's policy for everyone, forever, so that one card can play.
+A video plays inside the conversation. The obvious way to do that is to
+drop an iframe into the page, and the obvious way is wrong here: this
+origin holds the session token and can drive every route on the node,
+which is why its policy says `script-src 'self'` and `connect-src 'self'`
+and why the comment above it calls script execution "the whole game". A
+third party's player loaded into that document is a permission granted
+forever so that one card can play.
 
-So `GET /player` serves a document with **no token, no application script,
-and a policy of its own** that permits one thing: a frame from
-youtube-nocookie.com. It is unauthenticated on purpose — it holds nothing
-and says nothing about this node, and requiring the token would only mean
-putting the token in a URL bound for a window whose whole job is to talk to
-somebody else.
+So the frame is **nested**, and the nesting is the whole decision:
 
-Three shells open it three ways, and none of them is a workaround:
+    the conversation frames  →  GET /player  (ours, same origin)
+    /player frames           →  the embed    (youtube-nocookie.com)
 
-| shell | what happens | why |
-|---|---|---|
-| browser | `window.open('/player')` | a window is a window |
-| phone | the ordinary video address, `target=_blank` | `LocalOnlyClient` hands non-loopback hosts to the system, so YouTube's own app takes it; `/player` would replace the conversation inside the app's single WebView |
-| desktop | `POST /api/player/open` | the macOS webview implements no delegate for new windows, so `window.open` and `target=_blank` are silently inert there — a fact about the shell, not about this card |
+The interface's `frame-src` is therefore `'self'` and must stay `'self'`:
+it may frame a page of this node's that an injection could already have
+opened, and nothing else. `/player` is where a third party is allowed to
+exist — a document with no token, no application script, `script-src
+'none'`, and a policy naming exactly one frame host and one image host.
+It is unauthenticated on purpose: it holds nothing, and requiring the
+token would only mean putting the token in a document whose whole job is
+to talk to somebody else.
 
-That last seam takes a **video id**, never a URL, and builds the address
-itself at this node's own origin. The widest thing a caller can ask for is
-"show the player window"; an open-url endpoint would have been a way to
-make the host machine open an address of somebody else's choosing.
+One frame of distance, bought for one word in one directive. That is the
+difference between "youtube.com may run beside your keys" and "youtube.com
+may run inside a blank page we serve".
+
+Three consequences worth writing down, because each looked like a bug first:
+
+- **The player sends a referrer, and it is the only thing in this tree
+  that does.** `no-referrer` produced YouTube error 153 — an embed is a
+  contract between a page and a host, and a host shown nothing refuses.
+  The policy is `origin`, so what travels is `http://127.0.0.1:PORT` — a
+  loopback address, true of every copy of this app, saying nothing the
+  request for a specific video did not already say.
+- **A shell can have no origin to lend.** The desktop serves the whole
+  interface over a custom scheme — `cmd/wails-probe` measures
+  `origin=wails://localhost` — and a custom scheme's identity cannot
+  travel in a Referer header at all. So the node opens the smallest
+  listener that can exist, one route and no token, and `/api/status`
+  tells the page where it is. The interface's `frame-src` names that
+  loopback form beside `'self'`: still our page, still token-free, still
+  one frame from the embed. Every other shell reaches this node over
+  http already and uses the plain relative path.
+- **A subframe's navigation is not the top frame leaving.** The phone's
+  WebView client redirects non-loopback addresses to the system, and it
+  fires for every frame — so the embed's own load looked like an escape
+  attempt and was answered by launching a browser. What may be framed is
+  decided by the policy the node serves, which is where that rule
+  belongs; the lock on the TOP frame is untouched.
+
+A video whose owner forbids embedding says so inside the frame, in
+YouTube's own words. The card's title is still a link to it.
 
 ### 6. Pressing play asks first, once
 
@@ -129,6 +154,9 @@ answer. A question re-asked forever is a question nobody reads.
 - Accepted: the sender reveals to the site that somebody fetched its page.
   They had the address already; the alternative was every reader revealing
   themselves instead.
+- Accepted: `frame-src` moved from `'none'` to `'self'`. What that buys
+  an injection is the ability to frame a page of ours; what it buys the
+  person is a video that plays where they are reading.
 - Accepted: a card is ~16 KiB and will not ride a radio frame. The delivery
   ladder already says so in the concrete ("this is 18 KB and the radio
   carries 2.5"), and a card without a thumbnail is a few hundred bytes.
