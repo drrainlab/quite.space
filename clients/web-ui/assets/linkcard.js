@@ -123,7 +123,10 @@ const LINKS = (() => {
     const v = youtubeID(raw);
     if (v) return { q: 'v=' + encodeURIComponent(v), site: 'YouTube', timed: true };
     const sc = soundcloudPath(raw);
-    if (sc) return { q: 'sc=' + encodeURIComponent(sc), site: 'SoundCloud', timed: false };
+    // audio says the mounted frame is a STRIP, not a 16:9 stage: the
+    // classic SoundCloud widget is 166px of waveform, and stretching it
+    // into a video's shape leaves a field of its background around it.
+    if (sc) return { q: 'sc=' + encodeURIComponent(sc), site: 'SoundCloud', timed: false, audio: true };
     return null;
   }
 
@@ -422,7 +425,7 @@ const LINKS = (() => {
   function mount(target, url, host, replace) {
     const t0 = target.timed ? startAt(url) : '';
     const frame = document.createElement('iframe');
-    frame.className = 'link-player';
+    frame.className = 'link-player' + (target.audio ? ' audio' : '');
     // Relative here, absolute in a shell that has no http origin of its
     // own: the desktop serves this interface over wails://, and an embed
     // refuses a page whose identity cannot travel in a Referer header. The

@@ -130,6 +130,12 @@ func TestPlayerSoundcloud(t *testing.T) {
 		!strings.Contains(body, "soundcloud.com%2Fartist%2Fsets%2Fmix") {
 		t.Errorf("no widget for the path: %s", body)
 	}
+	// The CLASSIC widget. visual=true painted a black canvas over playing
+	// audio in the desktop's WKWebView; the waveform bar has nothing to
+	// fail at.
+	if !strings.Contains(body, "visual=false") {
+		t.Errorf("the widget is not the classic bar: %s", body)
+	}
 	if !strings.Contains(rec.Header().Get("Content-Security-Policy"), "https://w.soundcloud.com") {
 		t.Error("the policy does not admit the widget host it embeds")
 	}

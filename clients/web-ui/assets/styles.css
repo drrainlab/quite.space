@@ -681,6 +681,9 @@
     border: 0; background: #000;
   }
   .linkcard .link-player { border-radius: 10px 10px 0 0; }
+  /* Sound is a strip, not a stage: the classic SoundCloud widget is
+     166px tall, and a 16:9 frame around it is mostly its background. */
+  .link-player.audio { aspect-ratio: auto; height: 166px; }
   .txt .link-player, .entry .link-player {
     margin-top: 6px; border-radius: 8px; max-width: 420px;
   }

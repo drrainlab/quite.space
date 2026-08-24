@@ -125,10 +125,17 @@ func (a *APIServer) handlePlayer(w http.ResponseWriter, r *http.Request) {
 		// it itself; what this route accepts is only the path, through its
 		// own alphabet check, so the widest thing a caller can name is a
 		// page on soundcloud.com.
+		//
+		// The CLASSIC widget, not visual mode. visual=true paints the
+		// artwork as a full-bleed canvas, and in the desktop's WKWebView
+		// that canvas came up black while the audio played — a player you
+		// can hear and not see. The classic bar draws its waveform on its
+		// own solid background and has no artwork to fail at; sound in a
+		// conversation is a strip, not a poster, anyway.
 		q := url.Values{
 			"url":       {"https://soundcloud.com/" + sc},
 			"auto_play": {"true"},
-			"visual":    {"true"},
+			"visual":    {"false"},
 		}
 		src = "https://w.soundcloud.com/player/?" + q.Encode()
 		title = sc
