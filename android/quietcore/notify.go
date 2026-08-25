@@ -86,6 +86,11 @@ type Candidate struct {
 	// to know that.
 	AuthoredLocally bool
 
+	// AuthoredByPrincipal widens that to the PERSON (SR-0): any of this
+	// principal's devices. Auto-speech keys on this — a phone must not read
+	// the person their own words back because they typed them on a laptop.
+	AuthoredByPrincipal bool
+
 	// The presentation snapshot: what may be SHOWN, as opposed to what may be
 	// acted on. Every field is optional and an empty one is ordinary. Nothing
 	// in the dedup or the cursor depends on them, so a missing label can never
@@ -93,6 +98,11 @@ type Candidate struct {
 	SpaceLabel  string
 	SenderLabel string
 	PreviewText string
+
+	// SpokenText is the auto-speech body (SR-0): the full message text up to
+	// the core's spoken cap, where PreviewText is a one-line clip. Same
+	// standing as PreviewText; persisted nowhere.
+	SpokenText string
 
 	// Personal is the core saying "somebody called you" — the event's signed
 	// mentions include this person's principal. Routes the notification to
@@ -200,18 +210,20 @@ func armRuntime(r *node.Runtime) {
 		}
 		select {
 		case q <- notifyItem{cand: &Candidate{
-			EventID:            c.EventID.Hex(),
-			SpaceID:            c.SpaceID.Hex(),
-			Device:             c.Device.Hex(),
-			Schema:             c.Schema,
-			SourceSequence:     int64(c.SourceSequence),
-			OccurredAtUnixMs:   int64(c.OccurredAtUnixMs),
-			PresentationCursor: int64(c.PresentationCursor),
-			AuthoredLocally:    c.AuthoredLocally,
-			SpaceLabel:         c.SpaceLabel,
-			SenderLabel:        c.SenderLabel,
-			PreviewText:        c.PreviewText,
-			Personal:           c.Personal,
+			EventID:             c.EventID.Hex(),
+			SpaceID:             c.SpaceID.Hex(),
+			Device:              c.Device.Hex(),
+			Schema:              c.Schema,
+			SourceSequence:      int64(c.SourceSequence),
+			OccurredAtUnixMs:    int64(c.OccurredAtUnixMs),
+			PresentationCursor:  int64(c.PresentationCursor),
+			AuthoredLocally:     c.AuthoredLocally,
+			AuthoredByPrincipal: c.AuthoredByPrincipal,
+			SpaceLabel:          c.SpaceLabel,
+			SenderLabel:         c.SenderLabel,
+			PreviewText:         c.PreviewText,
+			SpokenText:          c.SpokenText,
+			Personal:            c.Personal,
 		}}:
 		default:
 			// Drop, count, and never block: this runs inside the absorb path,

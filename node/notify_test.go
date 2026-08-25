@@ -18,6 +18,7 @@ package node
 
 import (
 	"fmt"
+	"github.com/drrainlab/quiet_places/protocol/schemas"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1045,5 +1046,104 @@ func TestARenameReachesTheNextNotification(t *testing.T) {
 	if last != "Renamed Alice" {
 		t.Fatalf("the notification would say %q — a name a person changed and "+
 			"the device has already applied", last)
+	}
+}
+
+// SR-0: a candidate answers "did the PERSON write this" apart from "did this
+// DEVICE write this", and carries the full spoken body next to the one-line
+// preview — the two facts auto-speech needs and notifications never did.
+func TestACandidateCarriesPrincipalAuthorshipAndTheSpokenBody(t *testing.T) {
+	srv, addr := startRelay(t)
+	defer srv.Close()
+	owner := openRuntime(t, t.TempDir(), "owner")
+	defer owner.Close()
+	setPersonalRelay(t, owner, addr)
+	owner.applyRelaySync("", 0)
+	tid, err := owner.CreateSpace("cabin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	guest := openRuntime(t, t.TempDir(), "guest")
+	defer guest.Close()
+	setPersonalRelay(t, guest, addr)
+	guest.applyRelaySync("", 0)
+	pass, err := owner.MintPass(tid, 1, 24, addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := guest.JoinByPass(pass.Link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitJoin(t, guest, req, JoinReady)
+
+	var got []NotificationCandidate
+	var mu sync.Mutex
+	guest.AttachNotifications(func(c NotificationCandidate) {
+		mu.Lock()
+		got = append(got, c)
+		mu.Unlock()
+	})
+
+	// Longer than the preview clip, shorter than the spoken cap.
+	long := strings.Repeat("мы дошли до северного лагеря и всё в порядке ", 6)
+	if _, err := owner.Say(tid, long, SayOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	owner.relaySyncOnce(addr)
+	if _, err := guest.PullFromRelay(addr); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	var c *NotificationCandidate
+	for i := range got {
+		if got[i].Schema == schemas.MessageText {
+			c = &got[i]
+		}
+	}
+	if c == nil {
+		t.Fatal("the guest never saw a text candidate")
+	}
+	if c.AuthoredByPrincipal || c.AuthoredLocally {
+		t.Fatalf("the owner's message reads as the guest's own: %+v", c)
+	}
+	// clipRunes appends an ellipsis after the cut.
+	if n := len([]rune(c.PreviewText)); n > maxPreviewRunes+1 || n >= len([]rune(long)) {
+		t.Fatalf("preview not clipped: %d runes", n)
+	}
+	if c.SpokenText != long {
+		t.Fatalf("spoken body is not the full text: %d vs %d runes",
+			len([]rune(c.SpokenText)), len([]rune(long)))
+	}
+
+	// The guest's own words: both flags, on the guest's own candidate.
+	got = got[:0]
+	mu.Unlock()
+	if _, err := guest.Say(tid, "вижу вас", SayOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	var own *NotificationCandidate
+	for i := range got {
+		if got[i].Schema == schemas.MessageText {
+			own = &got[i]
+		}
+	}
+	if own == nil || !own.AuthoredByPrincipal || !own.AuthoredLocally {
+		t.Fatalf("the guest's own message lost its authorship: %+v", own)
+	}
+	// And the spoken cap holds against a pasted document.
+	huge := strings.Repeat("а", maxSpokenRunes+500)
+	got = got[:0]
+	mu.Unlock()
+	if _, err := guest.Say(tid, huge, SayOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	for i := range got {
+		if got[i].Schema == schemas.MessageText && len([]rune(got[i].SpokenText)) > maxSpokenRunes+1 {
+			t.Fatalf("spoken cap: %d runes", len([]rune(got[i].SpokenText)))
+		}
 	}
 }
