@@ -194,6 +194,15 @@ const RADIO = (() => {
     }
   };
 
+  // The host says a message from this space is sounding right now: a
+  // quiet chip near the PTT surface, nothing louder (groom §32).
+  window.quietSpeaking = function quietSpeaking(space, on) {
+    if (!ui || uiSpace !== space) return;
+    ui.wrap.classList.toggle('ptt-speaking', !!on);
+    if (on && lastState === 'idle') setStatus('∿ ' + label('ptt.speaking', 'speaking'));
+    else if (!on && lastState === 'idle') setStatus(label('ptt.hold', 'Hold to talk'));
+  };
+
   window.quietRadio = function quietRadio(space, st) {
     remember(space, { enabled: !!st.enabled, autoplay: !!st.autoplay });
     if (typeof current !== 'undefined' && current === space) mountFor(space);

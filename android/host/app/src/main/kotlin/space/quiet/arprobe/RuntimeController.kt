@@ -94,6 +94,38 @@ class RuntimeController private constructor(appContext: Context) {
 
     /** SR-0 — device-local, per-space Radio Mode preferences. */
     internal val radio = RadioModeStore(this.app)
+
+    /**
+     * The one entry for flipping Radio Mode: store, engine lifecycle, and
+     * the background claim. SR-0F: while any space listens as a radio and
+     * background listening is on, this holds ONE availability lease — the
+     * second holder the counter was built for — so the running service is
+     * not ended underneath a radio that is expected to speak. Playback
+     * itself needs no service; the process staying alive is the feature.
+     */
+    fun setRadioMode(space: String, enabled: Boolean, autoplay: Boolean) {
+        val hadAny = radio.anyEnabled()
+        radio.setMode(space, enabled, autoplay)
+        if (enabled) {
+            radioPlayback.prepare()
+            speechEngine.prepare()
+        }
+        val hasAny = radio.anyEnabled()
+        val wantLease = hasAny && radio.backgroundListen()
+        if (wantLease && !radioLeaseHeld) {
+            acquireAvailabilityLease()
+            radioLeaseHeld = true
+        } else if (!wantLease && radioLeaseHeld) {
+            releaseAvailabilityLease()
+            radioLeaseHeld = false
+        }
+        if (hadAny != hasAny) publish()
+    }
+
+    @Volatile private var radioLeaseHeld = false
+
+    /** SR-0: what the permanent notification appends when radios listen. */
+    fun radioListening(): Boolean = radioLeaseHeld
     private val presenter = SystemPresenter(this.app, ledger, storedPolicy(app))
 
     val notifications: NotificationCoordinator = NotificationCoordinator(
@@ -148,6 +180,18 @@ class RuntimeController private constructor(appContext: Context) {
                 previewText = c.previewText,
                 personal = c.personal,
             )
+        )
+        // SR-0: the SECOND consumer, after the coordinator's call so the
+        // ack order is untouched. Same Go-goroutine constraints: gates and
+        // a queue append, nothing blocking, no call back into the core.
+        radioPlayback.onCandidate(
+            eventId = c.eventID,
+            spaceId = c.spaceID,
+            schema = c.schema,
+            authoredByPrincipal = c.authoredByPrincipal,
+            presentationCursor = c.presentationCursor,
+            senderLabel = c.senderLabel,
+            spokenText = c.spokenText,
         )
         }
     }
@@ -354,7 +398,7 @@ class RuntimeController private constructor(appContext: Context) {
                 Log.w(TAG, "could not read the relay state for the card", t)
             }
         }
-        return AvailabilityText.State(relays, since, alive)
+        return AvailabilityText.State(relays, since, alive, radioListening())
     }
 
 
@@ -668,6 +712,26 @@ class RuntimeController private constructor(appContext: Context) {
 
     private val speechEngine = FakeSpeechInputEngine()
 
+    /** SR-0 phase 4: automatic speech of incoming messages. */
+    internal val radioPlayback = RadioPlaybackCoordinator(
+        enabled = { radio.enabled(it) },
+        autoplay = { radio.autoplay(it) },
+        engine = AndroidTtsEngine(this.app),
+        execute = { r -> worker.execute(r) },
+        pttBusy = { ptt.busy() },
+        speakingChanged = { space, on -> pushSpeaking(space, on) },
+    )
+
+    @Volatile private var speakingPagePush: ((String, Boolean) -> Unit)? = null
+
+    fun setSpeakingSink(fn: ((String, Boolean) -> Unit)?) {
+        speakingPagePush = fn
+    }
+
+    private fun pushSpeaking(space: String, on: Boolean) {
+        try { speakingPagePush?.invoke(space, on) } catch (_: Throwable) {}
+    }
+
     private val messageWriter = MessageWriter { apiEndpoint() }
 
     /** (api port, session token) of the live node, or null. */
@@ -703,6 +767,10 @@ class RuntimeController private constructor(appContext: Context) {
     )
 
     private fun pushPtt(e: PttController.Event) {
+        // HALF-DUPLEX: the microphone and the speaker are never open
+        // together — a press silences playback, IDLE resumes it.
+        if (e.state == PttController.State.ARMING) radioPlayback.holdForPtt()
+        if (e.state == PttController.State.IDLE) radioPlayback.resume()
         val fn = pttPagePush ?: return
         val o = JSONObject()
             .put("state", e.state.name.lowercase())

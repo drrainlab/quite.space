@@ -407,7 +407,7 @@ class QuietActivity : ComponentActivity() {
                     // the host's; the page gets the authoritative state
                     // pushed back so a stale localStorage echo self-corrects.
                     radioMode = { space, enabled, autoplay ->
-                        controller.radio.setMode(space, enabled, autoplay)
+                        controller.setRadioMode(space, enabled, autoplay)
                         runOnUiThread { pushRadioEcho(space) }
                         true
                     },
@@ -516,6 +516,17 @@ class QuietActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         controller.setPttSink(pttSink)
+        controller.setSpeakingSink { space, on ->
+            runOnUiThread {
+                if (web.visibility == View.VISIBLE) {
+                    web.evaluateJavascript(
+                        "window.quietSpeaking && window.quietSpeaking(" +
+                            JSONObject.quote(space) + ", $on);",
+                        null,
+                    )
+                }
+            }
+        }
         // AR-1b.7's first half. WHICH space is on screen is a separate fact
         // the web UI has to report, and that seam lands with b.7 — until it
         // does, a message for the conversation being read still notifies,
@@ -563,6 +574,7 @@ class QuietActivity : ComponentActivity() {
         // here rather than finishing into a void.
         controller.ptt.cancel()
         controller.setPttSink(null)
+        controller.setSpeakingSink(null)
         controller.notifications.onForeground(false)
         super.onPause()
     }

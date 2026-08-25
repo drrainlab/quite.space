@@ -478,6 +478,7 @@ const I18N = {
     'ptt.notready': 'Preparing offline voice…',
     'ptt.asrfail': "Couldn't recognize — try again",
     'ptt.sendfail': 'Not sent — hold to retry',
+    'ptt.speaking': 'speaking',
 
     // device
     'device.title': 'This device',
@@ -1452,6 +1453,7 @@ const I18N = {
     'ptt.notready': 'Готовлю оффлайн-распознавание…',
     'ptt.asrfail': 'Не удалось распознать — попробуйте ещё раз',
     'ptt.sendfail': 'Не отправлено — удержите, чтобы повторить',
+    'ptt.speaking': 'звучит',
     'device.title': 'Это устройство',
     'device.trusted': 'Доверенное устройство',
     'device.verification': 'Код проверки',

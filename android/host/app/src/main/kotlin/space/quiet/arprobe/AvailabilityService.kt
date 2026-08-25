@@ -207,6 +207,8 @@ internal object AvailabilityText {
         val secondsSinceEvent: Long,
         /** False while the core is closed — the mode is on, nothing is open. */
         val runtimeAlive: Boolean,
+        /** SR-0: a space is in Radio Mode and background listening is on. */
+        val radioListening: Boolean = false,
     )
 
     fun summary(s: State): String {
@@ -216,7 +218,10 @@ internal object AvailabilityText {
             1 -> "1 relay"
             else -> "${s.relays} relays"
         }
-        return "$where · ${ago(s.secondsSinceEvent)}"
+        val base = "$where · ${ago(s.secondsSinceEvent)}"
+        // Infrastructure-only, privacy-safe (groom §37): the MODE is named,
+        // never a transcript, a sender or a space.
+        return if (s.radioListening) "$base · listening for voice" else base
     }
 
     private fun ago(seconds: Long): String = when {
