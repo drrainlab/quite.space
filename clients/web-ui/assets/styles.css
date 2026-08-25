@@ -24,7 +24,15 @@
        backdrop blur in .bubble, not from the fill — which is why the fill
        can sit at three percent (the owner's own DevTools number) and the
        shape is still carried by the top-edge light catch and the shadow. */
-    --bubble-own: rgba(211,154,231,.04); --bubble-other: rgba(222,199,241,.03);
+    /* Re-graded 2026-08-22 (owner's groom): the conversation's surfaces are
+       CHARCOAL, not violet — colour left the surfaces and became semantic.
+       Own messages keep a 3-5% violet whisper (their side of the screen
+       already says "mine"; the tint only confirms it), incoming is nearly
+       neutral graphite. The old 3-4% glass fills read violet because the
+       sky's own hue leaked through them; these are darker and calmer. */
+    --bubble-own: rgba(35,27,38,.72); --bubble-other: rgba(24,22,27,.55);
+    --bubble-own-border: rgba(190,140,220,.07);
+    --composer: rgba(21,18,23,.62); --composer-line: rgba(255,255,255,.055);
     /* geometry + type */
     --radius-sm: 8px; --radius-md: 12px; --radius-lg: 18px;
     --font-scale: 1;
@@ -76,6 +84,7 @@
     --glow: rgba(138,79,192,.05);
     --glass: rgba(255,255,255,.72); --glass-border: rgba(60,40,80,.12);
     --bubble-own: rgba(138,79,192,.14); --bubble-other: #ffffff;
+    --composer: rgba(255,255,255,.66); --composer-line: rgba(60,40,80,.10);
     --shadow: 0 1px 3px rgba(40,24,60,.10), 0 6px 20px rgba(40,24,60,.06);
   }
 
@@ -353,7 +362,13 @@
   }
   .card.done { color: var(--dim); text-decoration: line-through; }
   #composer { display: flex;
-    background: var(--glass); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); }
+    /* Neutral on purpose (owner's groom): the composer plus own messages
+       used to form one big violet region. It is now just a slightly
+       lifted charcoal; send, the input focus and presence give it its
+       character. */
+    background: var(--composer);
+    border-top: 1px solid var(--composer-line);
+    backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); }
   #composer input, #composer textarea {
     /* min-width:0 because a text control carries a default intrinsic width
        that flex will not shrink below without being told. Without it the row
@@ -634,6 +649,24 @@
   .entry .filecard {
     border: 1px solid var(--line); border-radius: 4px; padding: 8px 10px;
     margin-top: 4px; display: inline-block; max-width: 360px; }
+
+  /* ---- words on their way (outbox.js) --------------------------------
+     A pending bubble is the author's own bubble at reduced opacity with a
+     quiet word in the corner — the same place the timestamp will live
+     once the node answers. */
+  #outboxStrip { padding: 0 12px; }
+  #outboxStrip .entry.pending { opacity: .65; }
+  #outboxStrip .pending-mark {
+    display: block; margin-top: 3px; font-size: 10px; opacity: .7;
+    font-style: italic; text-align: right;
+  }
+  .send-note {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    margin: 0 12px 6px; padding: 7px 10px; font-size: 12px; line-height: 1.5;
+    border: 1px solid color-mix(in srgb, #e07b7b 45%, transparent);
+    border-radius: 8px; background: color-mix(in srgb, #e07b7b 10%, transparent);
+  }
+  .send-note[hidden] { display: none; }
 
   /* ---- the feed's sense of time --------------------------------------
      A quiet line between days, and HH:MM in the bubble's corner. The
@@ -1055,7 +1088,8 @@
     .bubble { background: var(--panel); backdrop-filter: none;
       -webkit-backdrop-filter: none; }
   }
-  .msg.own .bubble { background: var(--bubble-own); }
+  .msg.own .bubble { background: var(--bubble-own);
+    border: 1px solid var(--bubble-own-border, transparent); }
   .msg:not(.grouped) .bubble { border-top-left-radius: var(--radius-sm); }
   .msg.own:not(.grouped) .bubble { border-top-left-radius: var(--radius-lg);
     border-top-right-radius: var(--radius-sm); }
@@ -1079,7 +1113,13 @@
   .space { display: flex; gap: 10px; align-items: center; border: 0;
     border-radius: var(--radius-md); padding: 8px 10px; background: transparent; }
   .space:hover { background: var(--surface-raised); }
-  .space.active { background: color-mix(in srgb, var(--acc) 16%, transparent); }
+  .space.active {
+    /* Half the violet (owner's groom): the selected space was the largest
+       violet object on screen. Its state is now a neutral lift plus one
+       small glowing marker — a coordinate, not a plate. */
+    background: color-mix(in srgb, var(--fg) 7%, transparent);
+    box-shadow: inset 2px 0 0 var(--acc);
+  }
   .space-av { flex: 0 0 auto; width: 40px; height: 40px; border-radius: 50%;
     background: var(--surface-raised); display: grid; place-items: center; }
   .space-main { flex: 1; min-width: 0; }
