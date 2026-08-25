@@ -119,6 +119,12 @@
          fetched it; the people who read it will fetch nothing. The ✕
          drops the card, never the message. -->
     <div id="linkStage" class="link-stage" hidden></div>
+    <!-- Words on their way to the node: rendered from the outbox, so a
+         press answers instantly and a reload repaints the same truth.
+         Below it, the one banner a REFUSED message comes back in — the
+         person's words never simply vanish (outbox.js). -->
+    <div id="outboxStrip" hidden></div>
+    <div id="sendNote" class="send-note" hidden></div>
     <form id="composer" data-on-submit="19">
       <div id="attachWrap">
         <button type="button" class="ic" data-on-click="20" title="attach" aria-label="Attach" data-i18n-title="ui.composer.attach.title">
@@ -1394,6 +1400,7 @@
 <script src="renderers.js"></script>
 <script src="markdown.js"></script>
 <script src="linkcard.js"></script>
+<script src="outbox.js"></script>
 <script src="publications.js"></script>
 <script src="apps.js"></script>
 <script src="listening.js"></script>

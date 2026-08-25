@@ -1866,7 +1866,8 @@ async function refreshSpace() {
   await RES.load(current); // palette must exist before rows render
   const entries = await fetchEntries(current);
   const log = document.getElementById('log');
-  const stick = log.scrollTop + log.clientHeight >= log.scrollHeight - 40;
+  const stick = (typeof OUTBOX !== 'undefined' && OUTBOX.takeStick()) ||
+    log.scrollTop + log.clientHeight >= log.scrollHeight - 40;
   // A SWITCH always rebuilds. Without this, entering an EMPTY space kept
   // the previous space's rows on screen: the reset below cleared the sigs
   // to [], and empty-against-empty read as "unchanged" — every([]) is
@@ -1884,6 +1885,7 @@ async function refreshSpace() {
       mentionsReset();
       mentionsLoadMembers(current);
     }
+    if (typeof OUTBOX !== 'undefined') OUTBOX.paint();
     // Tell the node which room is open: QuietRank stays quiet about the one
     // you are already reading.
     api('/api/attention/viewing', { method: 'POST', body: JSON.stringify({ space: current }) })
@@ -2443,17 +2445,9 @@ function growComposer(el) {
   box.style.height = box.scrollHeight + 'px';
 }
 
-// ONE SEND AT A TIME. The box is emptied when the send returns, and a
-// send can now WAIT — for a link card the node is still fetching — so the
-// window in which a second Enter finds the same text still sitting there
-// grew from a blink to a second. Without this, one impatient double-tap
-// posted the message twice.
-let sending = false;
-
 async function say(e) {
   e.preventDefault();
   const inp = document.getElementById('text');
-  if (sending) return false;
   if (!inp.value.trim() || !current) return false;
   if (inp.value.length > MAX_MESSAGE_CHARS) {
     alert(t('conv.too_long', { n: inp.value.length, max: MAX_MESSAGE_CHARS }));
@@ -2483,8 +2477,6 @@ async function say(e) {
   }
   // Mentions travel as a signed structural field, not as text markup.
   const mentions = typeof mentionsPayload === 'function' ? mentionsPayload(inp.value) : [];
-  const body = { text: inp.value, mentions };
-  if (replyTarget) body.reply_to = replyTarget.id;
   try {
     // In the assistant's space a message is a QUESTION: the node emits it
     // as your event and then asks the provider. Sending it the ordinary way
@@ -2497,42 +2489,34 @@ async function say(e) {
       refreshAI();
       return false;
     }
-    // A link card, when one is staged, is a BLOCK of its own — the
-    // protocol has no "text with an attachment", and inventing one here
-    // would mean a reader that has never heard of cards losing the
-    // message too.
+    // THE SEND IS AN ENQUEUE, and everything after the press is somebody
+    // else's job (outbox.js carries the doctrine). Synchronous on
+    // purpose, all the way to the cleared box: there is no await between
+    // reading the composer and emptying it, so a double-press finds an
+    // empty box and enqueues nothing — the guard that used to stand here
+    // became unnecessary the moment the race it guarded stopped existing.
     //
-    // So: a message that is nothing but its address becomes the card
-    // alone (one paste, one entry — the ordinary case). A message with
-    // words keeps the words as the message and the card follows them.
-    // A REPLY always sends the text, because the reply edge lives on the
-    // message and a card cannot carry it: dropping the text would drop
-    // the answer's connection to what it answered.
-    // settle, not pending: pasting a link and pressing send is faster
-    // than a round trip to a stranger's server, so the send waits for
-    // the card it is about to need — briefly, and then goes without it.
-    sending = true;
-    const link = typeof LINKS !== 'undefined' ? await LINKS.settle(inp.value) : null;
-    const textToo = !link || !link.bare || !!replyTarget;
-    if (textToo) {
-      await api(`/api/spaces/${current}/messages`, {
-        method: 'POST',
-        body: JSON.stringify(body),
-      });
-    }
-    if (link) {
-      // The card is best-effort: the message is already said, and a block
-      // the space will not take must not read as a failure to send.
-      try { await LINKS.send(link.card); } catch (cardErr) { console.warn('link card', cardErr); }
-    }
+    // The link card, when one is ALREADY staged, rides the queue item; a
+    // lookup still in flight is not waited for — the flusher gives it the
+    // settle window in the background, where waiting costs nobody's
+    // finger anything.
+    const staged = typeof LINKS !== 'undefined' ? LINKS.pending(inp.value) : null;
+    OUTBOX.enqueue(current, inp.value, {
+      reply_to: replyTarget ? replyTarget.id : undefined,
+      mentions,
+      card: staged ? staged.card : undefined,
+      bare: staged ? staged.bare : false,
+    });
     inp.value = '';
     growComposer(inp);
     cancelReply();
     if (typeof LINKS !== 'undefined') LINKS.reset();
     if (typeof mentionsReset === 'function') mentionsReset();
-    await refreshSpace();
+    // Your own send always answers with itself on screen — stickiness is
+    // for READING; the author just spoke.
+    const logEl = document.getElementById('log');
+    if (logEl) requestAnimationFrame(() => { logEl.scrollTop = logEl.scrollHeight; });
   } catch (err) { alert(err.message); }
-  finally { sending = false; }
   return false;
 }
 

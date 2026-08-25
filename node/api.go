@@ -45,6 +45,12 @@ type APIServer struct {
 	// loopback listener because its own origin cannot lend an embed an
 	// identity. Written before the window loads and never again.
 	playerOrigin string
+
+	// sayRefs makes POST /messages idempotent (see handleSay). Keyed
+	// space/client_ref → the event already minted for it; bounded FIFO.
+	sayMu    sync.Mutex
+	sayRefs  map[string]id.EventID
+	sayOrder []string
 }
 
 // NewAPIServer creates the server with a fresh session token.
@@ -446,14 +452,30 @@ func (a *APIServer) auth(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-func httpErr(w http.ResponseWriter, code int, err error) {
+// API answers are NEVER CACHED, and the header says so out loud.
+//
+// These are live views of a local log, polled every two seconds — and one
+// of them (/entries) carries an ETag with, until this line existed, no
+// cache policy at all. A response with a validator and no policy is
+// HEURISTICALLY CACHEABLE, and a WebView that exercises that right serves
+// a stale feed while every poll "succeeds": a person sends a message,
+// nothing appears, and the transport is innocent. The ETag keeps doing
+// its real job — saving the transfer and the parse — because no-store
+// governs the HTTP cache, not the conditional request our own client
+// sends by hand.
+func apiHeaders(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+}
+
+func httpErr(w http.ResponseWriter, code int, err error) {
+	apiHeaders(w)
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
-	w.Header().Set("Content-Type", "application/json")
+	apiHeaders(w)
 	json.NewEncoder(w).Encode(v)
 }
 
@@ -947,10 +969,27 @@ func (a *APIServer) handleSay(w http.ResponseWriter, r *http.Request) {
 		Text     string   `json:"text"`
 		ReplyTo  string   `json:"reply_to"`
 		Mentions []string `json:"mentions"`
+		// ClientRef makes this request IDEMPOTENT: the same (space, ref)
+		// answers with the event already minted, minting nothing. It is
+		// what lets a client retry a send it never heard back about —
+		// without it, "retry safely" is not a thing that exists, and the
+		// field report proving that was a friend's message arriving twice.
+		ClientRef string `json:"client_ref"`
 	}](r)
 	if err != nil || body.Text == "" {
 		httpErr(w, http.StatusBadRequest, errors.New("text required"))
 		return
+	}
+	refKey := ""
+	if body.ClientRef != "" && len(body.ClientRef) <= 64 {
+		refKey = tid.Hex() + "/" + body.ClientRef
+		a.sayMu.Lock()
+		if eid, dup := a.sayRefs[refKey]; dup {
+			a.sayMu.Unlock()
+			writeJSON(w, map[string]string{"id": eid.Hex()})
+			return
+		}
+		a.sayMu.Unlock()
 	}
 	var opt SayOptions
 	if body.ReplyTo != "" {
@@ -974,6 +1013,32 @@ func (a *APIServer) handleSay(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusForbidden, err)
 		return
 	}
+	if refKey != "" {
+		// Remembered AFTER the mint, so a failed Say never poisons the
+		// ref: the client's retry gets a fresh attempt, not a phantom id.
+		//
+		// The memory is in-process and bounded — 512 refs, oldest out —
+		// which covers what it exists for: the double-press and the retry
+		// storm, both measured in seconds. A node restarted mid-retry can
+		// still mint a duplicate; that window is accepted and small, and
+		// closing it would mean persisting request state the log itself
+		// does not need.
+		a.sayMu.Lock()
+		if a.sayRefs == nil {
+			a.sayRefs = map[string]id.EventID{}
+		}
+		a.sayRefs[refKey] = eid
+		a.sayOrder = append(a.sayOrder, refKey)
+		if len(a.sayOrder) > 512 {
+			delete(a.sayRefs, a.sayOrder[0])
+			a.sayOrder = a.sayOrder[1:]
+		}
+		a.sayMu.Unlock()
+	}
+	// The words are durable; wake the courier rather than letting them sit
+	// out the rest of a tick. Media has always kicked here — text deserved
+	// the same two seconds.
+	a.rt.kickRelaySync()
 	writeJSON(w, map[string]string{"id": eid.Hex()})
 }
 

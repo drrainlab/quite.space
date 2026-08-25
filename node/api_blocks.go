@@ -585,6 +585,11 @@ func (a *APIServer) handleEntries(w http.ResponseWriter, r *http.Request) {
 	sum := sha256.Sum256(body)
 	tag := `W/"` + hex.EncodeToString(sum[:16]) + `"`
 	w.Header().Set("ETag", tag)
+	// no-store BESIDE the ETag, deliberately: the validator saves the
+	// transfer for our own hand-rolled conditional request, no-store
+	// forbids the HTTP cache from ever answering in the node's place —
+	// a heuristically-cached feed is frozen while every poll "succeeds".
+	w.Header().Set("Cache-Control", "no-store")
 	if r.Header.Get("If-None-Match") == tag {
 		w.WriteHeader(http.StatusNotModified)
 		return
