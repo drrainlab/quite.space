@@ -126,6 +126,29 @@ const HOST = (() => {
     changeCode() {
       return call('changeCode') === true;
     },
+
+    // ---- SR-0: Radio Mode + push-to-talk ----
+    // The store lives on the host (it must work with the screen off); the
+    // page keeps a localStorage echo for instant rendering and the host
+    // corrects it through window.quietRadio — the notif.policy.echo shape.
+    setRadioMode(spaceId, enabled, autoplay) {
+      return call('setRadioMode', spaceId, !!enabled, !!autoplay) === true;
+    },
+    setRadioBackground(on) {
+      return call('setRadioBackground', !!on) === true;
+    },
+    // The finger. False = not now (no mic permission yet — the host raises
+    // the native dialog — or the engine is warming). Everything the page
+    // renders afterwards arrives via window.quietPtt pushes.
+    pttPress(spaceId) {
+      return call('pttPress', spaceId) === true;
+    },
+    pttRelease() {
+      return call('pttRelease') === true;
+    },
+    pttCancel() {
+      return call('pttCancel') === true;
+    },
   };
 })();
 

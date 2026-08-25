@@ -213,6 +213,12 @@ class QuietActivity : ComponentActivity() {
             cb?.onReceiveValue(uris)
         }
 
+    // SR-0: the PTT mic request — a PLAIN permission ask, unlike the
+    // WebView-coupled one below. The result is not read: the person presses
+    // the button again and the check re-runs against the system's answer.
+    private val requestPttMic =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { _ -> }
+
     private var pendingMic: PermissionRequest? = null
 
     private val requestMic =
@@ -397,6 +403,33 @@ class QuietActivity : ComponentActivity() {
                         }
                     },
                     stayRefused = { controller.availabilityRefused() },
+                    // SR-0 — Radio Mode and push-to-talk. The store write is
+                    // the host's; the page gets the authoritative state
+                    // pushed back so a stale localStorage echo self-corrects.
+                    radioMode = { space, enabled, autoplay ->
+                        controller.radio.setMode(space, enabled, autoplay)
+                        runOnUiThread { pushRadioEcho(space) }
+                        true
+                    },
+                    radioBackground = { on ->
+                        controller.radio.setBackgroundListen(on)
+                        true
+                    },
+                    pttPress = { space ->
+                        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) !=
+                            PackageManager.PERMISSION_GRANTED
+                        ) {
+                            // Asked at the moment of first use, never at app
+                            // start (groom §45). The press is refused; the
+                            // person answers the dialog and presses again.
+                            runOnUiThread { requestPttMic.launch(Manifest.permission.RECORD_AUDIO) }
+                            false
+                        } else {
+                            controller.ptt.press(space)
+                        }
+                    },
+                    pttRelease = { controller.ptt.release() },
+                    pttCancel = { controller.ptt.cancel() },
                 ),
                 "QuietHost",
             )
@@ -482,6 +515,7 @@ class QuietActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        controller.setPttSink(pttSink)
         // AR-1b.7's first half. WHICH space is on screen is a separate fact
         // the web UI has to report, and that seam lands with b.7 — until it
         // does, a message for the conversation being read still notifies,
@@ -524,6 +558,11 @@ class QuietActivity : ComponentActivity() {
     }
 
     override fun onPause() {
+        // A recording must not outlive the surface that started it (SR-0):
+        // the page is about to stop receiving pushes, so the utterance dies
+        // here rather than finishing into a void.
+        controller.ptt.cancel()
+        controller.setPttSink(null)
         controller.notifications.onForeground(false)
         super.onPause()
     }
@@ -1474,6 +1513,28 @@ class QuietActivity : ComponentActivity() {
      * nothing produces such an intent. The seam exists here so the tap path
      * never has to be routed through the debug rig and moved later.
      */
+    /**
+     * SR-0 — the host's pushes into the page, both guarded the same way as
+     * every evaluateJavascript here: visible WebView, loopback page only.
+     * The bridge stays getterless; these are the answers.
+     */
+    private fun pushRadioEcho(space: String) {
+        if (web.visibility != View.VISIBLE) return
+        val enabled = controller.radio.enabled(space)
+        val autoplay = controller.radio.autoplay(space)
+        val js = "window.quietRadio && window.quietRadio(" +
+            JSONObject.quote(space) + ", {enabled:$enabled, autoplay:$autoplay});"
+        web.evaluateJavascript(js, null)
+    }
+
+    private val pttSink: (String) -> Unit = { json ->
+        runOnUiThread {
+            if (web.visibility == View.VISIBLE) {
+                web.evaluateJavascript("window.quietPtt && window.quietPtt($json);", null)
+            }
+        }
+    }
+
     private fun deliverTarget() {
         val target = pendingTarget ?: return
         if (web.visibility != View.VISIBLE) return

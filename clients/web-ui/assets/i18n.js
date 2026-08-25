@@ -460,6 +460,25 @@ const I18N = {
     // instruments (QI-2)
     'instr.title': 'Instruments',
 
+    // radio mode (SR-0)
+    'radio.title': 'Radio',
+    'radio.mode': 'Radio mode',
+    'radio.autoplay': 'Speak new messages',
+    'radio.hint': 'Hold to talk; new messages can be spoken automatically.',
+    'ptt.hold': 'Hold to talk',
+    'ptt.release': 'release to send',
+    'ptt.slidecancel': 'release to cancel',
+    'ptt.cancel': 'cancel',
+    'ptt.type': 'Type instead',
+    'ptt.recognizing': 'recognizing…',
+    'ptt.sending': 'sending…',
+    'ptt.limit': 'time limit — sending',
+    'ptt.empty': "Didn't catch that — hold and try again",
+    'ptt.nomic': 'Microphone unavailable',
+    'ptt.notready': 'Preparing offline voice…',
+    'ptt.asrfail': "Couldn't recognize — try again",
+    'ptt.sendfail': 'Not sent — hold to retry',
+
     // device
     'device.title': 'This device',
     'device.trusted': 'Trusted device',
@@ -1414,6 +1433,25 @@ const I18N = {
 
     // instruments (QI-2)
     'instr.title': 'Инструменты',
+
+    // radio mode (SR-0)
+    'radio.title': 'Рация',
+    'radio.mode': 'Режим рации',
+    'radio.autoplay': 'Озвучивать новые сообщения',
+    'radio.hint': 'Удерживайте, чтобы говорить; новые сообщения могут озвучиваться автоматически.',
+    'ptt.hold': 'Удерживайте, чтобы говорить',
+    'ptt.release': 'отпустите — отправить',
+    'ptt.slidecancel': 'отпустите — отмена',
+    'ptt.cancel': 'отмена',
+    'ptt.type': 'Ввести текстом',
+    'ptt.recognizing': 'распознаю…',
+    'ptt.sending': 'отправка…',
+    'ptt.limit': 'лимит времени — отправляю',
+    'ptt.empty': 'Не расслышал — удержите и попробуйте ещё раз',
+    'ptt.nomic': 'Микрофон недоступен',
+    'ptt.notready': 'Готовлю оффлайн-распознавание…',
+    'ptt.asrfail': 'Не удалось распознать — попробуйте ещё раз',
+    'ptt.sendfail': 'Не отправлено — удержите, чтобы повторить',
     'device.title': 'Это устройство',
     'device.trusted': 'Доверенное устройство',
     'device.verification': 'Код проверки',

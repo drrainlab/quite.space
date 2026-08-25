@@ -2202,6 +2202,13 @@ async function refreshSpace() {
     }
   }
 
+  // SR-0: the Radio section and the PTT composer — only where a host
+  // bridge exists (the Android app); a plain browser renders neither.
+  if (typeof RADIO !== 'undefined') {
+    RADIO.renderSection(mbox, current);
+    RADIO.mountFor(current);
+  }
+
   // ON A PHONE, THIS PANEL IS WHERE A SPACE'S OWN CONTROLS LIVE.
   //
   // The conversation bar has room for the title, the thing somebody came to

@@ -567,6 +567,35 @@
   .instr-row .instr-label { color: var(--dim); }
   .instr-row .instr-val { color: var(--fg); font-variant-numeric: tabular-nums; }
   .instr-row.stale .instr-val { color: var(--dim); }
+  /* SR-0 — the push-to-talk surface. Quiet's own language: charcoal,
+     one accent, no tactical anything. */
+  #pttWrap {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 12px;
+    background: var(--composer); border-top: 1px solid var(--composer-line);
+    backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+  }
+  #pttButton {
+    flex: 1; min-height: 48px; border-radius: var(--radius-lg);
+    border: 1px solid var(--glass-border);
+    background: color-mix(in srgb, var(--panel) 55%, transparent);
+    display: flex; align-items: center; justify-content: center; gap: 10px;
+    cursor: pointer; user-select: none; touch-action: none;
+    color: var(--fg); font-size: 13px;
+  }
+  #pttGlyph { color: var(--acc); }
+  #pttWrap.ptt-live #pttButton {
+    border-color: var(--acc);
+    background: color-mix(in srgb, var(--acc) 9%, transparent);
+  }
+  #pttWrap.ptt-cancelling #pttButton {
+    border-color: var(--critical);
+    background: color-mix(in srgb, var(--critical) 9%, transparent);
+  }
+  #pttWave { display: none; }
+  #pttWrap.ptt-live #pttWave { display: block; }
+  #pttWrap.ptt-live #pttGlyph { display: none; }
+  .radio-row .radio-toggle { margin-left: auto; }
   #qrBox img { width: 220px; height: 220px; image-rendering: pixelated;
     background: #fff; padding: 8px; border-radius: 4px; margin-top: 8px; }
   .ic { border: 0; border-right: 1px solid var(--line); border-radius: 0;

@@ -91,6 +91,9 @@ class RuntimeController private constructor(appContext: Context) {
      * already shown, and show them again.
      */
     private val ledger = SqliteLedger(this.app)
+
+    /** SR-0 — device-local, per-space Radio Mode preferences. */
+    internal val radio = RadioModeStore(this.app)
     private val presenter = SystemPresenter(this.app, ledger, storedPolicy(app))
 
     val notifications: NotificationCoordinator = NotificationCoordinator(
@@ -121,6 +124,8 @@ class RuntimeController private constructor(appContext: Context) {
             // notification and closing rows is local work — no call back into
             // the core, which is what the binding's contract forbids.
             notifications.forgetSpace(spaceID)
+            // SD-0 parity for SR-0: no orphaned radio keys either.
+            radio.forgetSpace(spaceID)
         }
 
         override fun onCandidate(c: Candidate) {
@@ -653,6 +658,59 @@ class RuntimeController private constructor(appContext: Context) {
                 Log.w(TAG, "listener threw", t)
             }
         }
+    }
+
+    // ---- SR-0: push-to-talk (phases 1-2, fake engine until the ASR
+    // module lands). Owned HERE for the runtime's own reason: an utterance
+    // and its send must survive a rotation, though never a surface loss —
+    // the Activity cancels on pause, because a recording must not outlive
+    // the surface that started it.
+
+    private val speechEngine = FakeSpeechInputEngine()
+
+    private val messageWriter = MessageWriter { apiEndpoint() }
+
+    /** (api port, session token) of the live node, or null. */
+    internal fun apiEndpoint(): Pair<Int, String>? = try {
+        val core = JSONObject(Quietcore.status())
+        val port = core.optInt("api_port", 0)
+        val token = core.optString("session_token", "")
+        if (port > 0 && token.isNotEmpty()) port to token else null
+    } catch (_: Exception) {
+        null
+    }
+
+    @Volatile private var pttPagePush: ((String) -> Unit)? = null
+
+    /** The visible surface's way to watch PTT; null when no surface. */
+    fun setPttSink(fn: ((String) -> Unit)?) {
+        pttPagePush = fn
+    }
+
+    internal val ptt = PttController(
+        captureFactory = { amp, limit ->
+            object : PttController.Capture {
+                val s = AudioCaptureSession(12_000, amp, limit)
+                override fun start() = s.start()
+                override fun stopAndTake() = s.stopAndTake()
+                override fun cancel() = s.cancel()
+            }
+        },
+        engine = { speechEngine },
+        send = { space, text, ref -> messageWriter.send(space, text, ref) },
+        listener = { e -> pushPtt(e) },
+        execute = { r -> worker.execute(r) },
+    )
+
+    private fun pushPtt(e: PttController.Event) {
+        val fn = pttPagePush ?: return
+        val o = JSONObject()
+            .put("state", e.state.name.lowercase())
+            .put("amplitude", e.amplitude)
+        if (e.transcript != null) o.put("transcript", e.transcript)
+        if (e.error != null) o.put("error", e.error.name.lowercase())
+        if (e.limitReached) o.put("limit", true)
+        try { fn(o.toString()) } catch (_: Throwable) {}
     }
 
     companion object {
