@@ -63,7 +63,7 @@ const RADIO = (() => {
       `<button id="pttCancel" class="btn-plain" style="display:none">${esc(label('ptt.cancel', 'cancel'))}</button>` +
       `<div id="pttButton" role="button" tabindex="0" aria-label="${esc(label('ptt.hold', 'Hold to talk'))}">` +
       `<span id="pttGlyph">◉</span><span id="pttLabel">${esc(label('ptt.hold', 'Hold to talk'))}</span>` +
-      `<canvas id="pttWave" width="180" height="26"></canvas></div>` +
+      `<canvas id="pttWave" width="200" height="30"></canvas></div>` +
       `<button id="pttKeyboard" class="btn-plain" title="${esc(label('ptt.type', 'Type instead'))}">⌨</button>`;
     const button = wrap.querySelector('#pttButton');
     const cancelBtn = wrap.querySelector('#pttCancel');
@@ -120,9 +120,13 @@ const RADIO = (() => {
   }
 
   const waveBars = new Array(24).fill(0);
+  // Auto-gain: a quiet voice on a far mic still draws a living wave. The
+  // running peak decays, so the scale follows the speaker, not a constant.
+  let wavePeak = 1500;
   function drawWave(amp) {
     if (!ui) return;
-    waveBars.push(Math.min(1, amp / 20000)); waveBars.shift();
+    wavePeak = Math.max(1500, wavePeak * 0.97, amp);
+    waveBars.push(Math.min(1, amp / wavePeak)); waveBars.shift();
     const g = ui.wave.getContext('2d');
     if (!g) return;
     const { width, height } = ui.wave;
@@ -182,6 +186,7 @@ const RADIO = (() => {
         break;
       default: { // idle
         ui.wrap.classList.remove('ptt-live', 'ptt-cancelling');
+        wavePeak = 1500;
         ui.cancelBtn.style.display = 'none';
         waveBars.fill(0);
         if (e.error === 'empty') setStatus(label('ptt.empty', "Didn't catch that — hold and try again"));

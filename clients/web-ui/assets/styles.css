@@ -596,6 +596,15 @@
   #pttWrap.ptt-live #pttWave { display: block; }
   #pttWrap.ptt-live #pttGlyph { display: none; }
   .radio-row .radio-toggle { margin-left: auto; }
+  #pttButton { transition: border-color .18s ease, background .18s ease; }
+  #pttLabel { letter-spacing: .02em; }
+  #pttWrap.ptt-live #pttLabel { color: var(--acc); font-variant-numeric: tabular-nums; }
+  /* a message from this space is sounding: the surface hums, quietly */
+  #pttWrap.ptt-speaking #pttButton { border-color: color-mix(in srgb, var(--acc) 45%, transparent); }
+  #pttWrap.ptt-speaking #pttGlyph { animation: ptt-hum 1.6s ease-in-out infinite; }
+  @keyframes ptt-hum { 0%,100% { opacity: .5; } 50% { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { #pttWrap.ptt-speaking #pttGlyph { animation: none; } }
+  #pttCancel { color: var(--critical); }
   #qrBox img { width: 220px; height: 220px; image-rendering: pixelated;
     background: #fff; padding: 8px; border-radius: 4px; margin-top: 8px; }
   .ic { border: 0; border-right: 1px solid var(--line); border-radius: 0;

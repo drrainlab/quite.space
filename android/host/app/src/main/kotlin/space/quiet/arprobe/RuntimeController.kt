@@ -111,7 +111,12 @@ class RuntimeController private constructor(appContext: Context) {
             // The model fetch runs off the caller's thread; PTT reports
             // "preparing" until ready() turns true and prepare() warms it.
             worker.execute {
-                if (modelStore.ensure()) speechEngine.prepare()
+                if (modelStore.ensure() && speechEngine.prepare()) {
+                    // The page sits on "preparing offline voice" until told
+                    // otherwise — tell it: one idle push flips the button to
+                    // "hold to talk" the moment the engine is actually warm.
+                    pushPtt(PttController.Event(PttController.State.IDLE))
+                }
             }
         }
         val hasAny = radio.anyEnabled()
