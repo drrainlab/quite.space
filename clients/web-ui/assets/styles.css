@@ -635,6 +635,27 @@
     border: 1px solid var(--line); border-radius: 4px; padding: 8px 10px;
     margin-top: 4px; display: inline-block; max-width: 360px; }
 
+  /* ---- the feed's sense of time --------------------------------------
+     A quiet line between days, and HH:MM in the bubble's corner. The
+     stamp reserves its space with padding rather than floating over
+     text — a timestamp that covers the last word costs more than it
+     tells. */
+  .day-sep {
+    display: flex; align-items: center; gap: 10px;
+    margin: 14px 0 8px; opacity: .45;
+    font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+  }
+  .day-sep::before, .day-sep::after {
+    content: ''; flex: 1; border-top: 1px solid var(--line);
+  }
+  .entry .bubble { position: relative; }
+  .entry .bubble.stamped { padding-right: 46px; }
+  .entry .bubble .stamp {
+    position: absolute; right: 8px; bottom: 5px;
+    font-size: 10px; opacity: .45; pointer-events: auto;
+    font-family: var(--font-mono); letter-spacing: 0;
+  }
+
   /* ---- link cards ----------------------------------------------------
      Drawn from bytes that arrived inside the event: the picture is a
      data: URI and nothing here reaches a third party (linkcard.js).

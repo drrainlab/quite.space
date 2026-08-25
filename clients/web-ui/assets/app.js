@@ -3405,7 +3405,42 @@ function cssId(v) {
 // joins it; later ones just join. The feed differ is untouched — patchRow
 // finds rows by [data-eid] at any depth, and append/rebuild paths all come
 // through here with the same prev they already computed for `grouped`.
+// ---- when a message was said, said on screen ----
+//
+// created_at is the AUTHOR's wall clock from the signed envelope —
+// advisory by doctrine (it can lie), which is exactly the right standing
+// for a DISPLAY: it answers "when did they say this happened", never a
+// policy question. An entry without one (old events) simply wears no time.
+function dayKey(ts) {
+  if (!ts) return '';
+  const d = new Date(ts * 1000);
+  return d.getFullYear() + '-' + d.getMonth() + '-' + d.getDate();
+}
+function daySepLabel(ts) {
+  const d = new Date(ts * 1000);
+  const today = new Date();
+  const yest = new Date(today.getTime() - 864e5);
+  if (dayKey(ts) === dayKey(today.getTime() / 1000)) return t('conv.today');
+  if (dayKey(ts) === dayKey(yest.getTime() / 1000)) return t('conv.yesterday');
+  const opts = { weekday: 'short', day: 'numeric', month: 'long' };
+  if (d.getFullYear() !== today.getFullYear()) opts.year = 'numeric';
+  return d.toLocaleDateString(localeName() === 'ru' ? 'ru' : undefined, opts);
+}
+
 function renderEntryTiled(log, e, fresh, grouped, prev) {
+  // THE DAY LINE. The feed had no dates at all, and a conversation picked
+  // up after a week read as one endless evening — "история неочевидна"
+  // was the exact field report. Drawn between entries whose author clocks
+  // fall on different days; an entry with no clock draws none rather than
+  // guessing.
+  if (e.created_at && dayKey(e.created_at) !== dayKey(prev ? prev.created_at : 0)) {
+    const sep = document.createElement('div');
+    sep.className = 'day-sep';
+    const label = document.createElement('span');
+    label.textContent = daySepLabel(e.created_at);
+    sep.appendChild(label);
+    log.appendChild(sep);
+  }
   // A fresh arrival that is not my own asks the chime layer for a tick.
   // Coalescing, tier ranking and the person's own enables all live in
   // CHIME — this line states only the fact: something new arrived here.
@@ -3467,6 +3502,19 @@ function renderEntry(log, e, fresh, grouped) {
 
   const bubble = document.createElement('div');
   bubble.className = 'bubble';
+  // The time, in the corner every messenger taught people to look at.
+  // Absolute HH:MM rather than "20h ago": this feed repaints only when
+  // content changes, and a relative stamp that never re-renders is a
+  // stopped clock wearing a live face. The full date rides the hover.
+  if (e.created_at) {
+    const stamp = document.createElement('span');
+    stamp.className = 'stamp';
+    const d = new Date(e.created_at * 1000);
+    stamp.textContent = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    stamp.title = d.toLocaleString();
+    bubble.appendChild(stamp);
+    bubble.classList.add('stamped');
+  }
   // WHAT CAME FROM OUTSIDE SAYS SO, IN THE GATEWAY'S OWN VOICE (TR-0).
   // The API attaches `external` only under imported authorship — the
   // payload could carry that structure from anybody, the signature could
