@@ -15,6 +15,7 @@ FetchContent_Declare(
 set(WHISPER_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(WHISPER_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(GGML_OPENMP OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(whisper)
 
 add_library(quietasr SHARED src/main/cpp/whisper_jni.cpp)

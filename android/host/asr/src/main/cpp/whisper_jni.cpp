@@ -59,6 +59,9 @@ Java_space_quiet_asr_WhisperAsr_nativeTranscribe(
     p.n_threads = threads > 0 ? threads : 4;
     p.translate = false;
     p.no_timestamps = true;
+    // A hard ceiling per segment: a runaway decode must cost tokens, not
+    // tens of seconds. A 12-second utterance fits comfortably.
+    p.max_tokens = 96;
     p.print_progress = false;
     p.print_realtime = false;
     p.print_special = false;
@@ -68,6 +71,19 @@ Java_space_quiet_asr_WhisperAsr_nativeTranscribe(
         return reinterpret_cast<Ctx *>(ud)->cancel.load();
     };
     p.abort_callback_user_data = c;
+    // PTT utterances are bounded and SHORT, but whisper's encoder always
+    // chews a 30-second window. audio_ctx trims the encoder to the real
+    // audio length (50 frames/s + headroom) — the standard short-utterance
+    // trick from whisper.cpp's own streaming example. Measured on device:
+    // this is the difference between "walkie-talkie" and "voicemail".
+    {
+        int ctx = (int)(((int64_t)n * 50) / 16000) + 96;
+        // Floor at 256: below it the decoder can lose itself and generate
+        // for tens of seconds (measured on a 1.3 s clip at ctx 128).
+        if (ctx < 256) ctx = 256;
+        if (ctx > 1500) ctx = 1500;
+        p.audio_ctx = ctx;
+    }
 
     int rc = whisper_full(c->wc, p, f.data(), (int)f.size());
     if (l) env->ReleaseStringUTFChars(lang, l);
