@@ -17,3 +17,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "quiet-ar0-host"
 include(":app")
+// SR-0: the offline ASR module (whisper.cpp behind one JNI seam).
+include(":asr")

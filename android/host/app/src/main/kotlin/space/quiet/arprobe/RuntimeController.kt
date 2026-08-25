@@ -108,7 +108,11 @@ class RuntimeController private constructor(appContext: Context) {
         radio.setMode(space, enabled, autoplay)
         if (enabled) {
             radioPlayback.prepare()
-            speechEngine.prepare()
+            // The model fetch runs off the caller's thread; PTT reports
+            // "preparing" until ready() turns true and prepare() warms it.
+            worker.execute {
+                if (modelStore.ensure()) speechEngine.prepare()
+            }
         }
         val hasAny = radio.anyEnabled()
         val wantLease = hasAny && radio.backgroundListen()
@@ -710,7 +714,13 @@ class RuntimeController private constructor(appContext: Context) {
     // the Activity cancels on pause, because a recording must not outlive
     // the surface that started it.
 
-    private val speechEngine = FakeSpeechInputEngine()
+    // SR-0 phase 3: the real engine. The model rides in lazily (pinned
+    // hash, ModelStore); until it is on disk and loaded the provider
+    // answers null and the page honestly shows "preparing offline voice".
+    private val modelStore = ModelStore(this.app)
+    private val speechEngine = WhisperEngine(
+        modelPath = { modelStore.path().takeIf { modelStore.ready() }?.absolutePath },
+    )
 
     /** SR-0 phase 4: automatic speech of incoming messages. */
     internal val radioPlayback = RadioPlaybackCoordinator(
@@ -760,7 +770,7 @@ class RuntimeController private constructor(appContext: Context) {
                 override fun cancel() = s.cancel()
             }
         },
-        engine = { speechEngine },
+        engine = { if (modelStore.ready() && speechEngine.prepare()) speechEngine else null },
         send = { space, text, ref -> messageWriter.send(space, text, ref) },
         listener = { e -> pushPtt(e) },
         execute = { r -> worker.execute(r) },

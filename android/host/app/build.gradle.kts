@@ -182,6 +182,9 @@ android {
 
 dependencies {
     implementation(files("libs/quietcore.aar"))
+    // SR-0: offline speech recognition (whisper.cpp), its own module so the
+    // backend can be swapped behind SpeechInputEngine.
+    implementation(project(":asr"))
 
     // AR-1b.3. ONE AndroidX dependency, for one thing: registerForActivityResult
     // is the supported way to request a runtime permission, and the deprecated
