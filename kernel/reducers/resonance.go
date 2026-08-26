@@ -81,6 +81,9 @@ func (s *State) ResonanceTargetStatus(target id.EventID) (resolved bool) {
 	if _, ok := s.appInstanceEvents[target]; ok {
 		return true
 	}
+	if _, ok := s.objTargets[target]; ok {
+		return true
+	}
 	return false
 }
 

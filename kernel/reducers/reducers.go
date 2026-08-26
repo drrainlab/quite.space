@@ -17,6 +17,7 @@ import (
 	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/protocol/keep"
 	"github.com/drrainlab/quiet_places/protocol/listening"
+	"github.com/drrainlab/quiet_places/protocol/objects"
 	"github.com/drrainlab/quiet_places/protocol/publication"
 	"github.com/drrainlab/quiet_places/protocol/resonance"
 	"github.com/drrainlab/quiet_places/protocol/schemas"
@@ -36,6 +37,9 @@ const (
 	KindLink    EntryKind = "link"
 	KindSignal  EntryKind = "live_signal"
 	KindUnknown EntryKind = "unknown"
+	// KindObservation is a human observation (SP-1): a quiet feed row that
+	// is simultaneously a timeline note on its object (objects.go).
+	KindObservation EntryKind = "observation"
 )
 
 // EntryContent is a tagged union: exactly one pointer is non-nil, matching
@@ -48,8 +52,9 @@ type EntryContent struct {
 	Audio   *schemas.AudioBlock
 	File    *schemas.FileBlock
 	Link    *schemas.LinkBlock
-	Signal  *schemas.LiveSignalBlock
-	Unknown *UnknownContent
+	Signal      *schemas.LiveSignalBlock
+	Observation *ObservationNoteContent
+	Unknown     *UnknownContent
 }
 
 // TextContent is a chat text entry (message.text.v1). Mentions are the
@@ -135,6 +140,16 @@ type State struct {
 	// pubTargets: stable reaction target → document id.
 	pubTargets map[id.EventID][16]byte
 
+	// objects (SP-1, objects.go): per-object projection + stable targets +
+	// the space journal of object-less observations.
+	objects    map[[16]byte]*objRec
+	objTargets map[id.EventID][16]byte
+	journalObs []ObservationNote
+	// ObservationEvicted counts timeline notes deliberately aged out of
+	// bounded timelines. A separate counter, NOT Unsupported — these were
+	// understood, then evicted by the projection's own law.
+	ObservationEvicted int
+
 	// apps (ADR-014, apps.go): definitions by revision event, instances by
 	// id, and per-instance state partitions.
 	appDefs      map[id.EventID]*AppDefinitionRec
@@ -163,13 +178,15 @@ type State struct {
 	Unsupported map[string]int
 }
 
-// Card is one object-block entry (vision §6.3).
+// Card is one task card (vision §6.3, SP-1). Status is domain display
+// state — carried and shown, never interpreted by the kernel.
 type Card struct {
 	ID       id.EventID
 	Title    string
 	Status   string
 	Assignee *id.PrincipalID
 	Origin   *id.EventID
+	ObjectID *[16]byte // the domain object this task belongs to (SP-1)
 	Clock    uint64
 }
 
@@ -349,7 +366,7 @@ func (s *State) Apply(env *signal.Envelope, eid id.EventID) {
 			return
 		}
 		s.cards[eid] = &Card{ID: eid, Title: c.Title, Status: c.Status,
-			Assignee: c.Assignee, Origin: c.Origin, Clock: env.LogicalClock}
+			Assignee: c.Assignee, Origin: c.Origin, ObjectID: c.ObjectID, Clock: env.LogicalClock}
 	case schemas.CardUpdated:
 		c, err := schemas.DecodeCard(env.Payload)
 		if err != nil || c.Card == nil {
@@ -359,13 +376,14 @@ func (s *State) Apply(env *signal.Envelope, eid id.EventID) {
 		existing, ok := s.cards[*c.Card]
 		if !ok {
 			s.cards[*c.Card] = &Card{ID: *c.Card, Title: c.Title,
-				Status: c.Status, Assignee: c.Assignee, Clock: env.LogicalClock}
+				Status: c.Status, Assignee: c.Assignee, ObjectID: c.ObjectID, Clock: env.LogicalClock}
 			return
 		}
 		if later(env.LogicalClock, eid, existing.Clock, existing.ID) {
 			existing.Title = c.Title
 			existing.Status = c.Status
 			existing.Assignee = c.Assignee
+			existing.ObjectID = c.ObjectID
 			existing.Clock = env.LogicalClock
 		}
 	case publication.SchemaPublished, publication.SchemaRevised:
@@ -374,6 +392,14 @@ func (s *State) Apply(env *signal.Envelope, eid id.EventID) {
 		s.applyPublicationLifecycle(env, eid, true)
 	case publication.SchemaRestored:
 		s.applyPublicationLifecycle(env, eid, false)
+	case objects.SchemaCreated, objects.SchemaRevised:
+		s.applyObjectRevision(env, eid)
+	case objects.SchemaArchived:
+		s.applyObjectLifecycle(env, eid, true)
+	case objects.SchemaRestored:
+		s.applyObjectLifecycle(env, eid, false)
+	case schemas.ObservationNoted:
+		s.applyObservationNoted(env, eid)
 	case publication.SchemaComment:
 		s.applyPublicationComment(env, eid)
 	case appdef.SchemaDefinition:
@@ -596,12 +622,37 @@ func (s *State) Digest() [32]byte {
 			h.Write([]byte(e.Content.Link.URL))
 		case e.Content.Signal != nil:
 			h.Write([]byte(e.Content.Signal.Preset))
+		case e.Content.Observation != nil:
+			h.Write([]byte(e.Content.Observation.Text))
+			if e.Content.Observation.ObjectID != nil {
+				h.Write(e.Content.Observation.ObjectID[:])
+			}
 		}
 	}
 	for _, c := range s.Cards() {
 		h.Write(c.ID[:])
 		h.Write([]byte(c.Title))
 		h.Write([]byte(c.Status))
+		if c.ObjectID != nil {
+			h.Write(c.ObjectID[:])
+		}
+	}
+	// Objects (SP-1): record + lifecycle + bounded timelines, in sorted
+	// object-id order. Empty state writes nothing, so pre-SP-1 fixed
+	// digests stand.
+	for _, o := range s.digestObjects() {
+		h.Write(o.ObjectID[:])
+		h.Write([]byte(o.Name))
+		h.Write(o.RevisionEventID[:])
+		if o.Archived {
+			h.Write([]byte{1})
+		}
+		for _, n := range o.Observations {
+			h.Write(n.EventID[:])
+		}
+	}
+	for _, n := range s.journalObs {
+		h.Write(n.EventID[:])
 	}
 	if o, ok := s.LatestObservation(); ok {
 		h.Write([]byte{byte(o.Value.CentiValue)})

@@ -22,6 +22,7 @@ const (
 	PresenceUpdate    = "presence.update.v1"
 	ObservationTemp   = "observation.temperature.v1"
 	ObservationValue  = "observation.value.v1"
+	ObservationNoted  = "observation.noted.v1"
 	ReceiptDelivery   = "receipt.delivery.v1"
 	DeviceCertified   = "identity.device_certified.v1"
 	DeviceRevoked     = "identity.device_revoked.v1"
@@ -640,13 +641,16 @@ func DecodeTombstone(payload []byte) (*Tombstone, error) {
 }
 
 // Card is card.created.v1 / card.updated.v1 (plan §6.3 Object Block):
-// {1: title, 2: status, 3?: assignee principal, 4?: origin event, 5?: card id}.
+// {1: title, 2: status, 3?: assignee principal, 4?: origin event, 5?: card id,
+// 6?: object id}. Key 6 (SP-1) attaches the task to a domain object; it is
+// the RAW object id, not the derived target — reducers index it directly.
 type Card struct {
 	Title    string
 	Status   string // open | done | dropped
 	Assignee *id.PrincipalID
 	Origin   *id.EventID // message this card was made from
 	Card     *id.EventID // for updates: the card.created event
+	ObjectID *[16]byte   // domain object this task belongs to
 }
 
 func (c *Card) Encode() ([]byte, error) {
@@ -668,6 +672,9 @@ func (c *Card) Encode() ([]byte, error) {
 	if c.Card != nil {
 		n++
 	}
+	if c.ObjectID != nil {
+		n++
+	}
 	buf := codec.AppendMap(nil, n)
 	buf = codec.AppendUint(buf, 1)
 	buf = codec.AppendText(buf, c.Title)
@@ -684,6 +691,10 @@ func (c *Card) Encode() ([]byte, error) {
 	if c.Card != nil {
 		buf = codec.AppendUint(buf, 5)
 		buf = codec.AppendBytes(buf, c.Card[:])
+	}
+	if c.ObjectID != nil {
+		buf = codec.AppendUint(buf, 6)
+		buf = codec.AppendBytes(buf, c.ObjectID[:])
 	}
 	return buf, nil
 }
@@ -738,6 +749,17 @@ func DecodeCard(payload []byte) (*Card, error) {
 				var e id.EventID
 				copy(e[:], b)
 				c.Card = &e
+			}
+		case 6:
+			var b []byte
+			if b, err = d.ReadBytes(); err == nil {
+				if len(b) != 16 {
+					err = errors.New("schemas: object id must be 16 bytes")
+				} else {
+					var o [16]byte
+					copy(o[:], b)
+					c.ObjectID = &o
+				}
 			}
 		default:
 			err = d.SkipItem()
