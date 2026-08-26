@@ -41,15 +41,17 @@ function switchView(v) {
   setReading(false);
   document.querySelectorAll('#viewSwitch button').forEach(b =>
     b.classList.toggle('sel', b.dataset.v === v));
-  const posts = v === 'posts', shelf = v === 'shelf';
-  const chat = !posts && !shelf;
+  const posts = v === 'posts', shelf = v === 'shelf', objects = v === 'objects';
+  const chat = !posts && !shelf && !objects;
   document.getElementById('log').style.display = chat ? '' : 'none';
   document.getElementById('composer').style.display = chat ? '' : 'none';
   document.getElementById('cards').style.display = chat ? '' : 'none';
   document.getElementById('posts').style.display = posts ? '' : 'none';
   document.getElementById('shelf').style.display = shelf ? '' : 'none';
+  document.getElementById('objects').style.display = objects ? '' : 'none';
   if (posts) refreshPosts();
   if (shelf) refreshShelf();
+  if (objects) refreshObjects();
 }
 
 // pubNav is a navigation token: refreshPosts (the LIST) and openPub (an

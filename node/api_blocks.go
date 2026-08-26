@@ -515,6 +515,12 @@ type entryResp struct {
 	Params map[string]uint64 `json:"params,omitempty"`
 	Schema string            `json:"schema,omitempty"` // for unknown kinds
 
+	// ObjectID/ObservedAt: a human observation's edges (SP-1, kind
+	// "observation") — which domain object it is about, and the author's
+	// claim of when it was seen.
+	ObjectID   string `json:"object_id,omitempty"`
+	ObservedAt uint64 `json:"observed_at,omitempty"`
+
 	Asset *assetResp `json:"asset,omitempty"`
 }
 
@@ -743,6 +749,17 @@ func (a *APIServer) projectEntry(tid id.TerminalID, sp *terminals.Space,
 		resp.Params = map[string]uint64{}
 		for _, p := range v.Params {
 			resp.Params[p.Name] = p.Value
+		}
+	case e.Content.Observation != nil:
+		// A human observation (SP-1): the feed's quiet row. The object id
+		// rides along so the row can deep-link to the object card.
+		o := e.Content.Observation
+		resp.Text = o.Text
+		if o.ObjectID != nil {
+			resp.ObjectID = hex.EncodeToString(o.ObjectID[:])
+		}
+		if o.ObservedAt != 0 {
+			resp.ObservedAt = o.ObservedAt
 		}
 	case e.Content.Unknown != nil:
 		resp.Schema = e.Content.Unknown.Schema

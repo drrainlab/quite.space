@@ -1821,6 +1821,9 @@ async function refreshSpace() {
   const sp = currentSpace();
   const char = sp?.character;
   applyTheme(char);
+  // Space Mode v1 (ADR-029): central=objects reorders the view switch and
+  // picks the landing view — nothing below the UI ever reads it.
+  if (typeof applyCentralView === 'function') applyCentralView(char);
   loadSpaceAppearance(current);
   // Conversation header: title + invite (owned private) + info toggle.
   const convTitleEl = document.getElementById('convTitle');
@@ -1894,7 +1897,11 @@ async function refreshSpace() {
     // the node ranks attention with it, an Android host stops posting
     // notifications about the conversation on the screen.
     if (typeof HOST !== 'undefined') HOST.visibleSpace(current);
-    if (typeof pubView !== 'undefined' && pubView !== 'chat') switchView('chat');
+    // The landing view is the space's own (SP-1, ADR-029): central=objects
+    // opens on Objects, everything else opens on chat. This is the ONE
+    // place a space switch decides the view, so mode cannot fight it.
+    const home = char?.central === 'objects' ? 'objects' : 'chat';
+    if (typeof pubView !== 'undefined' && pubView !== home) switchView(home);
   }
   // Incremental feed render, four paths: (1) nothing changed → nothing
   // re-renders (a playing <video>/<audio> is never torn down); (2) appended
@@ -4040,6 +4047,23 @@ const FEED_RENDERERS = {
   file: (e) => renderFile(e),
   link: (e) => renderLink(e),
   live_signal: (e) => renderSignal(e),
+  // A human observation (SP-1): the feed's QUIET row — the same event also
+  // sits on its object's timeline; this is a projection, not a copy.
+  observation: (e) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'obs-entry';
+    const txt = document.createElement('span');
+    txt.textContent = '🔎 ' + e.text;
+    wrap.appendChild(txt);
+    if (e.object_id) {
+      const go = document.createElement('button');
+      go.className = 'obs-goto';
+      go.textContent = '→ ' + t('conv.obs.about');
+      go.onclick = () => { switchView('objects'); openObject(e.object_id); };
+      wrap.appendChild(go);
+    }
+    return wrap;
+  },
 };
 
 // Telegram-style video card: poster + ▶ overlay; the player mounts on tap

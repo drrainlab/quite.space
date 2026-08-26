@@ -65,6 +65,7 @@
         <button data-v="chat" class="sel" data-on-click="9" data-i18n="ui.convbar.view.chat">Chat</button>
         <button data-v="posts" data-on-click="10" data-i18n="ui.convbar.view.posts">Posts</button>
         <button data-v="shelf" data-on-click="11" data-i18n="ui.convbar.view.shelf">Shelf</button>
+        <button data-v="objects" data-on-click="248" data-i18n="ui.convbar.view.objects">Objects</button>
       </div>
       <span style="flex:1"></span>
       <span id="visBadge" class="vis-badge" style="display:none"></span>
@@ -110,6 +111,7 @@
       <div id="pubArticle" style="display:none"></div>
     </div>
     <div id="shelf" style="display:none"></div>
+    <div id="objects" style="display:none"></div>
     <div id="log"></div>
     <div id="replyBar" style="display:none"></div>
     <!-- Where a question goes belongs beside the box you type it into,
@@ -1391,6 +1393,28 @@
   <p class="out" id="keepMsg"></p>
 </dialog>
 
+<!-- Object editor (SP-1). One form for create and revise: a revision always
+     carries the WHOLE record — the props textarea IS the new set, and a
+     deleted line is a deleted prop. -->
+<dialog id="dlgObject">
+  <h3 data-i18n="ui.object.title">Object</h3>
+  <label data-i18n="ui.object.kind">Kind</label>
+  <select id="objKind"></select>
+  <label data-i18n="ui.object.name">Name</label>
+  <input id="objName" maxlength="200" data-i18n-ph="ui.object.ph.name" placeholder="CNC-01">
+  <label data-i18n="ui.object.status">Status</label>
+  <input id="objStatus" maxlength="40" data-i18n-ph="ui.object.ph.status" placeholder="operational">
+  <label data-i18n="ui.object.summary">Summary</label>
+  <textarea id="objSummary" maxlength="1000" rows="3"></textarea>
+  <label data-i18n="ui.object.props">Properties (key = value, one per line)</label>
+  <textarea id="objProps" rows="4" data-i18n-ph="ui.object.ph.props" placeholder="location = workshop corner"></textarea>
+  <div class="row">
+    <button class="btn-tinted" data-on-click="249" data-i18n="ui.object.save">Save</button>
+    <button data-on-click="250" data-i18n="ui.object.cancel">cancel</button>
+  </div>
+  <p class="out" id="objMsg"></p>
+</dialog>
+
 <script src="i18n.js"></script>
 <script src="chime-dsp.js"></script>
 <script src="chime.js"></script>
@@ -1407,6 +1431,7 @@
 <script src="resonance.js"></script>
 <script src="effects.js"></script>
 <script src="shelf.js"></script>
+<script src="objects.js"></script>
 <script src="mentions.js"></script>
 <script src="quietrank.js"></script>
 <script src="audio.js"></script>

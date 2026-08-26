@@ -103,7 +103,10 @@ type Object struct {
 	Clock           uint64
 	CreatedAt       uint64
 	Archived        bool
-	Observations    []ObservationNote
+	// ArchiveEventID: set while archived — the event a restore must
+	// explicitly reference.
+	ArchiveEventID id.EventID
+	Observations   []ObservationNote
 }
 
 func (s *State) objRecFor(objectID [16]byte) *objRec {
@@ -268,13 +271,17 @@ func (s *State) projectObjects(archived bool) []Object {
 		if err != nil {
 			continue
 		}
-		out = append(out, Object{
+		o := Object{
 			ObjectID: oid, Record: r, Raw: rec.recRaw,
 			Name: rec.name, Author: rec.author,
 			RevisionEventID: rec.revID, PrevRevision: rec.prevRev,
 			Clock: rec.revClock, CreatedAt: rec.createdAt, Archived: rec.archived(),
 			Observations: append([]ObservationNote(nil), rec.observations...),
-		})
+		}
+		if o.Archived {
+			o.ArchiveEventID = rec.archiveEvent
+		}
+		out = append(out, o)
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Clock != out[j].Clock {

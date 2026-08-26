@@ -96,6 +96,8 @@ func objectListJSON(o reducers.Object, tasks []reducers.Card) map[string]any {
 	}
 	if o.Archived {
 		j["archived"] = true
+		// What a restore must reference — carried so the UI can offer one.
+		j["archive_event_id"] = o.ArchiveEventID.Hex()
 	}
 	return j
 }
@@ -176,14 +178,34 @@ func (a *APIServer) handleGetObject(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			return errors.New("unknown object")
 		}
-		j = objectListJSON(o, nil)
+		objTasks := st.space.State.TasksForObject(oid)
+		j = objectListJSON(o, objTasks)
+		// The stable target's social state: kept-by-me, keep count, and the
+		// reaction aggregate — same viewer-relative projection the feed uses.
+		me := a.rt.PrincipalID
+		target := objects.Target(oid)
+		if kept, _ := st.space.State.KeepState(target, me); kept {
+			j["kept"] = true
+		}
+		if n := st.space.State.KeepCount(target); n > 0 {
+			j["keep_count"] = n
+		}
+		names := map[id.PrincipalID]string{me: a.rt.displayNameLocked()}
+		for _, c := range st.space.MemberCards(0) {
+			if c.Name != "" {
+				names[c.Principal] = c.Name
+			}
+		}
+		if res := a.projectResonance(st.space, target, me, names); res != nil && res.Total > 0 {
+			j["resonance"] = res
+		}
 		props := []propJSON{}
 		for _, p := range o.Record.Props {
 			props = append(props, propJSON{Key: p.Key, Value: p.Value})
 		}
 		j["props"] = props
 		tasks := []map[string]any{}
-		for _, c := range st.space.State.TasksForObject(oid) {
+		for _, c := range objTasks {
 			tasks = append(tasks, cardJSON(c))
 		}
 		j["tasks"] = tasks

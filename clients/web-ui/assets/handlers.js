@@ -292,6 +292,9 @@ const UI_HANDLERS = [
   /* 245 click    */ (event, el) => { chimeSet('personal', false); },
   /* 246 click    */ (event, el) => { LINKS.setEnabled(true); },
   /* 247 click    */ (event, el) => { LINKS.setEnabled(false); },
+  /* 248 click    */ (event, el) => { switchView('objects'); },
+  /* 249 click    */ (event, el) => { saveObject(); },
+  /* 250 click    */ (event, el) => { dlgObject.close(); },
 ];
 
 /** Attach every handler declared in the markup.

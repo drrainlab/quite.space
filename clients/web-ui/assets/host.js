@@ -166,6 +166,13 @@ window.quietOpen = function quietOpen(target) {
     // the right answer.
     current = spaceId;
     refresh().then(() => {
+      // An object deep link (SP-1): land on the object card. The QR on a
+      // machine is this line — {space_id, object_id}.
+      if (target.object_id && typeof openObject === 'function') {
+        switchView('objects');
+        openObject(target.object_id);
+        return;
+      }
       const mid = target.message_id || target.event_id;
       if (!mid) return;
       const row = document.querySelector(`[data-eid="${CSS.escape(mid)}"]`);
