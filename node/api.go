@@ -200,8 +200,16 @@ func (a *APIServer) Handler() http.Handler {
 	mux.HandleFunc("GET /api/spaces/{id}/messages", a.auth(a.handleMessages))
 	mux.HandleFunc("POST /api/spaces/{id}/messages", a.auth(a.handleSay))
 	mux.HandleFunc("GET /api/spaces/{id}/state", a.auth(a.handleState))
+	mux.HandleFunc("GET /api/spaces/{id}/cards", a.auth(a.handleListCards))
 	mux.HandleFunc("POST /api/spaces/{id}/cards", a.auth(a.handleMakeCard))
 	mux.HandleFunc("POST /api/spaces/{id}/cards/{card}/status", a.auth(a.handleCardStatus))
+	mux.HandleFunc("GET /api/spaces/{id}/objects", a.auth(a.handleListObjects))
+	mux.HandleFunc("POST /api/spaces/{id}/objects", a.auth(a.handleCreateObject))
+	mux.HandleFunc("GET /api/spaces/{id}/objects/{oid}", a.auth(a.handleGetObject))
+	mux.HandleFunc("POST /api/spaces/{id}/objects/{oid}", a.auth(a.handleReviseObject))
+	mux.HandleFunc("POST /api/spaces/{id}/objects/{oid}/archive", a.auth(a.handleArchiveObject))
+	mux.HandleFunc("POST /api/spaces/{id}/objects/{oid}/restore", a.auth(a.handleRestoreObject))
+	mux.HandleFunc("POST /api/spaces/{id}/objects/{oid}/observations", a.auth(a.handleNoteObservation))
 	mux.HandleFunc("POST /api/spaces/{id}/invites", a.auth(a.handleMintInvite))
 	mux.HandleFunc("GET /api/spaces/{id}/members", a.auth(a.handleMembers))
 	mux.HandleFunc("GET /api/spaces/{id}/entries", a.auth(a.handleEntries))
@@ -1268,14 +1276,16 @@ func (a *APIServer) handleMakeCard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body, err := readBody[struct {
-		Title  string `json:"title"`
-		Origin string `json:"origin"`
+		Title    string `json:"title"`
+		Origin   string `json:"origin"`
+		ObjectID string `json:"object_id"`
+		Assignee string `json:"assignee"`
 	}](r)
 	if err != nil || body.Title == "" {
 		httpErr(w, http.StatusBadRequest, errors.New("title required"))
 		return
 	}
-	var origin *id.EventID
+	var opt CardOptions
 	if body.Origin != "" {
 		h, err := hex.DecodeString(body.Origin)
 		if err != nil || len(h) != id.Size {
@@ -1284,9 +1294,27 @@ func (a *APIServer) handleMakeCard(w http.ResponseWriter, r *http.Request) {
 		}
 		var e id.EventID
 		copy(e[:], h)
-		origin = &e
+		opt.Origin = &e
 	}
-	eid, err := a.rt.MakeCard(tid, body.Title, origin)
+	if body.ObjectID != "" {
+		h, err := hex.DecodeString(body.ObjectID)
+		if err != nil || len(h) != 16 {
+			httpErr(w, http.StatusBadRequest, errors.New("bad object id"))
+			return
+		}
+		var o [16]byte
+		copy(o[:], h)
+		opt.ObjectID = &o
+	}
+	if body.Assignee != "" {
+		p, err := id.ParsePrincipalID(body.Assignee)
+		if err != nil {
+			httpErr(w, http.StatusBadRequest, errors.New("bad assignee"))
+			return
+		}
+		opt.Assignee = &p
+	}
+	eid, err := a.rt.MakeCard(tid, body.Title, opt)
 	if err != nil {
 		httpErr(w, http.StatusForbidden, err)
 		return

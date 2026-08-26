@@ -95,12 +95,17 @@ func prunable(schema string) bool {
 	switch schema {
 	case schemas.MessageText, schemas.MessageRevised, schemas.MessageTombstoned,
 		schemas.PresenceUpdate, schemas.ObservationTemp,
-		schemas.ObservationValue:
+		schemas.ObservationValue,
+		// A human observation ages like a message: the object's structural
+		// record does not depend on it (SP-1).
+		schemas.ObservationNoted:
 		return true
 	}
 	// Block media entries age out with their messages; resonance ages with
-	// its targets. Everything else (publication.*, app.*, keep.*,
-	// appearance.*, palette.*, membership.*, manifests) is structural.
+	// its targets. Everything else (publication.*, app.*, keep.*, object.*,
+	// card.*, appearance.*, palette.*, membership.*, manifests) is
+	// structural — an object or task referenced by current state survives
+	// regardless of age.
 	if schemas.IsBlockSchema(schema) {
 		return true
 	}

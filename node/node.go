@@ -1403,15 +1403,27 @@ func (r *Runtime) Say(tid id.TerminalID, text string, opt SayOptions) (id.EventI
 	return a.ID, nil
 }
 
-// MakeCard turns a message into a card (vision §8.3, message-to-object).
-func (r *Runtime) MakeCard(tid id.TerminalID, title string, origin *id.EventID) (id.EventID, error) {
+// CardOptions carries a new task's optional edges. A struct, not more
+// positional parameters — addressing grows, call sites should not.
+type CardOptions struct {
+	Origin   *id.EventID
+	ObjectID *[16]byte // SP-1: the domain object this task belongs to
+	Assignee *id.PrincipalID
+}
+
+// MakeCard creates a task card (vision §8.3; SP-1 object edge).
+func (r *Runtime) MakeCard(tid id.TerminalID, title string, opt CardOptions) (id.EventID, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	st, ok := r.spaces[tid]
 	if !ok {
 		return id.EventID{}, errors.New("node: unknown space")
 	}
-	payload, err := (&schemas.Card{Title: title, Status: "open", Origin: origin}).Encode()
+	if err := r.canWrite(st); err != nil {
+		return id.EventID{}, err
+	}
+	payload, err := (&schemas.Card{Title: title, Status: "open",
+		Origin: opt.Origin, ObjectID: opt.ObjectID, Assignee: opt.Assignee}).Encode()
 	if err != nil {
 		return id.EventID{}, err
 	}
@@ -1442,7 +1454,10 @@ func (r *Runtime) EmitBlock(tid id.TerminalID, schema string, payload []byte) (i
 	return a.ID, nil
 }
 
-// SetCardStatus updates a card.
+// SetCardStatus updates a card. card.updated.v1 is a WHOLE-RECORD LWW
+// register, so this is read-modify-write: fields the caller omitted are
+// preserved from the projection — a status toggle must never strip the
+// task off its object or its assignee.
 func (r *Runtime) SetCardStatus(tid id.TerminalID, card id.EventID, title, status string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -1450,7 +1465,22 @@ func (r *Runtime) SetCardStatus(tid id.TerminalID, card id.EventID, title, statu
 	if !ok {
 		return errors.New("node: unknown space")
 	}
-	payload, err := (&schemas.Card{Title: title, Status: status, Card: &card}).Encode()
+	if err := r.canWrite(st); err != nil {
+		return err
+	}
+	next := &schemas.Card{Title: title, Status: status, Card: &card}
+	for _, c := range st.space.State.Cards() {
+		if c.ID != card {
+			continue
+		}
+		if next.Title == "" {
+			next.Title = c.Title
+		}
+		next.Assignee = c.Assignee
+		next.ObjectID = c.ObjectID
+		break
+	}
+	payload, err := next.Encode()
 	if err != nil {
 		return err
 	}
