@@ -717,6 +717,12 @@ func (r *Runtime) requestIncompleteAssets(tid id.TerminalID, frames [][]byte) {
 				docAssets = append(docAssets, aid)
 			}
 		}
+		// Objects' live structural references (SP-2, ADR-030): a mirror
+		// must hold the mixes and covers the space's objects still name,
+		// or "open the track" answers 409 forever on this replica.
+		for aid := range st.space.State.ObjectLiveAssetIDs() {
+			docAssets = append(docAssets, aid)
+		}
 		return nil
 	})
 	for _, aid := range docAssets {
