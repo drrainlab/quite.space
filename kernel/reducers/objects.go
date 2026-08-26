@@ -42,11 +42,12 @@ type objRec struct {
 	createdAt uint64
 
 	// Archive and restore are two LWW REGISTERS and "archived" is a pure
-	// function of both — NOT the publications-style mutable flag. The flag
-	// form has an ordering hole this projection's convergence test caught:
-	// a restore folded BEFORE its archive is dropped ("not archived yet")
-	// and never reconsidered, so nodes that saw restore-first diverge
-	// forever from nodes that saw archive-first.
+	// function of both — NOT a mutable flag. The flag form (publications'
+	// original shape, since fixed to this one) has an ordering hole this
+	// projection's convergence test caught: a restore folded BEFORE its
+	// archive is dropped ("not archived yet") and never reconsidered, so
+	// nodes that saw restore-first diverge forever from nodes that saw
+	// archive-first.
 	hasArchive   bool
 	archiveEvent id.EventID
 	archiveClock uint64

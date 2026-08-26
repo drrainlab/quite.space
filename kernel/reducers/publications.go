@@ -26,11 +26,33 @@ type pubRec struct {
 	// revisions never move it (PS-2).
 	createdAt uint64
 
-	archived     bool
+	// Archive and restore are two LWW REGISTERS and "archived" is a pure
+	// function of both — the SP-1 objects form (objRec), ported back after
+	// its convergence test exposed the flag form's ordering hole here: a
+	// restore folded BEFORE its archive was dropped ("not archived yet")
+	// and never reconsidered, so a node that saw restore-first stayed
+	// archived forever while a node that saw archive-first went live.
+	hasArchive   bool
 	archiveEvent id.EventID
 	archiveClock uint64
+	restoreRef   *id.EventID // which archive event the restore undoes
+	restoreEID   id.EventID
+	restoreClock uint64
 
 	comments map[[16]byte]*PublicationComment
+}
+
+// archived derives the lifecycle state: archived unless the latest restore
+// explicitly references the latest archive and is later than it (ADR-014
+// invariant 6).
+func (r *pubRec) archived() bool {
+	if !r.hasArchive {
+		return false
+	}
+	if r.restoreRef == nil || *r.restoreRef != r.archiveEvent {
+		return true
+	}
+	return !later(r.restoreClock, r.restoreEID, r.archiveClock, r.archiveEvent)
 }
 
 // PubReactionTarget derives the STABLE reaction target for a document —
@@ -135,26 +157,25 @@ func (s *State) applyPublicationLifecycle(env *signal.Envelope, eid id.EventID, 
 	}
 	rec := s.pubRecFor(p.DocumentID)
 	if archive {
-		if rec.archived && !later(env.LogicalClock, eid, rec.archiveClock, rec.archiveEvent) {
+		if rec.hasArchive && !later(env.LogicalClock, eid, rec.archiveClock, rec.archiveEvent) {
 			return
 		}
-		rec.archived = true
+		rec.hasArchive = true
 		rec.archiveEvent = eid
 		rec.archiveClock = env.LogicalClock
 		return
 	}
-	// Restore lifts an archive only when it is LATER than the archive and
-	// explicitly references it (ADR-014 invariant 6).
-	if !rec.archived {
+	// Restore register: latest restore wins, ARRIVAL ORDER IRRELEVANT — a
+	// restore folded before its archive still counts once the archive
+	// lands, because archived() re-derives from both registers. It lifts
+	// the archive only when it explicitly references that archive event
+	// and is later than it (ADR-014 invariant 6).
+	if rec.restoreRef != nil && !later(env.LogicalClock, eid, rec.restoreClock, rec.restoreEID) {
 		return
 	}
-	if p.ArchivedRevision == nil || *p.ArchivedRevision != rec.archiveEvent {
-		return
-	}
-	if !later(env.LogicalClock, eid, rec.archiveClock, rec.archiveEvent) {
-		return
-	}
-	rec.archived = false
+	rec.restoreRef = p.ArchivedRevision
+	rec.restoreEID = eid
+	rec.restoreClock = env.LogicalClock
 }
 
 func (s *State) applyPublicationComment(env *signal.Envelope, eid id.EventID) {
@@ -190,7 +211,7 @@ func (s *State) ArchivedPublications() []Publication {
 func (s *State) projectPublications(archived bool) []Publication {
 	out := make([]Publication, 0, len(s.publications))
 	for docID, rec := range s.publications {
-		if rec.docRaw == nil || rec.archived != archived {
+		if rec.docRaw == nil || rec.archived() != archived {
 			continue
 		}
 		doc, err := publication.Decode(rec.docRaw)
@@ -201,7 +222,7 @@ func (s *State) projectPublications(archived bool) []Publication {
 			DocumentID: docID, Document: doc, Raw: rec.docRaw,
 			Title: rec.title, Author: rec.author,
 			RevisionEventID: rec.revID, PrevRevision: rec.prevRev,
-			Clock: rec.revClock, CreatedAt: rec.createdAt, Archived: rec.archived,
+			Clock: rec.revClock, CreatedAt: rec.createdAt, Archived: rec.archived(),
 		}
 		for _, c := range rec.comments {
 			pub.Comments = append(pub.Comments, *c)
@@ -237,7 +258,7 @@ func (s *State) PublicationByID(docID [16]byte) (Publication, bool) {
 	if !ok || rec.docRaw == nil {
 		return Publication{}, false
 	}
-	for _, p := range s.projectPublications(rec.archived) {
+	for _, p := range s.projectPublications(rec.archived()) {
 		if p.DocumentID == docID {
 			return p, true
 		}

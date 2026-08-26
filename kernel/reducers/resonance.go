@@ -167,7 +167,7 @@ func (s *State) resonanceHidden(target id.EventID) bool {
 	}
 	if docID, ok := s.pubTargets[target]; ok {
 		if p, ok := s.publications[docID]; ok {
-			return p.archived
+			return p.archived()
 		}
 	}
 	return false
