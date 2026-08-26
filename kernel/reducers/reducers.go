@@ -150,6 +150,12 @@ type State struct {
 	// understood, then evicted by the projection's own law.
 	ObservationEvicted int
 
+	// annots (SP-2, edges.go): per-asset bounded annotation timelines,
+	// same eviction law as observations; AnnotationEvicted is its honest
+	// counter.
+	annots            map[string][]AnnotationNote
+	AnnotationEvicted int
+
 	// apps (ADR-014, apps.go): definitions by revision event, instances by
 	// id, and per-instance state partitions.
 	appDefs      map[id.EventID]*AppDefinitionRec
@@ -398,8 +404,12 @@ func (s *State) Apply(env *signal.Envelope, eid id.EventID) {
 		s.applyObjectLifecycle(env, eid, true)
 	case objects.SchemaRestored:
 		s.applyObjectLifecycle(env, eid, false)
+	case objects.SchemaAttached:
+		s.applyObjectAttached(env, eid)
 	case schemas.ObservationNoted:
 		s.applyObservationNoted(env, eid)
+	case schemas.AssetAnnotated:
+		s.applyAssetAnnotated(env, eid)
 	case publication.SchemaComment:
 		s.applyPublicationComment(env, eid)
 	case appdef.SchemaDefinition:
@@ -650,9 +660,41 @@ func (s *State) Digest() [32]byte {
 		for _, n := range o.Observations {
 			h.Write(n.EventID[:])
 		}
+		// Asset edges (SP-2): pure LWW registers, deterministic in any
+		// arrival order, so they belong in the digest. Sorted by asset
+		// hex; the winner event id covers every field of the register.
+		for _, e := range s.digestEdges(o.ObjectID) {
+			h.Write([]byte(e.Asset))
+			h.Write(e.EventID[:])
+			if e.Detached {
+				h.Write([]byte{1})
+			}
+			h.Write([]byte(e.Supersedes))
+			h.Write([]byte(e.Role))
+		}
+		if rec := s.objects[o.ObjectID]; rec != nil && rec.cand != nil {
+			h.Write([]byte(rec.cand.asset))
+			h.Write(rec.cand.eid[:])
+		}
 	}
 	for _, n := range s.journalObs {
 		h.Write(n.EventID[:])
+	}
+	// Annotations (SP-2): bounded timelines under the deterministic
+	// observation eviction law — digest-safe. Sorted by asset hex;
+	// empty state writes nothing, so pre-SP-2 digests stand.
+	if len(s.annots) > 0 {
+		assets := make([]string, 0, len(s.annots))
+		for a := range s.annots {
+			assets = append(assets, a)
+		}
+		sort.Strings(assets)
+		for _, a := range assets {
+			h.Write([]byte(a))
+			for _, n := range s.annots[a] {
+				h.Write(n.EventID[:])
+			}
+		}
 	}
 	if o, ok := s.LatestObservation(); ok {
 		h.Write([]byte{byte(o.Value.CentiValue)})

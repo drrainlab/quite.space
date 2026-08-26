@@ -56,11 +56,12 @@ const (
 	recKeySummary = 5
 	recKeyProps   = 6
 	recKeyCover   = 7
+	recKeyParent  = 8
 
 	// maxKnownRecKey is the highest key this build understands; higher
 	// keys ride RawExtra verbatim so an older editor cannot strip a
 	// newer field by re-saving.
-	maxKnownRecKey = recKeyCover
+	maxKnownRecKey = recKeyParent
 )
 
 // Prop is one key/value pair. Encoded as a sorted array of pairs rather
@@ -91,6 +92,15 @@ type Record struct {
 	Summary string
 	Props   []Prop // sorted by Key, unique
 	Cover   string // hex asset id, optional
+	// Parent models PRIMARY CONTAINMENT — the one tree the object lives
+	// in (Track lives in a Release, Session lives in a Track). It is NOT
+	// an arbitrary object relationship: a track that also appears on a
+	// compilation is a future, separate edge primitive, and stretching
+	// this single pointer into that role would quietly turn a tree into
+	// an unmodelled graph (SP-2, ADR-030). The edge is DERIVED at
+	// projection time (ChildrenOf) — a parent record never lists its
+	// children.
+	Parent *[16]byte
 	// RawExtra carries unknown higher keys through a re-save.
 	RawExtra []Extra
 }
@@ -148,6 +158,14 @@ func (r *Record) Validate() error {
 	if len(r.Cover) > 128 {
 		return errors.New("objects: cover id too long")
 	}
+	if r.Parent != nil {
+		if *r.Parent == ([16]byte{}) {
+			return errors.New("objects: parent id is zero")
+		}
+		if *r.Parent == r.ObjectID {
+			return errors.New("objects: an object cannot be its own parent")
+		}
+	}
 	return nil
 }
 
@@ -169,6 +187,9 @@ func (r *Record) Encode() ([]byte, error) {
 		n++
 	}
 	if r.Cover != "" {
+		n++
+	}
+	if r.Parent != nil {
 		n++
 	}
 	n += len(extra)
@@ -199,6 +220,10 @@ func (r *Record) Encode() ([]byte, error) {
 	if r.Cover != "" {
 		buf = codec.AppendUint(buf, recKeyCover)
 		buf = codec.AppendText(buf, r.Cover)
+	}
+	if r.Parent != nil {
+		buf = codec.AppendUint(buf, recKeyParent)
+		buf = codec.AppendBytes(buf, r.Parent[:])
 	}
 	for _, e := range extra {
 		buf = codec.AppendUint(buf, e.Key)
@@ -265,6 +290,10 @@ func Decode(payload []byte) (*Record, error) {
 			}
 		case recKeyCover:
 			r.Cover, er = d.ReadText()
+		case recKeyParent:
+			var p [16]byte
+			er = read16(d, p[:])
+			r.Parent = &p
 		default:
 			er = readExtra(d, k, maxKnownRecKey, &r.RawExtra)
 		}

@@ -23,6 +23,7 @@ const (
 	ObservationTemp   = "observation.temperature.v1"
 	ObservationValue  = "observation.value.v1"
 	ObservationNoted  = "observation.noted.v1"
+	AssetAnnotated    = "asset.annotated.v1"
 	ReceiptDelivery   = "receipt.delivery.v1"
 	DeviceCertified   = "identity.device_certified.v1"
 	DeviceRevoked     = "identity.device_revoked.v1"

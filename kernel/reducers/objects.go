@@ -57,6 +57,11 @@ type objRec struct {
 	// observations: bounded timeline, ascending (CreatedAt, Clock, EventID).
 	// See insertObservation for the eviction law.
 	observations []ObservationNote
+
+	// edges (SP-2, edges.go): asset hex → LWW register; never evicted.
+	edges map[string]*assetEdge
+	// cand: the object's candidate register — "what we listen to now".
+	cand *candReg
 }
 
 // archived derives the lifecycle state: archived unless the latest restore
