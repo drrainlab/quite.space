@@ -3853,3 +3853,39 @@ div.reply-to { cursor: default; }
   background: var(--panel); color: var(--acc); border-radius: var(--radius-md);
   width: 32px; height: 32px; cursor: pointer; font-size: 16px; }
 .obj-add-btn:hover { border-color: var(--acc); }
+
+/* ---- Studio renderers (SP-2) ---- */
+.obj-crumb { font-size: 14px; }
+.obj-child-list, .obj-ver-list, .obj-take-list { display: flex;
+  flex-direction: column; gap: 6px; }
+.obj-child { display: flex; align-items: baseline; gap: 10px;
+  padding: 8px 10px; border: 1px solid var(--line);
+  border-radius: var(--radius-md); cursor: pointer; }
+.obj-child:hover { border-color: var(--acc); }
+.obj-child-name { font-weight: 500; }
+.obj-child-meta { font-size: 12px; opacity: .6; }
+.obj-ver { display: flex; align-items: center; gap: 10px; font-size: 13px;
+  padding: 4px 2px; }
+.obj-ver-name { min-width: 120px; }
+.obj-ver-star { background: none; border: none; color: var(--acc);
+  cursor: default; font-size: 14px; padding: 0; }
+.obj-ver-star.dim { opacity: .35; cursor: pointer; }
+.obj-ver-star.dim:hover { opacity: 1; }
+.obj-take { border: 1px solid var(--line); border-radius: var(--radius-md);
+  padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
+.obj-take-head { display: flex; align-items: center; gap: 8px; }
+/* Annotation pins ride the scrubber; the scrubber is their coordinate
+   system, so it must be one. */
+.ascrub { position: relative; }
+.obj-mark { position: absolute; top: -6px; width: 8px; height: 8px;
+  border-radius: 50%; background: var(--acc); border: none; padding: 0;
+  cursor: pointer; transform: translateX(-50%); }
+.obj-mark:hover { transform: translateX(-50%) scale(1.4); }
+.obj-at-chip { border: 1px solid var(--line); background: var(--panel);
+  border-radius: 999px; padding: 4px 10px; cursor: pointer; font-size: 12px;
+  margin-top: 6px; color: inherit; }
+.obj-at-chip.sel { border-color: var(--acc); color: var(--acc); }
+.obj-obs-seek { cursor: pointer; color: var(--acc); }
+/* Pins inherit the app's generous button metrics — pin them down. */
+.ascrub .obj-mark { min-width: 0; min-height: 0; width: 8px; height: 8px;
+  line-height: 0; box-shadow: 0 0 6px var(--acc); }

@@ -401,9 +401,13 @@
     <p class="hint" data-i18n="ui.wiz.ritualsHint">up to three rituals — they define how people live here:</p>
     <div id="ritualList"></div>
     <p class="hint" data-i18n="ui.wiz.centralHint">central block:</p>
+    <!-- value= is LOAD-BEARING: the i18n applier rewrites option
+         textContent, and an option without an explicit value would have
+         its .value rewritten with it — a Russian locale used to submit
+         central="объекты" into a signed manifest. -->
     <select id="wCentral">
-      <option data-i18n="ui.wiz.central.chat">chat</option><option data-i18n="ui.wiz.central.objects">objects</option><option data-i18n="ui.wiz.central.audio">audio</option>
-      <option data-i18n="ui.wiz.central.members">members</option><option data-i18n="ui.wiz.central.telemetry">telemetry</option>
+      <option value="chat" data-i18n="ui.wiz.central.chat">chat</option><option value="objects" data-i18n="ui.wiz.central.objects">objects</option><option value="audio" data-i18n="ui.wiz.central.audio">audio</option>
+      <option value="members" data-i18n="ui.wiz.central.members">members</option><option value="telemetry" data-i18n="ui.wiz.central.telemetry">telemetry</option>
     </select>
     <p class="hint" data-i18n="ui.wiz.presenceHint">custom presence states (comma separated, optional — they may not
     impersonate system properties like online/verified/delivered):</p>

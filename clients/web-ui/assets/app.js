@@ -4518,6 +4518,18 @@ function makeAudioPlayer(src, wave, durationMs) {
     else if (ev.key === ' ' || ev.key === 'Enter') { ev.preventDefault(); btn.click(); }
   });
 
+  // The SP-2 hook: enough surface for annotation markers to ride the
+  // scrubber without forking the player. Position math stays with the
+  // caller; the player only tells time and takes a seek.
+  player.seekMs = (ms) => {
+    const dur = total();
+    if (dur > 0) { audio.currentTime = Math.min(ms, dur) / 1000; paint(); }
+  };
+  player.currentMs = () => (audio.currentTime || 0) * 1000;
+  player.durationMs = () => total();
+  player.scrubEl = scrub;
+  player.onMeta = (cb) => audio.addEventListener('loadedmetadata', cb);
+
   return player;
 }
 

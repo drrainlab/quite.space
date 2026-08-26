@@ -29,6 +29,9 @@ type objectRecordJSON struct {
 	Summary  string     `json:"summary,omitempty"`
 	Props    []propJSON `json:"props,omitempty"`
 	Cover    string     `json:"cover,omitempty"`
+	// Parent: primary containment (SP-2) — hex object id of the one tree
+	// this object lives in.
+	Parent string `json:"parent,omitempty"`
 }
 
 func recordFromJSON(j objectRecordJSON) (*objects.Record, error) {
@@ -45,6 +48,15 @@ func recordFromJSON(j objectRecordJSON) (*objects.Record, error) {
 	}
 	for _, p := range j.Props {
 		r.Props = append(r.Props, objects.Prop{Key: p.Key, Value: p.Value})
+	}
+	if j.Parent != "" {
+		b, err := hex.DecodeString(j.Parent)
+		if err != nil || len(b) != 16 {
+			return nil, errors.New("bad parent id")
+		}
+		var par [16]byte
+		copy(par[:], b)
+		r.Parent = &par
 	}
 	// The wire wants sorted-unique props; sorting FOR the client here would
 	// silently accept duplicates, so only sort order is normalized upstream

@@ -11,11 +11,13 @@ let objEditBase = '';      // base_revision_event_id when editing
 let objEditID = '';        // object being edited ('' = creating)
 let objShowArchived = false; // list mode: live | archived
 let objLastSpace = null;   // which space the view state above belongs to
+let objEditParent = '';    // parent object id when creating a child
 
 // Kinds the UI SUGGESTS. The protocol does not close this vocabulary —
 // anything slug-shaped is a legal kind (ADR-029 discipline: suggestions are
 // mode/UI territory, validity is protocol territory).
-const OBJ_KINDS = ['machine', 'part', 'project', 'order', 'material', 'tool', 'other'];
+const OBJ_KINDS = ['machine', 'part', 'project', 'order', 'material', 'tool',
+  'release', 'track', 'session', 'other'];
 
 function objKindLabel(k) {
   const key = 'objects.kind.' + k;
@@ -106,6 +108,15 @@ async function openObject(oid) {
   back.textContent = '← ' + t('objects.back');
   back.onclick = () => { openObjectID = null; refreshObjects(); };
   head.appendChild(back);
+  // Containment breadcrumb: one level up, like the API's one level down.
+  if (o.parent) {
+    const up = document.createElement('button');
+    up.className = 'btn-plain obj-crumb';
+    up.textContent = '↑';
+    up.title = t('objects.parent');
+    up.onclick = () => openObject(o.parent);
+    head.appendChild(up);
+  }
   const title = document.createElement('div');
   title.className = 'obj-title'; title.textContent = o.name;
   head.appendChild(title);
@@ -189,6 +200,13 @@ async function openObject(oid) {
     }
     box.appendChild(tbl);
   }
+
+  // ---- the kind's own section (SP-2 Studio renderer): release/track/
+  // session get their shape here; every other kind skips straight to
+  // tasks. Kind steers RENDERING only — the vocabulary the user sees is
+  // human (tracks, takes, versions), never the kernel's.
+  const kindRenderer = OBJ_RENDERERS[o.kind];
+  if (kindRenderer) kindRenderer(box, o, oid);
 
   // ---- tasks: the checklist. The edge is derived server-side from
   // Card.ObjectID; the object record owns nothing. ----
@@ -295,9 +313,10 @@ function objSubmitBtn() {
 
 // ---- the editor dialog (create + revise share one form) ----
 
-function openObjectEditor(o) {
+function openObjectEditor(o, opts) {
   objEditID = o ? o.object_id : '';
   objEditBase = o ? o.revision_event_id : '';
+  objEditParent = o ? (o.parent || '') : ((opts && opts.parent) || '');
   const kindSel = document.getElementById('objKind');
   kindSel.innerHTML = '';
   for (const k of OBJ_KINDS) {
@@ -310,7 +329,7 @@ function openObjectEditor(o) {
     opt.value = o.kind; opt.textContent = o.kind;
     kindSel.appendChild(opt);
   }
-  kindSel.value = o ? o.kind : 'machine';
+  kindSel.value = o ? o.kind : ((opts && opts.kind) || 'machine');
   document.getElementById('objName').value = o ? o.name : '';
   document.getElementById('objStatus').value = o ? (o.status || '') : '';
   document.getElementById('objSummary').value = o ? (o.summary || '') : '';
@@ -348,6 +367,7 @@ async function saveObject() {
     summary: document.getElementById('objSummary').value.trim(),
     props,
   };
+  if (objEditParent) object.parent = objEditParent;
   if (!object.name) { msg.textContent = t('objects.name_required'); return; }
   try {
     if (objEditID) {
@@ -369,6 +389,354 @@ async function saveObject() {
     }
   } catch (e) { msg.textContent = e.message; }
 }
+
+// ---- SP-2: the Studio renderers, keyed by KIND ----
+//
+// Kind steers rendering and nothing else (ADR-029/030 discipline): a
+// release shows its tracks, a track shows its current mix with the notes
+// riding the scrubber, a session shows its takes. Any other kind falls
+// through to the generic card untouched. The words on screen are human —
+// tracks, takes, versions, notes — never edge/register/LWW.
+
+function objSectHead(box, label) {
+  const h = document.createElement('div');
+  h.className = 'obj-sect';
+  h.textContent = label;
+  box.appendChild(h);
+}
+
+// uploadAndAttach: one gesture — pick a file, bare-upload it (the node
+// emits the block.attached.v1 carrier), then emit the edge. For a track's
+// mix the new upload supersedes the current version: that IS the "new
+// version" gesture from the groom.
+function uploadAndAttach(oid, role, supersedes, onDone) {
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = 'audio/*';
+  inp.onchange = async () => {
+    const file = inp.files && inp.files[0];
+    if (!file) return;
+    try {
+      const up = await uploadAssetFile(file);
+      const body = { asset: up.asset_id, role, label: file.name };
+      if (supersedes) { body.supersedes = supersedes; body.candidate = 'set'; }
+      await api(`/api/spaces/${current}/objects/${oid}/assets`,
+        { method: 'POST', body: JSON.stringify(body) });
+      onDone();
+    } catch (e) { console.error(e); }
+  };
+  inp.click();
+}
+
+function objMarkTime(ms) {
+  const s = Math.floor(ms / 1000);
+  return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
+}
+
+// annotatedPlayer builds the house audio player for an asset and rides
+// its notes on the scrubber: percentage-positioned pins, click = seek.
+function annotatedPlayer(assetHex, notes) {
+  // A replica may hold the edge before the bytes: ask the node to pull
+  // the asset. Fire-and-forget — the GET answers 409 until complete, and
+  // reopening the card picks the bytes up.
+  api(`/api/spaces/${current}/assets/${assetHex}/fetch`, { method: 'POST', body: '{}' })
+    .catch(() => {});
+  const player = makeAudioPlayer(assetURL(assetHex), null, 0);
+  const timed = (notes || []).filter(n => n.position_ms !== undefined);
+  if (timed.length) {
+    const place = () => {
+      const dur = player.durationMs();
+      if (!dur) return;
+      player.scrubEl.querySelectorAll('.obj-mark').forEach(m => m.remove());
+      for (const n of timed) {
+        const pin = document.createElement('button');
+        pin.className = 'obj-mark';
+        pin.style.left = Math.min(100, (n.position_ms / dur) * 100) + '%';
+        pin.title = objMarkTime(n.position_ms) + '  ' + n.text;
+        pin.onclick = (ev) => { ev.stopPropagation(); player.seekMs(n.position_ms); };
+        player.scrubEl.appendChild(pin);
+      }
+    };
+    player.onMeta(place);
+  }
+  return player;
+}
+
+function renderNotesList(box, notes, player) {
+  const list = document.createElement('div');
+  list.className = 'obj-obs-list';
+  for (const n of notes || []) {
+    const row = document.createElement('div');
+    row.className = 'obj-obs';
+    const when = document.createElement('span');
+    when.className = 'obj-obs-when';
+    if (n.position_ms !== undefined) {
+      when.textContent = objMarkTime(n.position_ms);
+      when.classList.add('obj-obs-seek');
+      when.onclick = () => { if (player) player.seekMs(n.position_ms); };
+    }
+    row.appendChild(when);
+    const txt = document.createElement('span');
+    txt.className = 'obj-obs-text';
+    txt.textContent = n.text;
+    row.appendChild(txt);
+    list.appendChild(row);
+  }
+  if (!(notes || []).length) {
+    const e = document.createElement('div');
+    e.className = 'obj-obs-empty';
+    e.textContent = t('studio.notes_empty');
+    list.appendChild(e);
+  }
+  box.appendChild(list);
+}
+
+// noteComposer: the "at 01:42" gesture — the chip captures the player's
+// position when toggled; without it the note is about the whole asset.
+function noteComposer(box, assetHex, player, oid, reload) {
+  const form = document.createElement('form');
+  form.className = 'obj-obs-add';
+  let atMs = null;
+  const chip = document.createElement('button');
+  chip.type = 'button';
+  chip.className = 'obj-at-chip';
+  chip.textContent = '⏱';
+  chip.title = t('studio.at_position');
+  chip.onclick = () => {
+    if (atMs === null && player) {
+      atMs = Math.round(player.currentMs());
+      chip.textContent = '⏱ ' + objMarkTime(atMs);
+      chip.classList.add('sel');
+    } else {
+      atMs = null;
+      chip.textContent = '⏱';
+      chip.classList.remove('sel');
+    }
+  };
+  form.appendChild(chip);
+  const inp = document.createElement('input');
+  inp.type = 'text';
+  inp.placeholder = t('studio.note_ph');
+  inp.maxLength = 1000;
+  form.appendChild(inp);
+  form.appendChild(objSubmitBtn());
+  form.onsubmit = async (ev) => {
+    ev.preventDefault();
+    const text = inp.value.trim();
+    if (!text) return;
+    const body = { text, object_id: oid };
+    if (atMs !== null) body.position_ms = atMs;
+    try {
+      await api(`/api/spaces/${current}/assets/${assetHex}/annotations`,
+        { method: 'POST', body: JSON.stringify(body) });
+      inp.value = '';
+      reload();
+    } catch (e) { console.error(e); }
+  };
+  box.appendChild(form);
+}
+
+async function setCandidate(oid, assetHex, reload) {
+  try {
+    await api(`/api/spaces/${current}/objects/${oid}/assets/${assetHex}`,
+      { method: 'POST', body: JSON.stringify({ candidate: 'set' }) });
+    reload();
+  } catch (e) { console.error(e); }
+}
+
+const OBJ_RENDERERS = {
+  release(box, o, oid) {
+    objSectHead(box, t('studio.tracks'));
+    const list = document.createElement('div');
+    list.className = 'obj-child-list';
+    for (const c of o.children || []) {
+      const row = document.createElement('div');
+      row.className = 'obj-child';
+      const name = document.createElement('span');
+      name.className = 'obj-child-name';
+      name.textContent = c.name;
+      row.appendChild(name);
+      const meta = document.createElement('span');
+      meta.className = 'obj-child-meta';
+      meta.textContent = (c.status ? c.status : '') +
+        (c.task_open ? ' · ☐ ' + c.task_open : '');
+      row.appendChild(meta);
+      row.onclick = () => openObject(c.object_id);
+      list.appendChild(row);
+    }
+    if (!(o.children || []).length) {
+      const e = document.createElement('div');
+      e.className = 'obj-obs-empty';
+      e.textContent = t('studio.tracks_empty');
+      list.appendChild(e);
+    }
+    box.appendChild(list);
+    const add = document.createElement('button');
+    add.className = 'btn-plain';
+    add.textContent = t('studio.new_track');
+    add.onclick = () => openObjectEditor(null, { kind: 'track', parent: oid });
+    box.appendChild(add);
+  },
+
+  track(box, o, oid) {
+    const reload = () => openObject(oid);
+    // Annotation counts live on the edge list; the version chain reuses
+    // them by asset id.
+    const annCount = {};
+    for (const e of o.assets || []) annCount[e.asset] = e.annotations || 0;
+
+    objSectHead(box, t('studio.current'));
+    // The stage: shows the CURRENT mix by default, or whichever version
+    // the person opened from the list below — with that version's own
+    // notes riding the scrubber. Katya's note on mix-11 must be one tap
+    // away even after mix-12 took the star.
+    const stage = document.createElement('div');
+    box.appendChild(stage);
+    let stagedAsset = null;
+    const labelOf = (asset) => {
+      for (const e of o.assets || []) if (e.asset === asset) return e.label || asset.slice(0, 8);
+      return asset.slice(0, 8);
+    };
+    async function showOnStage(asset, notes) {
+      stagedAsset = asset;
+      stage.innerHTML = '';
+      if (!asset) {
+        const e = document.createElement('div');
+        e.className = 'obj-obs-empty';
+        e.textContent = t('studio.no_mix');
+        stage.appendChild(e);
+        return;
+      }
+      if (notes === undefined) {
+        try {
+          const r = await api(`/api/spaces/${current}/assets/${asset}/annotations`);
+          notes = r.annotations;
+        } catch (e) { notes = []; }
+        if (stagedAsset !== asset) return; // somebody staged another version meanwhile
+      }
+      if (asset !== o.current_asset) {
+        const which = document.createElement('div');
+        which.className = 'obj-child-meta';
+        which.textContent = labelOf(asset);
+        stage.appendChild(which);
+      }
+      const player = annotatedPlayer(asset, notes);
+      stage.appendChild(player);
+      renderNotesList(stage, notes, player);
+      noteComposer(stage, asset, player, oid, reload);
+    }
+    showOnStage(o.current_asset || null, o.current_asset ? o.current_annotations : []);
+    const up = document.createElement('button');
+    up.className = 'btn-tinted';
+    up.textContent = t('studio.upload_mix');
+    up.onclick = () => uploadAndAttach(oid, 'mix', o.current_asset || '', reload);
+    box.appendChild(up);
+
+    objSectHead(box, t('studio.versions'));
+    const vs = document.createElement('div');
+    vs.className = 'obj-ver-list';
+    for (const ch of o.version_chains || []) {
+      for (const v of ch.versions) {
+        const row = document.createElement('div');
+        row.className = 'obj-ver';
+        row.style.cursor = 'pointer';
+        row.onclick = () => showOnStage(v.asset);
+        const name = document.createElement('span');
+        name.className = 'obj-ver-name';
+        name.textContent = v.label || v.asset.slice(0, 8);
+        row.appendChild(name);
+        if (v.asset === o.current_asset) {
+          const b = document.createElement('span');
+          b.className = 'obj-chip obj-status';
+          b.textContent = t('studio.current_badge');
+          row.appendChild(b);
+        }
+        if (v.candidate) {
+          const s = document.createElement('span');
+          s.className = 'obj-ver-star';
+          s.textContent = '★';
+          row.appendChild(s);
+        } else {
+          const s = document.createElement('button');
+          s.className = 'obj-ver-star dim';
+          s.textContent = '☆';
+          s.title = t('studio.make_candidate');
+          s.onclick = (ev) => { ev.stopPropagation(); setCandidate(oid, v.asset, reload); };
+          row.appendChild(s);
+        }
+        if (annCount[v.asset]) {
+          const n = document.createElement('span');
+          n.className = 'obj-child-meta';
+          n.textContent = '💬 ' + annCount[v.asset];
+          row.appendChild(n);
+        }
+        vs.appendChild(row);
+      }
+    }
+    box.appendChild(vs);
+
+    const sessions = (o.children || []).filter(() => true);
+    if (sessions.length) {
+      objSectHead(box, t('studio.sessions'));
+      for (const c of sessions) {
+        const row = document.createElement('div');
+        row.className = 'obj-child';
+        const name = document.createElement('span');
+        name.className = 'obj-child-name';
+        name.textContent = c.name;
+        row.appendChild(name);
+        row.onclick = () => openObject(c.object_id);
+        box.appendChild(row);
+      }
+    }
+    const addS = document.createElement('button');
+    addS.className = 'btn-plain';
+    addS.textContent = t('studio.new_session');
+    addS.onclick = () => openObjectEditor(null, { kind: 'session', parent: oid });
+    box.appendChild(addS);
+  },
+
+  session(box, o, oid) {
+    const reload = () => openObject(oid);
+    objSectHead(box, t('studio.takes'));
+    const list = document.createElement('div');
+    list.className = 'obj-take-list';
+    const edges = (o.assets || []).filter(e => !e.detached);
+    for (const e of edges) {
+      const row = document.createElement('div');
+      row.className = 'obj-take';
+      const head = document.createElement('div');
+      head.className = 'obj-take-head';
+      const name = document.createElement('span');
+      name.className = 'obj-child-name';
+      name.textContent = (e.label || e.asset.slice(0, 8)) + (e.candidate ? ' ★' : '');
+      head.appendChild(name);
+      if (!e.candidate) {
+        const s = document.createElement('button');
+        s.className = 'obj-ver-star dim';
+        s.textContent = '☆';
+        s.title = t('studio.make_candidate');
+        s.onclick = () => setCandidate(oid, e.asset, reload);
+        head.appendChild(s);
+      }
+      row.appendChild(head);
+      row.appendChild(makeAudioPlayer(assetURL(e.asset), null, 0));
+      list.appendChild(row);
+    }
+    if (!edges.length) {
+      const em = document.createElement('div');
+      em.className = 'obj-obs-empty';
+      em.textContent = t('studio.takes_empty');
+      list.appendChild(em);
+    }
+    box.appendChild(list);
+    const up = document.createElement('button');
+    up.className = 'btn-tinted';
+    up.textContent = t('studio.upload_take');
+    up.onclick = () => uploadAndAttach(oid, 'take', '', reload);
+    box.appendChild(up);
+  },
+};
 
 // ---- Space Mode v1: reading qp.central (ADR-029: view order only) ----
 //
