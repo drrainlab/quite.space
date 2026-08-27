@@ -1382,6 +1382,8 @@ func (r *Runtime) canWrite(st *spaceState) error {
 type SayOptions struct {
 	ReplyTo  *id.EventID
 	Mentions []id.PrincipalID
+	// ObjectRefs: the domain objects this message is about (SP-2.1).
+	ObjectRefs [][16]byte
 }
 
 func (r *Runtime) Say(tid id.TerminalID, text string, opt SayOptions) (id.EventID, error) {
@@ -1395,7 +1397,8 @@ func (r *Runtime) Say(tid id.TerminalID, text string, opt SayOptions) (id.EventI
 		return id.EventID{}, err
 	}
 	a, err := human.Say(r.Self, st.space, text,
-		human.SayOptions{ReplyTo: opt.ReplyTo, Mentions: opt.Mentions},
+		human.SayOptions{ReplyTo: opt.ReplyTo, Mentions: opt.Mentions,
+			ObjectRefs: opt.ObjectRefs},
 		uint64(time.Now().Unix()))
 	if err != nil {
 		return id.EventID{}, err

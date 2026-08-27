@@ -190,6 +190,17 @@ async function openObject(oid) {
     }
   };
   actions.appendChild(keepBtn);
+  // «в чат»: stage a signed reference and land in the composer — the
+  // reverse of the feed chip's jump here.
+  const toChat = document.createElement('button');
+  toChat.className = 'btn-plain';
+  toChat.textContent = '# ' + t('objref.to_chat');
+  toChat.onclick = () => {
+    if (typeof objrefsStage === 'function') objrefsStage(oid, o.name);
+    switchView('chat');
+    document.getElementById('text')?.focus();
+  };
+  actions.appendChild(toChat);
   const edit = document.createElement('button');
   edit.className = 'btn-tinted';
   edit.textContent = t('objects.edit');

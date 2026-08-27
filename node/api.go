@@ -978,9 +978,10 @@ func (a *APIServer) handleSay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body, err := readBody[struct {
-		Text     string   `json:"text"`
-		ReplyTo  string   `json:"reply_to"`
-		Mentions []string `json:"mentions"`
+		Text       string   `json:"text"`
+		ReplyTo    string   `json:"reply_to"`
+		Mentions   []string `json:"mentions"`
+		ObjectRefs []string `json:"object_refs"`
 		// ClientRef makes this request IDEMPOTENT: the same (space, ref)
 		// answers with the event already minted, minting nothing. It is
 		// what lets a client retry a send it never heard back about —
@@ -1019,6 +1020,16 @@ func (a *APIServer) handleSay(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		opt.Mentions = append(opt.Mentions, p)
+	}
+	for _, o := range body.ObjectRefs {
+		b, err := hex.DecodeString(strings.TrimSpace(o))
+		if err != nil || len(b) != 16 {
+			httpErr(w, http.StatusBadRequest, errors.New("bad object ref"))
+			return
+		}
+		var oid [16]byte
+		copy(oid[:], b)
+		opt.ObjectRefs = append(opt.ObjectRefs, oid)
 	}
 	eid, err := a.rt.Say(tid, body.Text, opt)
 	if err != nil {

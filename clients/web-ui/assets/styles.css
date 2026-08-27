@@ -3979,3 +3979,15 @@ div.reply-to { cursor: default; }
 .kind-card.sel .kind-label { color: var(--acc); }
 /* «→ объект» is one gesture, not a paragraph — never let it wrap. */
 .obs-entry .obs-goto { white-space: nowrap; }
+
+/* -- object reference chips (SP-2.1): the "#" twin of mentions -- */
+.objref-glyph { font-size: 15px; width: 20px; text-align: center; }
+.objref-chip .objref-chip-x { background: none; border: none; color: var(--dim);
+  cursor: pointer; padding: 0 0 0 6px; min-width: 0; min-height: 0; font-size: 12px; }
+.objref-chip .objref-chip-x:hover { color: var(--acc); }
+.objref-row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+.objref-feed-chip { font-size: 12px; padding: 3px 10px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--panel); color: var(--acc);
+  cursor: pointer; min-height: 0; }
+.objref-feed-chip:hover { border-color: var(--acc); }
+.objref-feed-chip.unknown { color: var(--muted); cursor: default; }

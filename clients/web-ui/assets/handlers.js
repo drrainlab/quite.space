@@ -58,9 +58,10 @@ const UI_HANDLERS = [
   /*  23 click    */ (event, el) => { attachPick('audio'); },
   /*  24 click    */ (event, el) => { attachPick('doc'); },
   /*  25 click    */ (event, el) => { toggleVoice(); },
-  /*  26 input    */ (event, el) => { growComposer(el); mentionsOnInput(event); mentionsRenderChips(); LINKS.onInput(el); },
+  /*  26 input    */ (event, el) => { growComposer(el); mentionsOnInput(event); mentionsRenderChips(); objrefsOnInput(event); objrefsRenderChips(); LINKS.onInput(el); },
   /*  27 keydown  */ (event, el) => {
     if (mentionsOnKeydown(event)) { event.preventDefault(); event.stopPropagation(); return; }
+    if (objrefsOnKeydown(event)) { event.preventDefault(); event.stopPropagation(); return; }
     // Enter sends, Shift+Enter makes a line. The form's submit button no
     // longer gets Enter for free now that this is a textarea, and a
     // messenger where Enter inserts a newline is a messenger nobody can

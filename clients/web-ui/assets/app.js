@@ -1888,6 +1888,10 @@ async function refreshSpace() {
       mentionsReset();
       mentionsLoadMembers(current);
     }
+    if (typeof objrefsReset === 'function') {
+      objrefsReset();
+      objrefsLoadObjects(current);
+    }
     if (typeof OUTBOX !== 'undefined') OUTBOX.paint();
     // Tell the node which room is open: QuietRank stays quiet about the one
     // you are already reading.
@@ -2485,8 +2489,10 @@ async function say(e) {
     } catch (err) { alert(err.message); }
     return false;
   }
-  // Mentions travel as a signed structural field, not as text markup.
+  // Mentions travel as a signed structural field, not as text markup —
+  // and so do object references (SP-2.1), their object twin.
   const mentions = typeof mentionsPayload === 'function' ? mentionsPayload(inp.value) : [];
+  const objectRefs = typeof objrefsPayload === 'function' ? objrefsPayload(inp.value) : [];
   try {
     // In the assistant's space a message is a QUESTION: the node emits it
     // as your event and then asks the provider. Sending it the ordinary way
@@ -2514,6 +2520,7 @@ async function say(e) {
     OUTBOX.enqueue(current, inp.value, {
       reply_to: replyTarget ? replyTarget.id : undefined,
       mentions,
+      object_refs: objectRefs,
       card: staged ? staged.card : undefined,
       bare: staged ? staged.bare : false,
     });
@@ -2522,6 +2529,7 @@ async function say(e) {
     cancelReply();
     if (typeof LINKS !== 'undefined') LINKS.reset();
     if (typeof mentionsReset === 'function') mentionsReset();
+    if (typeof objrefsReset === 'function') objrefsReset();
     // Your own send always answers with itself on screen — stickiness is
     // for READING; the author just spoke.
     const logEl = document.getElementById('log');
@@ -4028,7 +4036,17 @@ const FEED_RENDERERS = {
   // decorates the names, it never re-parses the message for addressing.
   // …and a plain message that is a video address gets a play control.
   // Nothing is fetched for it: LINKS.decorate adds a verb, not a card.
-  text: (e) => LINKS.decorate(typeof mentionText === 'function' ? mentionText(e) : textNode('txt', e.text)),
+  text: (e) => {
+    const body = LINKS.decorate(typeof mentionText === 'function' ? mentionText(e) : textNode('txt', e.text));
+    // Object chips (SP-2.1): what the author SIGNED this message as
+    // being about — names resolved by the node, one tap to the card.
+    const chips = typeof objrefChips === 'function' ? objrefChips(e) : null;
+    if (!chips) return body;
+    const wrap = document.createElement('div');
+    wrap.appendChild(body);
+    wrap.appendChild(chips);
+    return wrap;
+  },
   visual: (e) => renderVisual(e),
   video: (e) => renderVideo(e),
   voice: (e) => renderVoiceAudio(e),

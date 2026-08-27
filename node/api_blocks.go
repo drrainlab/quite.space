@@ -492,6 +492,10 @@ type entryResp struct {
 	Mentions     []string `json:"mentions,omitempty"`
 	MentionNames []string `json:"mention_names,omitempty"`
 	MentionsMe   bool     `json:"mentions_me,omitempty"`
+	// ObjectRefs/ObjectRefNames: the domain objects this message claims
+	// to be about (SP-2.1), names resolved here like mention_names.
+	ObjectRefs     []string `json:"object_refs,omitempty"`
+	ObjectRefNames []string `json:"object_ref_names,omitempty"`
 	Revised      bool     `json:"revised,omitempty"`
 	Caption      string   `json:"caption,omitempty"`
 	Alt          string   `json:"alt,omitempty"`
@@ -696,6 +700,17 @@ func (a *APIServer) projectEntry(tid id.TerminalID, sp *terminals.Space,
 			if m == me {
 				resp.MentionsMe = true
 			}
+		}
+		// Object refs resolve to names the way mentions do — a chip must
+		// read "CNC-01", not eight hex characters, and a ref to an object
+		// this replica has not seen yet still travels as its id.
+		for _, oid := range e.Content.Text.ObjectRefs {
+			resp.ObjectRefs = append(resp.ObjectRefs, hex.EncodeToString(oid[:]))
+			name := ""
+			if o, ok := sp.State.ObjectByID(oid); ok {
+				name = o.Record.Name
+			}
+			resp.ObjectRefNames = append(resp.ObjectRefNames, name)
 		}
 	case e.Content.Visual != nil:
 		v := e.Content.Visual

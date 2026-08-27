@@ -36,12 +36,16 @@ func New(label string) (*terminals.Participant, error) {
 type SayOptions struct {
 	ReplyTo  *id.EventID
 	Mentions []id.PrincipalID
+	// ObjectRefs: which domain objects the message is about (SP-2.1) —
+	// the object twin of Mentions, signed with the text.
+	ObjectRefs [][16]byte
 }
 
 // Say publishes a human text message.
 func Say(p *terminals.Participant, s *terminals.Space, text string, opt SayOptions, at uint64) (eventlog.Applied, error) {
 	payload, err := (&schemas.TextMessage{
 		Text: text, ReplyTo: opt.ReplyTo, Mentions: opt.Mentions,
+		ObjectRefs: opt.ObjectRefs,
 	}).Encode()
 	if err != nil {
 		return eventlog.Applied{}, err

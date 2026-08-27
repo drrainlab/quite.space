@@ -121,7 +121,19 @@ type TextMessage struct {
 	// renderer speaks in ADR-019's voice: "{gateway} says this came from
 	// {address}. Their signature did not travel."
 	External *ExternalOrigin
+	// ObjectRefs is the author's SIGNED claim of which domain objects this
+	// message is about (SP-2.1, key 8) — the object twin of Mentions:
+	// anyone may reference any object, but the claim itself is
+	// authenticated, so readers never have to guess from the text. Raw
+	// object ids, not derived targets — the same rule as Card.ObjectID.
+	// A reader that predates the key skips it; authors keep the object's
+	// NAME in the text, so the sentence still reads everywhere.
+	ObjectRefs [][16]byte
 }
+
+// MaxObjectRefs bounds the reference list — a message is about a few
+// things, not a catalog.
+const MaxObjectRefs = 8
 
 // ExternalOrigin is the foreign provenance of an imported message.
 type ExternalOrigin struct {
@@ -244,6 +256,9 @@ func (t *TextMessage) Encode() ([]byte, error) {
 	if len(t.Mentions) > MaxMentions {
 		return nil, errors.New("schemas: too many mentions")
 	}
+	if len(t.ObjectRefs) > MaxObjectRefs {
+		return nil, errors.New("schemas: too many object refs")
+	}
 	if len(t.ProducedModel) > MaxModelLen {
 		return nil, errors.New("schemas: model name too long")
 	}
@@ -273,6 +288,9 @@ func (t *TextMessage) Encode() ([]byte, error) {
 		if len(t.Card.Reference) > MaxShareRef {
 			return nil, errors.New("schemas: card reference too long")
 		}
+	}
+	if len(t.ObjectRefs) > 0 {
+		n++
 	}
 	if x := t.External; x != nil {
 		n++
@@ -370,6 +388,13 @@ func (t *TextMessage) Encode() ([]byte, error) {
 			for _, f := range x.LossFlags {
 				buf = codec.AppendText(buf, f)
 			}
+		}
+	}
+	if len(t.ObjectRefs) > 0 {
+		buf = codec.AppendUint(buf, 8)
+		buf = codec.AppendArray(buf, len(t.ObjectRefs))
+		for i := range t.ObjectRefs {
+			buf = codec.AppendBytes(buf, t.ObjectRefs[i][:])
 		}
 	}
 	return buf, nil
@@ -576,6 +601,27 @@ func DecodeTextMessage(payload []byte) (*TextMessage, error) {
 				return nil, errors.New("schemas: external origin field too long")
 			}
 			t.External = &x
+		case 8:
+			var cnt int
+			cnt, err = d.ReadArray()
+			if err != nil {
+				return nil, err
+			}
+			if cnt > MaxObjectRefs {
+				return nil, errors.New("schemas: too many object refs")
+			}
+			for range cnt {
+				b, er := d.ReadBytes()
+				if er != nil {
+					return nil, er
+				}
+				if len(b) != 16 {
+					return nil, errors.New("schemas: object ref must be 16 bytes")
+				}
+				var oid [16]byte
+				copy(oid[:], b)
+				t.ObjectRefs = append(t.ObjectRefs, oid)
+			}
 		default:
 			err = d.SkipItem()
 		}
