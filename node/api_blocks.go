@@ -496,11 +496,11 @@ type entryResp struct {
 	// to be about (SP-2.1), names resolved here like mention_names.
 	ObjectRefs     []string `json:"object_refs,omitempty"`
 	ObjectRefNames []string `json:"object_ref_names,omitempty"`
-	Revised      bool     `json:"revised,omitempty"`
-	Caption      string   `json:"caption,omitempty"`
-	Alt          string   `json:"alt,omitempty"`
-	ThumbB64     string   `json:"thumb_b64,omitempty"`
-	ThumbMIME    string   `json:"thumb_mime,omitempty"`
+	Revised        bool     `json:"revised,omitempty"`
+	Caption        string   `json:"caption,omitempty"`
+	Alt            string   `json:"alt,omitempty"`
+	ThumbB64       string   `json:"thumb_b64,omitempty"`
+	ThumbMIME      string   `json:"thumb_mime,omitempty"`
 
 	Title      string `json:"title,omitempty"`
 	Artist     string `json:"artist,omitempty"`

@@ -160,15 +160,15 @@ func (a *APIServer) handleField(w http.ResponseWriter, r *http.Request) {
 			switch {
 			case pos.Known && pos.Current:
 				pj["position"] = map[string]any{
-					"lat": geo.Point{LatE7U: pos.LatE7U, LonE7U: pos.LonE7U}.LatDeg(),
-					"lon": geo.Point{LatE7U: pos.LatE7U, LonE7U: pos.LonE7U}.LonDeg(),
+					"lat":        geo.Point{LatE7U: pos.LatE7U, LonE7U: pos.LonE7U}.LatDeg(),
+					"lon":        geo.Point{LatE7U: pos.LatE7U, LonE7U: pos.LonE7U}.LonDeg(),
 					"accuracy_m": pos.AccuracyM, "state": "live",
 					"age_seconds": pos.AgeSeconds, "remaining_seconds": pos.RemainingSeconds,
 				}
 			case pos.Known:
 				pj["position"] = map[string]any{
-					"lat": geo.Point{LatE7U: pos.LatE7U, LonE7U: pos.LonE7U}.LatDeg(),
-					"lon": geo.Point{LatE7U: pos.LatE7U, LonE7U: pos.LonE7U}.LonDeg(),
+					"lat":        geo.Point{LatE7U: pos.LatE7U, LonE7U: pos.LonE7U}.LatDeg(),
+					"lon":        geo.Point{LatE7U: pos.LatE7U, LonE7U: pos.LonE7U}.LonDeg(),
 					"accuracy_m": pos.AccuracyM, "state": "stale",
 					"age_seconds": pos.AgeSeconds,
 				}
