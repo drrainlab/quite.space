@@ -308,7 +308,10 @@ async function openObject(oid) {
     row.className = 'obj-obs';
     const when = document.createElement('span');
     when.className = 'obj-obs-when';
-    when.textContent = n.observed_at ? new Date(n.observed_at * 1000).toLocaleString() : '';
+    when.textContent = n.observed_at
+      ? new Date(n.observed_at * 1000).toLocaleString([], {
+          day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+      : '';
     row.appendChild(when);
     const txt = document.createElement('span');
     txt.className = 'obj-obs-text'; txt.textContent = '🔎 ' + n.text;

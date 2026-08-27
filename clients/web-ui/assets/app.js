@@ -2022,16 +2022,12 @@ async function refreshSpace() {
   feedResCounts = new Map(entries.map(e => [e.id, resCounts(e.resonance)]));
 
   const st = await api(`/api/spaces/${current}/state`);
-  const cards = document.getElementById('cards');
-  cards.innerHTML = '';
-  for (const c of st.cards) {
-    const el = document.createElement('span');
-    el.className = 'card' + (c.status === 'done' ? ' done' : '');
-    el.textContent = `[${c.status}] ${c.title}`;
-    el.title = 'click to toggle status';
-    el.onclick = () => toggleCard(c);
-    cards.appendChild(el);
-  }
+  // The strip of "[open] title" chips above the chat was the SP-0 sketch
+  // of tasks. Tasks have a HOME now — the object card's checklist (SP-1)
+  // — and the sketch on top of every conversation was noise wearing a
+  // strikethrough. The #cards div stays (switchView addresses it); it
+  // just never fills again.
+  document.getElementById('cards').innerHTML = '';
   const parts = [];
   if (st.undecryptable > 0)
     parts.push(`<span class="warn">${esc(t('honesty.undecryptable', { count: st.undecryptable }))}</span>`);
@@ -3055,13 +3051,6 @@ function openInviteFromPass() {
   openInvite({ id: passSpace, title: sp?.title, display_title: sp?.display_title });
 }
 
-
-async function toggleCard(c) {
-  const next = c.status === 'open' ? 'done' : 'open';
-  await api(`/api/spaces/${current}/cards/${c.id}/status`,
-    { method: 'POST', body: JSON.stringify({ title: c.title, status: next }) });
-  refreshSpace();
-}
 
 async function lanConnect() {
   const addr = document.getElementById('lanAddr').value.trim();

@@ -3977,3 +3977,5 @@ div.reply-to { cursor: default; }
 .kind-glyph { font-size: 20px; line-height: 1; }
 .kind-label { font-size: 12px; color: var(--dim); }
 .kind-card.sel .kind-label { color: var(--acc); }
+/* «→ объект» is one gesture, not a paragraph — never let it wrap. */
+.obs-entry .obs-goto { white-space: nowrap; }
