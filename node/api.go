@@ -1250,12 +1250,15 @@ func (a *APIServer) handleSimulateInstrument(w http.ResponseWriter, r *http.Requ
 	body, err := readBody[struct {
 		Label string `json:"label"`
 		Seed  uint64 `json:"seed"`
+		// TickSeconds slows the reference driver (0 = its 5s default) —
+		// a broadcast greenhouse republishes its projection per reading.
+		TickSeconds uint64 `json:"tick_seconds"`
 	}](r)
 	if err != nil {
 		httpErr(w, http.StatusBadRequest, err)
 		return
 	}
-	iid, err := a.rt.AttachSimulatedInstrument(tid, body.Label, body.Seed)
+	iid, err := a.rt.AttachSimulatedInstrument(tid, body.Label, body.Seed, body.TickSeconds)
 	if err != nil {
 		httpErr(w, http.StatusBadRequest, err)
 		return

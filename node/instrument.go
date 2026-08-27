@@ -60,9 +60,16 @@ var simTickEvery = 5 * time.Second
 // AttachSimulatedInstrument mints the reference greenhouse into a space
 // and starts its driver. seed makes the whole value stream reproducible;
 // 0 draws a random one (live mode should shimmer, tests pass their own).
-func (r *Runtime) AttachSimulatedInstrument(space id.TerminalID, label string, seed uint64) (id.TerminalID, error) {
+// tickSeconds slows the driver from its 5s reference cadence (0 keeps it):
+// in a broadcast space every reading republishes the public projection,
+// and a 5s stream got the first public greenhouse rate-limited by its own
+// relay. Bounded below by the reference cadence — faster is never honest.
+func (r *Runtime) AttachSimulatedInstrument(space id.TerminalID, label string, seed, tickSeconds uint64) (id.TerminalID, error) {
 	if label == "" {
 		label = "Greenhouse"
+	}
+	if tickSeconds != 0 && time.Duration(tickSeconds)*time.Second < simTickEvery {
+		return id.TerminalID{}, fmt.Errorf("node: the reference driver ticks no faster than %s", simTickEvery)
 	}
 	if seed == 0 {
 		var b [8]byte
@@ -92,7 +99,7 @@ func (r *Runtime) AttachSimulatedInstrument(space id.TerminalID, label string, s
 		Space: space, Label: label, Kind: "sensor", Channels: chanLabels,
 		DeviceSeed: dev.Seed(), DeviceX25519: dev.X25519Priv(),
 		TerminalSeed: seedTerm, ManifestFrame: part.ManifestFrame,
-		Simulated: true, SimSeed: seed,
+		Simulated: true, SimSeed: seed, SimTickSeconds: tickSeconds,
 	}
 
 	err = r.withSpace(space, func(st *spaceState) error {
@@ -100,9 +107,34 @@ func (r *Runtime) AttachSimulatedInstrument(space id.TerminalID, label string, s
 		// instrument will ever write, and what carries the X25519 the
 		// epoch wraps address.
 		r.certifyOwnedDeviceLocked(dev)
-		st.space.AddInstrument(dev.ID, dev.X25519Pub)
-		if _, err := r.Self.RotateInstrumentEpoch(st.space); err != nil {
-			return err
+		if pol := st.space.Policy(); pol.IsPublic() {
+			// PUBLIC TELEMETRY. A plaintext space has no epoch membership
+			// and therefore no instrument plane — readings travel plaintext
+			// like everything else here (the seal switch keys on s.Private),
+			// so there is no plane to build and no key to turn. What a
+			// sensor DOES need in a curated (broadcast) space is the same
+			// thing any writer needs: an attested (principal, device)
+			// binding, signed into the manifest BEFORE its first frame —
+			// otherwise the emit gate refuses the very manifest that would
+			// introduce it.
+			if pol.Publish == terminals.PublishCurated &&
+				!pol.AllowsWriter(r.PrincipalID, dev.ID) {
+				title, character := st.space.Character()
+				next := pol
+				next.Writers = append(next.Writers,
+					terminals.WriterBinding{Principal: r.PrincipalID, Device: dev.ID})
+				if err := st.space.ReviseManifest(title, character, next); err != nil {
+					return err
+				}
+				meta := r.ks.Spaces[space]
+				meta.ManifestFrame = st.space.ManifestFrame
+				r.ks.Spaces[space] = meta
+			}
+		} else {
+			st.space.AddInstrument(dev.ID, dev.X25519Pub)
+			if _, err := r.Self.RotateInstrumentEpoch(st.space); err != nil {
+				return err
+			}
 		}
 		if _, _, err := part.PublishManifest(st.space); err != nil {
 			return err
@@ -164,6 +196,29 @@ func (r *Runtime) DetachInstrument(space, instrumentID id.TerminalID) error {
 		dev = detachedDev
 	}
 	return r.withSpace(space, func(st *spaceState) error {
+		if pol := st.space.Policy(); pol.IsPublic() {
+			// The plaintext analogue of "the key turns": a detached sensor
+			// must stop being an attested writer, or its device keeps the
+			// right to speak in the owner's broadcast forever.
+			if pol.Publish == terminals.PublishCurated && pol.AllowsWriter(r.PrincipalID, dev) {
+				title, character := st.space.Character()
+				next := pol
+				kept := next.Writers[:0]
+				for _, w := range next.Writers {
+					if !(w.Principal == r.PrincipalID && w.Device == dev) {
+						kept = append(kept, w)
+					}
+				}
+				next.Writers = kept
+				if err := st.space.ReviseManifest(title, character, next); err != nil {
+					return err
+				}
+				meta := r.ks.Spaces[space]
+				meta.ManifestFrame = st.space.ManifestFrame
+				r.ks.Spaces[space] = meta
+			}
+			return r.saveKeystore()
+		}
 		st.space.RemoveInstrument(dev)
 		if _, err := r.Self.RotateInstrumentEpoch(st.space); err != nil {
 			return err
@@ -285,7 +340,11 @@ func (r *Runtime) startSimulator(ir *instrumentRuntime) {
 	r.wg.Add(1)
 	go func() {
 		defer r.wg.Done()
-		t := time.NewTicker(simTickEvery)
+		every := simTickEvery
+		if ir.rec.SimTickSeconds != 0 {
+			every = time.Duration(ir.rec.SimTickSeconds) * time.Second
+		}
+		t := time.NewTicker(every)
 		defer t.Stop()
 		var n uint64
 		for {
