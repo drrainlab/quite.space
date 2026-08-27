@@ -41,17 +41,22 @@ function switchView(v) {
   setReading(false);
   document.querySelectorAll('#viewSwitch button').forEach(b =>
     b.classList.toggle('sel', b.dataset.v === v));
-  const posts = v === 'posts', shelf = v === 'shelf', objects = v === 'objects';
-  const chat = !posts && !shelf && !objects;
+  const posts = v === 'posts', shelf = v === 'shelf', objects = v === 'objects',
+    field = v === 'field';
+  const chat = !posts && !shelf && !objects && !field;
   document.getElementById('log').style.display = chat ? '' : 'none';
   document.getElementById('composer').style.display = chat ? '' : 'none';
   document.getElementById('cards').style.display = chat ? '' : 'none';
   document.getElementById('posts').style.display = posts ? '' : 'none';
   document.getElementById('shelf').style.display = shelf ? '' : 'none';
   document.getElementById('objects').style.display = objects ? '' : 'none';
+  document.getElementById('field').style.display = field ? '' : 'none';
+  // Leaving the field takes its timers with it (the ATMO.unmount rule).
+  if (!field && typeof fieldTeardown === 'function') fieldTeardown();
   if (posts) refreshPosts();
   if (shelf) refreshShelf();
   if (objects) refreshObjects();
+  if (field) { refreshField(); fieldOnEnter(); }
 }
 
 // pubNav is a navigation token: refreshPosts (the LIST) and openPub (an

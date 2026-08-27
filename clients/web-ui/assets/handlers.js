@@ -296,6 +296,7 @@ const UI_HANDLERS = [
   /* 248 click    */ (event, el) => { switchView('objects'); },
   /* 249 click    */ (event, el) => { saveObject(); },
   /* 250 click    */ (event, el) => { dlgObject.close(); },
+  /* 251 click    */ (event, el) => { switchView('field'); },
 ];
 
 /** Attach every handler declared in the markup.

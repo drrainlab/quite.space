@@ -221,6 +221,26 @@ class QuietActivity : ComponentActivity() {
 
     private var pendingMic: PermissionRequest? = null
 
+    // Geolocation prompt handoff (SP-3): the WebView's callback is retained
+    // while the native ask is up, superseding any earlier one — the same
+    // discipline pendingMic follows. Without this override the callback
+    // never fires and navigator.geolocation hangs silently forever.
+    private var pendingGeoOrigin: String? = null
+    private var pendingGeoCallback: android.webkit.GeolocationPermissions.Callback? = null
+
+    private val requestLocation =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            val origin = pendingGeoOrigin
+            val cb = pendingGeoCallback
+            pendingGeoOrigin = null
+            pendingGeoCallback = null
+            if (origin != null && cb != null) {
+                // retain=false: the grant is per-prompt; the page asks again
+                // next session and the system answer is re-consulted.
+                cb.invoke(origin, granted, false)
+            }
+        }
+
     private val requestMic =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             val req = pendingMic
@@ -308,6 +328,32 @@ class QuietActivity : ComponentActivity() {
                         pendingFiles = null
                         callback?.onReceiveValue(null)
                         false
+                    }
+                }
+
+                override fun onGeolocationPermissionsShowPrompt(
+                    origin: String,
+                    callback: android.webkit.GeolocationPermissions.Callback,
+                ) {
+                    runOnUiThread {
+                        // Only our own page: the WebView is locked to the
+                        // loopback origin, and anything else is denied
+                        // without being forwarded to the person.
+                        if (!origin.startsWith("http://127.0.0.1")) {
+                            callback.invoke(origin, false, false)
+                            return@runOnUiThread
+                        }
+                        val have = ContextCompat.checkSelfPermission(
+                            this@QuietActivity, Manifest.permission.ACCESS_FINE_LOCATION,
+                        ) == PackageManager.PERMISSION_GRANTED
+                        if (have) {
+                            callback.invoke(origin, true, false)
+                        } else {
+                            pendingGeoCallback?.invoke(pendingGeoOrigin ?: origin, false, false)
+                            pendingGeoOrigin = origin
+                            pendingGeoCallback = callback
+                            requestLocation.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+                        }
                     }
                 }
 
