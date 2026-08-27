@@ -525,6 +525,10 @@ type entryResp struct {
 	ObjectID   string `json:"object_id,omitempty"`
 	ObservedAt uint64 `json:"observed_at,omitempty"`
 
+	// SOS: a check-in's emergency truth (SP-3, kind "checkin"). The signed
+	// flag, never inferred from the text (ADR-031).
+	SOS bool `json:"sos,omitempty"`
+
 	Asset *assetResp `json:"asset,omitempty"`
 }
 
@@ -776,6 +780,12 @@ func (a *APIServer) projectEntry(tid id.TerminalID, sp *terminals.Space,
 		if o.ObservedAt != 0 {
 			resp.ObservedAt = o.ObservedAt
 		}
+	case e.Content.Checkin != nil:
+		// A contact fact (SP-3): the feed's quiet row — loud only when it
+		// carries SOS. Text is always present (the node's emit-path fallback
+		// law fills an empty note); consumers key on SOS, never on the text.
+		resp.Text = e.Content.Checkin.Text
+		resp.SOS = e.Content.Checkin.SOS
 	case e.Content.Unknown != nil:
 		resp.Schema = e.Content.Unknown.Schema
 		resp.Fallback = e.Content.Unknown.Fallback

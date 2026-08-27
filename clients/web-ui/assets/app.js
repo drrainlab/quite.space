@@ -4071,6 +4071,16 @@ const FEED_RENDERERS = {
     }
     return wrap;
   },
+  checkin: (e) => {
+    // A contact fact (SP-3): quiet like an observation — loud only on SOS.
+    // The renderer keys on the signed flag, never on the text (ADR-031).
+    const wrap = document.createElement('div');
+    wrap.className = 'obs-entry' + (e.sos ? ' checkin-sos' : '');
+    const txt = document.createElement('span');
+    txt.textContent = e.text || '';
+    wrap.appendChild(txt);
+    return wrap;
+  },
 };
 
 // Telegram-style video card: poster + ▶ overlay; the player mounts on tap

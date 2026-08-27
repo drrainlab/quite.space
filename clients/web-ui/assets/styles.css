@@ -3952,6 +3952,8 @@ div.reply-to { cursor: default; }
 .obs-entry .obs-goto { background: none; border: none; color: var(--acc);
   cursor: pointer; font-size: 12px; padding: 0; min-height: 0; }
 .obs-entry .obs-goto:hover { text-decoration: underline; }
+/* a check-in is the same quiet row — loud ONLY when it carries SOS */
+.obs-entry.checkin-sos { color: #e0635c; font-weight: 600; }
 
 /* -- narrow screens: the head stacks, taps grow -- */
 @media (max-width: 600px) {
