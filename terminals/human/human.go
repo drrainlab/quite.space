@@ -53,6 +53,17 @@ func Say(p *terminals.Participant, s *terminals.Space, text string, opt SayOptio
 	return p.Emit(s, schemas.MessageText, payload, signal.AuthorshipHuman, at)
 }
 
+// SetPosition publishes a geographic position claim with its mandatory
+// signed TTL (SP-3, ADR-031) — the presence twin.
+func SetPosition(p *terminals.Participant, s *terminals.Space, o *schemas.PositionObservation, at uint64) error {
+	payload, err := o.Encode()
+	if err != nil {
+		return err
+	}
+	_, err = p.Emit(s, schemas.ObservationPosition, payload, signal.AuthorshipHuman, at)
+	return err
+}
+
 // SetPresence publishes a presence state with mandatory TTL (plan §8.3).
 func SetPresence(p *terminals.Participant, s *terminals.Space, state string, at, ttl uint64) error {
 	payload, err := (&schemas.PresencePayload{State: state, ExpiresAt: at + ttl}).Encode()

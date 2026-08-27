@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/drrainlab/quiet_places/kernel/reducers"
+	"github.com/drrainlab/quiet_places/protocol/geo"
 	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/protocol/objects"
 )
@@ -32,6 +33,16 @@ type objectRecordJSON struct {
 	// Parent: primary containment (SP-2) — hex object id of the one tree
 	// this object lives in.
 	Parent string `json:"parent,omitempty"`
+	// Geo/Path (SP-3): float degrees at the JSON boundary only — the
+	// wire speaks fixed-point (protocol/geo).
+	Geo  *geoJSON     `json:"geo,omitempty"`
+	Path [][2]float64 `json:"path,omitempty"`
+}
+
+type geoJSON struct {
+	Lat     float64 `json:"lat"`
+	Lon     float64 `json:"lon"`
+	RadiusM uint64  `json:"radius_m,omitempty"`
 }
 
 func recordFromJSON(j objectRecordJSON) (*objects.Record, error) {
@@ -57,6 +68,20 @@ func recordFromJSON(j objectRecordJSON) (*objects.Record, error) {
 		var par [16]byte
 		copy(par[:], b)
 		r.Parent = &par
+	}
+	if j.Geo != nil {
+		pt, err := geo.FromDegrees(j.Geo.Lat, j.Geo.Lon)
+		if err != nil {
+			return nil, err
+		}
+		r.Geo = &objects.GeoShape{Point: pt, RadiusM: j.Geo.RadiusM}
+	}
+	for _, pp := range j.Path {
+		pt, err := geo.FromDegrees(pp[0], pp[1])
+		if err != nil {
+			return nil, err
+		}
+		r.Path = append(r.Path, pt)
 	}
 	// The wire wants sorted-unique props; sorting FOR the client here would
 	// silently accept duplicates, so only sort order is normalized upstream
@@ -124,6 +149,20 @@ func objectListJSON(o reducers.Object, tasks []reducers.Card) map[string]any {
 	}
 	if o.Record.Parent != nil {
 		j["parent"] = hex.EncodeToString(o.Record.Parent[:])
+	}
+	if g := o.Record.Geo; g != nil {
+		gj := map[string]any{"lat": g.Point.LatDeg(), "lon": g.Point.LonDeg()}
+		if g.RadiusM > 0 {
+			gj["radius_m"] = g.RadiusM
+		}
+		j["geo"] = gj
+	}
+	if len(o.Record.Path) > 0 {
+		path := make([][2]float64, 0, len(o.Record.Path))
+		for _, p := range o.Record.Path {
+			path = append(path, [2]float64{p.LatDeg(), p.LonDeg()})
+		}
+		j["path"] = path
 	}
 	return j
 }
