@@ -242,6 +242,16 @@ func (s *Space) absorb(a eventlog.Applied) {
 			})
 		}
 	}
+	if env.Schema == schemas.ObservationPosition && env.SourceTerminal != nil {
+		if p, err := schemas.DecodePositionObservation(env.Payload); err == nil {
+			s.Trust.UpdatePosition(claims.Position{
+				LatE7U: p.Point.LatE7U, LonE7U: p.Point.LonE7U,
+				AccuracyM: p.AccuracyM, EmittedAt: env.CreatedAt,
+				ExpiresAt: p.ExpiresAt, ObservedAt: p.ObservedAt,
+				Source: *env.SourceTerminal, EventID: a.ID,
+			})
+		}
+	}
 	if s.OnAbsorb != nil {
 		s.OnAbsorb(a)
 	}

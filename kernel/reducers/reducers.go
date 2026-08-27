@@ -40,20 +40,25 @@ const (
 	// KindObservation is a human observation (SP-1): a quiet feed row that
 	// is simultaneously a timeline note on its object (objects.go).
 	KindObservation EntryKind = "observation"
+	// KindCheckin is a contact fact (SP-3): a quiet feed row — loud only
+	// when it carries SOS — that is simultaneously the member's latest
+	// check-in register (field.go).
+	KindCheckin EntryKind = "checkin"
 )
 
 // EntryContent is a tagged union: exactly one pointer is non-nil, matching
 // Kind (no giant flat struct of nullable fields).
 type EntryContent struct {
-	Text    *TextContent
-	Visual  *schemas.VisualBlock
-	Video   *schemas.VideoBlock
-	Voice   *schemas.VoiceBlock
-	Audio   *schemas.AudioBlock
-	File    *schemas.FileBlock
-	Link    *schemas.LinkBlock
+	Text        *TextContent
+	Visual      *schemas.VisualBlock
+	Video       *schemas.VideoBlock
+	Voice       *schemas.VoiceBlock
+	Audio       *schemas.AudioBlock
+	File        *schemas.FileBlock
+	Link        *schemas.LinkBlock
 	Signal      *schemas.LiveSignalBlock
 	Observation *ObservationNoteContent
+	Checkin     *CheckinContent
 	Unknown     *UnknownContent
 }
 
@@ -159,6 +164,14 @@ type State struct {
 	// counter.
 	annots            map[string][]AnnotationNote
 	AnnotationEvicted int
+
+	// field (SP-3, field.go): markers and check-ins. Positions live in
+	// the trust engine (presence twin), not here.
+	markers        []FieldMarker
+	MarkerEvicted  int
+	checkins       []CheckinRecord
+	checkinLatest  map[id.PrincipalID]*CheckinRecord
+	CheckinEvicted int
 
 	// apps (ADR-014, apps.go): definitions by revision event, instances by
 	// id, and per-instance state partitions.
@@ -414,6 +427,14 @@ func (s *State) Apply(env *signal.Envelope, eid id.EventID) {
 		s.applyObservationNoted(env, eid)
 	case schemas.AssetAnnotated:
 		s.applyAssetAnnotated(env, eid)
+	case schemas.MarkerPlaced:
+		s.applyMarkerPlaced(env, eid)
+	case schemas.CheckinSent:
+		s.applyCheckin(env, eid)
+	case schemas.ObservationPosition:
+		// Positions fold in the trust engine (terminals absorb hook) —
+		// the reducer deliberately holds no wall-clock-expiring state.
+		return
 	case publication.SchemaComment:
 		s.applyPublicationComment(env, eid)
 	case appdef.SchemaDefinition:
@@ -641,6 +662,11 @@ func (s *State) Digest() [32]byte {
 			if e.Content.Observation.ObjectID != nil {
 				h.Write(e.Content.Observation.ObjectID[:])
 			}
+		case e.Content.Checkin != nil:
+			h.Write([]byte(e.Content.Checkin.Text))
+			if e.Content.Checkin.SOS {
+				h.Write([]byte{1})
+			}
 		}
 	}
 	for _, c := range s.Cards() {
@@ -683,6 +709,28 @@ func (s *State) Digest() [32]byte {
 	}
 	for _, n := range s.journalObs {
 		h.Write(n.EventID[:])
+	}
+	// Field (SP-3): markers and check-in history are bounded lists under
+	// the deterministic observation eviction law, and the latest-checkin
+	// registers are pure LWW — all digest-safe. Sorted, empty-writes-
+	// nothing: pre-SP-3 digests stand.
+	for _, m := range s.markers {
+		h.Write(m.EventID[:])
+		h.Write(m.MarkerID[:])
+	}
+	for _, c := range s.checkins {
+		h.Write(c.EventID[:])
+	}
+	if len(s.checkinLatest) > 0 {
+		ps := make([]id.PrincipalID, 0, len(s.checkinLatest))
+		for p := range s.checkinLatest {
+			ps = append(ps, p)
+		}
+		sort.Slice(ps, func(i, j int) bool { return string(ps[i][:]) < string(ps[j][:]) })
+		for _, p := range ps {
+			h.Write(p[:])
+			h.Write(s.checkinLatest[p].EventID[:])
+		}
 	}
 	// Annotations (SP-2): bounded timelines under the deterministic
 	// observation eviction law — digest-safe. Sorted by asset hex;

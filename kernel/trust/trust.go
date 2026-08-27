@@ -39,12 +39,16 @@ type deliveryKey struct {
 type Engine struct {
 	delivery map[deliveryKey]deliveryRecord
 	presence map[id.TerminalID]claims.Presence
+	// positions: the presence twin for geography (SP-3, ADR-031) — last
+	// signed position claim per source terminal.
+	positions map[id.TerminalID]claims.Position
 }
 
 func NewEngine() *Engine {
 	return &Engine{
-		delivery: map[deliveryKey]deliveryRecord{},
-		presence: map[id.TerminalID]claims.Presence{},
+		delivery:  map[deliveryKey]deliveryRecord{},
+		presence:  map[id.TerminalID]claims.Presence{},
+		positions: map[id.TerminalID]claims.Position{},
 	}
 }
 
@@ -139,6 +143,63 @@ type ProjectedPresence struct {
 	// local assumption about how long presence lasts — so a UI can count it
 	// down without inventing a TTL of its own. Zero unless Current.
 	RemainingSeconds uint64
+}
+
+// UpdatePosition stores the latest position claim for a terminal.
+// LWW by (EmittedAt, EventID) — the EventID tiebreak is deliberate:
+// presence's plain ">" guard leaves equal-EmittedAt claims decided by
+// arrival order, and replicas that heard them in different orders would
+// disagree forever. Positions refuse to inherit that hole.
+func (e *Engine) UpdatePosition(p claims.Position) {
+	cur, ok := e.positions[p.Source]
+	if ok {
+		if cur.EmittedAt > p.EmittedAt {
+			return
+		}
+		if cur.EmittedAt == p.EmittedAt && string(cur.EventID[:]) >= string(p.EventID[:]) {
+			return
+		}
+	}
+	e.positions[p.Source] = p
+}
+
+// ProjectedPosition expresses a current claim OR last-known-with-age —
+// never a current-tense position for an expired one.
+type ProjectedPosition struct {
+	Known      bool
+	Current    bool
+	LatE7U     uint64
+	LonE7U     uint64
+	AccuracyM  uint64
+	AgeSeconds uint64
+	// RemainingSeconds comes from the SIGNED expiry, never a local TTL
+	// guess. Zero unless Current.
+	RemainingSeconds uint64
+}
+
+// Position projects a terminal's position claim at the given time.
+func (e *Engine) Position(t id.TerminalID, nowUnix uint64) ProjectedPosition {
+	p, ok := e.positions[t]
+	if !ok {
+		return ProjectedPosition{}
+	}
+	out := ProjectedPosition{Known: true,
+		LatE7U: p.LatE7U, LonE7U: p.LonE7U, AccuracyM: p.AccuracyM,
+		AgeSeconds: p.AgeSeconds(nowUnix)}
+	if p.Current(nowUnix) {
+		out.Current = true
+		out.RemainingSeconds = p.ExpiresAt - nowUnix
+	}
+	return out
+}
+
+// Positions lists every terminal with a known position claim.
+func (e *Engine) Positions() map[id.TerminalID]claims.Position {
+	out := make(map[id.TerminalID]claims.Position, len(e.positions))
+	for k, v := range e.positions {
+		out[k] = v
+	}
+	return out
 }
 
 // Presence projects a terminal's presence at the given time.
