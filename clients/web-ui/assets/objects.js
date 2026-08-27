@@ -19,6 +19,39 @@ let objEditParent = '';    // parent object id when creating a child
 const OBJ_KINDS = ['machine', 'part', 'project', 'order', 'material', 'tool',
   'release', 'track', 'session', 'other'];
 
+// Placeholder examples per kind: the editor speaks the vocabulary of the
+// thing being made, not always the workshop's.
+const OBJ_KIND_HINTS = {
+  machine: { name: 'CNC-01', status: 'operational' },
+  release: { name: 'Night Signals · EP', status: 'production' },
+  track: { name: 'Winter Song', status: 'mixing' },
+  session: { name: 'Vocal · Katya · 26 Aug', status: '' },
+};
+
+// The picker's glyphs — one per suggested kind, an unknown kind gets ✦.
+const OBJ_KIND_GLYPHS = {
+  machine: '🛠️', part: '⚙️', tool: '🔧', material: '🧱',
+  project: '📋', order: '📦',
+  release: '💿', track: '🎵', session: '🎙️',
+  other: '✦',
+};
+
+// kindSuggestionsFor curates the picker BY SPACE: a studio offers the
+// creative set, a workshop the physical one, anywhere else the whole
+// vocabulary. Curation only — the protocol accepts any slug regardless,
+// and «other» keeps the door open (ADR-029: suggestions are mode
+// territory, validity is not).
+function kindSuggestionsFor(char) {
+  switch (char && char.archetype) {
+    case 'studio':
+      return ['release', 'track', 'session', 'project', 'other'];
+    case 'workshop':
+      return ['machine', 'part', 'tool', 'material', 'project', 'order', 'other'];
+    default:
+      return OBJ_KINDS;
+  }
+}
+
 function objKindLabel(k) {
   const key = 'objects.kind.' + k;
   const s = t(key);
@@ -70,7 +103,14 @@ async function refreshObjects() {
       card.appendChild(name);
       const meta = document.createElement('div');
       meta.className = 'obj-meta';
-      meta.textContent = objKindLabel(o.kind) + (o.status ? ' · ' + o.status : '');
+      const kindChip = document.createElement('span');
+      kindChip.className = 'obj-chip'; kindChip.textContent = objKindLabel(o.kind);
+      meta.appendChild(kindChip);
+      if (o.status) {
+        const st = document.createElement('span');
+        st.className = 'obj-chip obj-status'; st.textContent = o.status;
+        meta.appendChild(st);
+      }
       card.appendChild(meta);
       if (o.task_open || o.task_done) {
         const tk = document.createElement('div');
@@ -108,12 +148,12 @@ async function openObject(oid) {
   back.textContent = '← ' + t('objects.back');
   back.onclick = () => { openObjectID = null; refreshObjects(); };
   head.appendChild(back);
-  // Containment breadcrumb: one level up, like the API's one level down.
+  // Containment breadcrumb: one level up, by NAME — "↑ Night Signals",
+  // never eight hex characters.
   if (o.parent) {
     const up = document.createElement('button');
     up.className = 'btn-plain obj-crumb';
-    up.textContent = '↑';
-    up.title = t('objects.parent');
+    up.textContent = '↑ ' + (o.parent_name || t('objects.parent'));
     up.onclick = () => openObject(o.parent);
     head.appendChild(up);
   }
@@ -131,8 +171,9 @@ async function openObject(oid) {
     chips.appendChild(st);
   }
   head.appendChild(chips);
-  const spread = document.createElement('span'); spread.style.flex = '1';
-  head.appendChild(spread);
+  const actions = document.createElement('div');
+  actions.className = 'obj-actions';
+  head.appendChild(actions);
   // Keep on the STABLE target — survives every revision by construction.
   const keepBtn = document.createElement('button');
   keepBtn.className = 'btn-plain';
@@ -148,12 +189,12 @@ async function openObject(oid) {
       dlgKeep.showModal();
     }
   };
-  head.appendChild(keepBtn);
+  actions.appendChild(keepBtn);
   const edit = document.createElement('button');
   edit.className = 'btn-tinted';
   edit.textContent = t('objects.edit');
   edit.onclick = () => openObjectEditor(o);
-  head.appendChild(edit);
+  actions.appendChild(edit);
   const arch = document.createElement('button');
   arch.className = 'btn-plain';
   arch.textContent = o.archived ? t('objects.restore') : t('objects.archive');
@@ -171,7 +212,7 @@ async function openObject(oid) {
       openObject(oid);
     } catch (e) { console.error(e); }
   };
-  head.appendChild(arch);
+  actions.appendChild(arch);
   box.appendChild(head);
 
   // Reaction row on the stable target (same renderer as the feed).
@@ -313,23 +354,69 @@ function objSubmitBtn() {
 
 // ---- the editor dialog (create + revise share one form) ----
 
+let objEditKind = '';      // the picker's selection ('' = custom slug typed)
+
+function renderKindPicker(selected, char) {
+  const pick = document.getElementById('objKindPick');
+  const custom = document.getElementById('objKindCustom');
+  const kinds = kindSuggestionsFor(char).slice();
+  // An existing object whose kind is outside this space's suggestions
+  // still shows ITS kind as a card — editing must never hide the truth.
+  if (selected && !kinds.includes(selected)) kinds.unshift(selected);
+  pick.innerHTML = '';
+  custom.style.display = 'none';
+  custom.value = '';
+  const mark = () => pick.querySelectorAll('.kind-card').forEach(c =>
+    c.classList.toggle('sel', c.dataset.k === objEditKind));
+  for (const k of kinds) {
+    const card = document.createElement('button');
+    card.type = 'button';
+    card.className = 'kind-card';
+    card.dataset.k = k;
+    const g = document.createElement('span');
+    g.className = 'kind-glyph';
+    g.textContent = OBJ_KIND_GLYPHS[k] || '✦';
+    card.appendChild(g);
+    const l = document.createElement('span');
+    l.className = 'kind-label';
+    l.textContent = objKindLabel(k);
+    card.appendChild(l);
+    card.onclick = () => {
+      objEditKind = k;
+      applyKindHint(k);
+      // «other» is a door, not a kind: it opens the free slug field. The
+      // field pre-fills with "other" so pressing Save without typing
+      // still does the obvious thing.
+      if (k === 'other') {
+        custom.style.display = '';
+        if (!custom.value) custom.value = 'other';
+        custom.focus();
+        custom.select();
+      } else {
+        custom.style.display = 'none';
+      }
+      mark();
+    };
+    pick.appendChild(card);
+  }
+  objEditKind = selected || kinds[0];
+  if (objEditKind === 'other') custom.style.display = '';
+  applyKindHint(objEditKind);
+  mark();
+}
+
+function applyKindHint(k) {
+  const hint = OBJ_KIND_HINTS[k] || OBJ_KIND_HINTS.machine;
+  document.getElementById('objName').placeholder = hint.name;
+  document.getElementById('objStatus').placeholder = hint.status;
+}
+
 function openObjectEditor(o, opts) {
   objEditID = o ? o.object_id : '';
   objEditBase = o ? o.revision_event_id : '';
   objEditParent = o ? (o.parent || '') : ((opts && opts.parent) || '');
-  const kindSel = document.getElementById('objKind');
-  kindSel.innerHTML = '';
-  for (const k of OBJ_KINDS) {
-    const opt = document.createElement('option');
-    opt.value = k; opt.textContent = objKindLabel(k);
-    kindSel.appendChild(opt);
-  }
-  if (o && !OBJ_KINDS.includes(o.kind)) {
-    const opt = document.createElement('option');
-    opt.value = o.kind; opt.textContent = o.kind;
-    kindSel.appendChild(opt);
-  }
-  kindSel.value = o ? o.kind : ((opts && opts.kind) || 'machine');
+  const char = typeof currentSpace === 'function' ? currentSpace()?.character : null;
+  renderKindPicker(o ? o.kind : ((opts && opts.kind) || ''), char);
   document.getElementById('objName').value = o ? o.name : '';
   document.getElementById('objStatus').value = o ? (o.status || '') : '';
   document.getElementById('objSummary').value = o ? (o.summary || '') : '';
@@ -360,8 +447,11 @@ async function saveObject() {
   let props;
   try { props = parseObjProps(document.getElementById('objProps').value); }
   catch (e) { msg.textContent = e.message; return; }
+  const customKind = document.getElementById('objKindCustom');
   const object = {
-    kind: document.getElementById('objKind').value,
+    kind: (objEditKind === 'other' && customKind.value.trim())
+      ? customKind.value.trim().toLowerCase()
+      : objEditKind,
     name: document.getElementById('objName').value.trim(),
     status: document.getElementById('objStatus').value.trim(),
     summary: document.getElementById('objSummary').value.trim(),
@@ -572,7 +662,7 @@ const OBJ_RENDERERS = {
     }
     box.appendChild(list);
     const add = document.createElement('button');
-    add.className = 'btn-plain';
+    add.className = 'btn-plain obj-sect-act';
     add.textContent = t('studio.new_track');
     add.onclick = () => openObjectEditor(null, { kind: 'track', parent: oid });
     box.appendChild(add);
@@ -591,6 +681,7 @@ const OBJ_RENDERERS = {
     // notes riding the scrubber. Katya's note on mix-11 must be one tap
     // away even after mix-12 took the star.
     const stage = document.createElement('div');
+    stage.className = 'obj-stage';
     box.appendChild(stage);
     let stagedAsset = null;
     const labelOf = (asset) => {
@@ -616,7 +707,7 @@ const OBJ_RENDERERS = {
       }
       if (asset !== o.current_asset) {
         const which = document.createElement('div');
-        which.className = 'obj-child-meta';
+        which.className = 'obj-stage-which';
         which.textContent = labelOf(asset);
         stage.appendChild(which);
       }
@@ -627,7 +718,7 @@ const OBJ_RENDERERS = {
     }
     showOnStage(o.current_asset || null, o.current_asset ? o.current_annotations : []);
     const up = document.createElement('button');
-    up.className = 'btn-tinted';
+    up.className = 'btn-tinted obj-sect-act';
     up.textContent = t('studio.upload_mix');
     up.onclick = () => uploadAndAttach(oid, 'mix', o.current_asset || '', reload);
     box.appendChild(up);
@@ -651,24 +742,27 @@ const OBJ_RENDERERS = {
           b.textContent = t('studio.current_badge');
           row.appendChild(b);
         }
+        const tail = document.createElement('span');
+        tail.className = 'obj-ver-tail';
+        row.appendChild(tail);
+        if (annCount[v.asset]) {
+          const n = document.createElement('span');
+          n.className = 'obj-ver-notes';
+          n.textContent = '💬 ' + annCount[v.asset];
+          tail.appendChild(n);
+        }
         if (v.candidate) {
           const s = document.createElement('span');
           s.className = 'obj-ver-star';
           s.textContent = '★';
-          row.appendChild(s);
+          tail.appendChild(s);
         } else {
           const s = document.createElement('button');
           s.className = 'obj-ver-star dim';
           s.textContent = '☆';
           s.title = t('studio.make_candidate');
           s.onclick = (ev) => { ev.stopPropagation(); setCandidate(oid, v.asset, reload); };
-          row.appendChild(s);
-        }
-        if (annCount[v.asset]) {
-          const n = document.createElement('span');
-          n.className = 'obj-child-meta';
-          n.textContent = '💬 ' + annCount[v.asset];
-          row.appendChild(n);
+          tail.appendChild(s);
         }
         vs.appendChild(row);
       }
@@ -690,7 +784,7 @@ const OBJ_RENDERERS = {
       }
     }
     const addS = document.createElement('button');
-    addS.className = 'btn-plain';
+    addS.className = 'btn-plain obj-sect-act';
     addS.textContent = t('studio.new_session');
     addS.onclick = () => openObjectEditor(null, { kind: 'session', parent: oid });
     box.appendChild(addS);
@@ -731,7 +825,7 @@ const OBJ_RENDERERS = {
     }
     box.appendChild(list);
     const up = document.createElement('button');
-    up.className = 'btn-tinted';
+    up.className = 'btn-tinted obj-sect-act';
     up.textContent = t('studio.upload_take');
     up.onclick = () => uploadAndAttach(oid, 'take', '', reload);
     box.appendChild(up);

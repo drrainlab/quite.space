@@ -153,8 +153,17 @@ const RADIO = (() => {
     if (!composer) return;
     const enabled = hostReady() && space && state(space).enabled;
     if (!enabled) {
-      if (ui) { ui.wrap.remove(); ui = null; uiSpace = null; }
-      composer.style.display = '';
+      // Restore ONLY what this module took. When no PTT surface was ever
+      // mounted, the composer's visibility belongs to switchView — and
+      // this line used to clobber it on every poll, resurrecting the chat
+      // box under the Objects view. Even when tearing down a real swap,
+      // hand the composer back in the state the CURRENT view wants, not
+      // unconditionally visible.
+      if (ui) {
+        ui.wrap.remove(); ui = null; uiSpace = null;
+        const chatting = typeof pubView === 'undefined' || pubView === 'chat';
+        composer.style.display = chatting ? '' : 'none';
+      }
       return;
     }
     if (ui && uiSpace === space) return;

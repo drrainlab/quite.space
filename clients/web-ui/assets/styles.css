@@ -3807,85 +3807,173 @@ div.reply-to { cursor: default; }
   .entry.flash .bubble { animation: none; box-shadow: 0 0 0 2px var(--acc); }
 }
 
-/* ---- Objects (SP-1): the space's domain objects ---- */
-#objects { flex: 1; overflow-y: auto; padding: 14px 16px; }
-.obj-bar { display: flex; justify-content: flex-end; margin-bottom: 10px; }
+/* ---- Objects & Studio (SP-1/SP-2) ----
+   One coherent block, in the house language: charcoal panels, hairline
+   borders, the accent only where it MEANS something (current, candidate,
+   a link to press). Inputs here live outside #composer and dialogs, so
+   they are dressed explicitly — the browser's white default in a dark
+   room was a bug, not a choice. */
+
+#objects { flex: 1; overflow-y: auto; overscroll-behavior: contain;
+  padding: 16px clamp(16px, 4vw, 32px) 32px; }
+#objects > * { max-width: 760px; margin-inline: auto; }
+
+/* -- the list -- */
+.obj-bar { display: flex; justify-content: flex-end; align-items: center;
+  gap: 8px; margin-bottom: 14px; }
+.obj-bar .btn-plain.sel { color: var(--acc); border-color: var(--acc); }
 .obj-grid { display: grid; gap: 12px;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); }
 .obj-card { border: 1px solid var(--line); border-radius: var(--radius-md);
-  background: var(--panel); padding: 12px 14px; cursor: pointer;
-  box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 4px; }
-.obj-card:hover { border-color: var(--acc); }
-.obj-name { font-weight: 600; }
-.obj-meta { font-size: 12px; opacity: .7; }
-.obj-tasks { font-size: 12px; opacity: .6; margin-top: auto; }
+  background: var(--panel); padding: 14px 16px; cursor: pointer;
+  box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 8px;
+  transition: border-color .15s, background .15s; }
+.obj-card:hover { border-color: var(--acc); background: var(--surface-raised); }
+.obj-name { font-weight: 600; font-size: 15px; color: var(--fg); }
+.obj-meta { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.obj-tasks { font-size: 12px; color: var(--dim); margin-top: auto; }
+
+/* -- chips: kind is quiet, status carries the accent (it is the one
+      piece of state a human put there on purpose) -- */
+.obj-chip { font-size: 11px; padding: 2px 9px; border-radius: 999px;
+  border: 1px solid var(--line); color: var(--dim); white-space: nowrap; }
+.obj-chip.obj-status { border-color: color-mix(in srgb, var(--acc) 55%, transparent);
+  color: var(--acc); }
+
+/* -- the open card -- */
 .obj-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-  margin-bottom: 8px; }
-.obj-title { font-size: 18px; font-weight: 600; }
+  margin-bottom: 4px; }
+.obj-head .btn-plain, .obj-head .btn-tinted { white-space: nowrap; }
+.obj-crumb { color: var(--dim); }
+.obj-crumb:hover { color: var(--acc); }
+.obj-title { font-size: 20px; font-weight: 650; color: var(--fg); }
 .obj-chips { display: flex; gap: 6px; }
-.obj-chip { font-size: 11px; padding: 2px 8px; border-radius: 999px;
-  border: 1px solid var(--line); opacity: .8; }
-.obj-chip.obj-status { border-color: var(--acc); }
-.obj-summary { margin: 6px 0 10px; opacity: .85; white-space: pre-wrap; }
+.obj-actions { display: flex; gap: 8px; margin-left: auto; align-items: center; }
+.obj-summary { margin: 8px 0 4px; color: var(--dim); white-space: pre-wrap;
+  line-height: 1.5; }
 .obj-props { display: grid; grid-template-columns: max-content 1fr;
-  gap: 4px 14px; margin-bottom: 12px; font-size: 13px; }
+  gap: 6px 16px; margin: 10px 0 4px; font-size: 13px; }
 .obj-prop { display: contents; }
-.obj-prop-k { opacity: .6; }
-.obj-sect { font-size: 12px; text-transform: uppercase; letter-spacing: .08em;
-  opacity: .55; margin: 14px 0 6px; }
-.obj-task-list { display: flex; flex-direction: column; gap: 4px; }
-.obj-task { display: flex; align-items: center; gap: 8px; cursor: pointer; }
-.obj-task.done span { text-decoration: line-through; opacity: .55; }
-.obj-task-add input, .obj-obs-add input { width: 100%; margin-top: 6px; }
-.obj-obs-list { display: flex; flex-direction: column; gap: 6px; }
-.obj-obs { display: flex; gap: 10px; align-items: baseline; font-size: 13px; }
-.obj-obs-when { font-size: 11px; opacity: .5; white-space: nowrap; }
-.obj-obs-empty { opacity: .5; font-size: 13px; }
-.obj-res { margin-bottom: 8px; }
-/* The feed's quiet observation row: present, legible, not shouting. */
-.obs-entry { display: flex; align-items: baseline; gap: 8px;
-  font-size: 13px; opacity: .85; }
-.obs-goto { background: none; border: none; color: var(--acc);
-  cursor: pointer; font-size: 12px; padding: 0; }
-.obj-task-add, .obj-obs-add { display: flex; gap: 6px; align-items: center; }
-.obj-task-add input, .obj-obs-add input { flex: 1; margin-top: 6px; }
-.obj-add-btn { margin-top: 6px; border: 1px solid var(--line);
-  background: var(--panel); color: var(--acc); border-radius: var(--radius-md);
-  width: 32px; height: 32px; cursor: pointer; font-size: 16px; }
+.obj-prop-k { color: var(--muted); }
+.obj-prop-v { color: var(--fg); }
+.obj-sect { font-size: 11px; text-transform: uppercase; letter-spacing: .1em;
+  color: var(--muted); margin: 22px 0 10px; padding-top: 14px;
+  border-top: 1px solid var(--line); }
+
+/* -- forms that live on the card (tasks, notes): the composer's manners,
+      the panel's clothes -- */
+.obj-task-add, .obj-obs-add { display: flex; gap: 8px; align-items: center;
+  margin-top: 10px; }
+.obj-task-add input, .obj-obs-add input { flex: 1; min-width: 0;
+  background: var(--panel); color: var(--fg); font: inherit;
+  border: 1px solid var(--line); border-radius: var(--radius-md);
+  padding: 9px 13px; outline: none; }
+.obj-task-add input:focus, .obj-obs-add input:focus { border-color: var(--acc); }
+.obj-task-add input::placeholder, .obj-obs-add input::placeholder { color: var(--muted); }
+.obj-add-btn { border: 1px solid var(--line); background: var(--panel);
+  color: var(--acc); border-radius: var(--radius-md);
+  width: 38px; height: 38px; flex: none; cursor: pointer; font-size: 16px; }
 .obj-add-btn:hover { border-color: var(--acc); }
 
-/* ---- Studio renderers (SP-2) ---- */
-.obj-crumb { font-size: 14px; }
-.obj-child-list, .obj-ver-list, .obj-take-list { display: flex;
-  flex-direction: column; gap: 6px; }
-.obj-child { display: flex; align-items: baseline; gap: 10px;
-  padding: 8px 10px; border: 1px solid var(--line);
-  border-radius: var(--radius-md); cursor: pointer; }
-.obj-child:hover { border-color: var(--acc); }
-.obj-child-name { font-weight: 500; }
-.obj-child-meta { font-size: 12px; opacity: .6; }
+/* -- tasks -- */
+.obj-task-list { display: flex; flex-direction: column; gap: 2px; }
+.obj-task { display: flex; align-items: center; gap: 10px; cursor: pointer;
+  padding: 7px 10px; border-radius: var(--radius-sm); }
+.obj-task:hover { background: var(--surface-raised); }
+.obj-task input[type="checkbox"] { accent-color: var(--acc); }
+.obj-task.done span { text-decoration: line-through; color: var(--muted); }
+
+/* -- observations / notes -- */
+.obj-obs-list { display: flex; flex-direction: column; gap: 8px; }
+.obj-obs { display: flex; gap: 12px; align-items: baseline; font-size: 13px;
+  line-height: 1.45; }
+.obj-obs-when { font-size: 11px; color: var(--muted); white-space: nowrap;
+  font-variant-numeric: tabular-nums; }
+.obj-obs-seek { cursor: pointer; color: var(--acc); }
+.obj-obs-seek:hover { text-decoration: underline; }
+.obj-obs-text { color: var(--fg); }
+.obj-obs-empty { color: var(--muted); font-size: 13px; }
+
+/* -- the studio stage: the current mix is the room's centrepiece and
+      gets the raised surface -- */
+.obj-stage { background: var(--surface-raised); border: 1px solid var(--line);
+  border-radius: var(--radius-lg); padding: 16px 18px; display: flex;
+  flex-direction: column; gap: 12px; }
+.obj-stage .aplayer { width: 100%; }
+.obj-stage-which { font-size: 12px; color: var(--dim); }
+
+/* -- versions -- */
+.obj-ver-list { display: flex; flex-direction: column; gap: 2px; }
 .obj-ver { display: flex; align-items: center; gap: 10px; font-size: 13px;
-  padding: 4px 2px; }
-.obj-ver-name { min-width: 120px; }
+  padding: 8px 10px; border-radius: var(--radius-sm); cursor: pointer; }
+.obj-ver:hover { background: var(--surface-raised); }
+.obj-ver-name { color: var(--fg); min-width: 110px; }
+.obj-ver-tail { margin-left: auto; display: flex; gap: 10px; align-items: center; }
 .obj-ver-star { background: none; border: none; color: var(--acc);
-  cursor: default; font-size: 14px; padding: 0; }
+  cursor: default; font-size: 14px; padding: 0; min-width: 0; min-height: 0; }
 .obj-ver-star.dim { opacity: .35; cursor: pointer; }
 .obj-ver-star.dim:hover { opacity: 1; }
+.obj-ver-notes { font-size: 12px; color: var(--dim); }
+
+/* -- children (tracks, sessions) and takes -- */
+.obj-child-list, .obj-take-list { display: flex; flex-direction: column; gap: 8px; }
+.obj-child { display: flex; align-items: baseline; gap: 10px;
+  padding: 10px 14px; border: 1px solid var(--line);
+  border-radius: var(--radius-md); cursor: pointer; background: var(--panel);
+  transition: border-color .15s, background .15s; }
+.obj-child:hover { border-color: var(--acc); background: var(--surface-raised); }
+.obj-child-name { font-weight: 500; color: var(--fg); }
+.obj-child-meta { font-size: 12px; color: var(--dim); }
 .obj-take { border: 1px solid var(--line); border-radius: var(--radius-md);
-  padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
+  background: var(--panel); padding: 10px 14px; display: flex;
+  flex-direction: column; gap: 8px; }
 .obj-take-head { display: flex; align-items: center; gap: 8px; }
-/* Annotation pins ride the scrubber; the scrubber is their coordinate
-   system, so it must be one. */
+.obj-take .aplayer { width: 100%; }
+
+/* -- annotation pins on the scrubber -- */
 .ascrub { position: relative; }
-.obj-mark { position: absolute; top: -6px; width: 8px; height: 8px;
-  border-radius: 50%; background: var(--acc); border: none; padding: 0;
-  cursor: pointer; transform: translateX(-50%); }
-.obj-mark:hover { transform: translateX(-50%) scale(1.4); }
+.ascrub .obj-mark { position: absolute; top: -7px; min-width: 0; min-height: 0;
+  width: 9px; height: 9px; line-height: 0; border-radius: 50%;
+  background: var(--acc); border: none; padding: 0; cursor: pointer;
+  transform: translateX(-50%); box-shadow: 0 0 6px color-mix(in srgb, var(--acc) 60%, transparent); }
+.ascrub .obj-mark:hover { transform: translateX(-50%) scale(1.35); }
 .obj-at-chip { border: 1px solid var(--line); background: var(--panel);
-  border-radius: 999px; padding: 4px 10px; cursor: pointer; font-size: 12px;
-  margin-top: 6px; color: inherit; }
+  border-radius: 999px; height: 38px; padding: 0 13px; flex: none;
+  cursor: pointer; font-size: 12px; color: var(--dim);
+  font-variant-numeric: tabular-nums; }
 .obj-at-chip.sel { border-color: var(--acc); color: var(--acc); }
-.obj-obs-seek { cursor: pointer; color: var(--acc); }
-/* Pins inherit the app's generous button metrics — pin them down. */
-.ascrub .obj-mark { min-width: 0; min-height: 0; width: 8px; height: 8px;
-  line-height: 0; box-shadow: 0 0 6px var(--acc); }
+
+/* -- section action buttons under lists -- */
+.obj-sect-act { margin-top: 10px; }
+
+/* -- the feed's quiet observation row -- */
+.obs-entry { display: flex; align-items: baseline; gap: 8px;
+  font-size: 13px; color: var(--dim); }
+.obs-entry .obs-goto { background: none; border: none; color: var(--acc);
+  cursor: pointer; font-size: 12px; padding: 0; min-height: 0; }
+.obs-entry .obs-goto:hover { text-decoration: underline; }
+
+/* -- narrow screens: the head stacks, taps grow -- */
+@media (max-width: 600px) {
+  #objects { padding: 12px 12px 28px; }
+  .obj-head { row-gap: 8px; }
+  .obj-actions { margin-left: 0; width: 100%; justify-content: flex-start; }
+  .obj-title { font-size: 18px; }
+  .obj-add-btn, .obj-at-chip { height: var(--tap, 44px); }
+  .obj-task-add input, .obj-obs-add input { padding: 11px 13px; }
+}
+
+/* -- the kind picker: the space's vocabulary as cards, «other» keeps the
+      free slug door open -- */
+.kind-pick { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 8px; margin: 6px 0; }
+.kind-card { display: flex; flex-direction: column; align-items: center;
+  gap: 4px; padding: 10px 6px; border: 1px solid var(--line);
+  border-radius: var(--radius-md); background: var(--panel); cursor: pointer;
+  transition: border-color .12s, background .12s; }
+.kind-card:hover { border-color: var(--acc); }
+.kind-card.sel { border-color: var(--acc); background: var(--surface-raised);
+  box-shadow: inset 0 0 0 1px var(--acc); }
+.kind-glyph { font-size: 20px; line-height: 1; }
+.kind-label { font-size: 12px; color: var(--dim); }
+.kind-card.sel .kind-label { color: var(--acc); }

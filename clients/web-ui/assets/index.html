@@ -1403,7 +1403,13 @@
 <dialog id="dlgObject">
   <h3 data-i18n="ui.object.title">Object</h3>
   <label data-i18n="ui.object.kind">Kind</label>
-  <select id="objKind"></select>
+  <!-- A picker, not a closed list: the suggestions are the SPACE's
+       vocabulary (a studio offers releases, a workshop offers machines —
+       ADR-029 mode territory), and «other» opens a free slug because the
+       protocol never closes the kind vocabulary. -->
+  <div id="objKindPick" class="kind-pick"></div>
+  <input id="objKindCustom" style="display:none" maxlength="32"
+         data-i18n-ph="ui.object.ph.kind_custom" placeholder="your own kind (slug)">
   <label data-i18n="ui.object.name">Name</label>
   <input id="objName" maxlength="200" data-i18n-ph="ui.object.ph.name" placeholder="CNC-01">
   <label data-i18n="ui.object.status">Status</label>

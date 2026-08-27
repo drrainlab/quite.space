@@ -64,6 +64,17 @@ func recordFromJSON(j objectRecordJSON) (*objects.Record, error) {
 	return r, nil
 }
 
+// addParentName resolves the containment breadcrumb's label — the UI
+// should say "Night Signals", not eight hex characters.
+func addParentName(st *spaceState, o reducers.Object, j map[string]any) {
+	if o.Record.Parent == nil {
+		return
+	}
+	if p, ok := st.space.State.ObjectByID(*o.Record.Parent); ok {
+		j["parent_name"] = p.Record.Name
+	}
+}
+
 func (a *APIServer) oidParam(r *http.Request) ([16]byte, error) {
 	var out [16]byte
 	b, err := hex.DecodeString(r.PathValue("oid"))
@@ -212,7 +223,9 @@ func (a *APIServer) handleListObjects(w http.ResponseWriter, r *http.Request) {
 			list = st.space.State.ArchivedObjects()
 		}
 		for _, o := range list {
-			out = append(out, objectListJSON(o, st.space.State.TasksForObject(o.ObjectID)))
+			j := objectListJSON(o, st.space.State.TasksForObject(o.ObjectID))
+			addParentName(st, o, j)
+			out = append(out, j)
 		}
 		return nil
 	}); err != nil {
@@ -241,6 +254,7 @@ func (a *APIServer) handleGetObject(w http.ResponseWriter, r *http.Request) {
 		}
 		objTasks := st.space.State.TasksForObject(oid)
 		j = objectListJSON(o, objTasks)
+		addParentName(st, o, j)
 		// The stable target's social state: kept-by-me, keep count, and the
 		// reaction aggregate — same viewer-relative projection the feed uses.
 		me := a.rt.PrincipalID
