@@ -14,25 +14,28 @@ import (
 
 // Core schema ids, v0.
 const (
-	MessageText       = "message.text.v1"
-	MessageRevised    = "message.revised.v1"
-	MessageTombstoned = "message.tombstoned.v1"
-	CardCreated       = "card.created.v1"
-	CardUpdated       = "card.updated.v1"
-	PresenceUpdate    = "presence.update.v1"
-	ObservationTemp   = "observation.temperature.v1"
-	ObservationValue  = "observation.value.v1"
-	ObservationNoted  = "observation.noted.v1"
-	AssetAnnotated    = "asset.annotated.v1"
-	ReceiptDelivery   = "receipt.delivery.v1"
-	DeviceCertified   = "identity.device_certified.v1"
-	DeviceRevoked     = "identity.device_revoked.v1"
-	ManifestUpdated   = "terminal.manifest.updated.v1"
-	MemberJoined      = "membership.joined.v1"
-	MemberLeft        = "membership.left.v1"
-	MembershipEpoch   = "membership.epoch.v1"
-	InstrumentEpoch   = "membership.instrument_epoch.v1"
-	MemberAdded       = "membership.member_added.v1"
+	MessageText         = "message.text.v1"
+	MessageRevised      = "message.revised.v1"
+	MessageTombstoned   = "message.tombstoned.v1"
+	CardCreated         = "card.created.v1"
+	CardUpdated         = "card.updated.v1"
+	PresenceUpdate      = "presence.update.v1"
+	ObservationTemp     = "observation.temperature.v1"
+	ObservationValue    = "observation.value.v1"
+	ObservationNoted    = "observation.noted.v1"
+	AssetAnnotated      = "asset.annotated.v1"
+	ObservationPosition = "observation.position.v1"
+	MarkerPlaced        = "marker.placed.v1"
+	CheckinSent         = "checkin.sent.v1"
+	ReceiptDelivery     = "receipt.delivery.v1"
+	DeviceCertified     = "identity.device_certified.v1"
+	DeviceRevoked       = "identity.device_revoked.v1"
+	ManifestUpdated     = "terminal.manifest.updated.v1"
+	MemberJoined        = "membership.joined.v1"
+	MemberLeft          = "membership.left.v1"
+	MembershipEpoch     = "membership.epoch.v1"
+	InstrumentEpoch     = "membership.instrument_epoch.v1"
+	MemberAdded         = "membership.member_added.v1"
 )
 
 var schemaIDRe = regexp.MustCompile(`^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*\.v[1-9][0-9]*$`)
@@ -992,7 +995,6 @@ type EpochPayload struct {
 	Wraps []EpochWrap
 }
 
-
 // ---- observation.value.v1 (QI-0) ----
 //
 // The general reading of one INSTRUMENT CHANNEL. Three amendments from the
@@ -1012,8 +1014,10 @@ type EpochPayload struct {
 //     reading that will one day be displayed as fresher than it is.
 //
 // {1: channel, 2: magnitude, 3: negative, 4: decimals,
-//  5: bool_value, 6: enum_value, 7: observed_at, 8: stale_after,
-//  9: simulated}. Exactly ONE of {magnitude(+3,4), bool_value, enum_value}
+//
+//	5: bool_value, 6: enum_value, 7: observed_at, 8: stale_after,
+//	9: simulated}. Exactly ONE of {magnitude(+3,4), bool_value, enum_value}
+//
 // families is present — the tag is the presence.
 type ValueObservation struct {
 	Channel string // paramNameRe grammar, same as live_signal params
