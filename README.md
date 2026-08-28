@@ -107,7 +107,14 @@ go run ./cmd/terminal-relay --listen :7411
 
 ## Status
 
-Public beta, and honest about the edges:
+**1.0.0-beta.** The number is a promise about formats, not about polish:
+every log, backup, pass, bundle and device certificate written by this
+build opens in every later 1.x. [ADR-033](adr/ADR-033-what-1-0-promises.md)
+says exactly what is frozen — and, just as deliberately, what is not (the
+loopback HTTP API, the interface, local projections). The beta suffix
+marks the reach of our evidence, not a reservation on the formats.
+
+Honest about the edges:
 
 - **Works, in daily use:** spaces, invitations, conversation, media, voice,
   posts and atmosphere, public spaces and catalogues, relays with automatic
