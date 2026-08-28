@@ -114,12 +114,17 @@ func (r *Runtime) relayListenLoop() {
 // listenIngresses is the same set the pull half of the sync reads — the
 // armed relay first, then every once-advertised ingress — bounded and
 // deterministic so the maxListeners cut is stable rather than a lottery.
+// LOCK ORDER: rs.mu is taken FIRST, on its own, before r.mu — never
+// nested inside it. relaySyncOnce holds rs.mu and takes r.mu inside its
+// loop; nesting them here in the opposite order was a real AB-BA
+// deadlock, caught by a -race run that froze three goroutines solid.
 func (r *Runtime) listenIngresses() []string {
-	r.mu.Lock()
-	defer r.mu.Unlock()
 	seen := map[string]bool{}
 	var out []string
-	if rs := r.relaySync; rs != nil {
+	r.mu.Lock()
+	rs := r.relaySync
+	r.mu.Unlock()
+	if rs != nil {
 		rs.mu.Lock()
 		if rs.addr != "" {
 			seen[rs.addr] = true
@@ -127,6 +132,8 @@ func (r *Runtime) listenIngresses() []string {
 		}
 		rs.mu.Unlock()
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	var rest []string
 	for _, ing := range r.ks.SelfIngress {
 		if ing.Endpoint == "" || seen[ing.Endpoint] {
