@@ -145,6 +145,9 @@ type Keystore struct {
 	InstrEpochs map[id.TerminalID][]crypto.EpochKey
 	// Instruments are this node's attached instrument participants (QI-1).
 	Instruments []InstrumentRecord
+	// Sweeps are live recording sessions (SP-3.2) — identity and saga
+	// state only; the fixes live in the plaintext spool beside the store.
+	Sweeps []SweepRecord
 	// SelfTerminalSeed is the user's participant terminal key.
 	SelfTerminalSeed []byte
 	// DisplayName is the user's chosen name; empty until onboarding sets it.
@@ -395,6 +398,7 @@ const (
 	ksKeyInstrEp   = 22 // QI-0 instrument-epoch keys per space
 	ksKeyInstrs    = 23 // QI-1 attached instrument participants
 	ksKeyRefusals  = 24 // ADR-027 people this person declined to hear from
+	ksKeySweeps    = 25 // SP-3.2 recording sessions (identity + saga state)
 )
 
 // ksMapArity is how many top-level pairs encode() writes, and it MUST equal
@@ -402,7 +406,7 @@ const (
 // which is a poor place for a number that bricks every keystore when it is
 // wrong: too few and the trailing pair goes unread, so Done() fails and
 // nobody can open their data again. Named here, next to the keys it counts.
-const ksMapArity = 24
+const ksMapArity = 25
 
 func (k *Keystore) encode() []byte {
 	buf := codec.AppendMap(nil, ksMapArity)
@@ -525,6 +529,11 @@ func (k *Keystore) encode() []byte {
 		buf = codec.AppendBytes(buf, rf.Principal[:])
 		buf = codec.AppendText(buf, rf.Reason)
 		buf = codec.AppendUint(buf, uint64(rf.At))
+	}
+	buf = codec.AppendUint(buf, ksKeySweeps)
+	buf = codec.AppendArray(buf, len(k.Sweeps))
+	for _, sw := range k.Sweeps {
+		buf = appendSweepRecord(buf, sw)
 	}
 	return buf
 }
@@ -785,6 +794,19 @@ func decodeKeystore(data []byte) (*Keystore, error) {
 					return nil, er
 				}
 				k.Instruments = append(k.Instruments, ir)
+			}
+		case ksKeySweeps:
+			var cnt int
+			cnt, er = d.ReadArray()
+			if er != nil {
+				return nil, er
+			}
+			for range cnt {
+				var sw SweepRecord
+				if sw, er = readSweepRecord(d); er != nil {
+					return nil, er
+				}
+				k.Sweeps = append(k.Sweeps, sw)
 			}
 		case ksKeyRefusals:
 			var cnt int
