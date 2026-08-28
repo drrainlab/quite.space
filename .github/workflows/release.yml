@@ -106,14 +106,54 @@ jobs:
           # (scripts/android/beta-apk.sh) already shipped to testers' phones
           # with codes 110–124, and under the old formula v0.1.6 would have
           # come out as 106 — a DOWNGRADE to every phone that ever carried an
-          # rc, refusable only by uninstalling the node with it. 0.1.6 → 1060
-          # leaves ten codes of room per patch for exactly those rc builds
-          # (rcN of the NEXT patch = its base code + N, capped at +9).
+          # rc, refusable only by uninstalling the node with it. So each
+          # patch owns a BAND of ten codes.
+          #
+          # WITHIN THE BAND, THE FINAL IS THE TOP. A pre-release takes
+          # base+N from its own suffix number; the final takes base+9, above
+          # every pre-release of the same version. The first formula gave the
+          # final the BOTTOM of its band, which meant 1.0.0-beta.1, beta.2 and
+          # 1.0.0 all computed the same code — and Android will not install a
+          # build whose code did not increase. For an app whose whole point is
+          # that your history lives on your device, "uninstall to upgrade" is
+          # not an inconvenience, it is data loss. Found while preparing
+          # 1.0.0-beta.1, before the tag existed.
           BASE="${NAME%%-*}"
           MAJ="$(echo "$BASE" | cut -d. -f1)"
           MIN="$(echo "$BASE" | cut -d. -f2)"
           PAT="$(echo "$BASE" | cut -d. -f3)"
           CODE=$(( ${MAJ:-0} * 100000 + ${MIN:-0} * 1000 + ${PAT:-0} * 10 ))
+          # A pre-release's slot must order by STAGE and then by number:
+          # numbering alone put rc1 below beta.2, which is the same downgrade
+          # in a different costume. Nine slots, spent deliberately:
+          #
+          #   alpha.N → 0+N (1–2)   beta.N → 2+N (3–5)
+          #   rc.N    → 5+N (6–8)   final  → 9
+          #
+          # A stage that runs out of slots FAILS THE TAG rather than
+          # wrapping. There is no number to fall back on that is not
+          # somebody else's, and publishing a collision would be the exact
+          # data-loss trap this arithmetic exists to prevent — better a red
+          # workflow and a tag nobody has installed yet.
+          case "$NAME" in
+            *-*)
+              SUF="${NAME#*-}"
+              N="$(echo "$SUF" | tr -dc '0-9' | tail -c 2)"; N="${N:-1}"
+              if [ "$N" -lt 1 ]; then N=1; fi
+              case "$SUF" in
+                alpha*) OFF=0; ROOM=2 ;;
+                beta*)  OFF=2; ROOM=3 ;;
+                rc*)    OFF=5; ROOM=3 ;;
+                *)      echo "unknown pre-release stage in $NAME — teach this formula before tagging" >&2; exit 1 ;;
+              esac
+              if [ "$N" -gt "$ROOM" ]; then
+                echo "$NAME needs slot $N but its stage has room for $ROOM — move to the next stage or patch" >&2
+                exit 1
+              fi
+              CODE=$(( CODE + OFF + N ))
+              ;;
+            *) CODE=$(( CODE + 9 )) ;;
+          esac
           if [ "$CODE" -le 0 ]; then CODE=1; fi
           echo "tag=$TAG"   >> "$GITHUB_OUTPUT"
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
