@@ -121,6 +121,9 @@ type Runtime struct {
 	passes    *passRegistry
 	joins     map[string]*joinAttempt
 	llmClient *llm.Client // nil → default; injectable for tests
+	// tileState is the basemap tile machinery (SP-3.1), built lazily on
+	// the first tile request; nil until the Field view asks for one.
+	tileState *tileState
 
 	// agent is the local assistant's participant (AI-0). Its own terminal
 	// and device keys, the person's principal as controller.

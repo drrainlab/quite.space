@@ -299,6 +299,7 @@ func (a *APIServer) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/spaces/{id}/passes/{pass}", a.auth(a.handleRevokePass))
 	a.routeQuickLinks(mux)
 	a.routeBackup(mux)
+	a.routeTiles(mux)
 	mux.HandleFunc("POST /api/join-requests", a.auth(a.handleJoinRequest))
 	mux.HandleFunc("GET /api/join-requests/{req}", a.auth(a.handleJoinStatus))
 	mux.HandleFunc("GET /api/gateway", a.auth(a.handleGateway))

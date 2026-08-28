@@ -71,6 +71,13 @@ var ErrBackupUnreadable = errors.New(
 // written by definition.
 func skipFromBackup(rel string) bool {
 	base := filepath.Base(rel)
+	// The basemap tile cache stays out (ADR-032): a backup is a person's
+	// history, and tiles are refetchable world — hundreds of megabytes of
+	// OpenStreetMap pixels would dwarf the history this file exists to
+	// save, while telling anyone holding the backup where its owner looks.
+	if strings.HasPrefix(base, "tile-") && strings.HasSuffix(base, ".sealed") {
+		return true
+	}
 	return base == storage.LockFileName || strings.HasSuffix(base, ".tmp")
 }
 
