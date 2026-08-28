@@ -369,6 +369,29 @@ class RuntimeController private constructor(appContext: Context) {
     fun availabilityRefused(): Boolean =
         enabledPrefs.getBoolean(KEY_AVAILABILITY_REFUSED, false)
 
+    /**
+     * SP-3.2 — the sweep session's start was refused by the platform.
+     * The AvailabilityService lesson, applied to the second foreground
+     * service: a start the system swallowed must be a recorded state the
+     * interface can show, not a line in logcat — the person pressed a
+     * button, and "nothing happened" reads as their own mistake.
+     * There is no standing switch to force off here: a sweep is a session,
+     * not a mode, so the refusal is the whole record.
+     */
+    fun noteSweepRefused() {
+        enabledPrefs.edit().putBoolean(KEY_SWEEP_REFUSED, true).commit()
+        publish()
+    }
+
+    fun clearSweepRefused() {
+        if (!enabledPrefs.getBoolean(KEY_SWEEP_REFUSED, false)) return
+        enabledPrefs.edit().putBoolean(KEY_SWEEP_REFUSED, false).commit()
+        publish()
+    }
+
+    fun sweepRefused(): Boolean =
+        enabledPrefs.getBoolean(KEY_SWEEP_REFUSED, false)
+
     fun acquireAvailabilityLease(): Int {
         val n = availabilityLeases.incrementAndGet()
         publish()
@@ -881,6 +904,20 @@ class RuntimeController private constructor(appContext: Context) {
         execute = { r -> worker.execute(r) },
     )
 
+    @Volatile private var sweepPagePush: ((String) -> Unit)? = null
+
+    /** The visible surface's way to watch the sweep; null when no surface.
+     *  The pttPagePush discipline: the bridge stays getterless, the state
+     *  is PUSHED to the page, and a dead surface simply hears nothing. */
+    fun setSweepSink(fn: ((String) -> Unit)?) {
+        sweepPagePush = fn
+    }
+
+    /** SweepService's line to the page (window.quietSweep). */
+    internal fun pushSweep(json: String) {
+        try { sweepPagePush?.invoke(json) } catch (_: Throwable) {}
+    }
+
     private fun pushPtt(e: PttController.Event) {
         // HALF-DUPLEX: the microphone and the speaker are never open
         // together — a press silences playback, IDLE resumes it.
@@ -902,6 +939,7 @@ class RuntimeController private constructor(appContext: Context) {
         private const val KEY_POLICY = "presentation_policy"
         private const val KEY_AVAILABILITY = "availability_mode"
         private const val KEY_AVAILABILITY_REFUSED = "availability_refused"
+        private const val KEY_SWEEP_REFUSED = "sweep_refused"
 
         /**
          * The stored choice, or the strict default. An unreadable or unknown

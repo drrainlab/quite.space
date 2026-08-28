@@ -29,13 +29,22 @@
          not at launch, and never held: the WebView's getUserMedia is denied
          until this is granted (see QuietActivity.onPermissionRequest). -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
-    <!-- SP-3 Field: geolocation for the page's navigator.geolocation.
-         FOREGROUND ONLY — there is deliberately no background-location
-         permission and no location foreground service: sharing a position
-         is an explicit act while the map is open (ADR-031), and the
-         toggle's label promises exactly that much. -->
+    <!-- SP-3 Field: geolocation for the page's navigator.geolocation —
+         an explicit act while the map is open (ADR-031).
+
+         SP-3.2 adds the SECOND lawful place location exists: a Field
+         Session — an explicitly started, visibly active, bounded recording
+         (SweepService, foregroundServiceType="location"; ADR-034). What
+         SURVIVES from the original promise, deliberately:
+         ACCESS_BACKGROUND_LOCATION is still NOT declared. A location
+         foreground service is Android's while-in-use grant plus a
+         permanent notification — the person sees the session for as long
+         as it runs and can end it from the notification itself. Location
+         with no session and no visible card remains structurally
+         impossible. -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <!-- AND THIS ONE, WHICH IS NOT OPTIONAL AND IS NOT ABOUT SETTINGS.
          Chromium's Android audio manager refuses to enumerate ANY input
          device unless the app holds both: "Requires MODIFY_AUDIO_SETTINGS
@@ -109,6 +118,17 @@
             android:name=".AvailabilityService"
             android:exported="false"
             android:foregroundServiceType="remoteMessaging" />
+
+        <!-- SP-3.2 — the Field Session (ADR-034). Same start discipline as
+             the availability mode: from a visible screen, after a person
+             pressed the button that says what it does. "location" is the
+             honest type and also the enforced one: Android grants this
+             service exactly the app's while-in-use location, which is the
+             first law in platform form. -->
+        <service
+            android:name=".SweepService"
+            android:exported="false"
+            android:foregroundServiceType="location" />
 
         <!-- The swipe, coming back. NOT exported: nothing outside this app has
              any business telling it a notification was cleared, and an

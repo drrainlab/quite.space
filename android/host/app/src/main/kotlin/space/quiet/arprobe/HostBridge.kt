@@ -65,6 +65,16 @@ internal class HostBridge(
     private val pttPress: (space: String) -> Boolean = { false },
     private val pttRelease: () -> Boolean = { false },
     private val pttCancel: () -> Boolean = { false },
+    // SP-3.2 — the Field Session. Recording is Android-only in v1, and the
+    // page discovers that by the verbs' ABSENCE: a host without them never
+    // answers true, so the buttons never draw. Still the page's own facts —
+    // a person's press on "start sweep" / "stop". The trajectory itself
+    // never crosses this bridge: the node records it, the page reads it
+    // back over the API, and live state arrives via window.quietSweep.
+    private val sweepStart:
+        (space: String, parent: String, task: String, name: String) -> Boolean =
+        { _, _, _, _ -> false },
+    private val sweepStop: (result: String, note: String) -> Boolean = { _, _ -> false },
 ) {
 
     /** True when the caller proved it is the page our own node served. */
@@ -298,6 +308,31 @@ internal class HostBridge(
     fun pttCancel(pass: String?): Boolean {
         if (!admitted(pass)) return refuse("pttCancel")
         return pttCancel()
+    }
+
+    /**
+     * SP-3.2 — begin a Field Session on the named sector.
+     *
+     * `true` means STARTED THE MACHINERY, not "recording": the permission
+     * ask, the service start and the node's own start saga all happen
+     * behind it, and the honest answer arrives as a window.quietSweep push.
+     * A `false` is either a missing permission (the host is asking; press
+     * again — the PTT discipline) or a host that cannot record at all.
+     */
+    @JavascriptInterface
+    fun startSweep(pass: String?, spaceId: String?, parentObjectId: String?,
+                   taskId: String?, name: String?): Boolean {
+        if (!admitted(pass)) return refuse("startSweep")
+        if (spaceId.isNullOrEmpty() || parentObjectId.isNullOrEmpty()) return false
+        return sweepStart(spaceId, parentObjectId, taskId ?: "", name ?: "")
+    }
+
+    /** Stop with the person's judgement; an empty result is the node's
+     *  `undeclared` — a real word, not a missing one. */
+    @JavascriptInterface
+    fun stopSweep(pass: String?, result: String?, note: String?): Boolean {
+        if (!admitted(pass)) return refuse("stopSweep")
+        return sweepStop(result ?: "", note ?: "")
     }
 
     private fun refuse(what: String): Boolean {

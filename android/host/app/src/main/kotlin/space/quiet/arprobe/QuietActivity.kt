@@ -219,6 +219,14 @@ class QuietActivity : ComponentActivity() {
     private val requestPttMic =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { _ -> }
 
+    // SP-3.2: the sweep's location ask — the same discipline as the PTT mic:
+    // asked at the moment of first use, the result not read; the person
+    // presses "start sweep" again and the check re-runs against the
+    // system's own answer. FINE only: a sweep track made of cell-tower
+    // fixes would be a drawing, not a recording.
+    private val requestSweepLocation =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { _ -> }
+
     private var pendingMic: PermissionRequest? = null
 
     // Geolocation prompt handoff (SP-3): the WebView's callback is retained
@@ -488,6 +496,34 @@ class QuietActivity : ComponentActivity() {
                     },
                     pttRelease = { controller.ptt.release() },
                     pttCancel = { controller.ptt.cancel() },
+                    // SP-3.2 — the Field Session. STARTED FROM HERE for the
+                    // same reason the availability mode is: this Activity is
+                    // the visible thing a person pressed, which is both the
+                    // first law's "explicitly started" and what Android
+                    // requires of a location foreground service. The NODE
+                    // mints the session (SweepService only pumps the sensor),
+                    // and live state returns via window.quietSweep.
+                    sweepStart = { space, parent, task, name ->
+                        if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) !=
+                            PackageManager.PERMISSION_GRANTED
+                        ) {
+                            // The PTT discipline: refused now, asked now;
+                            // the person answers and presses again.
+                            runOnUiThread {
+                                requestSweepLocation.launch(
+                                    Manifest.permission.ACCESS_FINE_LOCATION
+                                )
+                            }
+                            false
+                        } else {
+                            SweepService.start(this@QuietActivity, space, parent, task, name)
+                            true
+                        }
+                    },
+                    sweepStop = { result, note ->
+                        SweepService.requestStop(this@QuietActivity, result, note)
+                        true
+                    },
                 ),
                 "QuietHost",
             )
@@ -574,6 +610,7 @@ class QuietActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         controller.setPttSink(pttSink)
+        controller.setSweepSink(sweepSink)
         controller.setSpeakingSink { space, on ->
             runOnUiThread {
                 if (web.visibility == View.VISIBLE) {
@@ -633,6 +670,7 @@ class QuietActivity : ComponentActivity() {
         // here rather than finishing into a void.
         controller.ptt.cancel()
         controller.setPttSink(null)
+        controller.setSweepSink(null)
         controller.setSpeakingSink(null)
         controller.notifications.onForeground(false)
         controller.setForeground(false)
@@ -701,6 +739,10 @@ class QuietActivity : ComponentActivity() {
                 // about something. Starting a foreground service is only
                 // allowed from a visible Activity, and this is one.
                 applyAvailabilityMode()
+                // SP-3.2: a Stop whose POST never landed is a person's
+                // judgement on hold — delivered against the node that just
+                // opened. Off the main thread; a no-op when nothing waits.
+                Thread { SweepService.deliverPendingStop(this) }.start()
             }
             RuntimeController.STATE_OPENING -> showStatus("Opening…", unlockable = false)
             else -> {
@@ -1603,6 +1645,18 @@ class QuietActivity : ComponentActivity() {
         runOnUiThread {
             if (web.visibility == View.VISIBLE) {
                 web.evaluateJavascript("window.quietPtt && window.quietPtt($json);", null)
+            }
+        }
+    }
+
+    // SP-3.2: the sweep session's mirror into the page, same guards. The
+    // page also polls GET /api/sweeps (this push is gated on visibility, and
+    // a banner that only updated while looked at would go stale in a pocket
+    // — the poll is the truth, the push is the responsiveness).
+    private val sweepSink: (String) -> Unit = { json ->
+        runOnUiThread {
+            if (web.visibility == View.VISIBLE) {
+                web.evaluateJavascript("window.quietSweep && window.quietSweep($json);", null)
             }
         }
     }

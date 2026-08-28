@@ -95,6 +95,23 @@ internal object NotificationChannels {
             }
         )
 
+        // SP-3.2 — the sweep session. Importance is frozen at creation like
+        // every channel's, which is exactly why it gets its own row: the
+        // session card must survive whatever the person decides about the
+        // connection mode's row.
+        nm.createNotificationChannel(
+            NotificationChannel(
+                NotificationPolicy.CHANNEL_SWEEP,
+                "Field sweep",
+                NotificationManager.IMPORTANCE_LOW,
+            ).apply {
+                description = "Shown while a field sweep is recording."
+                setShowBadge(false)
+                enableVibration(false)
+                setSound(null, null)
+            }
+        )
+
         nm.createNotificationChannel(
             NotificationChannel(
                 NotificationPolicy.CHANNEL_SIGNALS,

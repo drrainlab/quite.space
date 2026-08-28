@@ -60,6 +60,16 @@ internal object NotificationPolicy {
      * shade, which is where a state belongs.
      */
     const val CHANNEL_CONNECTION = "quite.connection"
+
+    /**
+     * SP-3.2 — the Field Session's own channel. The sweep's persistent card
+     * is the visible half of the first law (background location exists only
+     * inside a visibly active session, ADR-034), so it must be separate: a
+     * person silencing the connection mode must not be able to silence the
+     * one notification that makes a recording legitimate. Low and soundless
+     * like CHANNEL_CONNECTION — it is a state, not news.
+     */
+    const val CHANNEL_SWEEP = "quite.sweep.v1"
     const val CHANNEL_SIGNALS = "quite.signals.v2"
 
     /**
