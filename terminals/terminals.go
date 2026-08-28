@@ -85,12 +85,12 @@ type Space struct {
 	ProjectionFrames int
 
 	// priv is held only by the creating node (the controller's replica).
-	priv          ed25519.PrivateKey
-	priv2         *privateState
+	priv  ed25519.PrivateKey
+	priv2 *privateState
 	// instr is the instrument-epoch lineage (QI-0) — see
 	// instrument_epoch.go for the doctrine. Separate from priv2 so
 	// same-numbered epochs can never be looked up in the wrong lineage.
-	instr *instrState
+	instr         *instrState
 	ManifestFrame []byte
 	maxClock      uint64
 	// projSeen dedups projection-applied events on reader replicas.

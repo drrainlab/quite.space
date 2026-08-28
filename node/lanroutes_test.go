@@ -1,9 +1,9 @@
 // T6-LAN / L1 — the observed-route invariants, pinned (owner's spec):
 //
-//   observed LAN route:
-//     ✓ bound to an authenticated DeviceID
-//     ✓ lives only while directly observed
-//     ✓ never encoded into the keystore
+//	observed LAN route:
+//	  ✓ bound to an authenticated DeviceID
+//	  ✓ lives only while directly observed
+//	  ✓ never encoded into the keystore
 package node
 
 import (

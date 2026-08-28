@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
-// Copyright 2026 Gleb Bondarenko and the quite.space contributors
+// # Copyright 2026 Gleb Bondarenko and the quite.space contributors
 //
 // This is a NETWORK SERVICE, and it is licensed differently from the rest
 // of the repository — AGPL-3.0-only rather than Apache-2.0, because it is

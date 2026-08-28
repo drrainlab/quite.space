@@ -63,7 +63,7 @@ func TestListeningFoldMatrix(t *testing.T) {
 		cmdEvent(t, 2, 1, iid, 1, 1, "play", 0),
 		cmdEvent(t, 3, 1, iid, 1, 2, "pause", 42_000),
 		cmdEvent(t, 4, 1, iid, 1, 3, "play", 42_000),
-		cmdEvent(t, 5, 1, iid, 2, 1, "play", 0),      // Start session → new epoch wins
+		cmdEvent(t, 5, 1, iid, 2, 1, "play", 0),       // Start session → new epoch wins
 		cmdEvent(t, 6, 2, iid, 9, 9, "seek", 999_999), // follower forgery: ignored
 	}
 	events = append(events, events[3]) // duplicate delivery

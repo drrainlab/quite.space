@@ -31,12 +31,12 @@ func TestSetRoundTrip(t *testing.T) {
 
 func TestReactionUnionValidation(t *testing.T) {
 	bad := []Reaction{
-		{Kind: KindSemantic, Key: "warmth"},                              // no fallback
-		{Kind: KindSemantic, Key: "Warmth!", Fallback: "♡"},              // bad grammar
-		{Kind: KindSemantic, Key: "warmth", Fallback: "♡", Value: "🌲"},  // both arms
-		{Kind: KindUnicode, Value: "🌲", Key: "warmth"},                  // both arms
-		{Kind: KindUnicode},                                              // empty
-		{Kind: 3, Key: "warmth", Fallback: "♡"},                          // unknown kind
+		{Kind: KindSemantic, Key: "warmth"},                            // no fallback
+		{Kind: KindSemantic, Key: "Warmth!", Fallback: "♡"},            // bad grammar
+		{Kind: KindSemantic, Key: "warmth", Fallback: "♡", Value: "🌲"}, // both arms
+		{Kind: KindUnicode, Value: "🌲", Key: "warmth"},                 // both arms
+		{Kind: KindUnicode},                                               // empty
+		{Kind: 3, Key: "warmth", Fallback: "♡"},                           // unknown kind
 		{Kind: KindSemantic, Key: strings.Repeat("a", 65), Fallback: "♡"}, // too long
 	}
 	for i, r := range bad {

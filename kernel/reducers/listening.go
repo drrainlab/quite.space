@@ -22,7 +22,7 @@ type ListeningSession struct {
 	EventID    id.EventID
 	// IgnoredNonHost counts commands dropped because the signer was not the
 	// host (surfaced in Protocol view, never silently).
-	IgnoredNonHost  int
+	IgnoredNonHost   int
 	IgnoredMalformed int
 }
 

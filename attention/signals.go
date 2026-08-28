@@ -31,13 +31,13 @@ type Signal struct {
 	Author      string        `json:"author,omitempty"`
 	// AuthorKind (declared terminal kind) bends the chime's timbre; Personal
 	// (mention / reply-to-me) picks the richer motif. Neither affects rank.
-	AuthorKind string `json:"author_kind,omitempty"`
-	Personal   bool   `json:"personal,omitempty"`
-	Excerpt     string        `json:"excerpt"`
-	Delivery    Delivery      `json:"delivery"`
-	Hard        bool          `json:"hard"`
-	Reasons     []Reason      `json:"reasons"`
-	Score       float64       `json:"score"`
+	AuthorKind string   `json:"author_kind,omitempty"`
+	Personal   bool     `json:"personal,omitempty"`
+	Excerpt    string   `json:"excerpt"`
+	Delivery   Delivery `json:"delivery"`
+	Hard       bool     `json:"hard"`
+	Reasons    []Reason `json:"reasons"`
+	Score      float64  `json:"score"`
 	// CreatedAt is the author's advisory clock; ReceivedAt is the local
 	// fact, and is what ordering and budgets use.
 	CreatedAt  uint64 `json:"created_at,omitempty"`

@@ -15,8 +15,8 @@ type fakeContract struct {
 	refs     []schemas.AssetRef
 }
 
-func (f fakeContract) SchemaID() string            { return f.id }
-func (f fakeContract) Validate(p []byte) error     { return f.validErr }
+func (f fakeContract) SchemaID() string        { return f.id }
+func (f fakeContract) Validate(p []byte) error { return f.validErr }
 func (f fakeContract) Fallback(p []byte) (string, error) {
 	return f.fallback, f.validErr
 }

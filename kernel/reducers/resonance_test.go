@@ -41,7 +41,7 @@ func TestResonancePermutationMatrix(t *testing.T) {
 		resSetEv(t, 2, 1, 0xA1, target, semantic("warmth", "♡")),
 		resSetEv(t, 4, 1, 0xA2, target, semantic("spark", "✦")), // 1 replaces
 		resSetEv(t, 3, 2, 0xA3, target, semantic("warmth", "♡")),
-		resClearEv(t, 5, 2, 0xA4, target), // 2 clears
+		resClearEv(t, 5, 2, 0xA4, target),                     // 2 clears
 		resSetEv(t, 6, 2, 0xA5, target, unicodeReaction("🌲")), // 2 re-sets
 		resSetEv(t, 2, 3, 0xA6, target, semantic("warmth", "♡")),
 	}

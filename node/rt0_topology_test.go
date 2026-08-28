@@ -1,9 +1,9 @@
 // RT-0 / T0 — the semantic invariant, written before the code that will
 // satisfy it:
 //
-//   NO SEMANTIC OPERATION MAY DEPEND ON TWO PARTICIPANTS HAVING SELECTED
-//   THE SAME RELAY. Relay selection affects routing quality, never
-//   reachability semantics.
+//	NO SEMANTIC OPERATION MAY DEPEND ON TWO PARTICIPANTS HAVING SELECTED
+//	THE SAME RELAY. Relay selection affects routing quality, never
+//	reachability semantics.
 //
 // Premise in every test here: Alice's ingress is relay A, Bob's is relay B,
 // and at no point may correctness require A == B. These are the tests the

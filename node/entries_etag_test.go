@@ -16,8 +16,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/drrainlab/quiet_places/protocol/signal"
 	"github.com/drrainlab/quiet_places/protocol/schemas"
+	"github.com/drrainlab/quiet_places/protocol/signal"
 )
 
 func TestEntriesAnswerNotModifiedUntilSomethingChanges(t *testing.T) {

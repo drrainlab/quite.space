@@ -1,6 +1,6 @@
 // T6-LAN / L0 — the headline, red first (owner's spec, plan T6):
 //
-//   A LOCAL GROUP STOPS USING THE RELAY FOR LOCAL RECIPIENTS.
+//	A LOCAL GROUP STOPS USING THE RELAY FOR LOCAL RECIPIENTS.
 //
 // LAN is not "the space switches to LAN" — it is a more preferred route
 // candidate for exactly those recipients the client directly observes

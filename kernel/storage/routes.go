@@ -31,11 +31,11 @@ var errMalformedRouteEntry = errors.New("storage: malformed route entry")
 // a route learned from the sealed invitation exchange outranks one merely
 // carried over from the single-relay era. Serialized; values must not move.
 const (
-	RouteManual      uint8 = 1 // this person configured it for themselves
-	RouteInvitation  uint8 = 2 // the sealed join exchange carried it
-	RouteAdvertised  uint8 = 3 // a signed reachability advertisement (T3)
-	RouteObserved    uint8 = 4 // met on a live link (LAN/radio)
-	RouteLegacy      uint8 = 5 // the single-relay era's one recorded address
+	RouteManual     uint8 = 1 // this person configured it for themselves
+	RouteInvitation uint8 = 2 // the sealed join exchange carried it
+	RouteAdvertised uint8 = 3 // a signed reachability advertisement (T3)
+	RouteObserved   uint8 = 4 // met on a live link (LAN/radio)
+	RouteLegacy     uint8 = 5 // the single-relay era's one recorded address
 )
 
 // Route is one way to reach an endpoint, with the story of how we know.

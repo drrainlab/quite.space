@@ -59,9 +59,9 @@ type RelayDiagnostics struct {
 	// trying to pull right now or has given up on, with the true reason.
 	// Together the two halves of one stuck photo — the asker's fetch and
 	// the holder's want_hold — name the seam that failed.
-	Held      []HeldSpace       `json:"held,omitempty"`
-	WantHolds []WantHoldStatus  `json:"want_holds,omitempty"`
-	Fetches   []FetchBrief      `json:"fetches,omitempty"`
+	Held      []HeldSpace      `json:"held,omitempty"`
+	WantHolds []WantHoldStatus `json:"want_holds,omitempty"`
+	Fetches   []FetchBrief     `json:"fetches,omitempty"`
 }
 
 // FetchBrief is one in-flight or failed asset fetch, for diagnostics.

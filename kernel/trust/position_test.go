@@ -22,9 +22,9 @@ func TestPositionLWWOrderIndependent(t *testing.T) {
 			ExpiresAt: emitted + 600, Source: src, EventID: eid}
 	}
 	a := mk(100, 0x01, 111)
-	b := mk(200, 0x02, 222)  // later — must win over a
-	c := mk(200, 0x09, 333)  // equal time, higher event id — must win over b
-	d := mk(150, 0xFF, 444)  // older — must never win
+	b := mk(200, 0x02, 222) // later — must win over a
+	c := mk(200, 0x09, 333) // equal time, higher event id — must win over b
+	d := mk(150, 0xFF, 444) // older — must never win
 	all := []claims.Position{a, b, c, d}
 
 	for trial := 0; trial < 20; trial++ {
