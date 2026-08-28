@@ -301,6 +301,7 @@ func (a *APIServer) Handler() http.Handler {
 	a.routeQuickLinks(mux)
 	a.routeBackup(mux)
 	a.routeTiles(mux)
+	a.routeSweeps(mux)
 	mux.HandleFunc("POST /api/join-requests", a.auth(a.handleJoinRequest))
 	mux.HandleFunc("GET /api/join-requests/{req}", a.auth(a.handleJoinStatus))
 	mux.HandleFunc("GET /api/gateway", a.auth(a.handleGateway))
