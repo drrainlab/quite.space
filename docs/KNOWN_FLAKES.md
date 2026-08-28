@@ -14,6 +14,8 @@ green again, which it does on its own by definition.
 
 **Seen:** 2026-08-28, preparing 1.0.0-beta.1. Twice within an hour, both
 times while the machine was also running a full suite and a container.
+Again the same evening, in the SP-3.2 `-race` run of ./node — same
+assertion, same 3-provenance route, again under full-suite load.
 
 **Output, verbatim:**
 

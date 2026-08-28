@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/drrainlab/quiet_places/kernel/assets"
@@ -67,6 +68,10 @@ type sweepRuntime struct {
 	stop   chan struct{} // stops the position ticker; closed once
 	sealed *sealedTrack  // geometry cache across finalize re-drives
 	// lastFix is the freshest point the pump delivered, for the ticker.
+	// ITS OWN LOCK, not r.mu: the writer is a sample POST and the reader
+	// is the ticker goroutine — neither holds the runtime lock at that
+	// moment, and the -race detector proved the gap the day this shipped.
+	fixMu   sync.Mutex
 	lastFix struct {
 		pt     geo.Point
 		acc    uint64
@@ -196,9 +201,11 @@ func (r *Runtime) AppendSweepSamples(sid [16]byte, seq uint64, samples []SpoolSa
 	}
 	for i := len(samples) - 1; i >= 0; i-- {
 		if samples[i].Tag == field.SampleQPoint {
+			rt.fixMu.Lock()
 			rt.lastFix.pt = geo.Point{LatE7U: samples[i].LatE7U, LonE7U: samples[i].LonE7U}
 			rt.lastFix.acc = samples[i].AccuracyM
 			rt.lastFix.unixMS = samples[i].UnixMS
+			rt.fixMu.Unlock()
 			break
 		}
 	}
@@ -394,11 +401,14 @@ func (r *Runtime) startSweepTicker(rt *sweepRuntime) {
 			case <-rt.stop:
 				return
 			case <-t.C:
-				fixAge := time.Duration(uint64(time.Now().UnixMilli())-rt.lastFix.unixMS) * time.Millisecond
-				if rt.lastFix.unixMS == 0 || fixAge > sweepFixFresh {
+				rt.fixMu.Lock()
+				fix := rt.lastFix
+				rt.fixMu.Unlock()
+				fixAge := time.Duration(uint64(time.Now().UnixMilli())-fix.unixMS) * time.Millisecond
+				if fix.unixMS == 0 || fixAge > sweepFixFresh {
 					continue // an old fix re-stamped fresh would lie on the map
 				}
-				_ = r.SetPosition(rt.rec.Space, rt.lastFix.pt, rt.lastFix.acc, sweepPositionTTL)
+				_ = r.SetPosition(rt.rec.Space, fix.pt, fix.acc, sweepPositionTTL)
 			}
 		}
 	}()
