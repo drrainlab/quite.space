@@ -79,11 +79,11 @@ async function refreshObjects() {
     archT.textContent = t('objects.archived_toggle');
     archT.onclick = () => { objShowArchived = !objShowArchived; refreshObjects(); };
     bar.appendChild(archT);
-    const add = document.createElement('button');
-    add.className = 'btn-tinted';
-    add.textContent = t('objects.new');
-    add.onclick = () => openObjectEditor(null);
-    bar.appendChild(add);
+    // No "new object" button here: the header owns this view's ONE
+    // creation act (spacenav.js), and two buttons for the same thing
+    // sixty pixels apart is a choice the person has to make about nothing.
+    // The archived toggle stays — it changes what you are looking at, not
+    // what exists.
     box.appendChild(bar);
     if (!r.objects.length) {
       const e = document.createElement('div');

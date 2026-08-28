@@ -3500,30 +3500,45 @@ button:hover > .act-mark, button:focus-visible > .act-mark { opacity: 1; }
    opened the space; the occasional ones — invite, appearance, palette — keep
    their marks and lose their words. */
 @media (max-width: 600px) {
-  #convbar { flex-wrap: wrap; row-gap: 6px; padding: 8px 10px; }
+  #convbar { padding: 8px 10px 0; }
 
-  /* Row one. The title takes what is left and truncates rather than pushing
-     the buttons off the edge — a long space name is common and must not cost
-     somebody the way into the space. */
-  #convTitle { order: 0; flex: 1 1 auto; min-width: 0;
+  /* ROW ONE IS THE NAME AND THE WAY OUT OF IT, and nothing else.
+     The archetype and the access badge are facts about the place, not
+     things to act on — they already live in the ⓘ panel, which is one
+     press away and has room to say them properly. Keeping them here cost
+     the title its width and then pushed the whole row off the screen. */
+  .convbar-id { gap: 6px; min-width: 0; }
+  #convTitle { flex: 1 1 auto; min-width: 0;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  #newPostBtn { order: 1; }
-  #convbar > .icon-btn:last-child { order: 2; }   /* ⓘ, the way to details */
+  .conv-sub, #visBadge { display: none; }
+  .convbar-id > span[style*="flex:1"] { flex: 0 0 0; }
 
-  /* A greedy spacer strands everything after it on its own line. On a phone
-     it stops pushing — the same fix the header needed. */
-  #convbar > span[style*="flex:1"] { flex: 0 0 0; }
-
-  /* Row two: one control, the full width, three equal parts. */
-  #viewSwitch { order: 3; flex: 1 0 100%; width: 100%; }
-  #viewSwitch button { flex: 1; }
+  /* ROW TWO SCROLLS RATHER THAN WRAPS. Wrapping made the header grow a
+     third storey on a long vocabulary — Russian labels are wider — and a
+     header that changes height as you switch spaces is a header that
+     moves the conversation under your thumb. The fade on the right edge
+     is the affordance: it says there is more without spending a control
+     on saying it. */
+  .convbar-nav { gap: 6px; min-width: 0; }
+  .space-nav { flex-wrap: nowrap; overflow-x: auto; min-width: 0;
+    scrollbar-width: none; -webkit-overflow-scrolling: touch;
+    /* The fade ends BEFORE the act begins. Without the margin the last
+       tab slid under the button and read as broken layout rather than as
+       "there is more this way". */
+    margin-right: 4px;
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent); }
+  .space-nav::-webkit-scrollbar { display: none; }
+  .space-tab { flex: 0 0 auto; padding: 5px 8px 6px; }
+  /* The one act stays put while the tabs scroll under it: it is why
+     somebody opened this view. */
+  #viewPrimary { flex: 0 0 auto; }
 
   /* Occasional and owner-only: they move to the space panel, where somebody
      goes to look at the space rather than to read it. Drawn there by
      refreshSpace — see the note beside .space-acts. */
   #inviteBtn, #customizeBtn, #resPalBtn { display: none !important; }
-  #shareLinkBtn { order: 4; }
-  #visBadge { order: 5; }
+
 }
 
 /* The space's own controls, in the panel that is about the space. Full-width
