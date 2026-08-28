@@ -253,7 +253,7 @@ func TestMediaMatrixAcrossTwoRelays(t *testing.T) {
 	seen := map[string]string{}
 	var mu = make(chan struct{}, 1)
 	mu <- struct{}{}
-	wantsProbe = func(holder *Runtime, dev id.DeviceID, outcome string) {
+	probe := func(holder *Runtime, dev id.DeviceID, outcome string) {
 		<-mu
 		if dev == m.phone.Device.ID {
 			who := "?"
@@ -269,7 +269,8 @@ func TestMediaMatrixAcrossTwoRelays(t *testing.T) {
 		}
 		mu <- struct{}{}
 	}
-	defer func() { wantsProbe = nil }()
+	wantsProbe.Store(&probe)
+	defer wantsProbe.Store(nil)
 
 	kinds := []struct {
 		kind string

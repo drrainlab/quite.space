@@ -113,6 +113,13 @@ android {
         // system image and on a stock retail phone alike.
         getByName("debug") {
             isMinifyEnabled = false
+            // SR-0 stand safety, learned the hard way it almost was: the
+            // developer's phone carries the REAL quite.space with real
+            // spaces, and a debug install over it would first fail on the
+            // signature and then tempt an uninstall — which is the data.
+            // A suffixed id installs BESIDE the production app, always.
+            applicationIdSuffix = ".dev"
+            versionNameSuffix = "-dev"
         }
 
         // THE BETA BUILD. No rig and no contender: src/debug is not compiled
@@ -182,6 +189,9 @@ android {
 
 dependencies {
     implementation(files("libs/quietcore.aar"))
+    // SR-0: offline speech recognition (whisper.cpp), its own module so the
+    // backend can be swapped behind SpeechInputEngine.
+    implementation(project(":asr"))
 
     // AR-1b.3. ONE AndroidX dependency, for one thing: registerForActivityResult
     // is the supported way to request a runtime permission, and the deprecated

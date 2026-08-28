@@ -40,7 +40,13 @@ type pairingUI struct {
 }
 
 func (a *APIServer) handleDevices(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, map[string]any{"devices": a.rt.Devices()})
+	writeJSON(w, map[string]any{
+		"devices": a.rt.Devices(),
+		// Why grants from siblings were refused HERE, if any — the other
+		// half of the hold picture (pending is what this device owes; this
+		// is what it would not take).
+		"grant_refusals": a.rt.GrantRefusals(),
+	})
 }
 
 func (a *APIServer) handleRevokeDevice(w http.ResponseWriter, r *http.Request) {

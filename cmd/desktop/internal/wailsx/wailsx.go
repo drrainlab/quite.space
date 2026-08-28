@@ -89,6 +89,26 @@ func Run(o Options) error {
 		e.Cancel()
 	})
 
+	// THE PAGE CANNOT SEE THE WINDOW. A web `blur` is about the document's
+	// focus, not about whether this window is the one somebody is working
+	// in — inside a native shell the two part company, and the interface
+	// was left animating and polling for a window sitting behind an editor.
+	// The native key-window edge is the honest signal, so it is forwarded
+	// as the same events the page already listens for; `body.unfocused` is
+	// set here too, so a page that has not finished loading its scripts
+	// still starts in the right state.
+	attend := func(focused bool) {
+		if focused {
+			win.ExecJS(`document.body.classList.remove('unfocused');` +
+				`window.dispatchEvent(new Event('focus'))`)
+			return
+		}
+		win.ExecJS(`document.body.classList.add('unfocused');` +
+			`window.dispatchEvent(new Event('blur'))`)
+	}
+	win.RegisterHook(events.Common.WindowFocus, func(e *application.WindowEvent) { attend(true) })
+	win.RegisterHook(events.Common.WindowLostFocus, func(e *application.WindowEvent) { attend(false) })
+
 	tray := app.SystemTray.New()
 	if len(o.TrayIcon) > 0 {
 		tray.SetTemplateIcon(o.TrayIcon)

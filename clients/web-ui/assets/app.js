@@ -13,6 +13,15 @@ let seenSpace = null;
 // Members known to be "here" last render — used to fire the arrival pulse
 // exactly once, on the transition into presence (never as an idle loop).
 let hereMembers = new Set();
+// The info panel's last drawn signature — its equivalent of feedSig.
+let lastPanelSig = '';
+// The first members render after a space switch sees EVERYONE as newly
+// present; the visual pulse tolerates that, a chime must not — walking
+// into a room is not the room filling up.
+let hereFirstLook = true;
+// Which instrument cards are expanded. Held OUTSIDE the DOM because the
+// members panel is rebuilt on every poll — the hereMembers pattern.
+let openInstruments = new Set();
 // feedSig: per-entry signatures from the last render — the incremental feed
 // only touches the DOM when something actually changed (keeps players alive).
 let feedSig = [];
@@ -239,6 +248,22 @@ function setEffectsMode(m) {
   localStorage.setItem('qp.effects', m); syncSettingsUI();
   feedSig = []; feedContentSig = []; refreshSpace(); // re-apply residue at the new mode
 }
+// Quiet Chimes settings. Turning a row ON plays that chime once — the
+// settings screen is the demo: you hear exactly what you just allowed to
+// interrupt your time.
+const CHIME_SEG = { tick: 'chimeTick', room: 'chimeRoom',
+  signal: 'chimeSignal', personal: 'chimePersonal' };
+function chimeSet(tier, on) {
+  CHIME.setEnabled(tier, on);
+  pickSeg(CHIME_SEG[tier], on ? 'on' : 'off');
+  if (on) CHIME.preview(tier, null);
+}
+function chimeSyncUI() {
+  for (const [tier, seg] of Object.entries(CHIME_SEG)) {
+    pickSeg(seg, CHIME.enabled(tier) ? 'on' : 'off');
+  }
+}
+
 function pickSeg(groupId, v) {
   document.querySelectorAll('#' + groupId + ' button').forEach(b =>
     b.classList.toggle('sel', b.dataset.v === v));
@@ -554,6 +579,8 @@ function relayIntervalField() {
   return Math.min(n, 3600);
 }
 function syncSettingsUI() {
+  if (typeof chimeSyncUI === 'function') chimeSyncUI();
+  if (typeof LINKS !== 'undefined') LINKS.syncUI();
   const lang = (typeof localeName === 'function') ? localeName() : 'en';
   document.querySelectorAll('#setLang button').forEach(b =>
     b.classList.toggle('sel', b.dataset.v === lang));
@@ -1105,6 +1132,21 @@ async function refresh() {
 }
 
 function currentSpace() { return spacesCache.find(s => s.id === current); }
+
+// ASKING SOMEBODY FOR A CONVERSATION (ADR-027). One line, and the screen
+// is honest about what happens: they are asked, not added, and they may
+// simply say no — which this side will hear, once, and then stop.
+async function openKnock(principal, name) {
+  if (!principal || !current) return;
+  const line = prompt(t('knock.prompt', { name }), '');
+  if (line === null) return;              // changed their mind
+  try {
+    await api(`/api/spaces/${current}/knock`, {
+      method: 'POST', body: JSON.stringify({ principal, line: line.trim() }),
+    });
+    alert(t('knock.asked', { name }));
+  } catch (err) { alert(err.message); }
+}
 
 // The assistant's own strip: what it is, where a question goes, and what
 // went wrong if anything did.
@@ -1782,7 +1824,10 @@ async function refreshSpace() {
   loadSpaceAppearance(current);
   // Conversation header: title + invite (owned private) + info toggle.
   const convTitleEl = document.getElementById('convTitle');
-  convTitleEl.textContent = sp ? spaceName(sp) : '';
+  const convTitleText = sp ? spaceName(sp) : '';
+  // Written only when it differs: the same string is still a mutation, and
+  // this line ran on every poll tick.
+  if (convTitleEl.textContent !== convTitleText) convTitleEl.textContent = convTitleText;
   // Click to rename — owner only, and local only. The note under the input
   // says so; nothing here touches the space itself.
   convTitleEl.style.cursor = sp?.owned ? 'text' : '';
@@ -1821,7 +1866,8 @@ async function refreshSpace() {
   await RES.load(current); // palette must exist before rows render
   const entries = await fetchEntries(current);
   const log = document.getElementById('log');
-  const stick = log.scrollTop + log.clientHeight >= log.scrollHeight - 40;
+  const stick = (typeof OUTBOX !== 'undefined' && OUTBOX.takeStick()) ||
+    log.scrollTop + log.clientHeight >= log.scrollHeight - 40;
   // A SWITCH always rebuilds. Without this, entering an EMPTY space kept
   // the previous space's rows on screen: the reset below cleared the sigs
   // to [], and empty-against-empty read as "unchanged" — every([]) is
@@ -1829,6 +1875,7 @@ async function refreshSpace() {
   const switched = seenSpace !== current;
   if (switched) {
     seenSpace = current; seenEntries = new Set(); hereMembers = new Set();
+    hereFirstLook = true;
     feedSig = []; feedContentSig = []; feedResCounts = new Map();
     // Presence is per-space, so the countdown does not follow you into a
     // room where it was never posted.
@@ -1838,6 +1885,7 @@ async function refreshSpace() {
       mentionsReset();
       mentionsLoadMembers(current);
     }
+    if (typeof OUTBOX !== 'undefined') OUTBOX.paint();
     // Tell the node which room is open: QuietRank stays quiet about the one
     // you are already reading.
     api('/api/attention/viewing', { method: 'POST', body: JSON.stringify({ space: current }) })
@@ -1991,6 +2039,28 @@ async function refreshSpace() {
   // Our own card is the source of truth for the composer's presence button,
   // including on a tab that has only just opened.
   presenceAdopt(members);
+
+  // NOTHING CHANGED, NOTHING REBUILT. Everything below demolishes the info
+  // panel and builds it again — 51 DOM mutations a tick, a fresh <canvas>
+  // for the relic and a getComputedStyle that forces style recalc, all to
+  // redraw the identical picture every two seconds. The feed has had a
+  // signature diff for a long time; the panel beside it had none.
+  //
+  // The signature covers every input this block reads: the members and
+  // their presence, the instrument readings, the relic's event count, the
+  // space and its name, the view mode, and the locale — a language switch
+  // must still redraw.
+  const panelSig = JSON.stringify([current, st.events, st.observations,
+    char?.relic, members, PROTOCOL, [...openInstruments].sort(),
+    spaceName(currentSpace() || {}),
+    typeof localeName === 'function' ? localeName() : '']);
+  if (panelSig === lastPanelSig) return;
+  lastPanelSig = panelSig;
+  // The projection splits here (QI-2): a sensor or an actuator is a
+  // subject of the space but not a person — it renders once, in the
+  // Instruments section, never in the member list.
+  const people = members.filter(m => m.kind !== 'sensor' && m.kind !== 'actuator');
+  const instrCards = members.filter(m => m.kind === 'sensor' || m.kind === 'actuator');
   const mbox = document.getElementById('members');
   mbox.innerHTML = '';
   // the relic: grown from shared life, identical on every replica.
@@ -2005,7 +2075,7 @@ async function refreshSpace() {
   mbox.appendChild(note);
 
   const h = document.createElement('h3'); h.textContent = t('conv.member') + 's'; mbox.appendChild(h);
-  const summary = presenceSummary(members);
+  const summary = presenceSummary(people);
   if (summary) {
     const ps = document.createElement('div');
     ps.className = 'presence-summary'; ps.setAttribute('aria-live', 'polite');
@@ -2013,7 +2083,7 @@ async function refreshSpace() {
     mbox.appendChild(ps);
   }
   const nextHere = new Set();
-  for (const m of members) {
+  for (const m of people) {
     const d = document.createElement('div');
     d.className = 'member';
     let pres;
@@ -2042,6 +2112,12 @@ async function refreshSpace() {
     // (static). The gentle pulse fires ONCE, only on the transition into
     // presence — never as an idle loop. Reduced-motion drops the pulse.
     const arriving = here && !hereMembers.has(m.terminal);
+    // The same transition the visual pulse fires on — somebody ARRIVED
+    // into presence — is a space event to the chime layer. Own arrivals
+    // stay silent: walking into your own room is not an event.
+    if (arriving && !m.mine && !hereFirstLook && typeof CHIME !== 'undefined') {
+      CHIME.play('room');
+    }
     const glyphCls = 'glyph g24' + (here ? ' present' : '') + (arriving ? ' pulse-in' : '');
     let inner =
       `<div class="mhead"><span class="${glyphCls}">${glyphSVG(m.principal || m.terminal, glyphType, 24)}</span>` +
@@ -2053,9 +2129,85 @@ async function refreshSpace() {
       inner += `<div class="caps">${esc(m.io_mode)} · ${esc((m.capabilities || []).join(' '))}` +
         `${m.commandable ? '' : ' · no command surface'}</div>`;
     d.innerHTML = inner;
+    // THE VERB THAT WAS MISSING (ADR-027). A person you already share this
+    // room with can be asked — once — for a conversation of your own. Not
+    // offered for yourself, for a machine, or for somebody already met
+    // one-to-one: the ask exists to create that room, not to repeat it.
+    if (!m.mine && m.kind === 'human' && !currentSpace()?.dyad) {
+      const ask = document.createElement('button');
+      ask.className = 'btn-plain member-knock';
+      ask.textContent = t('knock.ask');
+      ask.onclick = () => openKnock(m.principal, name);
+      d.appendChild(ask);
+    }
     mbox.appendChild(d);
   }
   hereMembers = nextHere;
+  hereFirstLook = false;
+
+  // ---- Instruments: the place's physical panel (QI-2) ----
+  //
+  // Values come from the volatile observation plane, meaning comes from
+  // each instrument's SIGNED declaration; the two meet only here. The
+  // renderer is an allowlist by declared kind — an unknown kind shows its
+  // label and no value (defensive, never fatal), exactly the live_signal
+  // discipline.
+  if (instrCards.length) {
+    const ih = document.createElement('h3');
+    ih.textContent = t('instr.title');
+    mbox.appendChild(ih);
+    for (const m of instrCards) {
+      const iid = m.instrument_id;
+      const obs = (st.observations || {})[iid] || {};
+      const open = openInstruments.has(iid);
+      const decls = m.instruments || [];
+      const d = document.createElement('div');
+      d.className = 'member instr' + (open ? ' open' : '');
+      const name = m.name || (m.terminal || '').slice(0, 10);
+      const anySim = Object.values(obs).some(o => o.simulated);
+      const live = Object.values(obs).some(o => o.freshness === 'current');
+      // Collapsed line: ● Greenhouse · 21.4 °C · 48 % — the first two
+      // CURRENT number readings; a silent instrument shows its kind.
+      const brief = [];
+      for (const ch of decls) {
+        const o = obs[ch.channel];
+        if (ch.kind === 'number' && o && o.freshness === 'current' && brief.length < 2)
+          brief.push(o.display);
+      }
+      let inner =
+        `<div class="mhead"><span class="glyph g24">${glyphSVG(m.principal || m.terminal, memberGlyphType(m), 24)}</span>` +
+        `<span class="mname">${esc(name)}</span>` +
+        (anySim ? `<span class="badge kind b-deterministic_bot" title="${esc(t('honesty.simulated'))}">${esc(t('honesty.simulated'))}</span>` : '') +
+        `</div>` +
+        `<div class="pres ${live ? 'current' : 'stale'}">${live ? '●' : '○'} ${brief.map(esc).join(' · ') || esc(m.kind)}</div>`;
+      if (open) {
+        for (const ch of decls) {
+          const o = obs[ch.channel];
+          const label = ch.label || ch.channel;
+          const known = ch.kind === 'number' || ch.kind === 'boolean' || ch.kind === 'enum';
+          const stale = !!(o && o.freshness !== 'current');
+          inner += `<div class="instr-row${stale ? ' stale' : ''}">` +
+            `<span class="instr-label">${esc(label)}</span>` +
+            `<span class="instr-val">${known && o ? esc(o.display) : '—'}` +
+            `${stale ? ` · ${esc(relTime(o.age_seconds))}` : ''}</span></div>`;
+        }
+      }
+      d.innerHTML = inner;
+      d.onclick = () => {
+        if (openInstruments.has(iid)) openInstruments.delete(iid);
+        else openInstruments.add(iid);
+        refreshSpace();
+      };
+      mbox.appendChild(d);
+    }
+  }
+
+  // SR-0: the Radio section and the PTT composer — only where a host
+  // bridge exists (the Android app); a plain browser renders neither.
+  if (typeof RADIO !== 'undefined') {
+    RADIO.renderSection(mbox, current);
+    RADIO.mountFor(current);
+  }
 
   // ON A PHONE, THIS PANEL IS WHERE A SPACE'S OWN CONTROLS LIVE.
   //
@@ -2332,8 +2484,6 @@ async function say(e) {
   }
   // Mentions travel as a signed structural field, not as text markup.
   const mentions = typeof mentionsPayload === 'function' ? mentionsPayload(inp.value) : [];
-  const body = { text: inp.value, mentions };
-  if (replyTarget) body.reply_to = replyTarget.id;
   try {
     // In the assistant's space a message is a QUESTION: the node emits it
     // as your event and then asks the provider. Sending it the ordinary way
@@ -2346,15 +2496,33 @@ async function say(e) {
       refreshAI();
       return false;
     }
-    await api(`/api/spaces/${current}/messages`, {
-      method: 'POST',
-      body: JSON.stringify(body),
+    // THE SEND IS AN ENQUEUE, and everything after the press is somebody
+    // else's job (outbox.js carries the doctrine). Synchronous on
+    // purpose, all the way to the cleared box: there is no await between
+    // reading the composer and emptying it, so a double-press finds an
+    // empty box and enqueues nothing — the guard that used to stand here
+    // became unnecessary the moment the race it guarded stopped existing.
+    //
+    // The link card, when one is ALREADY staged, rides the queue item; a
+    // lookup still in flight is not waited for — the flusher gives it the
+    // settle window in the background, where waiting costs nobody's
+    // finger anything.
+    const staged = typeof LINKS !== 'undefined' ? LINKS.pending(inp.value) : null;
+    OUTBOX.enqueue(current, inp.value, {
+      reply_to: replyTarget ? replyTarget.id : undefined,
+      mentions,
+      card: staged ? staged.card : undefined,
+      bare: staged ? staged.bare : false,
     });
     inp.value = '';
     growComposer(inp);
     cancelReply();
+    if (typeof LINKS !== 'undefined') LINKS.reset();
     if (typeof mentionsReset === 'function') mentionsReset();
-    await refreshSpace();
+    // Your own send always answers with itself on screen — stickiness is
+    // for READING; the author just spoke.
+    const logEl = document.getElementById('log');
+    if (logEl) requestAnimationFrame(() => { logEl.scrollTop = logEl.scrollHeight; });
   } catch (err) { alert(err.message); }
   return false;
 }
@@ -2427,12 +2595,19 @@ const PRESENCE_GLYPHS = {
   monitoring_the_air: '📡',
 };
 let presenceGlyphMap = {}; // the open space's declared glyphs
+let presenceStatesSig = null; // last vocabulary drawn into the menu
 
 function presenceGlyph(state) {
   return presenceGlyphMap[state] || PRESENCE_GLYPHS[state] || '';
 }
 
 function presenceSetStates(states, glyphs) {
+  // The vocabulary changes when the SPACE changes, not every two seconds —
+  // but this ran on every poll tick, rebuilding the whole menu (13 DOM
+  // mutations a tick for a list nobody had touched).
+  const sig = JSON.stringify([states, glyphs]);
+  if (sig === presenceStatesSig) return;
+  presenceStatesSig = sig;
   presenceGlyphMap = glyphs || {};
   presenceStates = states;
   const menu = document.getElementById('presenceMenu');
@@ -3221,7 +3396,46 @@ function cssId(v) {
 // joins it; later ones just join. The feed differ is untouched — patchRow
 // finds rows by [data-eid] at any depth, and append/rebuild paths all come
 // through here with the same prev they already computed for `grouped`.
+// ---- when a message was said, said on screen ----
+//
+// created_at is the AUTHOR's wall clock from the signed envelope —
+// advisory by doctrine (it can lie), which is exactly the right standing
+// for a DISPLAY: it answers "when did they say this happened", never a
+// policy question. An entry without one (old events) simply wears no time.
+function dayKey(ts) {
+  if (!ts) return '';
+  const d = new Date(ts * 1000);
+  return d.getFullYear() + '-' + d.getMonth() + '-' + d.getDate();
+}
+function daySepLabel(ts) {
+  const d = new Date(ts * 1000);
+  const today = new Date();
+  const yest = new Date(today.getTime() - 864e5);
+  if (dayKey(ts) === dayKey(today.getTime() / 1000)) return t('conv.today');
+  if (dayKey(ts) === dayKey(yest.getTime() / 1000)) return t('conv.yesterday');
+  const opts = { weekday: 'short', day: 'numeric', month: 'long' };
+  if (d.getFullYear() !== today.getFullYear()) opts.year = 'numeric';
+  return d.toLocaleDateString(localeName() === 'ru' ? 'ru' : undefined, opts);
+}
+
 function renderEntryTiled(log, e, fresh, grouped, prev) {
+  // THE DAY LINE. The feed had no dates at all, and a conversation picked
+  // up after a week read as one endless evening — "история неочевидна"
+  // was the exact field report. Drawn between entries whose author clocks
+  // fall on different days; an entry with no clock draws none rather than
+  // guessing.
+  if (e.created_at && dayKey(e.created_at) !== dayKey(prev ? prev.created_at : 0)) {
+    const sep = document.createElement('div');
+    sep.className = 'day-sep';
+    const label = document.createElement('span');
+    label.textContent = daySepLabel(e.created_at);
+    sep.appendChild(label);
+    log.appendChild(sep);
+  }
+  // A fresh arrival that is not my own asks the chime layer for a tick.
+  // Coalescing, tier ranking and the person's own enables all live in
+  // CHIME — this line states only the fact: something new arrived here.
+  if (fresh && !e.mine && typeof CHIME !== 'undefined') CHIME.play('tick');
   if (grouped && prev && e.kind === 'visual' && prev.kind === 'visual') {
     let run = log.lastElementChild;
     if (!run || !run.classList.contains('media-run')) {
@@ -3279,6 +3493,19 @@ function renderEntry(log, e, fresh, grouped) {
 
   const bubble = document.createElement('div');
   bubble.className = 'bubble';
+  // The time, in the corner every messenger taught people to look at.
+  // Absolute HH:MM rather than "20h ago": this feed repaints only when
+  // content changes, and a relative stamp that never re-renders is a
+  // stopped clock wearing a live face. The full date rides the hover.
+  if (e.created_at) {
+    const stamp = document.createElement('span');
+    stamp.className = 'stamp';
+    const d = new Date(e.created_at * 1000);
+    stamp.textContent = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    stamp.title = d.toLocaleString();
+    bubble.appendChild(stamp);
+    bubble.classList.add('stamped');
+  }
   // WHAT CAME FROM OUTSIDE SAYS SO, IN THE GATEWAY'S OWN VOICE (TR-0).
   // The API attaches `external` only under imported authorship — the
   // payload could carry that structure from anybody, the signature could
@@ -3803,7 +4030,9 @@ function makeProgress(have, total) {
 const FEED_RENDERERS = {
   // Mentions come resolved from the node (signed field); mentionText only
   // decorates the names, it never re-parses the message for addressing.
-  text: (e) => (typeof mentionText === 'function' ? mentionText(e) : textNode('txt', e.text)),
+  // …and a plain message that is a video address gets a play control.
+  // Nothing is fetched for it: LINKS.decorate adds a verb, not a card.
+  text: (e) => LINKS.decorate(typeof mentionText === 'function' ? mentionText(e) : textNode('txt', e.text)),
   visual: (e) => renderVisual(e),
   video: (e) => renderVideo(e),
   voice: (e) => renderVoiceAudio(e),
@@ -4278,24 +4507,12 @@ function renderFile(e) {
   return wrap;
 }
 
-function renderLink(e) {
-  const card = document.createElement('div');
-  card.className = 'linkcard';
-  // e.url is whoever posted the entry's string. Through the same scheme
-  // check as every other link the client draws — a refused address stays
-  // readable and stops being clickable, rather than disappearing.
-  const href = MD.safeHref(e.url);
-  const a = document.createElement(href ? 'a' : 'span');
-  if (href) {
-    a.setAttribute('href', href);
-    a.setAttribute('target', '_blank');
-    a.setAttribute('rel', 'noopener noreferrer');
-  }
-  a.textContent = e.title || e.url;
-  card.appendChild(a);
-  if (e.description) card.appendChild(textNode('meta', e.description));
-  return card;
-}
+// A link card renders from the bytes that ARRIVED with it and asks the
+// network for nothing — linkcard.js holds the whole rule and the drawing.
+// Whether the card wears a play control is decided HERE, by the reader,
+// from the address; a sender does not get to declare that their link
+// deserves one.
+function renderLink(e) { return LINKS.build(e); }
 
 function renderWave(b64, progress) {
   const bytes = atob(b64);
@@ -5311,12 +5528,44 @@ NAV.onOpen = (id) => {
 checkOnboarding();
 checkPassDeepLink();
 refresh();
-setInterval(refresh, 2000);
+
+// THE POLL, PACED BY WHETHER ANYBODY IS THERE.
+//
+// It used to be an unconditional 2s tick: ~6.6 requests a second and ~96 DOM
+// mutations per idle tick, forever, including while the window sat hidden in
+// the tray. Nothing is lost by pausing it — the NODE keeps syncing on its own
+// cadence, and this loop only refreshes what is on a screen. So:
+//
+//   hidden          → nothing at all, and one immediate refresh on return
+//   visible, unfocused → every 10s: still current for a glance, a fifth of
+//                        the wakeups
+//   focused         → the live 2s tick, unchanged
+//
+// Deliberately NOT an idle timer while focused: somebody reading a live
+// conversation without touching the keyboard must not watch it go stale.
+const POLL_FAST = 2000, POLL_SLOW = 10000;
+let pollTimer = null, pollEvery = 0;
+function pollCadence() {
+  if (document.hidden) return 0;
+  return MODES.attended() ? POLL_FAST : POLL_SLOW;
+}
+function armPoll() {
+  const every = pollCadence();
+  if (every === pollEvery) return;
+  pollEvery = every;
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  if (every > 0) pollTimer = setInterval(refresh, every);
+}
+armPoll();
+MODES.onVisibilityChange((hidden) => { armPoll(); if (!hidden) refresh(); });
+MODES.onFocusChange((unfocused) => { armPoll(); if (!unfocused) refresh(); });
 // QuietRank rides a slower tick of its own: attention is not a live feed,
 // and scanning every two seconds would burn CPU for nothing.
 if (typeof qrRefreshBadge === 'function') {
   qrRefreshBadge();
-  setInterval(qrRefreshBadge, 8000);
+  // Attention is not a live feed, and /api/signals forces a full scan on the
+  // node — so it rides the same "is anybody there" rule as the poll above.
+  setInterval(() => { if (!document.hidden) qrRefreshBadge(); }, 8000);
 }
 initDropZone();
 initClipboardPaste();

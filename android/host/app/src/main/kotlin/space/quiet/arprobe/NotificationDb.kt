@@ -76,7 +76,8 @@ internal class NotificationDb(context: Context) :
               generation          INTEGER NOT NULL,
               space_label         TEXT,
               sender_label        TEXT,
-              preview_text        TEXT
+              preview_text        TEXT,
+              personal            INTEGER NOT NULL DEFAULT 0
             )
             """.trimIndent()
         )
@@ -109,6 +110,16 @@ internal class NotificationDb(context: Context) :
      * to say the word "no such table" out loud.
      */
     override fun onUpgrade(db: SQLiteDatabase, old: Int, new: Int) {
+        if (old < 3) {
+            // Quiet Chimes: the core now says "somebody called you"; the
+            // row carries it so a re-render keeps routing to the personal
+            // channel after a restart. DEFAULT 0 — history stays ordinary.
+            runCatching {
+                db.execSQL(
+                    "ALTER TABLE notification_events ADD COLUMN personal INTEGER NOT NULL DEFAULT 0"
+                )
+            }
+        }
         if (old < 2) {
             runCatching {
                 db.execSQL(
@@ -157,6 +168,7 @@ internal class NotificationDb(context: Context) :
                 put("space_label", c.spaceLabel)
                 put("sender_label", c.senderLabel)
                 put("preview_text", c.previewText)
+                put("personal", if (c.personal) 1 else 0)
             }
             // CONFLICT_IGNORE, not REPLACE: a redelivery must not resurrect a
             // row that has already been dismissed or read back into pending.
@@ -394,7 +406,7 @@ internal class NotificationDb(context: Context) :
     ): List<NotificationCoordinator.Item> {
         val items = mutableListOf<NotificationCoordinator.Item>()
         db.rawQuery(
-            "SELECT event_id, device, schema, occurred_at_unix_ms, sender_label, preview_text " +
+            "SELECT event_id, device, schema, occurred_at_unix_ms, sender_label, preview_text, personal " +
                 "FROM notification_events WHERE space_id = ? AND generation = ? " +
                 "AND state IN (?, ?) ORDER BY occurred_at_unix_ms, event_id",
             arrayOf(spaceId, generation.toString(), STATE_PENDING, STATE_PRESENTED),
@@ -408,6 +420,7 @@ internal class NotificationDb(context: Context) :
                         occurredAtUnixMs = c.getLong(3),
                         senderLabel = c.getString(4) ?: "",
                         previewText = c.getString(5) ?: "",
+                        personal = c.getInt(6) != 0,
                     )
                 )
             }
@@ -551,7 +564,7 @@ internal class NotificationDb(context: Context) :
         const val NAME = "quiet-notifications.db"
         // 2 — source_sequence and notification_people. Every schema change
         // moves this, or an existing install quietly stops storing anything.
-        const val VERSION = 2
+        const val VERSION = 3
 
         const val STATE_PENDING = "pending"
         const val STATE_PRESENTED = "presented"

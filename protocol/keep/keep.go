@@ -187,6 +187,8 @@ var keepableSchemas = map[string]bool{
 	schemas.BlockAudio:  true,
 	schemas.BlockFile:   true,
 	schemas.BlockLink:   true,
+	// SP-1: a human observation is a feed entry and keeps like one.
+	schemas.ObservationNoted: true,
 }
 
 // KeepableSchema reports whether events of this schema may be kept.

@@ -95,6 +95,16 @@ func TestAnAllowlistedDeviceCannotClaimADifferentPerson(t *testing.T) {
 // and only now meet Revocation(D), by which point what B applied does not
 // un-apply itself. The scan must finish across every log before one decision
 // is taken, and this pins it: all six orders, one answer.
+//
+// The one answer CHANGED once, and the change is the point of the second
+// assertion pair. This test used to demand that a live frame stamped
+// "before" the revocation be admitted as history — and the e2e revoke test
+// caught what that arithmetic hands a thief: the stamp is the AUTHOR's
+// claim, a stolen device's clock naturally lags the authority's, so its
+// next message filed itself under history and landed. History standing is
+// the REPLAY path's property (the gate is not yet installed while a log
+// replays its own frames); the gate itself, which only ever sees live
+// arrivals, refuses a revoked device at every clock.
 func TestAdmissionIsIndependentOfSpaceReplayOrder(t *testing.T) {
 	p, _ := identity.NewPrincipal(identity.NewRand())
 	d, _ := identity.NewDevice(identity.NewRand())
@@ -108,8 +118,9 @@ func TestAdmissionIsIndependentOfSpaceReplayOrder(t *testing.T) {
 	logs := [][]*signal.Envelope{spaceA, spaceB, spaceC}
 	orders := [][]int{{0, 1, 2}, {0, 2, 1}, {1, 0, 2}, {1, 2, 0}, {2, 0, 1}, {2, 1, 0}}
 
-	// Before the revocation the device could speak; after it, it cannot.
-	before := &signal.Envelope{Principal: p.ID, Device: d.ID, LogicalClock: 4}
+	// A live frame from the revoked device is refused at EVERY clock — the
+	// backdated one exactly as firmly as the honest one.
+	backdated := &signal.Envelope{Principal: p.ID, Device: d.ID, LogicalClock: 4}
 	after := &signal.Envelope{Principal: p.ID, Device: d.ID, LogicalClock: 40}
 
 	for _, order := range orders {
@@ -119,8 +130,8 @@ func TestAdmissionIsIndependentOfSpaceReplayOrder(t *testing.T) {
 				s.observe(env)
 			}
 		}
-		if err := s.admit(before); err != nil {
-			t.Fatalf("order %v: history before the revocation stopped standing: %v", order, err)
+		if err := s.admit(backdated); err == nil {
+			t.Fatalf("order %v: a backdated live frame from a revoked device was admitted", order)
 		}
 		if err := s.admit(after); err == nil {
 			t.Fatalf("order %v: a revoked device was admitted", order)
@@ -128,9 +139,14 @@ func TestAdmissionIsIndependentOfSpaceReplayOrder(t *testing.T) {
 	}
 }
 
-// ADR-002:50-52 in one assertion: a revocation ends what comes after it and
-// never reaches backwards. History is not retroactively broken.
-func TestRevokedDeviceCannotSpeakButHistoryStands(t *testing.T) {
+// ADR-002 decision 3, both halves in one place: a revoked device stops
+// SPEAKING at once — at any clock it cares to claim, because the clock is
+// its own claim — while everything a log already HOLDS stands, because
+// replay runs before this gate exists (eventlog.Open takes nil hooks;
+// attachSpace wires them after). The first half is asserted here; the
+// second is asserted where it lives, by the e2e revoke test counting its
+// pre-revocation message after the refusals.
+func TestRevokedDeviceCannotSpeakAtAnyClock(t *testing.T) {
 	p, _ := identity.NewPrincipal(identity.NewRand())
 	d, _ := identity.NewDevice(identity.NewRand())
 
@@ -138,11 +154,10 @@ func TestRevokedDeviceCannotSpeakButHistoryStands(t *testing.T) {
 	s.observe(certEnvelope(t, p, d, 1))
 	s.observe(revEnvelope(t, p, d, 100))
 
-	if err := s.admit(&signal.Envelope{Principal: p.ID, Device: d.ID, LogicalClock: 99}); err != nil {
-		t.Fatalf("an event from before the revocation was refused: %v", err)
-	}
-	if err := s.admit(&signal.Envelope{Principal: p.ID, Device: d.ID, LogicalClock: 101}); err == nil {
-		t.Fatal("a revoked device kept speaking")
+	for _, clk := range []uint64{1, 99, 100, 101} {
+		if err := s.admit(&signal.Envelope{Principal: p.ID, Device: d.ID, LogicalClock: clk}); err == nil {
+			t.Fatalf("a revoked device spoke at clock %d", clk)
+		}
 	}
 }
 

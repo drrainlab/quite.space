@@ -105,7 +105,48 @@ const MODES = (() => {
     document.body.classList.toggle('hidden-tab', document.hidden);
   }
 
-  return { min, resolve, reducedMotion, reducedTransparency, onPreferenceChange, onVisibilityChange };
+  /**
+   * The FOCUS edge, which is not the hide edge.
+   *
+   * A window can be perfectly visible and still be a room nobody is in —
+   * open beside the work it is not, on a second screen, behind a browser.
+   * `document.hidden` says nothing about that case, and it is the common
+   * one: measured, the drifting sky alone cost 15.4% of a renderer core
+   * there, holding a conversation nobody was reading.
+   *
+   * Sets `body.unfocused` (the CSS hook) and reports the edge. Focus is
+   * assumed at load: a page that starts by declaring itself unattended
+   * would freeze the first paint somebody is actually watching.
+   * @param {(unfocused: boolean) => void} fn
+   */
+  function onFocusChange(fn) {
+    const set = (unfocused) => {
+      document.body.classList.toggle('unfocused', unfocused);
+      fn(unfocused);
+    };
+    window.addEventListener('blur', () => set(true));
+    window.addEventListener('focus', () => set(false));
+    // A native shell may have set the class before this ran; do not undo it.
+    if (!document.body.classList.contains('unfocused')) {
+      document.body.classList.toggle('unfocused', !document.hasFocus());
+    }
+  }
+
+  /**
+   * Whether anybody is plausibly looking at this window right now.
+   *
+   * READ FROM THE CLASS, not from document.hasFocus(): inside a native
+   * shell the document can hold focus while the WINDOW sits behind an
+   * editor, and the shell is the one that knows — it forwards the
+   * key-window edge as blur/focus and sets the class itself. One source of
+   * truth, and it is the one the CSS already obeys.
+   */
+  function attended() {
+    return !document.hidden && !document.body.classList.contains('unfocused');
+  }
+
+  return { min, resolve, reducedMotion, reducedTransparency, onPreferenceChange,
+    onVisibilityChange, onFocusChange, attended };
 })();
 
 if (typeof window !== 'undefined') window.MODES = MODES;

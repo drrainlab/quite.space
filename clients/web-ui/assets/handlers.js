@@ -58,7 +58,7 @@ const UI_HANDLERS = [
   /*  23 click    */ (event, el) => { attachPick('audio'); },
   /*  24 click    */ (event, el) => { attachPick('doc'); },
   /*  25 click    */ (event, el) => { toggleVoice(); },
-  /*  26 input    */ (event, el) => { growComposer(el); mentionsOnInput(event); mentionsRenderChips(); },
+  /*  26 input    */ (event, el) => { growComposer(el); mentionsOnInput(event); mentionsRenderChips(); LINKS.onInput(el); },
   /*  27 keydown  */ (event, el) => {
     if (mentionsOnKeydown(event)) { event.preventDefault(); event.stopPropagation(); return; }
     // Enter sends, Shift+Enter makes a line. The form's submit button no
@@ -282,6 +282,16 @@ const UI_HANDLERS = [
   /* 235 click    */ (event, el) => { cancelPairingUI(); },
   /* 236 click    */ (event, el) => { bindPasscode(); },
   /* 237 click    */ (event, el) => { forgetPasscode(); },
+  /* 238 click    */ (event, el) => { chimeSet('tick', true); },
+  /* 239 click    */ (event, el) => { chimeSet('tick', false); },
+  /* 240 click    */ (event, el) => { chimeSet('room', true); },
+  /* 241 click    */ (event, el) => { chimeSet('room', false); },
+  /* 242 click    */ (event, el) => { chimeSet('signal', true); },
+  /* 243 click    */ (event, el) => { chimeSet('signal', false); },
+  /* 244 click    */ (event, el) => { chimeSet('personal', true); },
+  /* 245 click    */ (event, el) => { chimeSet('personal', false); },
+  /* 246 click    */ (event, el) => { LINKS.setEnabled(true); },
+  /* 247 click    */ (event, el) => { LINKS.setEnabled(false); },
 ];
 
 /** Attach every handler declared in the markup.

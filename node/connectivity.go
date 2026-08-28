@@ -351,17 +351,8 @@ func (r *Runtime) routeForSpaceLocked(c Connectivity, tid id.TerminalID,
 	if r.ledger == nil {
 		return TransportAny, false
 	}
-	var oldest *DeliveryIntent
-	for _, in := range r.ledger.Due(now, 0) {
-		if in.Space != tid {
-			continue
-		}
-		if oldest == nil || in.UpdatedAt < oldest.UpdatedAt {
-			cp := in
-			oldest = &cp
-		}
-	}
-	if oldest == nil {
+	oldest, ok := r.ledger.OldestDueForSpace(now, tid)
+	if !ok {
 		return TransportAny, false // nothing to send
 	}
 	avail := map[TransportKind]bool{}
@@ -370,7 +361,7 @@ func (r *Runtime) routeForSpaceLocked(c Connectivity, tid id.TerminalID,
 			avail[k] = true
 		}
 	}
-	return r.selectAmongLocked(c, *oldest, now, avail)
+	return r.selectAmongLocked(c, oldest, now, avail)
 }
 
 // transportOfLink maps a pump label onto a transport kind.

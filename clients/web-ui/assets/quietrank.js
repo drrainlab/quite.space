@@ -28,12 +28,38 @@ async function qrRefreshBadge() {
     const r = await api('/api/signals');
     const next = r.signals || [];
     const changed = qrSignature(next) !== qrSignature(QR.signals);
+    qrChimeNew(next);
     QR.signals = next;
     QR.unseen = r.unseen || 0;
     QR.mode = r.mode || 'minimal';
     qrPaintBadge();
     if (QR.open && changed) qrRenderInbox();
   } catch (e) { /* attention is optional; never break the shell */ }
+}
+
+// A NEW unseen signal is the one thing in this app with its own voice.
+// `personal` (a signed mention / reply-to-me — somebody called YOU) plays
+// the richer motif; `hard` deliberately does NOT: rank is a property of
+// the verdict, not of the sound. The author's kind bends the timbre —
+// a sensor speaks the same voice as a person, just drier.
+let qrChimed = null; // ids already voiced (null until the first look)
+function qrChimeNew(list) {
+  if (typeof CHIME === 'undefined') return;
+  if (qrChimed === null) {
+    // The first look after a page load is history, not news.
+    qrChimed = new Set((list || []).map(s => s.id));
+    return;
+  }
+  for (const s of (list || [])) {
+    if (qrChimed.has(s.id)) continue;
+    qrChimed.add(s.id);
+    if (s.seen) continue;
+    const mod = s.author_kind === 'human' ? 'person'
+      : (s.author_kind === 'sensor' || s.author_kind === 'bot' ||
+         s.author_kind === 'actuator' || s.author_kind === 'agent') ? 'instrument'
+        : 'space';
+    CHIME.play(s.personal ? 'personal' : 'signal', mod);
+  }
 }
 
 // qrSignature is the identity of the list, not its read state — so marking

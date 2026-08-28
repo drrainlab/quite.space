@@ -29,6 +29,10 @@ type Signal struct {
 	EventHex    string        `json:"event"`
 	SpaceTitle  string        `json:"space_title,omitempty"`
 	Author      string        `json:"author,omitempty"`
+	// AuthorKind (declared terminal kind) bends the chime's timbre; Personal
+	// (mention / reply-to-me) picks the richer motif. Neither affects rank.
+	AuthorKind string `json:"author_kind,omitempty"`
+	Personal   bool   `json:"personal,omitempty"`
 	Excerpt     string        `json:"excerpt"`
 	Delivery    Delivery      `json:"delivery"`
 	Hard        bool          `json:"hard"`

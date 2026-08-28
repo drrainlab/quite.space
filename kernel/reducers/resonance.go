@@ -81,6 +81,9 @@ func (s *State) ResonanceTargetStatus(target id.EventID) (resolved bool) {
 	if _, ok := s.appInstanceEvents[target]; ok {
 		return true
 	}
+	if _, ok := s.objTargets[target]; ok {
+		return true
+	}
 	return false
 }
 
@@ -164,7 +167,7 @@ func (s *State) resonanceHidden(target id.EventID) bool {
 	}
 	if docID, ok := s.pubTargets[target]; ok {
 		if p, ok := s.publications[docID]; ok {
-			return p.archived
+			return p.archived()
 		}
 	}
 	return false

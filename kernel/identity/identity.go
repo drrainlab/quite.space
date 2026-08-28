@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"sync"
 
 	"github.com/drrainlab/quiet_places/protocol/codec"
 	"github.com/drrainlab/quiet_places/protocol/id"
@@ -419,7 +420,20 @@ func (r *Revocation) Verify() error {
 // Store tracks certificates and revocations for signature admission. It is
 // pure state; persistence is the caller's job (rebuildable from the event
 // log, ADR-006).
+// Store holds trust — and it holds its OWN lock, which is a lesson paid
+// for on a production tag. It used to rely on its callers' discipline,
+// and the callers were disciplined in two different ways: writers took
+// the runtime's lock, while two admission checks read these maps outside
+// it — sound for years, until a background fetcher became a new
+// concurrent writer and the race detector caught AddCertificate's
+// mapassign against an unlocked Admit. A lock held on one side only is
+// no lock, and a store this small has no reason to make its safety
+// somebody else's job.
+//
+// The mutex is innermost by construction: no method calls out while
+// holding it, so a caller already holding a wider lock cannot deadlock.
 type Store struct {
+	mu    sync.RWMutex
 	certs map[id.DeviceID]*Certificate
 	revs  map[id.DeviceID]*Revocation
 }
@@ -433,6 +447,8 @@ func (s *Store) AddCertificate(c *Certificate) error {
 	if err := c.Verify(); err != nil {
 		return err
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if existing, ok := s.certs[c.Device]; ok && !bytes.Equal(existing.Principal[:], c.Principal[:]) {
 		return errors.New("identity: device already certified by a different principal")
 	}
@@ -446,6 +462,8 @@ func (s *Store) AddRevocation(r *Revocation) error {
 	if err := r.Verify(); err != nil {
 		return err
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if c, ok := s.certs[r.Device]; ok && !bytes.Equal(c.Principal[:], r.Principal[:]) {
 		return errors.New("identity: revocation principal does not match certificate")
 	}
@@ -457,6 +475,8 @@ func (s *Store) AddRevocation(r *Revocation) error {
 
 // Certificate returns the known certificate for a device, if any.
 func (s *Store) Certificate(dev id.DeviceID) (*Certificate, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	c, ok := s.certs[dev]
 	return c, ok
 }
@@ -471,6 +491,8 @@ func (s *Store) Certificate(dev id.DeviceID) (*Certificate, bool) {
 // exactly what a revocation exists to withhold, and the wrap list is
 // only ever consulted for the future.
 func (s *Store) CertifiedDevices(principal id.PrincipalID) []*Certificate {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	var out []*Certificate
 	for dev, c := range s.certs {
 		if !bytes.Equal(c.Principal[:], principal[:]) {
@@ -487,10 +509,26 @@ func (s *Store) CertifiedDevices(principal id.PrincipalID) []*Certificate {
 	return out
 }
 
+// Revoked reports whether ANY revocation is on record for a device.
+//
+// It exists for the callers that must not consult a clock: an event's
+// logical clock is written by its author, and a revoked device is exactly
+// the author whose claims stopped being trustworthy. Admission of LIVE
+// traffic keys on this; Admit's clock comparison below serves replay of
+// history a log already holds.
+func (s *Store) Revoked(dev id.DeviceID) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	_, ok := s.revs[dev]
+	return ok
+}
+
 // Admit decides whether an event from (principal, device) at the given
 // logical time is acceptable: certified, principal matches, not revoked at
 // that time. Unknown devices fail closed (invariant §2.7).
 func (s *Store) Admit(principal id.PrincipalID, device id.DeviceID, logicalClock uint64) error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	c, ok := s.certs[device]
 	if !ok {
 		return errors.New("identity: device not certified")

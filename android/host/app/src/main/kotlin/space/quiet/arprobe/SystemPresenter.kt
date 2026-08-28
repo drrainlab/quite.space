@@ -95,7 +95,14 @@ internal class SystemPresenter(
         }
 
         val n = p.items.size
-        val notification = Notification.Builder(app, NotificationPolicy.CHANNEL_MESSAGES)
+        // The strongest true claim about the group picks the channel: one
+        // signed mention among ten messages routes the whole card to the
+        // personal channel — the same arbitration the in-app chime does.
+        val channel = NotificationPolicy.channelFor(
+            p.items.lastOrNull()?.schema ?: "",
+            p.items.any { it.personal },
+        )
+        val notification = Notification.Builder(app, channel)
             .setSmallIcon(R.drawable.ic_stat_quiet)
             .setContentTitle(rendering.conversationTitle ?: "Quiet")
             .setContentText(rendering.genericText)

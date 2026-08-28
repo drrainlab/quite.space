@@ -213,6 +213,12 @@ class QuietActivity : ComponentActivity() {
             cb?.onReceiveValue(uris)
         }
 
+    // SR-0: the PTT mic request — a PLAIN permission ask, unlike the
+    // WebView-coupled one below. The result is not read: the person presses
+    // the button again and the check re-runs against the system's answer.
+    private val requestPttMic =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { _ -> }
+
     private var pendingMic: PermissionRequest? = null
 
     private val requestMic =
@@ -253,6 +259,16 @@ class QuietActivity : ComponentActivity() {
             // another app's content provider.
             settings.allowFileAccess = false
             settings.allowContentAccess = false
+            // A VIDEO STARTS BECAUSE SOMEBODY PRESSED PLAY, and Android
+            // cannot see that it did. The tap lands on our button, the
+            // player frame is mounted, and the embed inside it begins a
+            // moment later — by then the gesture has expired, and the
+            // default here would leave a black rectangle with no error.
+            //
+            // Loosened for the one page this WebView is allowed to load:
+            // its own interface, over loopback, whose player mounts only
+            // after a press and asks before the first one.
+            settings.mediaPlaybackRequiresUserGesture = false
             webChromeClient = object : WebChromeClient() {
                 override fun onShowFileChooser(
                     view: WebView?,
@@ -387,6 +403,33 @@ class QuietActivity : ComponentActivity() {
                         }
                     },
                     stayRefused = { controller.availabilityRefused() },
+                    // SR-0 — Radio Mode and push-to-talk. The store write is
+                    // the host's; the page gets the authoritative state
+                    // pushed back so a stale localStorage echo self-corrects.
+                    radioMode = { space, enabled, autoplay ->
+                        controller.setRadioMode(space, enabled, autoplay)
+                        runOnUiThread { pushRadioEcho(space) }
+                        true
+                    },
+                    radioBackground = { on ->
+                        controller.radio.setBackgroundListen(on)
+                        true
+                    },
+                    pttPress = { space ->
+                        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) !=
+                            PackageManager.PERMISSION_GRANTED
+                        ) {
+                            // Asked at the moment of first use, never at app
+                            // start (groom §45). The press is refused; the
+                            // person answers the dialog and presses again.
+                            runOnUiThread { requestPttMic.launch(Manifest.permission.RECORD_AUDIO) }
+                            false
+                        } else {
+                            controller.ptt.press(space)
+                        }
+                    },
+                    pttRelease = { controller.ptt.release() },
+                    pttCancel = { controller.ptt.cancel() },
                 ),
                 "QuietHost",
             )
@@ -472,6 +515,18 @@ class QuietActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        controller.setPttSink(pttSink)
+        controller.setSpeakingSink { space, on ->
+            runOnUiThread {
+                if (web.visibility == View.VISIBLE) {
+                    web.evaluateJavascript(
+                        "window.quietSpeaking && window.quietSpeaking(" +
+                            JSONObject.quote(space) + ", $on);",
+                        null,
+                    )
+                }
+            }
+        }
         // AR-1b.7's first half. WHICH space is on screen is a separate fact
         // the web UI has to report, and that seam lands with b.7 — until it
         // does, a message for the conversation being read still notifies,
@@ -514,6 +569,12 @@ class QuietActivity : ComponentActivity() {
     }
 
     override fun onPause() {
+        // A recording must not outlive the surface that started it (SR-0):
+        // the page is about to stop receiving pushes, so the utterance dies
+        // here rather than finishing into a void.
+        controller.ptt.cancel()
+        controller.setPttSink(null)
+        controller.setSpeakingSink(null)
         controller.notifications.onForeground(false)
         super.onPause()
     }
@@ -1464,6 +1525,28 @@ class QuietActivity : ComponentActivity() {
      * nothing produces such an intent. The seam exists here so the tap path
      * never has to be routed through the debug rig and moved later.
      */
+    /**
+     * SR-0 — the host's pushes into the page, both guarded the same way as
+     * every evaluateJavascript here: visible WebView, loopback page only.
+     * The bridge stays getterless; these are the answers.
+     */
+    private fun pushRadioEcho(space: String) {
+        if (web.visibility != View.VISIBLE) return
+        val enabled = controller.radio.enabled(space)
+        val autoplay = controller.radio.autoplay(space)
+        val js = "window.quietRadio && window.quietRadio(" +
+            JSONObject.quote(space) + ", {enabled:$enabled, autoplay:$autoplay});"
+        web.evaluateJavascript(js, null)
+    }
+
+    private val pttSink: (String) -> Unit = { json ->
+        runOnUiThread {
+            if (web.visibility == View.VISIBLE) {
+                web.evaluateJavascript("window.quietPtt && window.quietPtt($json);", null)
+            }
+        }
+    }
+
     private fun deliverTarget() {
         val target = pendingTarget ?: return
         if (web.visibility != View.VISIBLE) return
@@ -1523,6 +1606,25 @@ class QuietActivity : ComponentActivity() {
             view: WebView,
             request: WebResourceRequest,
         ): Boolean {
+            // SUBFRAMES ARE NOT THIS METHOD'S BUSINESS, and saying so is the
+            // difference between a video that plays and one that throws the
+            // person out into a browser.
+            //
+            // This callback fires for every frame, not only the top one. The
+            // conversation frames the node's own /player, which frames the
+            // video embed — so without this line the embed's navigation
+            // looked exactly like "the page is trying to leave", and was
+            // answered by launching an Intent and leaving the frame blank.
+            //
+            // What may be framed is decided by the Content-Security-Policy
+            // the node serves (frame-src 'self' on the interface, one named
+            // host on the player), which is where that rule belongs: a
+            // policy the browser enforces on every load, rather than a
+            // string comparison in a callback that only sees navigations.
+            //
+            // The lock this method exists for is untouched — the TOP frame
+            // still cannot go anywhere but loopback.
+            if (!request.isForMainFrame) return false
             val host = request.url.host
             if (host == "127.0.0.1" || host == "localhost") return false
             startActivity(Intent(Intent.ACTION_VIEW, request.url as Uri))

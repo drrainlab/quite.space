@@ -91,6 +91,50 @@ class RuntimeController private constructor(appContext: Context) {
      * already shown, and show them again.
      */
     private val ledger = SqliteLedger(this.app)
+
+    /** SR-0 — device-local, per-space Radio Mode preferences. */
+    internal val radio = RadioModeStore(this.app)
+
+    /**
+     * The one entry for flipping Radio Mode: store, engine lifecycle, and
+     * the background claim. SR-0F: while any space listens as a radio and
+     * background listening is on, this holds ONE availability lease — the
+     * second holder the counter was built for — so the running service is
+     * not ended underneath a radio that is expected to speak. Playback
+     * itself needs no service; the process staying alive is the feature.
+     */
+    fun setRadioMode(space: String, enabled: Boolean, autoplay: Boolean) {
+        val hadAny = radio.anyEnabled()
+        radio.setMode(space, enabled, autoplay)
+        if (enabled) {
+            radioPlayback.prepare()
+            // The model fetch runs off the caller's thread; PTT reports
+            // "preparing" until ready() turns true and prepare() warms it.
+            worker.execute {
+                if (modelStore.ensure() && speechEngine.prepare()) {
+                    // The page sits on "preparing offline voice" until told
+                    // otherwise — tell it: one idle push flips the button to
+                    // "hold to talk" the moment the engine is actually warm.
+                    pushPtt(PttController.Event(PttController.State.IDLE))
+                }
+            }
+        }
+        val hasAny = radio.anyEnabled()
+        val wantLease = hasAny && radio.backgroundListen()
+        if (wantLease && !radioLeaseHeld) {
+            acquireAvailabilityLease()
+            radioLeaseHeld = true
+        } else if (!wantLease && radioLeaseHeld) {
+            releaseAvailabilityLease()
+            radioLeaseHeld = false
+        }
+        if (hadAny != hasAny) publish()
+    }
+
+    @Volatile private var radioLeaseHeld = false
+
+    /** SR-0: what the permanent notification appends when radios listen. */
+    fun radioListening(): Boolean = radioLeaseHeld
     private val presenter = SystemPresenter(this.app, ledger, storedPolicy(app))
 
     val notifications: NotificationCoordinator = NotificationCoordinator(
@@ -121,6 +165,8 @@ class RuntimeController private constructor(appContext: Context) {
             // notification and closing rows is local work — no call back into
             // the core, which is what the binding's contract forbids.
             notifications.forgetSpace(spaceID)
+            // SD-0 parity for SR-0: no orphaned radio keys either.
+            radio.forgetSpace(spaceID)
         }
 
         override fun onCandidate(c: Candidate) {
@@ -141,7 +187,20 @@ class RuntimeController private constructor(appContext: Context) {
                 spaceLabel = c.spaceLabel,
                 senderLabel = c.senderLabel,
                 previewText = c.previewText,
+                personal = c.personal,
             )
+        )
+        // SR-0: the SECOND consumer, after the coordinator's call so the
+        // ack order is untouched. Same Go-goroutine constraints: gates and
+        // a queue append, nothing blocking, no call back into the core.
+        radioPlayback.onCandidate(
+            eventId = c.eventID,
+            spaceId = c.spaceID,
+            schema = c.schema,
+            authoredByPrincipal = c.authoredByPrincipal,
+            presentationCursor = c.presentationCursor,
+            senderLabel = c.senderLabel,
+            spokenText = c.spokenText,
         )
         }
     }
@@ -348,7 +407,7 @@ class RuntimeController private constructor(appContext: Context) {
                 Log.w(TAG, "could not read the relay state for the card", t)
             }
         }
-        return AvailabilityText.State(relays, since, alive)
+        return AvailabilityText.State(relays, since, alive, radioListening())
     }
 
 
@@ -652,6 +711,89 @@ class RuntimeController private constructor(appContext: Context) {
                 Log.w(TAG, "listener threw", t)
             }
         }
+    }
+
+    // ---- SR-0: push-to-talk (phases 1-2, fake engine until the ASR
+    // module lands). Owned HERE for the runtime's own reason: an utterance
+    // and its send must survive a rotation, though never a surface loss —
+    // the Activity cancels on pause, because a recording must not outlive
+    // the surface that started it.
+
+    // SR-0 phase 3: the real engine. The model rides in lazily (pinned
+    // hash, ModelStore); until it is on disk and loaded the provider
+    // answers null and the page honestly shows "preparing offline voice".
+    private val modelStore = ModelStore(this.app)
+    private val speechEngine = WhisperEngine(
+        modelPath = { modelStore.path().takeIf { modelStore.ready() }?.absolutePath },
+    )
+
+    /** SR-0 phase 4: automatic speech of incoming messages. */
+    internal val radioPlayback = RadioPlaybackCoordinator(
+        enabled = { radio.enabled(it) },
+        autoplay = { radio.autoplay(it) },
+        engine = AndroidTtsEngine(this.app),
+        execute = { r -> worker.execute(r) },
+        pttBusy = { ptt.busy() },
+        speakingChanged = { space, on -> pushSpeaking(space, on) },
+    )
+
+    @Volatile private var speakingPagePush: ((String, Boolean) -> Unit)? = null
+
+    fun setSpeakingSink(fn: ((String, Boolean) -> Unit)?) {
+        speakingPagePush = fn
+    }
+
+    private fun pushSpeaking(space: String, on: Boolean) {
+        try { speakingPagePush?.invoke(space, on) } catch (_: Throwable) {}
+    }
+
+    private val messageWriter = MessageWriter { apiEndpoint() }
+
+    /** (api port, session token) of the live node, or null. */
+    internal fun apiEndpoint(): Pair<Int, String>? = try {
+        val core = JSONObject(Quietcore.status())
+        val port = core.optInt("api_port", 0)
+        val token = core.optString("session_token", "")
+        if (port > 0 && token.isNotEmpty()) port to token else null
+    } catch (_: Exception) {
+        null
+    }
+
+    @Volatile private var pttPagePush: ((String) -> Unit)? = null
+
+    /** The visible surface's way to watch PTT; null when no surface. */
+    fun setPttSink(fn: ((String) -> Unit)?) {
+        pttPagePush = fn
+    }
+
+    internal val ptt = PttController(
+        captureFactory = { amp, limit ->
+            object : PttController.Capture {
+                val s = AudioCaptureSession(12_000, amp, limit)
+                override fun start() = s.start()
+                override fun stopAndTake() = s.stopAndTake()
+                override fun cancel() = s.cancel()
+            }
+        },
+        engine = { if (modelStore.ready() && speechEngine.prepare()) speechEngine else null },
+        send = { space, text, ref -> messageWriter.send(space, text, ref) },
+        listener = { e -> pushPtt(e) },
+        execute = { r -> worker.execute(r) },
+    )
+
+    private fun pushPtt(e: PttController.Event) {
+        // HALF-DUPLEX: the microphone and the speaker are never open
+        // together — a press silences playback, IDLE resumes it.
+        if (e.state == PttController.State.ARMING) radioPlayback.holdForPtt()
+        if (e.state == PttController.State.IDLE) radioPlayback.resume()
+        val fn = pttPagePush ?: return
+        val o = JSONObject()
+            .put("state", e.state.name.lowercase())
+            .put("amplitude", e.amplitude)
+        if (e.transcript != null) o.put("transcript", e.transcript)
+        if (e.error != null) o.put("error", e.error.name.lowercase())
+        if (e.limitReached) o.put("limit", true)
+        try { fn(o.toString()) } catch (_: Throwable) {}
     }
 
     companion object {

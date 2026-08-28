@@ -3,6 +3,8 @@ package space.quiet.arprobe
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
+import android.media.AudioAttributes
+import android.net.Uri
 import android.os.Build
 
 /**
@@ -37,9 +39,35 @@ import android.os.Build
  */
 internal object NotificationChannels {
 
+    /**
+     * The Quiet Chimes voice, rendered by scripts/sound/render-chimes.cjs
+     * from the SAME chime-dsp.js the web app plays — one model, two mouths.
+     *
+     * IMPORTANCE IS PLATFORM DELIVERY SEMANTICS (heads-up behaviour, the
+     * person's own vibration settings) — it is NOT part of the sonic
+     * hierarchy. The voice's anti-escalation law lives inside the WAVs:
+     * every tier shares one peak budget, and a personal signal is richer
+     * and longer than an ordinary one, never louder. After creation the
+     * person owns each channel's actual volume and vibration in system
+     * settings, which is exactly where that power belongs.
+     */
+    private fun sound(context: Context, res: Int): Pair<Uri, AudioAttributes> =
+        Uri.parse("android.resource://${context.packageName}/$res") to
+            AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .build()
+
     fun ensure(context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val nm = context.getSystemService(NotificationManager::class.java) ?: return
+
+        // The v1 rows carried the system default sound; their ids are frozen,
+        // so the voice arrives as a new generation and the old rows go —
+        // deleting is the sanctioned migration, and it keeps the person's
+        // settings list at exactly one row per meaning.
+        nm.deleteNotificationChannel("quite.messages")
+        nm.deleteNotificationChannel("quite.signals")
 
         nm.createNotificationChannel(
             NotificationChannel(
@@ -49,6 +77,8 @@ internal object NotificationChannels {
             ).apply {
                 description = "Someone wrote in a space you are in."
                 setShowBadge(true)
+                val (uri, attrs) = sound(context, R.raw.chime_message)
+                setSound(uri, attrs)
             }
         )
 
@@ -71,8 +101,23 @@ internal object NotificationChannels {
                 "Signals",
                 NotificationManager.IMPORTANCE_HIGH,
             ).apply {
-                description = "Something addressed to you."
+                description = "Something the space itself flagged for you."
                 setShowBadge(true)
+                val (uri, attrs) = sound(context, R.raw.chime_signal)
+                setSound(uri, attrs)
+            }
+        )
+
+        nm.createNotificationChannel(
+            NotificationChannel(
+                NotificationPolicy.CHANNEL_SIGNALS_PERSONAL,
+                "Personal signals",
+                NotificationManager.IMPORTANCE_HIGH,
+            ).apply {
+                description = "Somebody called you by name."
+                setShowBadge(true)
+                val (uri, attrs) = sound(context, R.raw.chime_signal_personal)
+                setSound(uri, attrs)
             }
         )
     }

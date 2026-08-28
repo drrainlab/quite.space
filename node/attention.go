@@ -19,6 +19,7 @@ import (
 	"github.com/drrainlab/quiet_places/kernel/storage"
 	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/terminals"
+	"strings"
 )
 
 // errNotFound is returned when a signal or its source event is gone.
@@ -142,12 +143,14 @@ func (r *Runtime) ScanAttention() {
 // attentionSpaceInfo is the per-space context the scan needs, resolved under
 // the runtime lock once.
 type attentionSpaceInfo struct {
-	tid    id.TerminalID
-	space  *terminals.Space
-	title  string
-	names  map[id.PrincipalID]string
-	scope  attention.Scope
-	myself id.PrincipalID
+	tid      id.TerminalID
+	space    *terminals.Space
+	title    string
+	names    map[id.PrincipalID]string
+	kinds    map[id.PrincipalID]string
+	scope    attention.Scope
+	myself   id.PrincipalID
+	selfName string
 }
 
 func (r *Runtime) attentionSpaces() []attentionSpaceInfo {
@@ -162,14 +165,19 @@ func (r *Runtime) attentionSpaces() []attentionSpaceInfo {
 		}
 		meta := r.ks.Spaces[tid]
 		names := map[id.PrincipalID]string{}
+		kinds := map[id.PrincipalID]string{}
 		for _, c := range st.space.MemberCards(0) {
 			if c.Name != "" {
 				names[c.Principal] = c.Name
 			}
+			if c.Kind != "" {
+				kinds[c.Principal] = c.Kind
+			}
 		}
 		out = append(out, attentionSpaceInfo{
 			tid: tid, space: st.space, title: meta.Title,
-			names: names, scope: scope, myself: r.PrincipalID,
+			names: names, kinds: kinds, scope: scope, myself: r.PrincipalID,
+			selfName: r.displayNameLocked(),
 		})
 	}
 	return out
@@ -183,7 +191,26 @@ func (r *Runtime) scanSpace(st *attentionState, info attentionSpaceInfo, full bo
 	if !full && len(entries) > attentionTailWindow {
 		entries = entries[len(entries)-attentionTailWindow:]
 	}
+	// THE PERSON'S OWN NAME IS ALWAYS WATCHED. Aliases default to empty,
+	// and "somebody typed @myname and no signal fired" was the first thing
+	// a live user hit. Seeded per scan rather than persisted, so a rename
+	// follows automatically and never fossilizes the old name. Guarded the
+	// way aliases are guarded everywhere: too-short names ("me", the
+	// default, or a two-letter nickname) would fire on ordinary words, and
+	// the person can still add short forms EXPLICITLY in settings — an
+	// explicit choice may be noisy, a default must not be.
 	aliases := st.engine.Policy.Aliases
+	if name := strings.TrimSpace(info.selfName); len([]rune(name)) >= 3 && !strings.EqualFold(name, "me") {
+		seeded := true
+		for _, a := range aliases {
+			if strings.EqualFold(strings.TrimSpace(a), name) {
+				seeded = false
+			}
+		}
+		if seeded {
+			aliases = append(append([]string(nil), aliases...), name)
+		}
+	}
 
 	st.mu.Lock()
 	defer st.mu.Unlock()
@@ -214,6 +241,7 @@ func (r *Runtime) scanSpace(st *attentionState, info attentionSpaceInfo, full bo
 		ctx := attention.Context{
 			Viewer: viewer, SpaceTitle: info.title,
 			AuthorName:  info.names[e.Author],
+			AuthorKind:  info.kinds[e.Author],
 			AuthorKnown: info.names[e.Author] != "",
 			ViewingNow:  info.tid == viewing,
 		}

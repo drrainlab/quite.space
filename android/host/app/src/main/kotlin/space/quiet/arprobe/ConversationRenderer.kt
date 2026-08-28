@@ -95,7 +95,8 @@ internal class ConversationRenderer(
         // falls back to the generic renderer, which is honest about what it is.
         val shortcutId = shortcuts.ensurePreviewShortcut(p.spaceId, p.tag, r) ?: return null
 
-        return Notification.Builder(app, NotificationPolicy.CHANNEL_MESSAGES)
+        return Notification.Builder(app, NotificationPolicy.channelFor(
+            p.items.lastOrNull()?.schema ?: "", p.items.any { it.personal }))
             .setSmallIcon(R.drawable.ic_stat_quiet)
             .setStyle(style)
             .setShortcutId(shortcutId)      // without this it is not a conversation

@@ -100,6 +100,10 @@ type Runtime struct {
 	routeKnowledgeGen uint64
 	// grants: the identity plane's in-memory half (grants.go, ADR-024).
 	grants *grantState
+	// knocks: requests for a conversation waiting for this person to
+	// answer (knock.go, ADR-027). In memory by design — a knock is a
+	// question, not a record, and one nobody answers simply expires.
+	knocks *knockState
 	// Reconsideration is COALESCED, never recursive: a held frame may itself
 	// be the control event that changes admission state again.
 	// ingressArmed stays false throughout Open, so every change applied
@@ -210,8 +214,14 @@ type Runtime struct {
 	// into a pocket. One-shot and bounded (rideAheadMaxBytes); anything
 	// bigger, and any re-offer, travels on demand as before.
 	rideAhead map[id.TerminalID]map[AssetKey]struct{}
-	stopOnce     sync.Once
-	wg           sync.WaitGroup
+	// instruments are the attached instrument participants (QI-1),
+	// keyed by InstrumentID.
+	instruments map[id.TerminalID]*instrumentRuntime
+	// DevIngest opens the dev-only frame ingest for EXTERNAL instruments
+	// (QI-M3 stand). Off by default; a bearer decision is not made here.
+	DevIngest bool
+	stopOnce  sync.Once
+	wg        sync.WaitGroup
 
 	// lock is this process's exclusive hold on the data directory. Two nodes
 	// on one directory both hold a Keystore and both write it back through
@@ -415,7 +425,7 @@ func Open(dataDir string, passphrase []byte, displayName string) (rt *Runtime, e
 		notifyLedger: newNotifyLedger(dataDir),
 		assetIdx:     newAssetIndex(), passes: newPassRegistry(),
 		joins: map[string]*joinAttempt{}, stop: make(chan struct{}),
-		syncKick: make(chan struct{}, 1),
+		syncKick:            make(chan struct{}, 1),
 		startupReconsidered: make(chan struct{}),
 		relayWants:          map[id.TerminalID]map[id.Hash]struct{}{},
 		// Radios ask for retransmission unless told otherwise. See
@@ -567,6 +577,7 @@ func Open(dataDir string, passphrase []byte, displayName string) (rt *Runtime, e
 			// no-manifest member replica): today's encrypted runtime.
 			s.EnablePrivate(r.Device)
 			s.RestoreEpochs(r.ks.Epochs[tid])
+			s.RestoreInstrumentEpochs(r.ks.InstrEpochs[tid])
 		}
 		if meta.Owned {
 			if err := s.RestoreController(r.ks.TerminalSeeds[tid], meta.ManifestFrame, meta.Members); err != nil {
@@ -712,6 +723,7 @@ func Open(dataDir string, passphrase []byte, displayName string) (rt *Runtime, e
 	// Connector journals restore their intent to act the same way the join
 	// saga does: reopened and re-driven, never merely present on disk.
 	r.resumeConnectors()
+	r.restoreInstruments()
 	// The radio this device was last attached to, brought back on its own.
 	// Best effort by design — see restoreRadio: a radio that is unplugged, or
 	// that came back under a different serial path, must never stop somebody
@@ -970,6 +982,9 @@ func (r *Runtime) stopped() bool {
 
 func (r *Runtime) persistEpochsLocked(tid id.TerminalID, s *terminals.Space) {
 	r.ks.Epochs[tid] = s.ExportEpochs()
+	if ie := s.ExportInstrumentEpochs(); len(ie) > 0 {
+		r.ks.InstrEpochs[tid] = ie
+	}
 	if meta, ok := r.ks.Spaces[tid]; ok && meta.Owned {
 		meta.Members = s.Members()
 		r.ks.Spaces[tid] = meta
@@ -1140,6 +1155,9 @@ func (r *Runtime) CreateSpaceWithOptions(title string, o CreateOptions) (id.Term
 		if _, err := r.Self.RotateEpoch(s); err != nil {
 			return id.TerminalID{}, err
 		}
+		if _, err := r.Self.RotateInstrumentEpoch(s); err != nil {
+			return id.TerminalID{}, err
+		}
 	}
 	seed, err := s.TerminalSeed()
 	if err != nil {
@@ -1183,6 +1201,12 @@ func (r *Runtime) MintInvite(tid id.TerminalID, dev id.DeviceID, xpub [32]byte) 
 	// person was invited, and the person is all of their devices.
 	r.expandMembersLocked(st.space)
 	if _, err := r.Self.RotateEpoch(st.space); err != nil {
+		return "", err
+	}
+	// The instrument lineage turns with every membership change
+	// (owner's amendment 5) — a new member must read the greenhouse too,
+	// and a removed one must stop.
+	if _, err := r.Self.RotateInstrumentEpoch(st.space); err != nil {
 		return "", err
 	}
 	r.persistEpochsLocked(tid, st.space)
@@ -1379,15 +1403,27 @@ func (r *Runtime) Say(tid id.TerminalID, text string, opt SayOptions) (id.EventI
 	return a.ID, nil
 }
 
-// MakeCard turns a message into a card (vision §8.3, message-to-object).
-func (r *Runtime) MakeCard(tid id.TerminalID, title string, origin *id.EventID) (id.EventID, error) {
+// CardOptions carries a new task's optional edges. A struct, not more
+// positional parameters — addressing grows, call sites should not.
+type CardOptions struct {
+	Origin   *id.EventID
+	ObjectID *[16]byte // SP-1: the domain object this task belongs to
+	Assignee *id.PrincipalID
+}
+
+// MakeCard creates a task card (vision §8.3; SP-1 object edge).
+func (r *Runtime) MakeCard(tid id.TerminalID, title string, opt CardOptions) (id.EventID, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	st, ok := r.spaces[tid]
 	if !ok {
 		return id.EventID{}, errors.New("node: unknown space")
 	}
-	payload, err := (&schemas.Card{Title: title, Status: "open", Origin: origin}).Encode()
+	if err := r.canWrite(st); err != nil {
+		return id.EventID{}, err
+	}
+	payload, err := (&schemas.Card{Title: title, Status: "open",
+		Origin: opt.Origin, ObjectID: opt.ObjectID, Assignee: opt.Assignee}).Encode()
 	if err != nil {
 		return id.EventID{}, err
 	}
@@ -1418,7 +1454,10 @@ func (r *Runtime) EmitBlock(tid id.TerminalID, schema string, payload []byte) (i
 	return a.ID, nil
 }
 
-// SetCardStatus updates a card.
+// SetCardStatus updates a card. card.updated.v1 is a WHOLE-RECORD LWW
+// register, so this is read-modify-write: fields the caller omitted are
+// preserved from the projection — a status toggle must never strip the
+// task off its object or its assignee.
 func (r *Runtime) SetCardStatus(tid id.TerminalID, card id.EventID, title, status string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -1426,7 +1465,22 @@ func (r *Runtime) SetCardStatus(tid id.TerminalID, card id.EventID, title, statu
 	if !ok {
 		return errors.New("node: unknown space")
 	}
-	payload, err := (&schemas.Card{Title: title, Status: status, Card: &card}).Encode()
+	if err := r.canWrite(st); err != nil {
+		return err
+	}
+	next := &schemas.Card{Title: title, Status: status, Card: &card}
+	for _, c := range st.space.State.Cards() {
+		if c.ID != card {
+			continue
+		}
+		if next.Title == "" {
+			next.Title = c.Title
+		}
+		next.Assignee = c.Assignee
+		next.ObjectID = c.ObjectID
+		break
+	}
+	payload, err := next.Encode()
 	if err != nil {
 		return err
 	}

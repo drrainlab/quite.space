@@ -255,13 +255,10 @@ func (r *Runtime) openAttempt(tid id.TerminalID, now time.Time) (AttemptID, bool
 	if r.ledger == nil {
 		return AttemptID{}, false
 	}
-	due := r.ledger.Due(now, 0)
+	due := r.ledger.DueForSpace(now, tid, 0)
 	var token AttemptID
 	var needs []id.EventID
 	for _, in := range due {
-		if in.Space != tid {
-			continue
-		}
 		if !in.Attempt.Zero() {
 			if token.Zero() {
 				// An epoch is already open for this space: reuse it, so a

@@ -292,6 +292,17 @@ type JoinRequest struct {
 	// that bearer is the same party the hint describes. T3's signed
 	// reachability advertisement subsumes this.
 	ReturnRoutes []string
+	// Certs is the knocker's CERTIFIED SET: every root-signed device
+	// certificate of its principal, raw identity.Certificate encodings.
+	// Carried so the host can admit the whole person, not one hand of it
+	// (ADR-024 mechanism 1): the host's next rotation wraps the epoch to
+	// the knocker's sibling devices too, and a sibling that later learns
+	// the space through the identity plane is not deafened by the very
+	// rotation that let the knocker in. Outside the signed body for the
+	// same reason ReturnRoutes is; each certificate carries its own root
+	// signature and is verified on its own before it becomes trust.
+	// Public facts — the same frames ride every space log in plaintext.
+	Certs [][]byte
 }
 
 const (
@@ -303,6 +314,10 @@ const (
 	jrName      = 6
 	jrSignature = 7
 	jrRoutes    = 8
+	jrCerts     = 9
+
+	// maxJoinCerts bounds what a stranger may hand a host in one knock.
+	maxJoinCerts = 16
 )
 
 func (r *JoinRequest) signingBody() []byte {
@@ -333,17 +348,33 @@ func joinInfo(space id.TerminalID, passID [16]byte) []byte {
 func BuildJoinRequestWithSecret(pass *Pass, secret []byte, dev *identity.Device,
 	displayName string, nonce []byte, devicePriv ed25519.PrivateKey,
 	returnRoutes ...string) (reqID [32]byte, sealed []byte, err error) {
+	return BuildJoinRequestWithCerts(pass, secret, dev, displayName, nonce, devicePriv, nil, returnRoutes...)
+}
 
+// BuildJoinRequestWithCerts is BuildJoinRequestWithSecret carrying the
+// knocker's certified set (see JoinRequest.Certs). More than maxJoinCerts
+// are dropped from the tail rather than refused: the knock still works,
+// the host learns the first sixteen hands.
+func BuildJoinRequestWithCerts(pass *Pass, secret []byte, dev *identity.Device,
+	displayName string, nonce []byte, devicePriv ed25519.PrivateKey,
+	certs [][]byte, returnRoutes ...string) (reqID [32]byte, sealed []byte, err error) {
+
+	if len(certs) > maxJoinCerts {
+		certs = certs[:maxJoinCerts]
+	}
 	reqID = sha256.Sum256(append(append(pass.PassID[:], dev.ID[:]...), nonce...))
 	r := &JoinRequest{
 		RequestID: reqID, PassID: pass.PassID, Secret: append([]byte(nil), secret...),
 		Device: dev.ID, DeviceXpub: dev.X25519Pub, DisplayName: displayName,
-		ReturnRoutes: returnRoutes,
+		ReturnRoutes: returnRoutes, Certs: certs,
 	}
 	body := r.signingBody()
 	sig := ed25519.Sign(devicePriv, body)
 	n := 7
 	if len(r.ReturnRoutes) > 0 {
+		n++
+	}
+	if len(r.Certs) > 0 {
 		n++
 	}
 	full := codec.AppendMap(nil, n)
@@ -355,6 +386,13 @@ func BuildJoinRequestWithSecret(pass *Pass, secret []byte, dev *identity.Device,
 		full = codec.AppendArray(full, len(r.ReturnRoutes))
 		for _, rt := range r.ReturnRoutes {
 			full = codec.AppendText(full, rt)
+		}
+	}
+	if len(r.Certs) > 0 {
+		full = codec.AppendUint(full, jrCerts)
+		full = codec.AppendArray(full, len(r.Certs))
+		for _, c := range r.Certs {
+			full = codec.AppendBytes(full, c)
 		}
 	}
 
@@ -445,6 +483,16 @@ func decodeJoinRequest(b []byte) (*JoinRequest, []byte, error) {
 					var rt string
 					if rt, er = d.ReadText(); er == nil {
 						r.ReturnRoutes = append(r.ReturnRoutes, rt)
+					}
+				}
+			}
+		case jrCerts:
+			var cnt int
+			if cnt, er = d.ReadArray(); er == nil {
+				for i := 0; i < cnt && er == nil; i++ {
+					var c []byte
+					if c, er = d.ReadBytes(); er == nil && len(r.Certs) < maxJoinCerts {
+						r.Certs = append(r.Certs, append([]byte(nil), c...))
 					}
 				}
 			}
@@ -711,8 +759,16 @@ func FreshNonce() ([]byte, error) {
 // is wrapped to it, publish the canonical membership.member_added.v1 event
 // so all participants learn the join, and return the new epoch (n + key) and
 // the space manifest frame for the sealed acceptance. History starts here.
+//
+// beforeRotate, when given, runs after the device is registered and
+// BEFORE the epoch is minted — the one moment a host can widen the wrap
+// list to the newcomer's whole certified set (ADR-024 mechanism 1). This
+// was the one rotation site that mechanism missed: create, invite, pair
+// and revoke all expanded, and the pass accept rotated blind, so a
+// sibling that learned the space by grant was deafened by the very
+// rotation that admitted its sibling.
 func (s *Space) AcceptIntoSpace(self *Participant, device id.DeviceID, xpub [32]byte,
-	name string, acceptedBy id.PrincipalID, at uint64) (epochN uint64, epochKey [32]byte, manifest []byte, err error) {
+	name string, acceptedBy id.PrincipalID, at uint64, beforeRotate func(*Space)) (epochN uint64, epochKey [32]byte, manifest []byte, err error) {
 
 	if s.priv == nil {
 		return 0, epochKey, nil, errors.New("terminals: only the controller can accept")
@@ -731,6 +787,9 @@ func (s *Space) AcceptIntoSpace(self *Participant, device id.DeviceID, xpub [32]
 		return n, s.priv2.epochs[n].Key, append([]byte(nil), s.ManifestFrame...), nil
 	}
 	s.AddMember(device, xpub)
+	if beforeRotate != nil {
+		beforeRotate(s)
+	}
 	if _, err := self.RotateEpoch(s); err != nil {
 		return 0, epochKey, nil, err
 	}

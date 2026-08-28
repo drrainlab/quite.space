@@ -79,6 +79,14 @@ func main() {
 		log.Fatalf("probe: api server: %v", err)
 	}
 	api.SetToken("probe-token")
+	// The player's loopback origin — the shell's own answer to "this window
+	// has no http identity to lend an embed" (ADR-028 §5). Started here so
+	// the gate below exercises the real path rather than a stand-in.
+	if origin, err := api.ListenPlayer(); err != nil {
+		fmt.Printf("PROBE gate=player-listen verdict=fail detail=%v\n", err)
+	} else {
+		fmt.Printf("PROBE gate=player-listen verdict=pass detail=%s\n", origin)
+	}
 	real := api.Handler() // built ONCE — it constructs a fresh mux per call
 
 	// The asset router: /probe* is the harness, everything else is the real

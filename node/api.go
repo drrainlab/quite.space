@@ -24,9 +24,11 @@ import (
 	"github.com/drrainlab/quiet_places/kernel/assets"
 	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/protocol/manifest"
+	"github.com/drrainlab/quiet_places/protocol/schemas"
 	"github.com/drrainlab/quiet_places/protocol/signal"
 	"github.com/drrainlab/quiet_places/terminals"
 	qrcode "github.com/skip2/go-qrcode"
+	"strconv"
 )
 
 // APIServer wraps a Runtime for local HTTP access.
@@ -38,6 +40,17 @@ type APIServer struct {
 	// One pairing flow at a time (MD-1): the UI's poll-driven view of it.
 	pairingMu sync.Mutex
 	pairing   *pairingUI
+
+	// playerOrigin is set once, at startup, by a shell that asked for a
+	// loopback listener because its own origin cannot lend an embed an
+	// identity. Written before the window loads and never again.
+	playerOrigin string
+
+	// sayRefs makes POST /messages idempotent (see handleSay). Keyed
+	// space/client_ref → the event already minted for it; bounded FIFO.
+	sayMu    sync.Mutex
+	sayRefs  map[string]id.EventID
+	sayOrder []string
 }
 
 // NewAPIServer creates the server with a fresh session token.
@@ -187,8 +200,16 @@ func (a *APIServer) Handler() http.Handler {
 	mux.HandleFunc("GET /api/spaces/{id}/messages", a.auth(a.handleMessages))
 	mux.HandleFunc("POST /api/spaces/{id}/messages", a.auth(a.handleSay))
 	mux.HandleFunc("GET /api/spaces/{id}/state", a.auth(a.handleState))
+	mux.HandleFunc("GET /api/spaces/{id}/cards", a.auth(a.handleListCards))
 	mux.HandleFunc("POST /api/spaces/{id}/cards", a.auth(a.handleMakeCard))
 	mux.HandleFunc("POST /api/spaces/{id}/cards/{card}/status", a.auth(a.handleCardStatus))
+	mux.HandleFunc("GET /api/spaces/{id}/objects", a.auth(a.handleListObjects))
+	mux.HandleFunc("POST /api/spaces/{id}/objects", a.auth(a.handleCreateObject))
+	mux.HandleFunc("GET /api/spaces/{id}/objects/{oid}", a.auth(a.handleGetObject))
+	mux.HandleFunc("POST /api/spaces/{id}/objects/{oid}", a.auth(a.handleReviseObject))
+	mux.HandleFunc("POST /api/spaces/{id}/objects/{oid}/archive", a.auth(a.handleArchiveObject))
+	mux.HandleFunc("POST /api/spaces/{id}/objects/{oid}/restore", a.auth(a.handleRestoreObject))
+	mux.HandleFunc("POST /api/spaces/{id}/objects/{oid}/observations", a.auth(a.handleNoteObservation))
 	mux.HandleFunc("POST /api/spaces/{id}/invites", a.auth(a.handleMintInvite))
 	mux.HandleFunc("GET /api/spaces/{id}/members", a.auth(a.handleMembers))
 	mux.HandleFunc("GET /api/spaces/{id}/entries", a.auth(a.handleEntries))
@@ -200,6 +221,11 @@ func (a *APIServer) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/spaces/{id}/resonance/palette", a.auth(a.handleSetResonancePalette))
 	mux.HandleFunc("GET /api/spaces/{id}/resonance/{target}/actors", a.auth(a.handleResonanceActors))
 	mux.HandleFunc("POST /api/spaces/{id}/presence", a.auth(a.handlePresence))
+	mux.HandleFunc("POST /api/spaces/{id}/instruments/simulate", a.auth(a.handleSimulateInstrument))
+	mux.HandleFunc("DELETE /api/spaces/{id}/instruments/{iid}", a.auth(a.handleDetachInstrument))
+	mux.HandleFunc("POST /api/spaces/{id}/instruments/enroll", a.auth(a.handleEnrollInstrument))
+	mux.HandleFunc("POST /api/spaces/{id}/instruments/{iid}/ingest", a.auth(a.handleIngestInstrument))
+	mux.HandleFunc("GET /api/spaces/{id}/instruments/epochs", a.auth(a.handleInstrumentEpochs))
 	mux.HandleFunc("POST /api/invites/accept", a.auth(a.handleJoin))
 	mux.HandleFunc("POST /api/public/open", a.auth(a.handlePublicOpen))
 	// The transient post preview (PS-3): a card invites a look, and looking
@@ -236,6 +262,21 @@ func (a *APIServer) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/spaces/{id}/name", a.auth(a.handleSetLocalTitle))
 	mux.HandleFunc("GET /api/entry-requests", a.auth(a.handleEntryRequests))
 	mux.HandleFunc("POST /api/entry-requests/{req}/decide", a.auth(a.handleDecideEntry))
+	// Knocking on a PERSON (ADR-027): the same door shape, one floor up.
+	mux.HandleFunc("GET /api/knocks", a.auth(a.handleKnocks))
+	mux.HandleFunc("POST /api/knocks/{id}/answer", a.auth(a.handleAnswerKnock))
+	mux.HandleFunc("POST /api/spaces/{id}/knock", a.auth(a.handleKnockOn))
+	mux.HandleFunc("GET /api/refusals", a.auth(a.handleRefusals))
+	mux.HandleFunc("DELETE /api/refusals/{principal}", a.auth(a.handleUnrefuse))
+
+	// A link preview is fetched by the SENDER, once, before the send —
+	// never by a reader opening a room (node/unfurl.go).
+	mux.HandleFunc("POST /api/unfurl", a.auth(a.handleUnfurl))
+
+	// The player (node/player.go). Framed BY the interface and carrying no
+	// token of its own: the embed it holds is a third party's code kept one
+	// frame away from everything worth taking.
+	mux.HandleFunc("GET /player", a.handlePlayer)
 	// QuietRank (AT-0): device-local attention layer.
 	mux.HandleFunc("GET /api/signals", a.auth(a.handleSignals))
 	mux.HandleFunc("POST /api/signals/{id}/seen", a.auth(a.handleSignalSeen))
@@ -345,6 +386,30 @@ func (a *APIServer) Handler() http.Handler {
 // style attributes plus the renderers' own el.style writes). CSS injection
 // is a far smaller prize than script, and the palette/tint values that
 // reach a style are hex-validated at renderers.js:115.
+//
+// frame-src IS 'self', and the distance between that and a permissive one
+// is the whole design of the video player (node/player.go).
+//
+// A video plays inside the conversation, which means this document frames
+// something. What it frames is OUR OWN /player — never youtube.com. That
+// page then frames the embed under a policy of its own, in a document with
+// no token and no application script. So the code belonging to a third
+// party sits one frame FURTHER from everything worth taking, and the
+// widest thing this directive permits an injection to do is frame a page
+// of this node's that it could already have opened.
+//
+// The loopback form beside it is the same page reached the only other way
+// it can be. A shell that serves this interface over a CUSTOM SCHEME has
+// no http origin to lend the embed, and an embed refuses a page whose
+// identity cannot travel (node/player.go's ListenPlayer says the rest), so
+// there the player is framed at http://127.0.0.1:<port> instead. Still
+// ours, still token-free, still one frame away from the embed.
+//
+// What must NEVER appear here is an external host: that would put a third
+// party's script beside the session token, which is the one thing this
+// policy exists to prevent. A frame is not readable across origins, so
+// what the loopback form grants an injection is the ability to display a
+// local page it cannot read.
 const uiPolicy = "default-src 'self'; " +
 	"script-src 'self'; " +
 	"style-src 'self' 'unsafe-inline'; " +
@@ -353,7 +418,7 @@ const uiPolicy = "default-src 'self'; " +
 	"font-src 'self'; " +
 	"connect-src 'self'; " +
 	"object-src 'none'; " +
-	"frame-src 'none'; " +
+	"frame-src 'self' http://127.0.0.1:*; " +
 	"worker-src 'none'; " +
 	"base-uri 'self'; " +
 	"form-action 'self'; " +
@@ -395,14 +460,30 @@ func (a *APIServer) auth(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-func httpErr(w http.ResponseWriter, code int, err error) {
+// API answers are NEVER CACHED, and the header says so out loud.
+//
+// These are live views of a local log, polled every two seconds — and one
+// of them (/entries) carries an ETag with, until this line existed, no
+// cache policy at all. A response with a validator and no policy is
+// HEURISTICALLY CACHEABLE, and a WebView that exercises that right serves
+// a stale feed while every poll "succeeds": a person sends a message,
+// nothing appears, and the transport is innocent. The ETag keeps doing
+// its real job — saving the transfer and the parse — because no-store
+// governs the HTTP cache, not the conditional request our own client
+// sends by hand.
+func apiHeaders(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+}
+
+func httpErr(w http.ResponseWriter, code int, err error) {
+	apiHeaders(w)
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
-	w.Header().Set("Content-Type", "application/json")
+	apiHeaders(w)
 	json.NewEncoder(w).Encode(v)
 }
 
@@ -414,6 +495,9 @@ func (a *APIServer) spaceID(r *http.Request) (id.TerminalID, error) {
 
 type statusResp struct {
 	Fingerprint string `json:"fingerprint"`
+	// PrincipalID is the raw id an external instrument names as its
+	// controller (QI-M): the dev stand hands it to the board.
+	PrincipalID string `json:"principal_id"`
 	DeviceID    string `json:"device_id"`
 	DeviceXPub  string `json:"device_xpub"`
 	LAN         struct {
@@ -468,6 +552,12 @@ type statusResp struct {
 	// two copies of a limit are one limit and one bug waiting for the day
 	// they differ.
 	MaxAssetBytes int64 `json:"max_asset_bytes"`
+	// PlayerOrigin is where the video player is reachable over http, and
+	// is set ONLY by a shell that has no http origin of its own (the
+	// desktop's wails:// scheme). Empty everywhere else, and empty means
+	// "the ordinary relative path" — node/player.go's ListenPlayer says
+	// why the difference exists.
+	PlayerOrigin string `json:"player_origin,omitempty"`
 }
 
 func (a *APIServer) handleOnboarding(w http.ResponseWriter, r *http.Request) {
@@ -515,6 +605,7 @@ func deviceName() string {
 func (a *APIServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 	var resp statusResp
 	resp.Fingerprint = a.rt.Fingerprint()
+	resp.PrincipalID = a.rt.PrincipalID.Hex()
 	resp.DeviceID = a.rt.Device.ID.Hex()
 	resp.DeviceXPub = hex.EncodeToString(a.rt.Device.X25519Pub[:])
 	l := a.rt.LAN()
@@ -529,6 +620,7 @@ func (a *APIServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 	resp.Radio.Detail = nil
 	resp.Connectivity = a.rt.Connectivity()
 	resp.MaxAssetBytes = assets.MaxAssetSize
+	resp.PlayerOrigin = a.playerOrigin
 
 	m := a.rt.Mesh()
 	resp.Mesh.Connected, resp.Mesh.NodeNum = m.Connected, m.NodeNum
@@ -885,10 +977,27 @@ func (a *APIServer) handleSay(w http.ResponseWriter, r *http.Request) {
 		Text     string   `json:"text"`
 		ReplyTo  string   `json:"reply_to"`
 		Mentions []string `json:"mentions"`
+		// ClientRef makes this request IDEMPOTENT: the same (space, ref)
+		// answers with the event already minted, minting nothing. It is
+		// what lets a client retry a send it never heard back about —
+		// without it, "retry safely" is not a thing that exists, and the
+		// field report proving that was a friend's message arriving twice.
+		ClientRef string `json:"client_ref"`
 	}](r)
 	if err != nil || body.Text == "" {
 		httpErr(w, http.StatusBadRequest, errors.New("text required"))
 		return
+	}
+	refKey := ""
+	if body.ClientRef != "" && len(body.ClientRef) <= 64 {
+		refKey = tid.Hex() + "/" + body.ClientRef
+		a.sayMu.Lock()
+		if eid, dup := a.sayRefs[refKey]; dup {
+			a.sayMu.Unlock()
+			writeJSON(w, map[string]string{"id": eid.Hex()})
+			return
+		}
+		a.sayMu.Unlock()
 	}
 	var opt SayOptions
 	if body.ReplyTo != "" {
@@ -912,6 +1021,32 @@ func (a *APIServer) handleSay(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusForbidden, err)
 		return
 	}
+	if refKey != "" {
+		// Remembered AFTER the mint, so a failed Say never poisons the
+		// ref: the client's retry gets a fresh attempt, not a phantom id.
+		//
+		// The memory is in-process and bounded — 512 refs, oldest out —
+		// which covers what it exists for: the double-press and the retry
+		// storm, both measured in seconds. A node restarted mid-retry can
+		// still mint a duplicate; that window is accepted and small, and
+		// closing it would mean persisting request state the log itself
+		// does not need.
+		a.sayMu.Lock()
+		if a.sayRefs == nil {
+			a.sayRefs = map[string]id.EventID{}
+		}
+		a.sayRefs[refKey] = eid
+		a.sayOrder = append(a.sayOrder, refKey)
+		if len(a.sayOrder) > 512 {
+			delete(a.sayRefs, a.sayOrder[0])
+			a.sayOrder = a.sayOrder[1:]
+		}
+		a.sayMu.Unlock()
+	}
+	// The words are durable; wake the courier rather than letting them sit
+	// out the rest of a tick. Media has always kicked here — text deserved
+	// the same two seconds.
+	a.rt.kickRelaySync()
 	writeJSON(w, map[string]string{"id": eid.Hex()})
 }
 
@@ -940,6 +1075,18 @@ type stateResp struct {
 	Observation   *observationResp `json:"observation,omitempty"`
 	Undecryptable int              `json:"undecryptable"`
 	Events        int              `json:"events"`
+	// Observations is the instrument plane's latest state (QI-2):
+	// instrument_id → channel → reading. Display text is composed HERE,
+	// from the fixed-point value and the manifest's declared unit — the
+	// frame carries neither unit nor kind by design.
+	Observations map[string]map[string]valueObsResp `json:"observations,omitempty"`
+}
+
+type valueObsResp struct {
+	Display   string `json:"display"`
+	Freshness string `json:"freshness"`
+	AgeSec    uint64 `json:"age_seconds"`
+	Simulated bool   `json:"simulated,omitempty"`
 }
 
 func (a *APIServer) handleState(w http.ResponseWriter, r *http.Request) {
@@ -953,6 +1100,48 @@ func (a *APIServer) handleState(w http.ResponseWriter, r *http.Request) {
 		resp.Undecryptable, resp.Events = st.space.Undecryptable, st.space.Log.Len()
 		for _, c := range st.space.State.Cards() {
 			resp.Cards = append(resp.Cards, cardResp{ID: c.ID.Hex(), Title: c.Title, Status: c.Status})
+		}
+		// The instrument plane (QI-2). Units come from each instrument's
+		// signed declaration; a reading whose channel was never declared
+		// shows bare — defensive, not fatal.
+		if vos := st.space.State.ValueObservations(); len(vos) > 0 {
+			decls := map[string]map[string]terminals.ChannelDecl{}
+			for _, m := range st.space.Registry.All() {
+				if m.Manifest == nil || !terminals.IsInstrumentKind(m.Manifest.Kind) {
+					continue
+				}
+				per := map[string]terminals.ChannelDecl{}
+				for _, d := range terminals.ParseInstruments(m.Manifest.DeclaredLabels) {
+					per[d.Channel] = d
+				}
+				decls[m.ID.Hex()] = per
+			}
+			now := uint64(time.Now().Unix())
+			resp.Observations = map[string]map[string]valueObsResp{}
+			for key, vo := range vos {
+				iid := key.Instrument.Hex()
+				if resp.Observations[iid] == nil {
+					resp.Observations[iid] = map[string]valueObsResp{}
+				}
+				unit := ""
+				if d, ok := decls[iid][key.Channel]; ok {
+					unit = d.Unit
+				}
+				age := uint64(0)
+				if now > vo.ObservedAt {
+					age = now - vo.ObservedAt
+				}
+				fresh := "current"
+				if age > vo.Value.StaleAfter {
+					fresh = "stale"
+				}
+				resp.Observations[iid][key.Channel] = valueObsResp{
+					Display:   formatValueObs(vo.Value, unit),
+					Freshness: fresh,
+					AgeSec:    age,
+					Simulated: vo.Value.Simulated,
+				}
+			}
 		}
 		o, ok := st.space.State.LatestObservation()
 		if !ok {
@@ -989,6 +1178,90 @@ func (a *APIServer) handleState(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, resp)
 }
 
+// formatValueObs renders a tagged fixed-point reading for humans:
+// magnitude/10^decimals with the declared unit, on/off for booleans,
+// the word itself for enums.
+func formatValueObs(v schemas.ValueObservation, unit string) string {
+	switch {
+	case v.HasBool:
+		if v.BoolValue {
+			return "on"
+		}
+		return "off"
+	case v.EnumValue != "":
+		return v.EnumValue
+	case v.HasNumber:
+		sign := ""
+		if v.Negative {
+			sign = "-"
+		}
+		if v.Decimals == 0 {
+			out := sign + uitoa(v.Magnitude)
+			if unit != "" {
+				out += " " + unit
+			}
+			return out
+		}
+		div := uint64(1)
+		for i := uint64(0); i < v.Decimals; i++ {
+			div *= 10
+		}
+		frac := uitoa(v.Magnitude % div)
+		for uint64(len(frac)) < v.Decimals {
+			frac = "0" + frac
+		}
+		out := sign + uitoa(v.Magnitude/div) + "." + frac
+		if unit != "" {
+			out += " " + unit
+		}
+		return out
+	}
+	return ""
+}
+
+func uitoa(v uint64) string { return strconv.FormatUint(v, 10) }
+
+// handleSimulateInstrument attaches the reference greenhouse (QI-1).
+func (a *APIServer) handleSimulateInstrument(w http.ResponseWriter, r *http.Request) {
+	tid, err := a.spaceID(r)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	body, err := readBody[struct {
+		Label string `json:"label"`
+		Seed  uint64 `json:"seed"`
+	}](r)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	iid, err := a.rt.AttachSimulatedInstrument(tid, body.Label, body.Seed)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, map[string]string{"instrument_id": iid.Hex()})
+}
+
+func (a *APIServer) handleDetachInstrument(w http.ResponseWriter, r *http.Request) {
+	tid, err := a.spaceID(r)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	iid, err := id.ParseTerminalID(r.PathValue("iid"))
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := a.rt.DetachInstrument(tid, iid); err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
 func pad2(n int) string {
 	if n < 10 {
 		return "0" + itoa(n)
@@ -1003,14 +1276,16 @@ func (a *APIServer) handleMakeCard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body, err := readBody[struct {
-		Title  string `json:"title"`
-		Origin string `json:"origin"`
+		Title    string `json:"title"`
+		Origin   string `json:"origin"`
+		ObjectID string `json:"object_id"`
+		Assignee string `json:"assignee"`
 	}](r)
 	if err != nil || body.Title == "" {
 		httpErr(w, http.StatusBadRequest, errors.New("title required"))
 		return
 	}
-	var origin *id.EventID
+	var opt CardOptions
 	if body.Origin != "" {
 		h, err := hex.DecodeString(body.Origin)
 		if err != nil || len(h) != id.Size {
@@ -1019,9 +1294,27 @@ func (a *APIServer) handleMakeCard(w http.ResponseWriter, r *http.Request) {
 		}
 		var e id.EventID
 		copy(e[:], h)
-		origin = &e
+		opt.Origin = &e
 	}
-	eid, err := a.rt.MakeCard(tid, body.Title, origin)
+	if body.ObjectID != "" {
+		h, err := hex.DecodeString(body.ObjectID)
+		if err != nil || len(h) != 16 {
+			httpErr(w, http.StatusBadRequest, errors.New("bad object id"))
+			return
+		}
+		var o [16]byte
+		copy(o[:], h)
+		opt.ObjectID = &o
+	}
+	if body.Assignee != "" {
+		p, err := id.ParsePrincipalID(body.Assignee)
+		if err != nil {
+			httpErr(w, http.StatusBadRequest, errors.New("bad assignee"))
+			return
+		}
+		opt.Assignee = &p
+	}
+	eid, err := a.rt.MakeCard(tid, body.Title, opt)
 	if err != nil {
 		httpErr(w, http.StatusForbidden, err)
 		return
@@ -1111,6 +1404,11 @@ type memberResp struct {
 	DeclaredLabels []string `json:"declared_labels"`
 	SysLabels      []string `json:"sys_labels"`
 	Commandable    bool     `json:"commandable"`
+	// InstrumentID + Instruments: set only on instrument cards (QI-2).
+	// The id repeats Terminal under the name every new API must use —
+	// nothing physical is ever called a terminal in this protocol.
+	InstrumentID string          `json:"instrument_id,omitempty"`
+	Instruments  []instrChanResp `json:"instruments,omitempty"`
 	// Mine marks this node's own card, so a UI can show you your own state
 	// without having to guess which member you are.
 	Mine     bool `json:"mine"`
@@ -1123,6 +1421,13 @@ type memberResp struct {
 		// local assumption about how long presence lasts.
 		LeftSec uint64 `json:"remaining_seconds,omitempty"`
 	} `json:"presence"`
+}
+
+type instrChanResp struct {
+	Channel string `json:"channel"`
+	Kind    string `json:"kind"`
+	Unit    string `json:"unit,omitempty"`
+	Label   string `json:"label,omitempty"`
 }
 
 func (a *APIServer) handleMembers(w http.ResponseWriter, r *http.Request) {
@@ -1186,6 +1491,16 @@ func (a *APIServer) handleMembers(w http.ResponseWriter, r *http.Request) {
 		m.Presence.State = c.Presence.State
 		m.Presence.AgeSec = c.Presence.AgeSeconds
 		m.Presence.LeftSec = c.Presence.RemainingSeconds
+		// Instrument cards carry their declaration (QI-2) — and the id
+		// under the one name new APIs use for physical endpoints.
+		if c.Kind == "sensor" || c.Kind == "actuator" {
+			m.InstrumentID = c.Terminal.Hex()
+			for _, d := range terminals.ParseInstruments(c.DeclaredLabels) {
+				m.Instruments = append(m.Instruments, instrChanResp{
+					Channel: d.Channel, Kind: d.Kind, Unit: d.Unit, Label: d.Label,
+				})
+			}
+		}
 		out = append(out, m)
 	}
 	writeJSON(w, out)
@@ -1414,4 +1729,98 @@ func (a *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// handleEnrollInstrument admits an EXTERNAL instrument by its enrollment
+// bytes (QI-M, ADR-026) and returns its provision. Idempotent for the
+// same binding; 409 for a conflicting one.
+func (a *APIServer) handleEnrollInstrument(w http.ResponseWriter, r *http.Request) {
+	tid, err := a.spaceID(r)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	body, err := readBody[struct {
+		EnrollmentHex string `json:"enrollment_hex"`
+	}](r)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	enroll, err := hex.DecodeString(body.EnrollmentHex)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	prov, iid, err := a.rt.AttachInstrumentByEnrollment(tid, enroll, uint64(time.Now().Unix()))
+	if err != nil {
+		code := http.StatusBadRequest
+		if errors.Is(err, ErrEnrollmentConflict) {
+			code = http.StatusConflict
+		}
+		httpErr(w, code, err)
+		return
+	}
+	writeJSON(w, map[string]string{"instrument_id": iid.Hex(), "provision_hex": hex.EncodeToString(prov)})
+}
+
+// handleIngestInstrument is the dev stand's door (QI-M3): frames from ONE
+// external instrument, bound to its identity, only under --dev-ingest.
+func (a *APIServer) handleIngestInstrument(w http.ResponseWriter, r *http.Request) {
+	tid, err := a.spaceID(r)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	iid, err := id.ParseTerminalID(r.PathValue("iid"))
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	body, err := readBody[struct {
+		FramesHex []string `json:"frames_hex"`
+	}](r)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	frames := make([][]byte, 0, len(body.FramesHex))
+	for _, h := range body.FramesHex {
+		f, err := hex.DecodeString(h)
+		if err != nil {
+			httpErr(w, http.StatusBadRequest, err)
+			return
+		}
+		frames = append(frames, f)
+	}
+	n, err := a.rt.IngestInstrumentFrames(tid, iid, frames)
+	if err != nil {
+		code := http.StatusBadRequest
+		if errors.Is(err, ErrDevIngestClosed) {
+			code = http.StatusForbidden
+		}
+		httpErr(w, code, err)
+		return
+	}
+	writeJSON(w, map[string]int{"applied": n})
+}
+
+// handleInstrumentEpochs hands the current instrument epoch frame(s) to the
+// dev stand so it can push them to a device after a rotation.
+func (a *APIServer) handleInstrumentEpochs(w http.ResponseWriter, r *http.Request) {
+	tid, err := a.spaceID(r)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	frames, err := a.rt.ExternalInstrumentEpochFrames(tid)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	out := make([]string, 0, len(frames))
+	for _, f := range frames {
+		out = append(out, hex.EncodeToString(f))
+	}
+	writeJSON(w, map[string][]string{"frames_hex": out})
 }

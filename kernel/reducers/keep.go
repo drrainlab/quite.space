@@ -80,6 +80,8 @@ func kindSchema(k EntryKind) string {
 		return schemas.BlockFile
 	case KindLink:
 		return schemas.BlockLink
+	case KindObservation:
+		return schemas.ObservationNoted
 	}
 	return ""
 }
@@ -97,6 +99,9 @@ func (s *State) KeepTargetStatus(target id.EventID) (kind string, resolved, keep
 	}
 	if _, ok := s.appInstanceEvents[target]; ok {
 		return "app", true, true
+	}
+	if _, ok := s.objTargets[target]; ok {
+		return "object", true, true
 	}
 	return "", false, false
 }

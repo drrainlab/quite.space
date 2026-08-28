@@ -62,6 +62,14 @@ const (
 	// devices" claim that is really one hub with spokes.
 	identitySetVersion = 2
 	identitySetSigCtx  = "qp-identity-set-v0:"
+	// refusalSetVersion marks the third message this plane carries: the
+	// people this person declined to hear from (ADR-027). It rides here
+	// for the same reason a space grant does — a relationship belongs to
+	// the PERSON (ADR-024), so declining on the phone must silence the
+	// laptop. It is the person's own state, sealed to their own devices,
+	// and it names nobody to anybody else.
+	refusalSetVersion = 3
+	refusalSetSigCtx  = "qp-refusal-set-v0:"
 )
 
 // spaceGrant is what one sibling tells another about a membership the
@@ -270,13 +278,162 @@ func encodeSignedGrant(g *spaceGrant) []byte {
 	return append(encodeGrantBody(g), codec.AppendBytes(nil, g.Signature)...)
 }
 
+// refusalSet is the person's standing refusals, travelling to their own
+// other devices.
+type refusalSet struct {
+	Refusals  []storage.RefusalRecord
+	Grantor   id.DeviceID
+	Signature []byte
+}
+
+func encodeRefusalSetBody(rs *refusalSet) []byte {
+	var buf []byte
+	buf = codec.AppendArray(buf, 3)
+	buf = codec.AppendUint(buf, refusalSetVersion)
+	buf = codec.AppendArray(buf, len(rs.Refusals))
+	for _, rf := range rs.Refusals {
+		buf = codec.AppendArray(buf, 3)
+		buf = codec.AppendBytes(buf, rf.Principal[:])
+		buf = codec.AppendText(buf, rf.Reason)
+		buf = codec.AppendUint(buf, uint64(rf.At))
+	}
+	buf = codec.AppendBytes(buf, rs.Grantor[:])
+	return buf
+}
+
+func decodeRefusalSet(data []byte) (*refusalSet, error) {
+	bad := errors.New("node: malformed refusal set")
+	d := codec.NewDecoder(data)
+	n, err := d.ReadArray()
+	if err != nil || n < 3 {
+		return nil, bad
+	}
+	v, err := d.ReadUint()
+	if err != nil || v != refusalSetVersion {
+		return nil, bad
+	}
+	rs := &refusalSet{}
+	cnt, err := d.ReadArray()
+	if err != nil {
+		return nil, bad
+	}
+	for range cnt {
+		fields, err := d.ReadArray()
+		if err != nil || fields < 3 {
+			return nil, bad
+		}
+		var rf storage.RefusalRecord
+		raw, err := d.ReadBytes()
+		if err != nil || len(raw) != len(rf.Principal) {
+			return nil, bad
+		}
+		copy(rf.Principal[:], raw)
+		if rf.Reason, err = d.ReadText(); err != nil {
+			return nil, bad
+		}
+		at, err := d.ReadUint()
+		if err != nil {
+			return nil, bad
+		}
+		rf.At = int64(at)
+		for i := 3; i < fields; i++ {
+			if err := d.SkipItem(); err != nil {
+				return nil, bad
+			}
+		}
+		rs.Refusals = append(rs.Refusals, rf)
+	}
+	raw, err := d.ReadBytes()
+	if err != nil || len(raw) != len(rs.Grantor) {
+		return nil, bad
+	}
+	copy(rs.Grantor[:], raw)
+	if rs.Signature, err = d.ReadBytes(); err != nil {
+		return nil, bad
+	}
+	return rs, nil
+}
+
+func (r *Runtime) sealedRefusalSetLocked(dev id.DeviceID) []byte {
+	cert, ok := r.ident.certificateFor(dev)
+	if !ok {
+		return nil
+	}
+	rs := &refusalSet{
+		Refusals: append([]storage.RefusalRecord(nil), r.ks.Refusals...),
+		Grantor:  r.Device.ID,
+	}
+	rs.Signature = ed25519.Sign(r.Device.SignKey(),
+		append([]byte(refusalSetSigCtx), encodeRefusalSetBody(rs)...))
+	plain := append(encodeRefusalSetBody(rs), codec.AppendBytes(nil, rs.Signature)...)
+	enc, ct, err := crypto.SealTo(cert.X25519Pub,
+		append([]byte(grantSigCtx), dev[:]...), plain)
+	if err != nil {
+		return nil
+	}
+	var sealed []byte
+	sealed = codec.AppendArray(sealed, 3)
+	sealed = codec.AppendBytes(sealed, enc)
+	sealed = codec.AppendBytes(sealed, ct)
+	sealed = codec.AppendBytes(sealed, planeTag(refusalSetSigCtx, dev[:],
+		encodeRefusalSetBody(rs)))
+	return sealed
+}
+
+// installRefusalSet merges a sibling's refusals. UNION, never replacement:
+// two devices may each have refused somebody while apart, and the person
+// meant both. A refusal is only ever lifted by the person saying so.
+func (r *Runtime) installRefusalSet(plain []byte) error {
+	rs, err := decodeRefusalSet(plain)
+	if err != nil {
+		return err
+	}
+	r.mu.Lock()
+	cert, ok := r.ident.certificateFor(rs.Grantor)
+	r.mu.Unlock()
+	if !ok {
+		return errors.New("node: refusals from an uncertified device")
+	}
+	if !bytes.Equal(cert.Principal[:], r.PrincipalID[:]) {
+		return errors.New("node: refusals from another principal")
+	}
+	if !ed25519.Verify(ed25519.PublicKey(rs.Grantor[:]),
+		append([]byte(refusalSetSigCtx), encodeRefusalSetBody(rs)...), rs.Signature) {
+		return errors.New("node: refusal set signature does not verify")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	changed := false
+	for _, in := range rs.Refusals {
+		found := false
+		for i := range r.ks.Refusals {
+			if r.ks.Refusals[i].Principal == in.Principal {
+				found = true
+				// The later word wins: a person may rewrite what they say.
+				if in.At > r.ks.Refusals[i].At {
+					r.ks.Refusals[i] = in
+					changed = true
+				}
+			}
+		}
+		if !found {
+			r.ks.Refusals = append(r.ks.Refusals, in)
+			changed = true
+		}
+	}
+	if !changed {
+		return nil
+	}
+	return r.saveKeystore()
+}
+
 // grantState is the in-memory half: which siblings have been OBSERVED in
 // which space (derived from the log), and the sealed-bytes cache that
 // keeps re-offers byte-identical for the relay's dedup.
 type grantState struct {
-	seen     map[id.TerminalID]map[id.DeviceID]bool
-	scanned  map[id.TerminalID]int // log length at last author scan
-	sealed   map[id.TerminalID]map[id.DeviceID][]byte
+	seen    map[id.TerminalID]map[id.DeviceID]bool
+	scanned map[id.TerminalID]int // log length at last author scan
+	sealed  map[id.TerminalID]map[id.DeviceID][]byte
 	// setSent: how many (certs+revs) records the identity-set offered to
 	// each sibling carried. The set is re-offered when it grows — a new
 	// sibling certified, a device revoked — and once per process start
@@ -284,6 +441,9 @@ type grantState struct {
 	// accumulation; recorded in ADR-024).
 	setSent  map[id.DeviceID]int
 	setBytes map[id.DeviceID][]byte
+	// refusalsSent: how many refusals the set offered to each sibling
+	// carried, re-offered when it grows or changes.
+	refusalsSent map[id.DeviceID]int
 	// tagChecked: siblings whose mailbox this process has already read
 	// for logical-message tags (once is enough; the seal cache covers the
 	// rest of the process lifetime).
@@ -321,13 +481,14 @@ type offerItem struct {
 func (r *Runtime) grantsInit() {
 	if r.grants == nil {
 		r.grants = &grantState{
-			seen:     map[id.TerminalID]map[id.DeviceID]bool{},
-			scanned:  map[id.TerminalID]int{},
-			sealed:   map[id.TerminalID]map[id.DeviceID][]byte{},
-			setSent:    map[id.DeviceID]int{},
-			setBytes:   map[id.DeviceID][]byte{},
-			tagChecked: map[id.DeviceID]bool{},
-			refused:    map[[32]byte]string{},
+			seen:         map[id.TerminalID]map[id.DeviceID]bool{},
+			scanned:      map[id.TerminalID]int{},
+			sealed:       map[id.TerminalID]map[id.DeviceID][]byte{},
+			setSent:      map[id.DeviceID]int{},
+			refusalsSent: map[id.DeviceID]int{},
+			setBytes:     map[id.DeviceID][]byte{},
+			tagChecked:   map[id.DeviceID]bool{},
+			refused:      map[[32]byte]string{},
 		}
 	}
 }
@@ -384,6 +545,23 @@ func (r *Runtime) offerGrants() {
 			continue
 		}
 		r.grants.setSent[dev] = setSize
+		offers = append(offers, offerItem{dev: dev, body: body,
+			eps: append([]storage.Route(nil), r.ks.PeerRoutes[dev]...)})
+	}
+	// THE REFUSALS TRAVEL THE SAME PLANE (ADR-027). A person who declined
+	// somebody on one device must not be knocked on again from the other:
+	// the refusal answers on their behalf everywhere, or it answers
+	// nowhere.
+	refusalCount := len(r.ks.Refusals)
+	for _, dev := range sibs {
+		if dev == self || r.grants.refusalsSent[dev] == refusalCount || refusalCount == 0 {
+			continue
+		}
+		body := r.sealedRefusalSetLocked(dev)
+		if body == nil {
+			continue
+		}
+		r.grants.refusalsSent[dev] = refusalCount
 		offers = append(offers, offerItem{dev: dev, body: body,
 			eps: append([]storage.Route(nil), r.ks.PeerRoutes[dev]...)})
 	}
@@ -691,8 +869,11 @@ func (r *Runtime) installGrant(sealed []byte) error {
 	// TWO MESSAGES RIDE THIS PLANE; the version inside the plaintext
 	// decides. Both pass the same trust gate below before anything is
 	// believed.
-	if ver := peekPlaneVersion(plain); ver == identitySetVersion {
+	switch peekPlaneVersion(plain) {
+	case identitySetVersion:
 		return r.installIdentitySet(plain)
+	case refusalSetVersion:
+		return r.installRefusalSet(plain)
 	}
 	g, err := decodeGrant(plain)
 	if err != nil {

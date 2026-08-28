@@ -261,7 +261,12 @@ async function refreshDoor() {
     rows = await api('/api/entry-requests');
   } catch { strip.hidden = true; return; }
   const waiting = (rows || []).filter((r) => r.state === 'pending');
-  if (!waiting.length) { strip.hidden = true; strip.innerHTML = ''; return; }
+  if (!waiting.length) {
+    // The same strip carries the other kind of asking (ADR-027): somebody
+    // wanting a conversation rather than a room. A door is a door.
+    if (await refreshKnockStrip(strip)) return;
+    strip.hidden = true; strip.innerHTML = ''; return;
+  }
 
   const r = waiting[0];
   const who = esc(r.name || 'somebody');
@@ -273,6 +278,42 @@ async function refreshDoor() {
   strip.hidden = false;
   document.getElementById('doorYes').onclick = () => decideDoor(r.request_id, true);
   document.getElementById('doorNo').onclick = () => decideDoor(r.request_id, false);
+}
+
+// A KNOCK IS NOT A JOIN REQUEST, and the strip says so: it names the room
+// that makes this person not a stranger, shows their own sentence as their
+// words, and offers the third answer the ADR insists on — the one that
+// means "and do not ask again", which is the only one that is remembered.
+async function refreshKnockStrip(strip) {
+  let knocks = [];
+  try {
+    ({ knocks } = await api('/api/knocks'));
+  } catch { return false; }
+  if (!knocks || !knocks.length) return false;
+  const k = knocks[0];
+  const who = esc(k.name || t('knock.somebody'));
+  const via = esc(k.via_title || t('knock.aSharedRoom'));
+  strip.innerHTML =
+    `<span>${t('knock.wants', { who: `<b>${who}</b>`, via: `<i>${via}</i>` })}</span>` +
+    (k.line ? `<span class="knock-line">«${esc(k.line)}»</span>` : '') +
+    (knocks.length > 1 ? `<span class="hint">+${knocks.length - 1}</span>` : '') +
+    `<button id="knockYes">${esc(t('knock.letIn'))}</button>` +
+    `<button id="knockNo">${esc(t('knock.notNow'))}</button>` +
+    `<button id="knockNever" class="btn-plain">${esc(t('knock.never'))}</button>`;
+  strip.hidden = false;
+  document.getElementById('knockYes').onclick = () => answerKnock(k.id, 'let_in');
+  document.getElementById('knockNo').onclick = () => answerKnock(k.id, 'not_now');
+  document.getElementById('knockNever').onclick = () => answerKnock(k.id, 'do_not_ask');
+  return true;
+}
+
+async function answerKnock(kid, answer) {
+  try {
+    await api(`/api/knocks/${encodeURIComponent(kid)}/answer`,
+      { method: 'POST', body: JSON.stringify({ answer }) });
+  } catch (err) { alert(err.message); }
+  refreshDoor();
+  if (typeof refresh === 'function') refresh();
 }
 
 async function decideDoor(reqID, admit) {

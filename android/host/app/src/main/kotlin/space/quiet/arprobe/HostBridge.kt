@@ -50,6 +50,16 @@ internal class HostBridge(
     private val stayRefused: () -> Boolean,
     private val revealPassphrase: () -> Boolean = { false },
     private val changeCode: () -> Boolean = { false },
+    // SR-0 — Radio Mode + push-to-talk. All still the page's own facts:
+    // a local preference, and the person's finger on a button. The
+    // transcript never crosses this bridge — it is pushed to the page by
+    // the host (window.quietPtt), and the page cannot ask for it.
+    private val radioMode: (space: String, enabled: Boolean, autoplay: Boolean) -> Boolean =
+        { _, _, _ -> false },
+    private val radioBackground: (Boolean) -> Boolean = { false },
+    private val pttPress: (space: String) -> Boolean = { false },
+    private val pttRelease: () -> Boolean = { false },
+    private val pttCancel: () -> Boolean = { false },
 ) {
 
     /** True when the caller proved it is the page our own node served. */
@@ -212,6 +222,49 @@ internal class HostBridge(
     fun changeCode(pass: String?): Boolean {
         if (!admitted(pass)) return refuse("changeCode")
         return changeCode()
+    }
+
+    /**
+     * SR-0 — the person flipped Radio Mode for one space, on this device
+     * only (groom D3: never shared state, never in the log). The host
+     * answers by pushing the authoritative state back into the page.
+     */
+    @JavascriptInterface
+    fun setRadioMode(pass: String?, spaceId: String?, enabled: Boolean, autoplay: Boolean): Boolean {
+        if (!admitted(pass)) return refuse("setRadioMode")
+        if (spaceId.isNullOrEmpty()) return false
+        return radioMode(spaceId, enabled, autoplay)
+    }
+
+    /** The device-wide "listen in background" switch. */
+    @JavascriptInterface
+    fun setRadioBackground(pass: String?, on: Boolean): Boolean {
+        if (!admitted(pass)) return refuse("setRadioBackground")
+        return radioBackground(on)
+    }
+
+    /**
+     * SR-0 — push-to-talk. The finger landed; false means "not now" (no
+     * mic permission yet — the host raises the native request — or the
+     * engine is not ready). The page renders only what the host pushes.
+     */
+    @JavascriptInterface
+    fun pttPress(pass: String?, spaceId: String?): Boolean {
+        if (!admitted(pass)) return refuse("pttPress")
+        if (spaceId.isNullOrEmpty()) return false
+        return pttPress(spaceId)
+    }
+
+    @JavascriptInterface
+    fun pttRelease(pass: String?): Boolean {
+        if (!admitted(pass)) return refuse("pttRelease")
+        return pttRelease()
+    }
+
+    @JavascriptInterface
+    fun pttCancel(pass: String?): Boolean {
+        if (!admitted(pass)) return refuse("pttCancel")
+        return pttCancel()
     }
 
     private fun refuse(what: String): Boolean {

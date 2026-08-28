@@ -195,6 +195,40 @@ SAFE.push((async () => {
       `dialog ${dlgOK}, backdrop-filter ${bf}`);
 })();
 
+// WHAT ORIGIN DOES THIS SHELL SPEAK AS?
+//
+// The question behind ADR-028 §5: the video plays in a nested frame, and
+// YouTube's embed refuses a page it cannot identify (error 153) — which is
+// what a missing or non-http referrer looks like to it. In a browser this
+// origin is http://127.0.0.1:PORT and the embed is content. Inside this
+// shell the interface is served over a CUSTOM SCHEME, and a wails:// origin
+// is not something a Referer header can carry.
+//
+// So the gate reports the origin rather than guessing at the consequence,
+// and the row beside it is a human's: does the embed below actually play?
+(async function gateOrigin() {
+  const p = location.protocol;
+  const httpish = p === 'http:' || p === 'https:';
+  put('player-origin', httpish ? 'pass' : 'manual',
+      `this window speaks as ${location.origin} — ` + (httpish
+        ? 'an embed can be told who is embedding it'
+        : 'no http(s) origin, so the node lends the player a loopback one'));
+  let origin = '';
+  try {
+    const st = await fetch('/api/status', { headers: { 'X-QP-Token': 'probe-token' } }).then(r => r.json());
+    origin = st.player_origin || '';
+    put('player-origin-api', origin ? 'pass' : 'fail',
+        origin ? `status says the player listens at ${origin}` : 'status carries no player_origin');
+  } catch (e) { put('player-origin-api', 'fail', String(e)); }
+  const f = document.createElement('iframe');
+  f.src = (origin || '') + '/player?v=aqz-KE-bpKQ';   // Big Buck Bunny, embeddable
+  f.setAttribute('allow', 'autoplay; encrypted-media; fullscreen');
+  f.style.cssText = 'width:420px;height:236px;border:1px solid #3a3145;border-radius:8px;display:block;margin:12px 0';
+  f.onload = () => put('player-frame', 'manual',
+    `framed ${f.src} — a human says whether the video plays or shows error 153`);
+  document.body.appendChild(f);
+})();
+
 // The hazard batch: blob-backed bodies, deliberately last. Ordered, not
 // parallel, so a fatal probe still leaves every earlier verdict on stdout.
 Promise.allSettled(SAFE).then(() => setTimeout(async () => {

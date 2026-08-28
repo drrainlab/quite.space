@@ -50,6 +50,11 @@ import (
 // a person's content than it can ever display.
 const maxPreviewRunes = 120
 
+// maxSpokenRunes bounds SpokenText: enough for a 12-second utterance in
+// any language, small enough that a pasted document does not become a
+// ten-minute recital.
+const maxSpokenRunes = 1000
+
 // NotificationCandidate is the narrow fact a host may render. It carries no
 // frames, no keys and no protocol: everything here has already been verified.
 type NotificationCandidate struct {
@@ -90,6 +95,13 @@ type NotificationCandidate struct {
 	// are to know that.
 	AuthoredLocally bool
 
+	// AuthoredByPrincipal widens that to the PERSON (SR-0): true for an
+	// event authored by any of this principal's devices, not only this one.
+	// Auto-speech keys on this, never on AuthoredLocally — a phone must not
+	// read the person their own words back just because they typed them on
+	// their laptop.
+	AuthoredByPrincipal bool
+
 	// The presentation snapshot: what a host may SHOW, as opposed to what it
 	// may act on. Every field is optional and an empty one is ordinary — a
 	// space with no title has none, a manifest may not have arrived, a schema
@@ -103,6 +115,21 @@ type NotificationCandidate struct {
 	SpaceLabel  string
 	SenderLabel string
 	PreviewText string
+
+	// SpokenText is the presentation text for AUTO-SPEECH (SR-0): the full
+	// message body up to maxSpokenRunes, where PreviewText is a one-line
+	// notification clip. Same provenance and same privacy standing as
+	// PreviewText — resolved from in-memory state after admission, persisted
+	// nowhere (the notify ledger stores ids and sequences, never text).
+	SpokenText string
+
+	// Personal is the CORE saying "somebody called you": the event's SIGNED
+	// mentions include this runtime's principal. This is the field the
+	// Android side's own comment has been waiting for — a candidate fact,
+	// not a host-side guess — and it routes a notification to the personal
+	// signals channel. Structural only: reply-to-me needs an authorship
+	// lookup and is deliberately not v1.
+	Personal bool
 }
 
 // notifySink is the runtime's attached notification plane.
@@ -310,14 +337,15 @@ func (r *Runtime) candidateOf(tid id.TerminalID, s *terminals.Space,
 	a eventlog.Applied, cursor uint64) NotificationCandidate {
 
 	c := NotificationCandidate{
-		EventID:            a.ID,
-		SpaceID:            tid,
-		Device:             a.Env.Device,
-		Schema:             a.Env.Schema,
-		SourceSequence:     a.Env.Sequence,
-		OccurredAtUnixMs:   a.Env.CreatedAt * 1000, // the protocol counts seconds
-		PresentationCursor: cursor,
-		AuthoredLocally:    a.Env.Device == r.Device.ID,
+		EventID:             a.ID,
+		SpaceID:             tid,
+		Device:              a.Env.Device,
+		Schema:              a.Env.Schema,
+		SourceSequence:      a.Env.Sequence,
+		OccurredAtUnixMs:    a.Env.CreatedAt * 1000, // the protocol counts seconds
+		PresentationCursor:  cursor,
+		AuthoredLocally:     a.Env.Device == r.Device.ID,
+		AuthoredByPrincipal: a.Env.Principal == r.PrincipalID,
 	}
 	r.decorateLocked(s, a, &c)
 	return c
@@ -346,6 +374,12 @@ func (r *Runtime) decorateLocked(s *terminals.Space, a eventlog.Applied, c *Noti
 	// it belongs to whoever is rendering.
 	if entry.Content.Text != nil {
 		c.PreviewText = clipRunes(entry.Content.Text.Text, maxPreviewRunes)
+		c.SpokenText = clipRunes(entry.Content.Text.Text, maxSpokenRunes)
+		for _, m := range entry.Content.Text.Mentions {
+			if m == r.PrincipalID {
+				c.Personal = true
+			}
+		}
 	}
 
 	if entry.Author == r.PrincipalID {

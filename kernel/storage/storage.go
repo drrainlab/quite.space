@@ -139,6 +139,12 @@ type Keystore struct {
 	TerminalSeeds map[id.TerminalID][]byte
 	// Epochs holds known epoch keys per private space.
 	Epochs map[id.TerminalID][]crypto.EpochKey
+	// InstrEpochs holds the instrument-epoch lineage per space (QI-0) —
+	// the second key ring. Losing it on restart would silently blind a
+	// member to every reading until the next rotation.
+	InstrEpochs map[id.TerminalID][]crypto.EpochKey
+	// Instruments are this node's attached instrument participants (QI-1).
+	Instruments []InstrumentRecord
 	// SelfTerminalSeed is the user's participant terminal key.
 	SelfTerminalSeed []byte
 	// DisplayName is the user's chosen name; empty until onboarding sets it.
@@ -211,6 +217,10 @@ type Keystore struct {
 	// Empty and nil mean the same thing and both mean "nobody": absence is
 	// never permission.
 	LegacyBindings []LegacyBinding
+	// Refusals are the people this person declined to hear from (ADR-027).
+	// Principal-scoped and convergent: declining on the phone must silence
+	// the laptop, so this travels the identity plane like a space grant.
+	Refusals []RefusalRecord
 }
 
 // PublicPublishState is the publisher-side durable projection counter.
@@ -297,6 +307,7 @@ func NewKeystore(p *identity.Principal, d *identity.Device) *Keystore {
 		PublicPublish: map[id.TerminalID]PublicPublishState{},
 		TerminalSeeds: map[id.TerminalID][]byte{},
 		Epochs:        map[id.TerminalID][]crypto.EpochKey{},
+		InstrEpochs:   map[id.TerminalID][]crypto.EpochKey{},
 		Spaces:        map[id.TerminalID]SpaceMeta{},
 		Forgotten:     map[id.TerminalID]int64{},
 		PeerRoutes:    map[id.DeviceID][]Route{},
@@ -381,6 +392,9 @@ const (
 	ksKeyGateway   = 19 // TR-0 the external-boundary participant
 	ksKeyCerts     = 20 // MD-0 device certificates AND revocations (one store)
 	ksKeyLegacy    = 21 // MD-0 the frozen pre-certification allowlist
+	ksKeyInstrEp   = 22 // QI-0 instrument-epoch keys per space
+	ksKeyInstrs    = 23 // QI-1 attached instrument participants
+	ksKeyRefusals  = 24 // ADR-027 people this person declined to hear from
 )
 
 // ksMapArity is how many top-level pairs encode() writes, and it MUST equal
@@ -388,7 +402,7 @@ const (
 // which is a poor place for a number that bricks every keystore when it is
 // wrong: too few and the trailing pair goes unread, so Done() fails and
 // nobody can open their data again. Named here, next to the keys it counts.
-const ksMapArity = 21
+const ksMapArity = 24
 
 func (k *Keystore) encode() []byte {
 	buf := codec.AppendMap(nil, ksMapArity)
@@ -484,6 +498,34 @@ func (k *Keystore) encode() []byte {
 	buf = appendTrustStore(buf, k.Certs, k.Revs)
 	buf = codec.AppendUint(buf, ksKeyLegacy)
 	buf = appendLegacyBindings(buf, k.LegacyBindings)
+	// QI-0: the instrument-epoch ring, unconditionally — ksMapArity is a
+	// fixed contract and the decoder's default arm lets an old build skip
+	// a key it has never heard of.
+	buf = codec.AppendUint(buf, ksKeyInstrEp)
+	buf = codec.AppendArray(buf, len(k.InstrEpochs))
+	for _, ep := range sortedEpochs(k.InstrEpochs) {
+		buf = codec.AppendArray(buf, 2)
+		buf = codec.AppendBytes(buf, ep.id[:])
+		buf = codec.AppendArray(buf, len(ep.keys))
+		for _, e := range ep.keys {
+			buf = codec.AppendArray(buf, 2)
+			buf = codec.AppendUint(buf, e.N)
+			buf = codec.AppendBytes(buf, e.Key[:])
+		}
+	}
+	buf = codec.AppendUint(buf, ksKeyInstrs)
+	buf = codec.AppendArray(buf, len(k.Instruments))
+	for _, ir := range k.Instruments {
+		buf = appendInstrumentRecord(buf, ir)
+	}
+	buf = codec.AppendUint(buf, ksKeyRefusals)
+	buf = codec.AppendArray(buf, len(k.Refusals))
+	for _, rf := range k.Refusals {
+		buf = codec.AppendArray(buf, 3)
+		buf = codec.AppendBytes(buf, rf.Principal[:])
+		buf = codec.AppendText(buf, rf.Reason)
+		buf = codec.AppendUint(buf, uint64(rf.At))
+	}
 	return buf
 }
 
@@ -595,6 +637,7 @@ func decodeKeystore(data []byte) (*Keystore, error) {
 	k := &Keystore{
 		TerminalSeeds: map[id.TerminalID][]byte{},
 		Epochs:        map[id.TerminalID][]crypto.EpochKey{},
+		InstrEpochs:   map[id.TerminalID][]crypto.EpochKey{},
 		Spaces:        map[id.TerminalID]SpaceMeta{},
 		Forgotten:     map[id.TerminalID]int64{},
 		PeerRoutes:    map[id.DeviceID][]Route{},
@@ -687,6 +730,93 @@ func decodeKeystore(data []byte) (*Keystore, error) {
 					copy(e.Key[:], kb)
 					k.Epochs[tid] = append(k.Epochs[tid], e)
 				}
+			}
+		case ksKeyInstrEp:
+			var cnt int
+			cnt, er = d.ReadArray()
+			if er != nil {
+				return nil, er
+			}
+			for range cnt {
+				if _, er = d.ReadArray(); er != nil {
+					return nil, er
+				}
+				var tidB []byte
+				if tidB, er = d.ReadBytes(); er != nil {
+					return nil, er
+				}
+				if len(tidB) != id.Size {
+					return nil, errors.New("storage: bad terminal id in instrument epochs")
+				}
+				var tid id.TerminalID
+				copy(tid[:], tidB)
+				var ecnt int
+				if ecnt, er = d.ReadArray(); er != nil {
+					return nil, er
+				}
+				for range ecnt {
+					if _, er = d.ReadArray(); er != nil {
+						return nil, er
+					}
+					var e crypto.EpochKey
+					if e.N, er = d.ReadUint(); er != nil {
+						return nil, er
+					}
+					var kb []byte
+					if kb, er = d.ReadBytes(); er != nil {
+						return nil, er
+					}
+					if len(kb) != crypto.KeySize {
+						return nil, errors.New("storage: bad instrument epoch key length")
+					}
+					copy(e.Key[:], kb)
+					k.InstrEpochs[tid] = append(k.InstrEpochs[tid], e)
+				}
+			}
+		case ksKeyInstrs:
+			var cnt int
+			cnt, er = d.ReadArray()
+			if er != nil {
+				return nil, er
+			}
+			for range cnt {
+				var ir InstrumentRecord
+				if ir, er = readInstrumentRecord(d); er != nil {
+					return nil, er
+				}
+				k.Instruments = append(k.Instruments, ir)
+			}
+		case ksKeyRefusals:
+			var cnt int
+			cnt, er = d.ReadArray()
+			if er != nil {
+				return nil, er
+			}
+			for range cnt {
+				var fields int
+				if fields, er = d.ReadArray(); er != nil || fields < 3 {
+					return nil, errors.New("storage: bad refusal record")
+				}
+				var rf RefusalRecord
+				var pb []byte
+				if pb, er = d.ReadBytes(); er != nil || len(pb) != len(rf.Principal) {
+					return nil, errors.New("storage: bad refusal principal")
+				}
+				copy(rf.Principal[:], pb)
+				if rf.Reason, er = d.ReadText(); er != nil {
+					return nil, er
+				}
+				var at uint64
+				if at, er = d.ReadUint(); er != nil {
+					return nil, er
+				}
+				rf.At = int64(at)
+				for i := 3; i < fields; i++ {
+					if er = d.SkipItem(); er != nil {
+						return nil, er
+					}
+				}
+				k.Refusals = append(k.Refusals, rf)
 			}
 		case ksKeySelfTerm:
 			var b []byte

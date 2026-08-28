@@ -150,12 +150,14 @@ const SKY = (() => {
     if (typeof syncSettingsUI === 'function') syncSettingsUI();
   }
 
-  /** Give every dialog and the conversation a sky. Done once at load, and
-   *  again for dialogs added later, so new markup inherits it for free. */
+  /** Give every dialog and the whole main stage a sky. The stage, not just
+   *  the conversation: one continuous field runs under the chat AND under
+   *  the info panel, so the panel's glass has something to shimmer over.
+   *  Done once at load, and again for dialogs added later. */
   function paintSurfaces() {
     document.querySelectorAll('dialog').forEach(d => d.classList.add('sky'));
-    const log = document.getElementById('log');
-    if (log) log.classList.add('sky');
+    const stage = document.querySelector('main');
+    if (stage) stage.classList.add('sky');
   }
 
   document.addEventListener('DOMContentLoaded', () => { paintSurfaces(); apply(); });
