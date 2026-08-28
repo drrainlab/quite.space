@@ -20,20 +20,25 @@ const PREV = (() => {
   function screen() { return document.getElementById('previewScreen'); }
 
   function show() {
-    const c = document.getElementById('content');
-    if (c) c.style.display = 'none';
-    const cat = document.getElementById('catalogScreen');
-    if (cat) cat.style.display = 'none';
-    screen().style.display = '';
+    // One switch owns the middle column (showScreen). Hiding siblings by
+    // hand is how two screens ended up on it at once.
+    showScreen('preview');
   }
 
-  function close() {
+  // leaving: another screen is taking the column. Drop what was being
+  // read and touch no display — whoever is arriving owns that.
+  function leaving() {
     open_ = null;
     if (typeof ATMO !== 'undefined') ATMO.unmount();
     if (prevObserver) prevObserver.disconnect();
-    screen().style.display = 'none';
-    const c = document.getElementById('content');
-    if (c) c.style.display = '';
+  }
+
+  // close: the reader's own way out. A preview is only ever opened FROM
+  // Discover, so back goes back there — landing in the conversation would
+  // be a different place than the one the person left.
+  function close() {
+    leaving();
+    showScreen('catalog');
   }
 
   /** Open a shared card's reference. */
@@ -51,7 +56,13 @@ const PREV = (() => {
     // ORDER matters — openPub and assetURL are current-relative, so the
     // space switches first, then the view, then the post.
     if (r.state === 'existing_local') {
-      close();
+      // Walking INTO the space this device already holds — so Discover is
+      // left, not merely covered: showScreen hides the catalog and lets
+      // CAT release the session the leaf was holding. Doing this by hand
+      // left both screens on the column at once, and the first press of
+      // "← Posts" landed in a layout with no way back.
+      leaving();
+      showScreen('conversation');
       current = r.space_id;
       await refresh();
       switchView('posts');
@@ -478,7 +489,11 @@ const PREV = (() => {
       });
       // Follow = replica + Navigator, in one motion.
       await NAV.addRef(res.id, r.space_title || '', 'pins');
-      close();
+      // Following LANDS IN THE SPACE, not back in Discover: the person
+      // asked for this place, and the reader's own back button is the
+      // only thing that means "I was just looking".
+      leaving();
+      showScreen('conversation');
       current = res.id;
       await refresh();
       switchView('posts');
@@ -493,7 +508,8 @@ const PREV = (() => {
         method: 'POST', body: JSON.stringify({ reference: open_.reference }),
       });
       await api(`/api/spaces/${res.id}/join`, { method: 'POST' });
-      close();
+      leaving();
+      showScreen('conversation');
       current = res.id;
       await refresh();
     } catch (err) {
@@ -501,7 +517,7 @@ const PREV = (() => {
     }
   }
 
-  return { open, close };
+  return { open, close, leaving };
 })();
 
 if (typeof window !== 'undefined') window.PREV = PREV;

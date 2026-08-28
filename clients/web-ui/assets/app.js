@@ -850,7 +850,16 @@ function showScreen(which) {
   if (compactScreen() && compactPane) setPanel(compactPane, true);
   if (which !== 'catalog' && typeof CAT !== 'undefined' && CAT.leaving) CAT.leaving();
   if (which !== 'signals' && typeof qrLeaving === 'function') qrLeaving();
-  const screens = { conversation: 'content', catalog: 'catalogScreen', signals: 'signalsScreen' };
+  // The transient reader is a SCREEN like the others. It used to manage
+  // its own display by hand, which meant this function could not take the
+  // column back from it: opening a post whose space was already held
+  // revealed the conversation UNDER a Discover screen nobody had hidden,
+  // and the grid grew a fourth child — the layout that came out crooked.
+  if (which !== 'preview' && typeof PREV !== 'undefined' && PREV.leaving) PREV.leaving();
+  const screens = {
+    conversation: 'content', catalog: 'catalogScreen',
+    signals: 'signalsScreen', preview: 'previewScreen',
+  };
   for (const [name, id] of Object.entries(screens)) {
     const el = document.getElementById(id);
     if (el) el.style.display = name === which ? '' : 'none';
