@@ -264,6 +264,34 @@ function chimeSyncUI() {
   }
 }
 
+// EN-3 — the doorbell row. Host-only: the endpoint lives between the
+// phone's UnifiedPush distributor and the core; this page only ever
+// learns the STATE and prints the honest sentence for it.
+function doorbellSet(on) {
+  if (typeof HOST === 'undefined' || !HOST.present) return;
+  if (on) {
+    if (!HOST.doorbellOn()) { doorbellSyncUI('no_distributor'); return; }
+  } else {
+    HOST.doorbellOff();
+  }
+  setTimeout(doorbellSyncUI, 400); // registration is asynchronous
+}
+function doorbellSyncUI(forced) {
+  const row = document.getElementById('doorbellRow');
+  const note = document.getElementById('doorbellNote');
+  if (!row || typeof HOST === 'undefined' || !HOST.present) return;
+  row.style.display = '';
+  const st = forced || HOST.doorbellStatus();
+  pickSeg('setDoorbell', st === 'off' || st === 'no_distributor' ? 'off' : 'on');
+  const lines = {
+    no_distributor: t('ui.set.doorbell.none'),
+    registering: t('ui.set.doorbell.registering'),
+    on: t('ui.set.doorbell.live'),
+  };
+  note.textContent = lines[st] || '';
+  note.style.display = lines[st] ? '' : 'none';
+}
+
 function pickSeg(groupId, v) {
   document.querySelectorAll('#' + groupId + ' button').forEach(b =>
     b.classList.toggle('sel', b.dataset.v === v));
@@ -581,6 +609,7 @@ function relayIntervalField() {
 function syncSettingsUI() {
   if (typeof chimeSyncUI === 'function') chimeSyncUI();
   if (typeof LINKS !== 'undefined') LINKS.syncUI();
+  doorbellSyncUI();
   const lang = (typeof localeName === 'function') ? localeName() : 'en';
   document.querySelectorAll('#setLang button').forEach(b =>
     b.classList.toggle('sel', b.dataset.v === lang));

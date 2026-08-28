@@ -39,6 +39,17 @@ const HOST = (() => {
     present: !!bridge,
 
     /**
+     * EN-3 — the doorbell (UnifiedPush). Status is one of "off",
+     * "registering", "on", "no_distributor" — the last is an answer the
+     * row prints as a sentence, never a dead switch. The endpoint itself
+     * never crosses this bridge into the page: the host hands it straight
+     * to the core, and the page only ever learns the state.
+     */
+    doorbellStatus() { return call('doorbellStatus') || 'off'; },
+    doorbellOn() { return call('doorbellOn') === true; },
+    doorbellOff() { return call('doorbellOff') === true; },
+
+    /**
      * The conversation on screen, or null.
      *
      * DEDUPED, because it is called from a poll: repeating the same answer

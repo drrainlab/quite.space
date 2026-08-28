@@ -107,6 +107,23 @@
             android:name=".NotificationDismissReceiver"
             android:exported="false" />
 
+        <!-- EN-3 — the UnifiedPush doorbell. EXPORTED, deliberately: the
+             distributor app's broadcasts must reach this receiver on a dead
+             process, which is the whole reason the doorbell exists. What an
+             abuser gains by sending these is a sync kick or a nameless
+             nudge notification — the ping carries nothing and unlocks
+             nothing. -->
+        <receiver
+            android:name=".UnifiedPushReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="org.unifiedpush.android.connector.NEW_ENDPOINT" />
+                <action android:name="org.unifiedpush.android.connector.MESSAGE" />
+                <action android:name="org.unifiedpush.android.connector.UNREGISTERED" />
+                <action android:name="org.unifiedpush.android.connector.REGISTRATION_FAILED" />
+            </intent-filter>
+        </receiver>
+
     </application>
 
     <!-- AR-0's rig — RigActivity and the :contender process — lives in

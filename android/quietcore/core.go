@@ -24,7 +24,9 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"github.com/drrainlab/quiet_places/transports/relay"
 	"net"
 	"os"
 	"runtime"
@@ -412,5 +414,43 @@ func SetForeground(fg bool) {
 	stateMu.Unlock()
 	if r != nil {
 		r.SetForeground(fg)
+	}
+}
+
+// SetPushEndpoint stores the EN-3 doorbell endpoint in settings — an
+// opaque UnifiedPush URL the relays may POST a contentless ping to when
+// mail arrives and no parked connection is left to hear it. Empty turns
+// the doorbell off; the next park clears the standing registration. The
+// endpoint is validated with the relay's own rule so a broken one is an
+// error here rather than a listener quietly failing its park.
+func SetPushEndpoint(endpoint string) error {
+	stateMu.Lock()
+	r := rt
+	stateMu.Unlock()
+	if r == nil {
+		return errors.New("quietcore: not running")
+	}
+	if endpoint != "" {
+		if err := relay.ValidatePushEndpoint(endpoint); err != nil {
+			return err
+		}
+	}
+	s := r.GetSettings()
+	if s.PushEndpoint == endpoint {
+		return nil
+	}
+	s.PushEndpoint = endpoint
+	return r.SetSettings(s)
+}
+
+// KickSync wakes the relay sync out of turn. The UnifiedPush receiver
+// calls it when a doorbell ping arrives: the ping carries nothing, the
+// drain fetches everything, exactly the division EN-3 promises.
+func KickSync() {
+	stateMu.Lock()
+	r := rt
+	stateMu.Unlock()
+	if r != nil {
+		r.KickRelaySync()
 	}
 }

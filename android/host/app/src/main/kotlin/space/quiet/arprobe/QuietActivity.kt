@@ -449,6 +449,18 @@ class QuietActivity : ComponentActivity() {
                         }
                     },
                     stayRefused = { controller.availabilityRefused() },
+                    // EN-3 — the doorbell. Status distinguishes "nothing on
+                    // this phone can carry it" from "off", so the settings
+                    // row can say the true sentence instead of a dead switch.
+                    doorbellStatus = {
+                        if (!UnifiedPushConnector.hasDistributor(this@QuietActivity)) {
+                            "no_distributor"
+                        } else {
+                            UnifiedPushConnector.status(this@QuietActivity)
+                        }
+                    },
+                    doorbellOn = { UnifiedPushConnector.register(this@QuietActivity) },
+                    doorbellOff = { UnifiedPushConnector.unregister(this@QuietActivity) },
                     // SR-0 — Radio Mode and push-to-talk. The store write is
                     // the host's; the page gets the authoritative state
                     // pushed back so a stale localStorage echo self-corrects.

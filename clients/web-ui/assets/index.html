@@ -860,6 +860,19 @@
           <button data-v="off" data-i18n="ui.set.linkprev.off" data-on-click="247">Off</button>
         </div>
       </div>
+      <!-- EN-3 — the doorbell. Host-only (app.js shows it when a bridge is
+           present): the endpoint comes from a UnifiedPush distributor on
+           the phone and never crosses into this page. The honest trade is
+           in the sub line, because opt-in without the sentence is not
+           opt-in. -->
+      <div class="list-row" id="doorbellRow" style="display:none">
+        <span class="lr-label" data-i18n="ui.set.doorbell">Doorbell (UnifiedPush)<span class="lr-sub" data-i18n="ui.set.doorbell.sub"> · wakes a sleeping phone; hands your relay a stable push address</span></span>
+        <div class="segmented" id="setDoorbell">
+          <button data-v="on" data-i18n="ui.set.doorbell.on" data-on-click="252">On</button>
+          <button data-v="off" data-i18n="ui.set.doorbell.off" data-on-click="253">Off</button>
+        </div>
+      </div>
+      <p class="hint" id="doorbellNote" style="display:none"></p>
       <!-- The technical layer. It used to be a word above every conversation
            for a mode almost nobody turns on; whoever needs to read a
            capability set knows to come looking, and everybody else was

@@ -74,3 +74,7 @@ func (r *Runtime) SetForeground(fg bool) {
 		r.kickRelaySync()
 	}
 }
+
+// KickRelaySync is the exported face of the sync kick, for shells whose
+// doorbell rang: the ping carried nothing, the drain fetches everything.
+func (r *Runtime) KickRelaySync() { r.kickRelaySync() }
