@@ -4079,6 +4079,15 @@ const FEED_RENDERERS = {
     const txt = document.createElement('span');
     txt.textContent = e.text || '';
     wrap.appendChild(txt);
+    // The claimed point, said out loud (owner's ask): a check-in read off
+    // the screen should be a complete sentence — place included. Rendered
+    // from the STRUCTURED geo, never parsed back out of the text.
+    if (e.geo) {
+      const at = document.createElement('span');
+      at.className = 'checkin-coords';
+      at.textContent = (+e.geo.lat).toFixed(5) + ', ' + (+e.geo.lon).toFixed(5);
+      wrap.appendChild(at);
+    }
     return wrap;
   },
 };

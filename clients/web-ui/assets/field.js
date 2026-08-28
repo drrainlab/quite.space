@@ -179,8 +179,12 @@ function fieldProjection(w, h) {
   }
   const lat0 = (minLat + maxLat) / 2;
   const cos = Math.max(0.05, Math.cos(lat0 * Math.PI / 180));
-  const spanX = Math.max((maxLon - minLon) * cos, 0.0005);
-  const spanY = Math.max(maxLat - minLat, 0.0005);
+  // A lone point is a place, not a bbox: open a ~600 m window around it
+  // rather than zooming to a degenerate span where any accuracy circle
+  // swallows the viewport (found by the owner's first solo share).
+  const minSpanDeg = 600 / 111320;
+  const spanX = Math.max((maxLon - minLon) * cos, minSpanDeg);
+  const spanY = Math.max(maxLat - minLat, minSpanDeg);
   const pad = 0.82; // fit-to-content with breathing room
   const scale = Math.min(w / spanX, h / spanY) * pad * FIELD.zoom;
   const cx = (minLon + maxLon) / 2, cy = lat0;
@@ -196,6 +200,55 @@ function fieldProjection(w, h) {
 }
 
 // ---- drawing (redraw-on-event, no permanent loop) ----
+
+// The map's own paper (no basemap tiles yet — SP-3.1): a metre grid
+// anchored to WORLD coordinates, so it pans and zooms with the claims it
+// carries, plus a scale bar. Together they are what makes a dot on a dark
+// canvas read as a place on a map.
+function fieldDrawPaper(ctx, proj, w, h, line, dim) {
+  const [latC] = proj.invert(w / 2, h / 2);
+  const pxPerM = proj.metersToPx(1, latC);
+  if (!isFinite(pxPerM) || pxPerM <= 0) return;
+  // A round step — 1/2/5 × 10ⁿ metres — targeting ~90 px between lines.
+  const target = 90 / pxPerM;
+  const pow = Math.pow(10, Math.floor(Math.log10(target)));
+  let step = pow * 10;
+  for (const m of [1, 2, 5]) { if (pow * m >= target) { step = pow * m; break; } }
+  const stepLatDeg = step / 111320;
+  const cos = Math.max(0.05, Math.cos(latC * Math.PI / 180));
+  const stepLonDeg = stepLatDeg / cos;
+  // The visible window in world coordinates, from the projection itself.
+  const [latTop, lonLeft] = proj.invert(0, 0);
+  const [latBot, lonRight] = proj.invert(w, h);
+  ctx.strokeStyle = line;
+  ctx.globalAlpha = 0.45;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let lo = Math.ceil(lonLeft / stepLonDeg) * stepLonDeg; lo < lonRight; lo += stepLonDeg) {
+    const x = Math.round(proj.x(lo)) + 0.5;
+    ctx.moveTo(x, 0); ctx.lineTo(x, h);
+  }
+  for (let la = Math.ceil(latBot / stepLatDeg) * stepLatDeg; la < latTop; la += stepLatDeg) {
+    const y = Math.round(proj.y(la)) + 0.5;
+    ctx.moveTo(0, y); ctx.lineTo(w, y);
+  }
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+  // Scale bar, bottom-left: one grid cell long, so the label explains
+  // the grid at the same time.
+  const barPx = step * pxPerM;
+  const bx = 14, by = h - 14;
+  ctx.strokeStyle = dim;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(bx, by - 4); ctx.lineTo(bx, by);
+  ctx.lineTo(bx + barPx, by); ctx.lineTo(bx + barPx, by - 4);
+  ctx.stroke();
+  ctx.fillStyle = dim;
+  ctx.font = '10px ui-monospace, monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText(step >= 1000 ? (step / 1000) + ' km' : step + ' m', bx + 4, by - 5);
+}
 
 function fieldDrawAll() {
   fieldDrawMap();
@@ -235,6 +288,8 @@ function fieldDrawMap() {
     return;
   }
   const d = FIELD.data;
+
+  fieldDrawPaper(ctx, proj, w, h, line, dim);
 
   // Zones and places.
   for (const o of d.objects || []) {
@@ -300,13 +355,21 @@ function fieldDrawMap() {
     const x = proj.x(pos.lon), y = proj.y(pos.lat);
     const col = typeof glyphColor === 'function' ? glyphColor(p.principal) : acc;
     if (pos.accuracy_m) {
+      // A RING, not a wash: desktop fixes claim kilometres of accuracy,
+      // and a filled disc at that radius painted the whole map grey. A
+      // ring larger than the viewport is skipped — it says nothing.
       const r = Math.max(4, proj.metersToPx(pos.accuracy_m, pos.lat));
-      ctx.beginPath();
-      ctx.arc(x, y, r, 0, Math.PI * 2);
-      ctx.fillStyle = col;
-      ctx.globalAlpha = 0.08;
-      ctx.fill();
-      ctx.globalAlpha = 1;
+      if (r < Math.max(w, h)) {
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.strokeStyle = col;
+        ctx.globalAlpha = 0.3;
+        ctx.setLineDash([3, 5]);
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
+      }
     }
     ctx.beginPath();
     ctx.arc(x, y, 5, 0, Math.PI * 2);

@@ -21,6 +21,7 @@ import (
 
 	"github.com/drrainlab/quiet_places/kernel/assets"
 	"github.com/drrainlab/quiet_places/kernel/reducers"
+	"github.com/drrainlab/quiet_places/protocol/geo"
 	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/protocol/schemas"
 	"github.com/drrainlab/quiet_places/protocol/signal"
@@ -528,6 +529,9 @@ type entryResp struct {
 	// SOS: a check-in's emergency truth (SP-3, kind "checkin"). The signed
 	// flag, never inferred from the text (ADR-031).
 	SOS bool `json:"sos,omitempty"`
+	// Geo: the check-in's claimed point, degrees at the JSON boundary —
+	// so the feed row can print the coordinates beside the sentence.
+	Geo *geoJSON `json:"geo,omitempty"`
 
 	Asset *assetResp `json:"asset,omitempty"`
 }
@@ -786,6 +790,10 @@ func (a *APIServer) projectEntry(tid id.TerminalID, sp *terminals.Space,
 		// law fills an empty note); consumers key on SOS, never on the text.
 		resp.Text = e.Content.Checkin.Text
 		resp.SOS = e.Content.Checkin.SOS
+		if c := e.Content.Checkin; c.HasPoint {
+			p := geo.Point{LatE7U: c.LatE7U, LonE7U: c.LonE7U}
+			resp.Geo = &geoJSON{Lat: p.LatDeg(), Lon: p.LonDeg()}
+		}
 	case e.Content.Unknown != nil:
 		resp.Schema = e.Content.Unknown.Schema
 		resp.Fallback = e.Content.Unknown.Fallback

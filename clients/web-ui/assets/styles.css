@@ -3957,6 +3957,10 @@ div.reply-to { cursor: default; }
 .obs-entry .obs-goto:hover { text-decoration: underline; }
 /* a check-in is the same quiet row — loud ONLY when it carries SOS */
 .obs-entry.checkin-sos { color: #e0635c; font-weight: 600; }
+/* its claimed point, said beside the sentence in the quiet monospace of
+   coordinates everywhere else in the app */
+.obs-entry .checkin-coords { font-family: ui-monospace, monospace;
+  font-size: 11px; color: var(--dim); }
 
 /* -- narrow screens: the head stacks, taps grow -- */
 @media (max-width: 600px) {

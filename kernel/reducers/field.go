@@ -61,6 +61,13 @@ type CheckinRecord struct {
 type CheckinContent struct {
 	Text string
 	SOS  bool
+	// The claim's coordinates, carried into the row so the feed can SAY
+	// them (owner's ask): "I'm OK" without a place is half the sentence.
+	// Display-side only — the wire already carries the point; nothing is
+	// ever parsed back out of prose (ADR-031).
+	LatE7U   uint64
+	LonE7U   uint64
+	HasPoint bool
 }
 
 func (s *State) applyMarkerPlaced(env *signal.Envelope, eid id.EventID) {
@@ -152,7 +159,8 @@ func (s *State) applyCheckin(env *signal.Envelope, eid id.EventID) {
 	// Projection one: the quiet feed row — a check-in is a sentence the
 	// room should see, especially when it screams.
 	s.installEntry(eid, env, KindCheckin, EntryContent{
-		Checkin: &CheckinContent{Text: c.Text, SOS: c.SOS},
+		Checkin: &CheckinContent{Text: c.Text, SOS: c.SOS,
+			LatE7U: rec.LatE7U, LonE7U: rec.LonE7U, HasPoint: rec.HasPoint},
 	})
 	// Projection two: latest per author principal, an LWW register by
 	// (CreatedAt, Clock, EventID). Keyed by PRINCIPAL, not terminal: the
