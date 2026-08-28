@@ -280,6 +280,25 @@ jobs:
           ANDROID_NDK_HOME="$NDK" gomobile init
           gomobile version
 
+      # THE NATIVE TOOLCHAIN IS INSTALLED, NOT HOPED FOR.
+      #
+      # :asr builds whisper.cpp through CMake, and the version is pinned in
+      # android/host/asr/build.gradle.kts. A runner image that happens to
+      # carry that version is luck; a release that depends on luck fails on
+      # the day it matters — which is exactly how v1.0.0-beta.1's first
+      # attempt died, on a pin naming a CMake the Android SDK has never
+      # published. Installing it here means the pin and the toolchain are
+      # decided in the repository, by whoever reads these two files.
+      - name: the native toolchain the :asr module needs
+        run: |
+          set -euo pipefail
+          WANT="$(grep -oE 'version = "[0-9.]+"' android/host/asr/build.gradle.kts | grep -oE '[0-9.]+' | tail -1)"
+          echo "asr pins CMake $WANT"
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "cmake;$WANT" >/dev/null
+          test -x "$ANDROID_HOME/cmake/$WANT/bin/cmake" \
+            || { echo "::error::cmake $WANT did not install — is it an Android SDK package?"; exit 1; }
+          "$ANDROID_HOME/cmake/$WANT/bin/cmake" --version | head -1
+
       - name: build, verify and sign the beta apk
         env:
           # The same script the maintainer runs by hand, so there is ONE

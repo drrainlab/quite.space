@@ -45,7 +45,20 @@ android {
     externalNativeBuild {
         cmake {
             path = file("CMakeLists.txt")
-            version = "4.0.2"
+            // PINNED TO A VERSION THE ANDROID SDK ACTUALLY SHIPS, and
+            // installed by the release workflow rather than found.
+            //
+            // This said 4.0.2 — the Homebrew CMake that happened to be on
+            // the maintainer's PATH. The Android SDK has never published a
+            // 4.x, so the pin meant "whatever this one machine has", and
+            // the first release built anywhere else refused:
+            //   [CXX1300] CMake '4.0.2' was not found in SDK, PATH, or by
+            //   cmake.dir property
+            // 3.22.1 is what CMakeLists.txt already declares as its
+            // minimum, so the number a reader sees is the number that
+            // builds. The sibling law is in scripts/android/beta-apk.sh, in
+            // capitals: the build must not depend on whose shell ran it.
+            version = "3.22.1"
         }
     }
     compileOptions {
