@@ -138,15 +138,18 @@ function fieldBuild(box) {
   spread.style.flex = '1';
   bar.appendChild(spread);
 
-  const markerBtn = document.createElement('button');
-  markerBtn.id = 'fieldMarkerBtn';
-  markerBtn.className = 'btn-plain';
-  markerBtn.textContent = '📍 ' + t('field.place_marker');
-  markerBtn.onclick = () => {
-    FIELD.placing = !FIELD.placing;
-    markerBtn.classList.toggle('sel', FIELD.placing);
-  };
-  bar.appendChild(markerBtn);
+  // Placing a marker is this view's CREATION act, so it lives in the
+  // header's primary slot beside "+ post" and "+ object" (spacenav.js),
+  // not duplicated here. What stays in this toolbar is what belongs to
+  // being in the field: sharing, the map's own background, and the two
+  // things a person says about themselves.
+  // While the map is armed, say so where the eyes already are.
+  const hint = document.createElement('span');
+  hint.id = 'fieldPlacingHint';
+  hint.className = 'field-placing';
+  hint.style.display = 'none';
+  hint.textContent = t('field.placing_hint');
+  bar.appendChild(hint);
 
   const ok = document.createElement('button');
   ok.className = 'btn-tinted';
@@ -761,21 +764,111 @@ function fieldScheduleDraw() {
 
 // ---- marker placement ----
 
+// The marker composer. What the person is CLAIMING is what the dialog
+// shows: a kind (glyph cards, the object editor's picker idiom), a note,
+// and — only for kinds that age — how long the claim speaks for. The
+// coordinates are displayed and never editable: they came from a finger
+// on the map, and a typed number would be a different claim.
+let markerDraft = null;
+
+// fieldArmMarker: the header's "+ marker" arms the map rather than
+// opening a form. A marker is a claim ABOUT A PLACE, so the place is
+// chosen first — the dialog opens where the finger landed.
+function fieldArmMarker() {
+  if (typeof pubView !== 'undefined' && pubView !== 'field') switchView('field');
+  FIELD.placing = true;
+  const hint = document.getElementById('fieldPlacingHint');
+  if (hint) hint.style.display = '';
+  fieldScheduleDraw();
+}
+
+// Kinds that are TEMPORARY BY NATURE offer an expiry. "Searched" is a
+// fact about a moment that stays true forever; "hazard" is a condition
+// that may lift. Offering a TTL on the first would invite a lie.
+const FIELD_MARKER_AGEING = ['hazard', 'casualty', 'extraction'];
+
 function fieldOpenMarkerDialog(lat, lon) {
   FIELD.placing = false;
-  document.getElementById('fieldMarkerBtn')?.classList.remove('sel');
-  const kind = prompt(t('field.marker_kind_prompt', { kinds: FIELD_MARKER_KINDS.join(', ') }), 'waypoint');
-  if (!kind || !FIELD_MARKER_KINDS.includes(kind.trim())) return;
-  const text = prompt(t('field.marker_text_prompt'), '') || '';
-  const body = { kind: kind.trim(), text: text.trim(), lat, lon };
-  if (kind.trim() === 'hazard') {
-    const hrs = prompt(t('field.marker_ttl_prompt'), '');
-    const h = parseFloat(hrs);
-    if (h > 0) body.expires_in_seconds = Math.round(h * 3600);
+  const armed = document.getElementById('fieldPlacingHint');
+  if (armed) armed.style.display = 'none';
+  markerDraft = { lat, lon, kind: 'waypoint' };
+  const dlg = document.getElementById('dlgMarker');
+  document.getElementById('markerAt').textContent =
+    lat.toFixed(5) + ', ' + lon.toFixed(5);
+  const txt = /** @type {HTMLInputElement} */(document.getElementById('markerText'));
+  txt.value = '';
+  document.getElementById('markerMsg').textContent = '';
+
+  const ttl = /** @type {HTMLSelectElement} */(document.getElementById('markerTtl'));
+  ttl.innerHTML = '';
+  for (const [secs, key] of [[0, 'field.ttl.forever'], [3600, 'field.ttl.1h'],
+    [6 * 3600, 'field.ttl.6h'], [24 * 3600, 'field.ttl.24h'], [72 * 3600, 'field.ttl.72h']]) {
+    const o = document.createElement('option');
+    o.value = String(secs);
+    o.textContent = t(key);
+    ttl.appendChild(o);
+  }
+
+  const pick = document.getElementById('markerKindPick');
+  pick.innerHTML = '';
+  const mark = () => pick.querySelectorAll('.kind-card').forEach(c =>
+    c.classList.toggle('sel', c.dataset.k === markerDraft.kind));
+  const ageing = () => {
+    const on = FIELD_MARKER_AGEING.includes(markerDraft.kind);
+    document.getElementById('markerTtlRow').style.display = on ? '' : 'none';
+    document.getElementById('markerTtlHint').style.display = on ? '' : 'none';
+  };
+  for (const k of FIELD_MARKER_KINDS) {
+    const card = document.createElement('button');
+    card.type = 'button';
+    card.className = 'kind-card';
+    card.dataset.k = k;
+    const g = document.createElement('span');
+    g.className = 'kind-glyph';
+    g.textContent = FIELD_MARKER_GLYPHS[k] || '✦';
+    card.appendChild(g);
+    const l = document.createElement('span');
+    l.className = 'kind-label';
+    l.textContent = t('field.kind.' + k);
+    card.appendChild(l);
+    card.onclick = () => {
+      markerDraft.kind = k;
+      mark();
+      ageing();
+      // The note is optional, and its placeholder is the kind's own
+      // question — an empty note falls back to the kind's name, which
+      // is why nothing here is required.
+      txt.placeholder = t('field.kind_ph.' + k);
+      txt.focus();
+    };
+    pick.appendChild(card);
+  }
+  mark();
+  ageing();
+  txt.placeholder = t('field.kind_ph.waypoint');
+  dlg.showModal();
+  setTimeout(() => txt.focus(), 30);
+}
+
+function fieldPlaceMarker() {
+  if (!markerDraft) return;
+  const txt = /** @type {HTMLInputElement} */(document.getElementById('markerText'));
+  const body = {
+    kind: markerDraft.kind,
+    text: txt.value.trim(),
+    lat: markerDraft.lat, lon: markerDraft.lon,
+  };
+  const ttl = /** @type {HTMLSelectElement} */(document.getElementById('markerTtl'));
+  if (FIELD_MARKER_AGEING.includes(markerDraft.kind) && Number(ttl.value) > 0) {
+    body.expires_in_seconds = Number(ttl.value);
   }
   api(`/api/spaces/${current}/markers`, { method: 'POST', body: JSON.stringify(body) })
-    .then(() => refreshField())
-    .catch(e => console.error(e));
+    .then(() => {
+      document.getElementById('dlgMarker').close();
+      markerDraft = null;
+      refreshField();
+    })
+    .catch(e => { document.getElementById('markerMsg').textContent = e.message; });
 }
 
 // ---- position sharing: while the map is open, and nothing more ----

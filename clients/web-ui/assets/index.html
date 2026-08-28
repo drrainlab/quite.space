@@ -59,17 +59,20 @@
     <div id="nav"></div>
   </div>
   <div id="content">
+    <!-- TWO STOREYS, because they answer two different questions.
+         The first is identity: what this place is, who may read it, and
+         the acts that belong to the SPACE. The second is the space's own
+         architecture — the views it offers, ordered by what it is centred
+         on (spacenav.js) — plus the one creation act belonging to the
+         view on screen. A "New post" button hovering over a map was an
+         action from somebody else's context. -->
     <div id="convbar">
-      <span id="convTitle"></span>
-      <div class="segmented" id="viewSwitch">
-        <button data-v="chat" class="sel" data-on-click="9" data-i18n="ui.convbar.view.chat">Chat</button>
-        <button data-v="posts" data-on-click="10" data-i18n="ui.convbar.view.posts">Posts</button>
-        <button data-v="shelf" data-on-click="11" data-i18n="ui.convbar.view.shelf">Shelf</button>
-        <button data-v="objects" data-on-click="248" data-i18n="ui.convbar.view.objects">Objects</button>
-        <button data-v="field" data-on-click="251" data-i18n="ui.convbar.view.field">Field</button>
-      </div>
-      <span style="flex:1"></span>
-      <span id="visBadge" class="vis-badge" style="display:none"></span>
+      <div class="convbar-id">
+        <span id="convMode" class="conv-mode"></span>
+        <span id="convTitle"></span>
+        <span id="convSub" class="conv-sub"></span>
+        <span id="visBadge" class="vis-badge" style="display:none"></span>
+        <span style="flex:1"></span>
       <!-- MARKS, NOT EMOJI. A colour emoji next to the thin ⓘ read as a
            sticker stuck on the bar: its own palette, its own weight, its own
            idea of a baseline. These are drawn in the header's language —
@@ -82,7 +85,7 @@
           <path d="M6.7 9.3a2.7 2.7 0 0 0 3.8 0l2-2a2.7 2.7 0 0 0-3.8-3.8l-.9.9"/>
           <path d="M9.3 6.7a2.7 2.7 0 0 0-3.8 0l-2 2a2.7 2.7 0 0 0 3.8 3.8l.9-.9" opacity=".55"/>
         </svg><span class="act-label" data-i18n="ui.convbar.share_link.label">Share link</span></button>
-      <button id="newPostBtn" class="btn-tinted" data-on-click="13"
+      <button id="newPostBtn" class="btn-tinted" style="display:none" data-on-click="13"
               title="New post" aria-label="New post" data-i18n-title="ui.convbar.new_post.title">
         <svg class="act-mark" viewBox="0 0 16 16" aria-hidden="true">
           <path d="M3.1 12.9 3.9 10.2 10.1 4a1.65 1.65 0 0 1 2.3 2.3l-6.2 6.2z"/>
@@ -93,6 +96,10 @@
            what a directory is FOR, so it is one press, not "compose a
            publication of kind space and paste a link into a block". -->
       <button id="addSpaceBtn" class="btn-tinted" style="display:none" data-on-click="14" data-i18n="ui.convbar.add_space">+ Add space</button>
+      <!-- newPostBtn is hidden by default now: the per-view creation act
+           lives on the second storey (spacenav.js), and two "new post"
+           buttons in one header is one too many. It stays in the markup
+           because the shortcut and the directory paths still press it. -->
       <button id="customizeBtn" class="icon-btn" style="display:none" data-on-click="15" title="Customize" data-i18n-title="ui.convbar.customize.title" aria-label="Customize space" data-i18n-aria="ui.convbar.customize.aria">
         <svg class="act-mark" viewBox="0 0 16 16" aria-hidden="true">
           <path d="M8 1.9a6.1 6.1 0 1 0 0 12.2c.85 0 1.35-.55 1.35-1.25 0-.75-.65-1.15-.65-1.85 0-.6.5-1 1.1-1h1.25A3.05 3.05 0 0 0 14.1 6.95C14.1 4.15 11.4 1.9 8 1.9Z"/>
@@ -103,6 +110,15 @@
       <button id="resPalBtn" class="icon-btn" style="display:none" data-on-click="16" title="Reaction palette" aria-label="Reaction palette" data-i18n-title="ui.convbar.res_palette.title">✧</button>
       <button id="inviteBtn" class="btn-tinted" style="display:none" data-on-click="17" data-i18n="ui.convbar.invite">invite</button>
       <button class="icon-btn" data-on-click="18" title="Space info" aria-label="Space info" data-i18n-title="ui.convbar.space_info.title">ⓘ</button>
+      </div>
+      <!-- The space's own architecture. Built by spacenav.js when a space
+           opens: order and visibility come from the declared centre, so a
+           field space lands on its map and a workshop on its bench. -->
+      <div class="convbar-nav">
+        <nav id="viewSwitch" class="space-nav" aria-label="Space views"></nav>
+        <span style="flex:1"></span>
+        <button id="viewPrimary" class="btn-tinted" style="display:none"></button>
+      </div>
     </div>
     <div id="persona"></div>
     <div id="honesty"></div>
@@ -409,7 +425,7 @@
          central="объекты" into a signed manifest. -->
     <select id="wCentral">
       <option value="chat" data-i18n="ui.wiz.central.chat">chat</option><option value="objects" data-i18n="ui.wiz.central.objects">objects</option><option value="audio" data-i18n="ui.wiz.central.audio">audio</option>
-      <option value="members" data-i18n="ui.wiz.central.members">members</option><option value="telemetry" data-i18n="ui.wiz.central.telemetry">telemetry</option>
+      <option value="members" data-i18n="ui.wiz.central.members">members</option><option value="telemetry" data-i18n="ui.wiz.central.telemetry">telemetry</option><option value="field" data-i18n="ui.wiz.central.field">field</option>
     </select>
     <p class="hint" data-i18n="ui.wiz.presenceHint">custom presence states (comma separated, optional — they may not
     impersonate system properties like online/verified/delivered):</p>
@@ -1412,6 +1428,34 @@
   <p class="out" id="keepMsg"></p>
 </dialog>
 
+<!-- Marker composer (SP-3). A marker is a CLAIM about a place, so the
+     dialog shows what is being claimed: the kind as glyph cards (the same
+     picker idiom the object editor uses), the note, and — for kinds that
+     age — how long the claim speaks for. The coordinates are shown, never
+     edited: they came from the map, and a typed number would be a
+     different claim than the one the finger made. -->
+<dialog id="dlgMarker">
+  <h3 data-i18n="ui.marker.title">Place a marker</h3>
+  <p class="hint" id="markerAt"></p>
+  <div id="markerKindPick" class="kind-pick"></div>
+  <label data-i18n="ui.marker.note">Note</label>
+  <input id="markerText" maxlength="120" data-i18n-ph="ui.marker.ph.note"
+         placeholder="what is here (optional)">
+  <p class="hint" id="markerTtlHint" style="display:none"
+     data-i18n="ui.marker.ttl_hint">A hazard can be temporary. After it expires the
+    marker stays as history, dimmed — never as present danger.</p>
+  <div class="row" id="markerTtlRow" style="display:none">
+    <label for="markerTtl" data-i18n="ui.marker.ttl">Speaks for</label>
+    <select id="markerTtl"></select>
+  </div>
+  <p class="hint" id="markerMsg"></p>
+  <div class="row">
+    <button class="btn-tinted" id="markerPlace" data-on-click="254"
+            data-i18n="ui.marker.place">Place</button>
+    <button class="btn-plain" data-on-click="255" data-i18n="ui.marker.cancel">Cancel</button>
+  </div>
+</dialog>
+
 <!-- Object editor (SP-1). One form for create and revise: a revision always
      carries the WHOLE record — the props textarea IS the new set, and a
      deleted line is a deleted prop. -->
@@ -1458,6 +1502,7 @@
 <script src="shelf.js"></script>
 <script src="objects.js"></script>
 <script src="field.js"></script>
+<script src="spacenav.js"></script>
 <script src="mentions.js"></script>
 <script src="objrefs.js"></script>
 <script src="quietrank.js"></script>

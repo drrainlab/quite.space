@@ -299,6 +299,8 @@ const UI_HANDLERS = [
   /* 251 click    */ (event, el) => { switchView('field'); },
   /* 252 click    */ (event, el) => { doorbellSet(true); },
   /* 253 click    */ (event, el) => { doorbellSet(false); },
+  /* 254 click    */ (event, el) => { fieldPlaceMarker(); },
+  /* 255 click    */ (event, el) => { document.getElementById('dlgMarker').close(); },
 ];
 
 /** Attach every handler declared in the markup.

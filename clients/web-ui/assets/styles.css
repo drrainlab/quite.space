@@ -1394,9 +1394,44 @@
     border-radius: 8px; padding: 7px 9px; font: inherit; margin: 0; }
 
   /* --- conversation header + members info drawer --- */
-  #convbar { display: flex; align-items: center; gap: 8px; padding: 8px 12px 8px 16px;
-    min-height: 48px; }
+  /* TWO STOREYS: identity above, the space's own architecture below. */
+  #convbar { display: flex; flex-direction: column; gap: 2px;
+    padding: 8px 12px 0 16px; }
+  .convbar-id { display: flex; align-items: center; gap: 8px; min-height: 34px; }
   #convTitle { font-weight: 600; font-size: calc(15px * var(--font-scale)); }
+  /* The archetype, said once and quietly: the title is the space's NAME,
+     this is what kind of place it is. */
+  .conv-sub { color: var(--dim); font-size: 12px; }
+  .conv-sub:not(:empty)::before { content: '· '; opacity: .5; }
+  /* A mark, not a sticker — it takes the header's own colour. */
+  .conv-mode { color: var(--acc); opacity: .75; font-size: 13px; }
+  /* The same mark in the space list, so a place is recognisable before
+     it is opened. */
+  .space-mode { color: var(--acc); opacity: .6; font-size: 11px; margin-right: 4px; }
+
+  /* The nav strip: almost-text tabs. The active one is brighter text and
+     a thin line under it, never a filled pill — this is part of the
+     space, not a row of controls stuck on top of it. */
+  .convbar-nav { display: flex; align-items: center; gap: 8px; min-height: 32px; }
+  .space-nav { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; }
+  .space-tab { background: none; border: 0; padding: 5px 10px 6px;
+    color: var(--dim); font-size: calc(13px * var(--font-scale));
+    font-family: inherit; cursor: pointer; border-radius: 0;
+    border-bottom: 2px solid transparent; min-height: 0;
+    transition: color .12s, border-color .12s; }
+  .space-tab:hover { color: var(--fg); }
+  .space-tab.sel { color: var(--fg); border-bottom-color: var(--acc);
+    text-shadow: 0 0 12px var(--glow); }
+  .space-more { letter-spacing: 1px; }
+  .space-more-menu { position: fixed; z-index: 60; display: flex; flex-direction: column;
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: var(--radius-md); padding: 4px; min-width: 120px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.35); }
+  .space-more-menu button { background: none; border: 0; text-align: left;
+    padding: 7px 10px; color: var(--fg); font-size: 13px; font-family: inherit;
+    cursor: pointer; border-radius: var(--radius-sm); }
+  .space-more-menu button:hover { background: var(--surface-raised); }
+  #viewPrimary { white-space: nowrap; }
   /* The panel's own class is kept for anything that still reads it; the
      FOLD is body.fold-info on the grid, so both sides work one way. */
   .info-toggle { cursor: pointer; }
@@ -3955,6 +3990,9 @@ div.reply-to { cursor: default; }
 .obs-entry .obs-goto { background: none; border: none; color: var(--acc);
   cursor: pointer; font-size: 12px; padding: 0; min-height: 0; }
 .obs-entry .obs-goto:hover { text-decoration: underline; }
+/* "tap the map" — said in the toolbar the eyes are already on */
+.field-placing { color: var(--acc); font-size: 12px; }
+
 /* a check-in is the same quiet row — loud ONLY when it carries SOS */
 .obs-entry.checkin-sos { color: #e0635c; font-weight: 600; }
 /* its claimed point, said beside the sentence in the quiet monospace of

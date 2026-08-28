@@ -249,6 +249,7 @@ func (a *APIServer) Handler() http.Handler {
 	mux.HandleFunc("GET /api/spaces/{id}/link", a.auth(a.handlePublicLink))
 	mux.HandleFunc("POST /api/spaces/{id}/join", a.auth(a.handlePublicJoin))
 	mux.HandleFunc("POST /api/spaces/{id}/policy", a.auth(a.handleRevisePolicy))
+	mux.HandleFunc("POST /api/spaces/{id}/central", a.auth(a.handleReviseCentral))
 	mux.HandleFunc("POST /api/spaces/{id}/mirror", a.auth(a.handleSetMirror))
 	// Sending a message somewhere else (SHARE-1). One act, one copy per
 	// target, each sealed with that space's own epoch.
