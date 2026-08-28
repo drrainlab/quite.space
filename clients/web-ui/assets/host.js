@@ -160,6 +160,29 @@ const HOST = (() => {
     pttCancel() {
       return call('pttCancel') === true;
     },
+
+    // ---- SP-3.2: the Field Session ----
+    // Recording is Android-only in v1, and the page learns that from the
+    // verbs' ABSENCE: on a desktop, or an older phone build, sweepAvailable
+    // answers false and the buttons never draw — a missing capability is
+    // a missing control, never a dead one.
+    sweepAvailable() {
+      return !!bridge && typeof bridge.startSweep === 'function';
+    },
+    // True = the machinery started (permission ask, service, the node's own
+    // start saga) — NOT "recording". The honest state arrives as
+    // window.quietSweep pushes, and GET /api/sweeps is the truth the page
+    // polls. False may simply mean "the host is asking for the location
+    // permission right now — press again" (the PTT discipline).
+    startSweep(spaceId, parentObjectId, taskId, name) {
+      return call('startSweep', spaceId, parentObjectId, taskId || '', name || '') === true;
+    },
+    // An empty result is deliberate vocabulary: the node records
+    // `undeclared` — the person pressed Stop without giving judgement,
+    // and the completion fact travels now rather than waiting for prose.
+    stopSweep(result, note) {
+      return call('stopSweep', result || '', note || '') === true;
+    },
   };
 })();
 

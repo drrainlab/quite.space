@@ -224,6 +224,33 @@ async function openObject(oid) {
     } catch (e) { console.error(e); }
   };
   actions.appendChild(arch);
+  // SP-3.2 — «Начать свип» on a geo-bearing object (a sector, a place).
+  // The button exists only where recording can: a host with the verbs
+  // (Android, v1). Everything else — desktop, an old build — renders and
+  // exports sweeps but never offers to start one; a missing capability is
+  // a missing control, not a dead one.
+  if (o.geo && o.kind !== 'sweep' && !o.archived &&
+      typeof HOST !== 'undefined' && HOST.sweepAvailable()) {
+    const sw = document.createElement('button');
+    sw.className = 'btn-tinted';
+    sw.textContent = '◉ ' + t('sweep.start');
+    sw.onclick = () => {
+      // The first open task on the sector rides along: completing the
+      // sweep with a judgement closes it (interrupted leaves it open —
+      // the node's law, not the page's).
+      const openTask = (o.tasks || []).find(c => c.status === 'open');
+      const ok = HOST.startSweep(current, oid, openTask ? openTask.id : '', o.name || '');
+      if (!ok) {
+        // Either the host is raising the location permission dialog right
+        // now (press again — the PTT discipline) or it refused. Said
+        // plainly either way; a silent button teaches a wrong lesson.
+        alert(t('sweep.start_failed'));
+      } else {
+        switchView('field');
+      }
+    };
+    actions.appendChild(sw);
+  }
   box.appendChild(head);
 
   // Reaction row on the stable target (same renderer as the feed).
@@ -648,7 +675,147 @@ async function setCandidate(oid, assetHex, reload) {
   } catch (e) { console.error(e); }
 }
 
+// ---- SP-3.2: the sweep card and its stop dialog ----
+
+// Stop with a judgement. The vocabulary is the wire's, closed:
+// nothing_found | found | undeclared — `interrupted` is never a person's
+// choice, it is the node's word for a sweep nobody finished. The prose
+// travels separately (a NoteObservation on the sector), so the radio-sized
+// fact never waits for a paragraph.
+function sweepStopDialog(sweepId, onDone) {
+  const dlg = document.getElementById('dlgSweepStop');
+  if (!dlg) return;
+  const pick = document.getElementById('sweepResultPick');
+  const note = document.getElementById('sweepNote');
+  pick.innerHTML = '';
+  note.value = '';
+  let chosen = '';
+  for (const r of ['nothing_found', 'found', '']) {
+    const b = document.createElement('button');
+    b.className = 'btn-plain';
+    b.dataset.result = r;
+    b.textContent = t(r ? 'sweep.result.' + r : 'sweep.result.undeclared');
+    b.onclick = () => {
+      chosen = r;
+      pick.querySelectorAll('button').forEach(x =>
+        x.classList.toggle('sel', x.dataset.result === r));
+    };
+    pick.appendChild(b);
+  }
+  document.getElementById('sweepStopCancel').onclick = () => dlg.close();
+  document.getElementById('sweepStopGo').onclick = async () => {
+    // The host stops CAPTURE and finalizes (Android); a node holding the
+    // session locally takes the POST directly. Both paths land on the same
+    // node-side state machine, which is the arbiter of racing stops.
+    let ok = false;
+    if (typeof HOST !== 'undefined' && HOST.sweepAvailable()) {
+      ok = HOST.stopSweep(chosen, note.value.trim());
+    }
+    if (!ok) {
+      try {
+        await api(`/api/sweeps/${sweepId}/stop`,
+          { method: 'POST', body: JSON.stringify({ result: chosen, note: note.value.trim() }) });
+        ok = true;
+      } catch (e) { console.error(e); }
+    }
+    dlg.close();
+    if (!ok) alert(t('sweep.stop_failed'));
+    else if (onDone) setTimeout(onDone, 800);
+  };
+  dlg.showModal();
+}
+
 const OBJ_RENDERERS = {
+  // SP-3.2 — the sweep card. THE EVENT WINS: the card's status chip above
+  // came from the object cache, but everything this section states is read
+  // from the space's sweep list, where the reducer's completion fact
+  // overrides whatever revision did or did not land (ADR-034).
+  sweep(box, o, oid) {
+    const sect = document.createElement('div');
+    box.appendChild(sect);
+    (async () => {
+      let fact = null;
+      let active = null;
+      try {
+        const r = await api(`/api/spaces/${current}/sweeps`);
+        fact = (r.sweeps || []).find(x => x.sweep_id === oid) || null;
+      } catch { /* an old node has no sweeps route */ }
+      try {
+        const r = await api('/api/sweeps');
+        active = (r.sweeps || []).find(x => x.sweep_id === oid) || null;
+      } catch { /* same */ }
+
+      objSectHead(sect, t('sweep.sweep'));
+      const card = document.createElement('div');
+      card.className = 'sweep-card';
+      const line = (k, v) => {
+        const row = document.createElement('div');
+        row.className = 'obj-prop';
+        const kk = document.createElement('span');
+        kk.className = 'obj-prop-k'; kk.textContent = k;
+        const vv = document.createElement('span');
+        vv.className = 'obj-prop-v'; vv.textContent = v;
+        row.appendChild(kk); row.appendChild(vv);
+        card.appendChild(row);
+      };
+      if (fact) {
+        line(t('sweep.result_k'), t('sweep.r_' + fact.result));
+        const started = new Date(fact.started_at * 1000);
+        const ended = new Date(fact.ended_at * 1000);
+        const mins = Math.max(0, Math.round((fact.ended_at - fact.started_at) / 60));
+        const two = n => String(n).padStart(2, '0');
+        line(t('sweep.when_k'),
+          `${two(started.getHours())}:${two(started.getMinutes())}–` +
+          `${two(ended.getHours())}:${two(ended.getMinutes())} · ${mins} min`);
+        line(t('sweep.distance_k'),
+          fact.distance_m >= 1000
+            ? (fact.distance_m / 1000).toFixed(1) + ' km'
+            : fact.distance_m + ' m');
+        sect.appendChild(card);
+        // Export: free projections of the canonical asset (ADR-033 —
+        // wire truth ≠ export format). The GPX splits <trkseg> at every
+        // gap; honesty survives the export.
+        if (fact.track_asset && !/^0+$/.test(fact.track_asset)) {
+          const exp = document.createElement('div');
+          exp.className = 'sweep-export';
+          const cap = document.createElement('span');
+          cap.className = 'obj-prop-k';
+          cap.textContent = t('sweep.export');
+          exp.appendChild(cap);
+          for (const fmt of ['gpx', 'geojson', 'csv']) {
+            const aEl = document.createElement('a');
+            aEl.className = 'btn-plain';
+            aEl.textContent = fmt.toUpperCase();
+            aEl.href = `/api/spaces/${current}/objects/${oid}/track.${fmt}` +
+              `?token=${encodeURIComponent(token)}`;
+            aEl.download = (o.name || 'sweep') + '.' + fmt;
+            exp.appendChild(aEl);
+          }
+          sect.appendChild(exp);
+        }
+      } else if (active) {
+        line(t('sweep.result_k'),
+          t(active.state === 2 ? 'sweep.recording' : 'sweep.suspended'));
+        line(t('sweep.distance_k'),
+          active.distance_m >= 1000
+            ? (active.distance_m / 1000).toFixed(1) + ' km'
+            : (active.distance_m || 0) + ' m');
+        sect.appendChild(card);
+        const stop = document.createElement('button');
+        stop.className = 'btn-tinted obj-sect-act';
+        stop.textContent = t('sweep.stop');
+        stop.onclick = () => sweepStopDialog(oid, () => openObject(oid));
+        sect.appendChild(stop);
+      } else {
+        // Neither a fact nor a live session: the sweep exists as an object
+        // (cache) but its completion has not reached this device. Say what
+        // the cache says and no more.
+        line(t('sweep.result_k'), o.status || t('sweep.recording'));
+        sect.appendChild(card);
+      }
+    })();
+  },
+
   release(box, o, oid) {
     objSectHead(box, t('studio.tracks'));
     const list = document.createElement('div');

@@ -320,6 +320,19 @@
   <button data-on-click="48" data-i18n="ui.attach.cancel">cancel</button></div>
 </dialog>
 
+<!-- SP-3.2: finishing a sweep. STATIC like every dialog here — the Back
+     gesture watcher (armBackClosesDialogs) observes the dialogs present at
+     load, so a dynamically minted one would not close on Back. Buttons are
+     wired from objects.js, not the positional handler table. -->
+<dialog id="dlgSweepStop">
+  <h3 data-i18n="sweep.stop_title">Finish the sweep</h3>
+  <p class="hint" data-i18n="sweep.result_label">What did the sweep find?</p>
+  <div id="sweepResultPick" class="sweep-result-pick"></div>
+  <textarea id="sweepNote" class="sweep-note" data-i18n-ph="sweep.note_ph"></textarea>
+  <div class="row"><button id="sweepStopGo" class="btn-tinted" data-i18n="sweep.stop">Finish</button>
+  <button id="sweepStopCancel" class="btn-plain" data-i18n="ui.object.cancel">cancel</button></div>
+</dialog>
+
 <dialog id="dlgVoiceReview">
   <h3 data-i18n="ui.voice.title">voice message</h3>
   <div id="voicePlayerHost"></div>
@@ -1500,6 +1513,7 @@
 <script src="resonance.js"></script>
 <script src="effects.js"></script>
 <script src="shelf.js"></script>
+<script src="track.js"></script>
 <script src="objects.js"></script>
 <script src="field.js"></script>
 <script src="spacenav.js"></script>

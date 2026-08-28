@@ -4087,6 +4087,28 @@ div.reply-to { cursor: default; }
 .field-ci { margin-left: auto; color: var(--dim); font-size: 12px; }
 .field-ci.sos { color: #e05555; font-weight: 600; }
 .field-ci.overdue { color: var(--warn, #d9a44a); }
+/* SP-3.2 — the active-sweep banner and the sweep card */
+.field-sweep-banner { display: flex; flex-direction: column; gap: 6px; }
+.field-sweep-row { display: flex; align-items: center; gap: 10px;
+  font-size: 13px; padding: 8px 12px; border: 1px solid var(--line);
+  border-radius: var(--radius-md); background: var(--panel); }
+.field-sweep-dot { width: 8px; height: 8px; border-radius: 50%;
+  background: var(--line); flex: none; }
+.field-sweep-dot.on { background: var(--acc);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--acc) 60%, transparent); }
+.field-sweep-name { color: var(--fg); font-weight: 500; }
+.field-sweep-meta { color: var(--dim); font-variant-numeric: tabular-nums; }
+.field-sweep-stop { margin-left: auto; }
+.sweep-card { display: flex; flex-direction: column; gap: 2px; }
+.sweep-export { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.sweep-export a { text-decoration: none; }
+.sweep-result-pick { display: flex; gap: 8px; margin: 8px 0; flex-wrap: wrap; }
+.sweep-result-pick button.sel { border-color: var(--acc); color: var(--acc); }
+.sweep-note { width: 100%; min-height: 72px; margin-bottom: 10px;
+  background: var(--surface, transparent); color: var(--fg);
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  padding: 8px; font: inherit; font-size: 13px; resize: vertical; }
+
 .field-cadence { display: flex; align-items: center; gap: 8px;
   font-size: 12px; color: var(--muted); }
 .field-cadence select { background: var(--panel); color: var(--fg);

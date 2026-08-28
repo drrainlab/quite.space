@@ -224,6 +224,28 @@ func TestMediaAvailabilityWording(t *testing.T) {
 	t.Logf("%s", out)
 }
 
+// TestTrackReaderPinnedToTheGoldenVector is the rope between two
+// implementations of one sealed format: protocol/field's TestTrackGoldenVector
+// asserts the bytes field.track.v1 encodes to, and this runs the REAL
+// clients/web-ui/assets/track.js (require'd, never copied) against those very
+// bytes. The harness checks the segment SHAPE above all — the gap law ("a
+// reader cannot join across a gap") lives in that shape, not in a comment.
+func TestTrackReaderPinnedToTheGoldenVector(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not available")
+	}
+	script := filepath.Join("..", "..", "scripts", "webui", "trackvector.cjs")
+	if _, err := os.Stat(script); err != nil {
+		t.Fatalf("the track harness is missing: %v", err)
+	}
+	out, err := exec.Command(node, script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("the JS track reader disagrees with the golden vector: %v\n%s", err, out)
+	}
+	t.Logf("%s", out)
+}
+
 // TestTheConnectionChipSaysWhatIsCarrying runs the chip's own decision against
 // the states a device is really in — including the two it used to get wrong: a
 // modem attached to an empty segment counted itself as a peer, and a radio

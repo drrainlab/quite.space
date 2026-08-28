@@ -27,6 +27,13 @@ const FIELD = {
   shareTimer: null,    // position emission loop
   placing: false,      // "tap the map to place a marker"
   resizeObs: null,
+  // SP-3.2 — sweeps. `sweeps` is the space's completed list (event wins);
+  // `actives` is THIS node's live sessions (GET /api/sweeps); `tracks`
+  // caches decoded track assets by hex — 'pending'/'failed' are states,
+  // so a broken asset is asked for once, not on every frame.
+  sweeps: null,
+  actives: null,
+  tracks: new Map(),
 };
 
 const FIELD_MARKER_GLYPHS = {
@@ -47,6 +54,14 @@ async function refreshField() {
   try {
     FIELD.data = await api(`/api/spaces/${current}/field`);
   } catch (e) { console.error(e); return; }
+  // SP-3.2: completed sweeps (the reducer's facts, event wins) and this
+  // node's live sessions. Both are allowed to fail without taking the map
+  // down — an old node simply has no sweeps.
+  try { FIELD.sweeps = (await api(`/api/spaces/${current}/sweeps`)).sweeps || []; }
+  catch { FIELD.sweeps = FIELD.sweeps || []; }
+  try { FIELD.actives = (await api('/api/sweeps')).sweeps || []; }
+  catch { FIELD.actives = FIELD.actives || []; }
+  fieldSweepBannerSync();
   fieldDrawAll();
 }
 
@@ -165,6 +180,15 @@ function fieldBuild(box) {
   };
   bar.appendChild(sos);
   box.appendChild(bar);
+
+  // SP-3.2 — the active-sweep banner: the in-app half of the session's
+  // visibility (the notification is the lock-screen half). Hidden until
+  // a live session exists on this node.
+  const sweepBan = document.createElement('div');
+  sweepBan.id = 'fieldSweepBanner';
+  sweepBan.className = 'field-sweep-banner';
+  sweepBan.style.display = 'none';
+  box.appendChild(sweepBan);
 
   // The canvas.
   const wrap = document.createElement('div');
@@ -554,6 +578,11 @@ function fieldDrawMap() {
     }
   }
 
+  // SP-3.2: completed sweep tracks — under the markers, over the intent
+  // lines. Where a route says "we meant to go here", a track says "we
+  // actually went", and its gaps stay gaps.
+  fieldDrawTracks(ctx, proj, acc, dim);
+
   // Markers: expired claims are HISTORY — dimmed, never present danger.
   for (const m of d.markers || []) {
     const x = proj.x(m.lon), y = proj.y(m.lat);
@@ -925,4 +954,138 @@ function fieldCheckin(sos) {
   if (navigator.geolocation) {
     navigator.geolocation.getCurrentPosition(send, () => send(null), { timeout: 5000, maximumAge: 60_000 });
   } else send(null);
+}
+
+
+// ---- SP-3.2: the Field Session on the map ----
+
+function fieldSweepMinutes(ms) {
+  const m = Math.max(0, Math.floor(ms / 60000));
+  return m >= 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${m} min`;
+}
+function fieldSweepKm(m) {
+  return m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${m} m`;
+}
+
+// The banner renders THIS NODE's live sessions. The poll (refreshField,
+// every 10 s) is the truth; window.quietSweep pushes are the responsiveness
+// between polls — an Android host pushes only while the page is visible,
+// and a banner that only updated while looked at would go stale in a
+// pocket, which is why the poll stays.
+function fieldSweepBannerSync() {
+  const ban = document.getElementById('fieldSweepBanner');
+  if (!ban) return;
+  const live = (FIELD.actives || []).filter(a => a.state === 2 || a.state === 3);
+  if (!live.length) { ban.style.display = 'none'; ban.innerHTML = ''; return; }
+  ban.style.display = '';
+  ban.innerHTML = '';
+  for (const a of live) {
+    const row = document.createElement('div');
+    row.className = 'field-sweep-row';
+    const dot = document.createElement('span');
+    dot.className = 'field-sweep-dot' + (a.state === 2 ? ' on' : '');
+    row.appendChild(dot);
+    const name = document.createElement('span');
+    name.className = 'field-sweep-name';
+    name.textContent = a.label || t('sweep.sweep');
+    row.appendChild(name);
+    const meta = document.createElement('span');
+    meta.className = 'field-sweep-meta';
+    const elapsed = a.started_at ? Date.now() - a.started_at * 1000 : 0;
+    meta.textContent = t(a.state === 2 ? 'sweep.recording' : 'sweep.suspended') +
+      ' · ' + fieldSweepMinutes(elapsed) + ' · ' + fieldSweepKm(a.distance_m || 0);
+    row.appendChild(meta);
+    const stop = document.createElement('button');
+    stop.className = 'btn-tinted field-sweep-stop';
+    stop.textContent = t('sweep.stop');
+    stop.onclick = () => sweepStopDialog(a.sweep_id, () => refreshField());
+    row.appendChild(stop);
+    ban.appendChild(row);
+  }
+}
+
+// The host's push (Android). The payload is a hint to redraw NOW; the poll
+// remains the source, so a malformed push costs one refresh, never a lie.
+window.quietSweep = function quietSweep(state) {
+  try {
+    if (state && (state.state === 'stopped' || state.state === 'recording')) {
+      if (typeof pubView !== 'undefined' && pubView === 'field') refreshField();
+    }
+  } catch (e) { console.warn('quiet: sweep push', e); }
+};
+
+// Completed tracks: decoded once per asset, drawn BY SEGMENT — the decoder
+// hands back segments between gaps, so joining across one is impossible by
+// construction (the brief's law, in the shape of the data).
+function fieldTrackFor(sweep) {
+  const hex = sweep.track_asset;
+  if (!hex || /^0+$/.test(hex)) return null;
+  const got = FIELD.tracks.get(hex);
+  if (got === 'pending' || got === 'failed') return null;
+  if (got) return got;
+  FIELD.tracks.set(hex, 'pending');
+  fetch(`/api/spaces/${current}/assets/${hex}`, { headers: { 'X-QP-Token': token } })
+    .then(r => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); })
+    .then(buf => {
+      FIELD.tracks.set(hex, trackDecode(new Uint8Array(buf)));
+      fieldScheduleDraw();
+    })
+    .catch(() => {
+      // Asked once; the asset may simply not have synced yet. The next
+      // space refresh clears the way for another try.
+      FIELD.tracks.set(hex, 'failed');
+    });
+  return null;
+}
+
+function fieldDrawTracks(ctx, proj, acc, dim) {
+  for (const sw of FIELD.sweeps || []) {
+    const tr = fieldTrackFor(sw);
+    if (!tr) continue;
+    // Segments: the walked line.
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = acc;
+    ctx.globalAlpha = 0.75;
+    for (const seg of tr.segments) {
+      if (seg.length < 2) {
+        if (seg.length === 1) {
+          ctx.beginPath();
+          ctx.arc(proj.x(seg[0].lon), proj.y(seg[0].lat), 2.2, 0, Math.PI * 2);
+          ctx.fillStyle = acc;
+          ctx.fill();
+        }
+        continue;
+      }
+      ctx.beginPath();
+      seg.forEach((pt, i) => {
+        const x = proj.x(pt.lon), y = proj.y(pt.lat);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    // Gaps: DRAWN AS GAPS — a dotted bridge with the claim written on it,
+    // never a solid line through a forest.
+    for (const g of tr.gaps) {
+      const a = tr.segments[g.afterSegment];
+      const b = tr.segments[g.afterSegment + 1];
+      if (!a || !b || !a.length || !b.length) continue;
+      const p1 = a[a.length - 1], p2 = b[0];
+      const x1 = proj.x(p1.lon), y1 = proj.y(p1.lat);
+      const x2 = proj.x(p2.lon), y2 = proj.y(p2.lat);
+      ctx.beginPath();
+      ctx.setLineDash([2, 5]);
+      ctx.strokeStyle = dim;
+      ctx.lineWidth = 1.2;
+      ctx.moveTo(x1, y1); ctx.lineTo(x2, y2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = dim;
+      ctx.font = '10px system-ui';
+      ctx.textAlign = 'center';
+      ctx.fillText(
+        t('sweep.gap_' + g.reason) + ' · ' + Math.round(g.durationMs / 1000) + ' s',
+        (x1 + x2) / 2, (y1 + y2) / 2 - 4);
+    }
+  }
 }
