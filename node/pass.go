@@ -210,7 +210,17 @@ func (r *Runtime) ensurePassPolling() {
 	r.wg.Add(1)
 	go func() {
 		defer r.wg.Done()
-		t := cadenceTicker(1)
+		// The door is watched CLOSELY only while somebody is home. A
+		// standing invite link is an unrevoked pass, and this loop used
+		// to poll its relay every two seconds for as long as the link
+		// existed — share a room once and the phone paid for the door
+		// forever. Foregrounded, the two-second watch stays: a person at
+		// the door while the owner is looking deserves an answer at
+		// conversation speed. Backgrounded, the knock waits with
+		// everything else — up to the background cadence, and the sync
+		// kick on returning wakes this loop's schedule too (the ticker
+		// re-arms on every pass, so the first foreground tick is fast).
+		t := time.NewTicker(r.syncInterval(cadence))
 		defer t.Stop()
 		for {
 			select {
@@ -222,6 +232,7 @@ func (r *Runtime) ensurePassPolling() {
 			for addr := range r.passRelays() {
 				r.pollPassRequests(addr)
 			}
+			t.Reset(r.syncInterval(cadence))
 		}
 	}()
 }

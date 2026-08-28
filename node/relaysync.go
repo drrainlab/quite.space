@@ -103,6 +103,10 @@ const (
 const (
 	quietAfter = 60 * time.Second
 	quietEvery = 15
+	// planesEvery spaces out the identity/knock mailbox fetches in the
+	// foreground (every 5th tick — 10s as shipped): they multiply by
+	// every once-advertised ingress and neither plane is a conversation.
+	planesEvery = 5
 	// seedEvery is the quiet cadence for a node that SEEDS a space: how
 	// often it looks for other people's media requests. Faster than the
 	// ordinary quiet tier and slower than every tick — about six seconds at
@@ -194,9 +198,18 @@ func (r *Runtime) applyRelaySync(addr string, interval time.Duration) {
 		case <-stop:
 			return
 		}
-		t := time.NewTicker(interval)
+		// The ticker is REARMED to the attention state's interval after
+		// every pass (node/foreground.go): two seconds while somebody is
+		// looking, backgroundMultiplier times that while nobody is. A
+		// plain NewTicker held the radio in its high-power state around
+		// the clock — the idle phone's whole battery bill, measured.
+		// Reset-after-pass rather than a second channel: a kick already
+		// wakes the loop out of turn, and the first pass after it re-arms
+		// at whatever the state now earns.
+		t := time.NewTicker(r.syncInterval(interval))
 		defer t.Stop()
 		r.relaySyncOnce(addr) // an immediate first pass
+		t.Reset(r.syncInterval(interval))
 		last := time.Now()
 		for {
 			select {
@@ -206,6 +219,7 @@ func (r *Runtime) applyRelaySync(addr string, interval time.Duration) {
 				return
 			case <-r.syncKick:
 				r.relaySyncOnce(addr)
+				t.Reset(r.syncInterval(interval))
 			case <-t.C:
 				// THE FIRST TICK AFTER A SLEEP IS NOT AN ORDINARY TICK, and
 				// this loop is where it is cheapest to notice: it runs on a
@@ -221,6 +235,7 @@ func (r *Runtime) applyRelaySync(addr string, interval time.Duration) {
 				}
 				last = now
 				r.relaySyncOnce(addr)
+				t.Reset(r.syncInterval(interval))
 			}
 		}
 	}()
@@ -672,13 +687,22 @@ func (r *Runtime) relaySyncOnce(addr string) {
 	// measured as "the phone's grant sat on the relay the Mac had moved
 	// away from" — a sibling that changed relays drained its old space
 	// mailboxes and silently stopped draining its old identity one.
-	for _, ingress := range ingresses {
-		r.fetchGrants(ingress)
-		// The knock mailbox rides the same heartbeat and the same
-		// every-ingress rule (ADR-027): somebody asking to talk must not
-		// be lost because this device moved relays since they last heard
-		// where to find it.
-		r.fetchKnocks(ingress)
+	//
+	// ON A SPARSE TICK, not every tick. These fetches multiply by every
+	// once-advertised ingress — the pre-T4 fence keeps dead ones on the
+	// list — and neither plane is a conversation: a grant converging in
+	// ten seconds instead of two changes nothing anybody watches, and a
+	// knock's own TTL is a day. In the background the whole cycle is
+	// already a minute, and every minute-cycle runs them.
+	if !r.foregrounded() || tick%planesEvery == 0 {
+		for _, ingress := range ingresses {
+			r.fetchGrants(ingress)
+			// The knock mailbox rides the same heartbeat and the same
+			// every-ingress rule (ADR-027): somebody asking to talk must
+			// not be lost because this device moved relays since they
+			// last heard where to find it.
+			r.fetchKnocks(ingress)
+		}
 	}
 
 	rs.mu.Lock()

@@ -578,6 +578,7 @@ class QuietActivity : ComponentActivity() {
         // does, a message for the conversation being read still notifies,
         // which is the safe direction to be wrong in.
         controller.notifications.onForeground(true)
+        controller.setForeground(true)
         applyPermissionState()
         // AR-1c — THE MODE COMES BACK HERE, AND ONLY HERE.
         //
@@ -622,6 +623,7 @@ class QuietActivity : ComponentActivity() {
         controller.setPttSink(null)
         controller.setSpeakingSink(null)
         controller.notifications.onForeground(false)
+        controller.setForeground(false)
         super.onPause()
     }
 

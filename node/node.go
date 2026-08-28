@@ -207,6 +207,10 @@ type Runtime struct {
 	// measured cost of politely waiting was the first third of every
 	// "фото ооочень медленно стартовало".
 	syncKick chan struct{}
+	// backgrounded is 1 while no person is looking (node/foreground.go).
+	// An atomic rather than a field under r.mu: read on every loop tick,
+	// including ticks that deliberately avoid the runtime lock.
+	backgrounded atomic.Int64
 	// rideAhead: assets whose BYTES should ride the next background push,
 	// once. Armed at the moment of sending — the one moment the sender is
 	// certainly awake — so a recipient's fetch finds the bytes already in

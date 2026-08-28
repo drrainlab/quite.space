@@ -77,7 +77,16 @@ func (r *Runtime) StartLAN(listenAddr, announceAddr string) error {
 		t := cadenceTicker(announceEvery)
 		defer t.Stop()
 		for {
-			r.announceOnce(announceAddr, port, selfNonce)
+			// A pocket does not need to be discoverable. The multicast
+			// TX every three seconds is pure spend with the screen dark —
+			// LAN delivery is a convenience the relay covers the moment
+			// it stops — so announcing pauses with attention and resumes
+			// with it. The LISTENER stays up: a peer that still announces
+			// can be heard for free, and the Android shell releases its
+			// multicast lock in the background anyway.
+			if r.foregrounded() {
+				r.announceOnce(announceAddr, port, selfNonce)
+			}
 			select {
 			case <-r.stop:
 				return

@@ -118,6 +118,7 @@ func main() {
 		ShowLabel:   "Show Quite Space",
 		QuitLabel:   "Quit",
 		DevTools:    debug,
+		OnAttend:    shell.SetForeground,
 		OnQuit:      shell.Shutdown,
 	})
 	// Belt and braces: OnQuit already ran, and Shutdown is a sync.Once, so

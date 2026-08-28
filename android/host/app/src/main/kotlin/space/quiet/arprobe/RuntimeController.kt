@@ -598,9 +598,13 @@ class RuntimeController private constructor(appContext: Context) {
                 // Multicast is dropped by the Wi-Fi stack unless a lock is
                 // held, and LAN discovery IS multicast — without this the
                 // phone announces into the void and hears nobody (T6-LAN).
-                // Held for the node's lifetime, released in stop(); the
-                // battery cost is the price of "stay connected", which is
-                // already this app's default posture.
+                // Held while a person is LOOKING and released with the
+                // screen (setForeground below): a pocket does not need to
+                // be discoverable, the relay covers delivery the moment
+                // LAN stops, and a held lock keeps the Wi-Fi chip from
+                // filtering multicast — a steady drain the energy survey
+                // put on the bill by name.
+                lanWanted = withLAN
                 if (withLAN) acquireMulticast()
                 Quietcore.startAs(
                     dataDir().absolutePath,
@@ -621,6 +625,30 @@ class RuntimeController private constructor(appContext: Context) {
     }
 
     private var multicast: WifiManager.MulticastLock? = null
+    @Volatile private var lanWanted = false
+
+    /**
+     * The shell's one honest bit about attention, forwarded to the core
+     * (which stretches its relay heartbeat in the background — the idle
+     * radio was the battery bill) and applied to the multicast lock
+     * (which the Wi-Fi chip pays for even in a pocket). Called from the
+     * activity's own resume/pause, beside the notification coordinator's
+     * identical signal.
+     */
+    fun setForeground(fg: Boolean) {
+        worker.execute {
+            try {
+                Quietcore.setForeground(fg)
+            } catch (t: Throwable) {
+                Log.w(TAG, "setForeground", t)
+            }
+            if (fg) {
+                if (lanWanted) acquireMulticast()
+            } else {
+                releaseMulticast()
+            }
+        }
+    }
 
     private fun acquireMulticast() {
         try {

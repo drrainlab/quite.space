@@ -61,6 +61,12 @@ type Options struct {
 	// AND after the run loop returns for any other reason, so it MUST be
 	// idempotent — which is why the shell's Shutdown is a sync.Once.
 	OnQuit func()
+	// OnAttend fires on the native key-window edges with true when the
+	// window became the one somebody is working in. The shell forwards it
+	// to the node, which stretches its relay heartbeat while nobody looks
+	// — a laptop on battery pays the same radio bill a phone does, only
+	// slower.
+	OnAttend func(focused bool)
 }
 
 // Run owns the process until the application quits.
@@ -98,6 +104,9 @@ func Run(o Options) error {
 	// set here too, so a page that has not finished loading its scripts
 	// still starts in the right state.
 	attend := func(focused bool) {
+		if o.OnAttend != nil {
+			o.OnAttend(focused)
+		}
 		if focused {
 			win.ExecJS(`document.body.classList.remove('unfocused');` +
 				`window.dispatchEvent(new Event('focus'))`)

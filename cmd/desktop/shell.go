@@ -158,6 +158,20 @@ func (s *Shell) open(c lockgate.Credentials) error {
 	return nil
 }
 
+// SetForeground forwards the window's attention edge to the node, which
+// stretches its relay heartbeat while nobody looks. Safe before the gate
+// opens — a locked shell has no node yet, and the first thing an opened
+// one hears is the CURRENT state, because Await runs after the window
+// exists and the runtime defaults to foregrounded anyway.
+func (s *Shell) SetForeground(fg bool) {
+	s.mu.Lock()
+	rt := s.rt
+	s.mu.Unlock()
+	if rt != nil {
+		rt.SetForeground(fg)
+	}
+}
+
 // Shutdown closes the node once, whatever asks for it — the tray's Quit, an
 // OS shutdown, or the run loop returning. Runtime.Close is idempotent and
 // bounded on its own (DS-1b); the Once here is about the two OTHER callers

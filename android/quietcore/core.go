@@ -399,3 +399,18 @@ func readProcStartTicks() string {
 	}
 	return f[19] // field 22 overall
 }
+
+// SetForeground is the shell's one honest bit about attention: true while
+// a person is looking at the app, false when the screen went dark or the
+// app left the front. It is what lets the node stretch its relay
+// heartbeat in a pocket — the idle radio bill was the phone's whole
+// battery story — and snap back before the screen finishes waking.
+// Safe to call in any state; a node that is not running ignores it.
+func SetForeground(fg bool) {
+	stateMu.Lock()
+	r := rt
+	stateMu.Unlock()
+	if r != nil {
+		r.SetForeground(fg)
+	}
+}
