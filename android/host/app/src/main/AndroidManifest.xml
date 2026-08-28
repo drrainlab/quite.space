@@ -6,6 +6,17 @@
          screen that asks for it: a permission declared before anything can
          use it is a promise with nothing behind it. A refusal is an ordinary
          state — the node still syncs and the log is still the truth. -->
+    <!-- EN-3: Android 11+ package visibility hides other apps' receivers
+         unless the intent is declared here — without this line the
+         distributor scan returns empty on a phone with ntfy installed,
+         and the doorbell's switch looks dead. Found live, on exactly
+         that phone. -->
+    <queries>
+        <intent>
+            <action android:name="org.unifiedpush.android.distributor.REGISTER" />
+        </intent>
+    </queries>
+
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- LAN discovery (T6-LAN): announces ride multicast UDP, and Android

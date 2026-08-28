@@ -197,6 +197,12 @@ func (r *Runtime) SetSettings(s Settings) error {
 	}
 	r.ks.Settings = b
 	err = r.saveKeystore()
+	// The doorbell endpoint changed: end every parked session so the next
+	// park carries the new truth at once. An off switch that stays
+	// registered until the bucket rotates is not an off switch (EN-3).
+	if s.PushEndpoint != cur.PushEndpoint {
+		defer r.BounceListeners()
+	}
 	// Restart the loop when the address, the cadence OR THE MODE changed.
 	//
 	// The mode used to be missing from this list, and the consequence was

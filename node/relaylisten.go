@@ -191,11 +191,18 @@ func (r *Runtime) runListener(addr string, stop, done chan struct{}) {
 	rotate := time.NewTimer(untilRotate)
 	defer rotate.Stop()
 	sessionStop := make(chan struct{})
+	epoch := r.listenEpoch()
 	go func() {
 		select {
 		case <-stop:
 		case <-r.stop:
 		case <-rotate.C:
+		case <-epoch:
+			// Somebody changed what a park should carry — the doorbell
+			// switch, most immediately. The session ends and the manager
+			// re-parks within a tick with the new truth; waiting out a
+			// bucket rotation would leave an OFF switch registered for
+			// hours, which is not what "off" means.
 		}
 		close(sessionStop)
 	}()
@@ -286,6 +293,32 @@ func (r *Runtime) listenBackoff(addr string) (time.Time, bool) {
 type listenRetryState struct {
 	at       time.Time
 	failures uint
+}
+
+// listenEpoch is the channel the CURRENT listener sessions watch;
+// bounceListeners closes it, ending every session so the manager re-parks
+// with whatever changed. Lazily created so a runtime that never listens
+// never allocates it.
+func (r *Runtime) listenEpoch() <-chan struct{} {
+	r.listenMu.Lock()
+	defer r.listenMu.Unlock()
+	if r.listenEpochCh == nil {
+		r.listenEpochCh = make(chan struct{})
+	}
+	return r.listenEpochCh
+}
+
+// BounceListeners ends every parked session so the next park carries the
+// current settings — called when the push endpoint changes, because an
+// off switch that stays registered until the next bucket rotation is not
+// an off switch.
+func (r *Runtime) BounceListeners() {
+	r.listenMu.Lock()
+	defer r.listenMu.Unlock()
+	if r.listenEpochCh != nil {
+		close(r.listenEpochCh)
+		r.listenEpochCh = nil
+	}
 }
 
 // nextBucketRotation is the wall-clock moment the current hint bucket

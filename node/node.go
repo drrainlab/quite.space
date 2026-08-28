@@ -216,9 +216,10 @@ type Runtime struct {
 	backgrounded atomic.Int64
 	// EN-2 relay push: healthy parked listeners, and the per-ingress
 	// retry schedule (node/relaylisten.go).
-	listenParked atomic.Int64
-	listenMu     sync.Mutex
-	listenRetry  map[string]listenRetryState
+	listenParked  atomic.Int64
+	listenMu      sync.Mutex
+	listenRetry   map[string]listenRetryState
+	listenEpochCh chan struct{}
 	// rideAhead: assets whose BYTES should ride the next background push,
 	// once. Armed at the moment of sending — the one moment the sender is
 	// certainly awake — so a recipient's fetch finds the bytes already in
