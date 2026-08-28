@@ -153,7 +153,22 @@ class HostBridgeTest {
         val readable = HostBridge::class.java.declaredMethods
             .filter { it.isAnnotationPresent(android.webkit.JavascriptInterface::class.java) }
         assertTrue("the bridge must expose something", readable.isNotEmpty())
+        // EN-3 bent the letter once, deliberately and narrowly: the doorbell
+        // status is a closed-vocabulary word about the PHONE'S OWN doorbell
+        // ("off" / "no_distributor" / ...), so the settings row can say a
+        // true sentence instead of a dead switch. It is not a getter for
+        // anything the token check protects. The exemption is BY NAME —
+        // a second String-returning verb still fails here and has to argue
+        // its way into this list.
+        val statusWords = setOf("doorbellStatus")
         for (m in readable) {
+            if (m.name in statusWords) {
+                assertEquals(
+                    "${m.name} answers with a status word",
+                    java.lang.String::class.java, m.returnType,
+                )
+                continue
+            }
             assertEquals(
                 "${m.name} returns ${m.returnType}: only a boolean may cross back",
                 java.lang.Boolean.TYPE, m.returnType,
