@@ -240,6 +240,21 @@ func (r *Runtime) FetchTile(ctx context.Context, z, x, y int) ([]byte, error) {
 }
 
 func (r *Runtime) fetchTileUpstream(ctx context.Context, ts *tileState, tpl, key string, z, x, y int) ([]byte, error) {
+	// LOOK AGAIN BEFORE SPENDING A REQUEST. Between this caller's cache
+	// miss and the moment it claimed the tile, another one may have
+	// finished the very same fetch and written it: the leader saves and
+	// THEN drops its in-flight entry, so a straggler that missed the cache
+	// a moment earlier finds no leader to follow and becomes a second one.
+	//
+	// The window is narrow on fast iron and wide under the race detector,
+	// which is where CI caught it. It is not a correctness bug — the
+	// second request returns the same pixels — but it is a request to
+	// somebody's donated capacity that nobody needed, and the OSM policy
+	// we chose to honour is made of exactly such requests. Panning a map
+	// asks for the same tile from two draws all the time.
+	if data, err := r.root.LoadSealed(key); err == nil {
+		return data, nil
+	}
 	// THE GATE RUNS BEFORE THE SOCKET OPENS — the dial itself is the
 	// disclosure (connectivity doctrine). Offline/radio-only: cache or
 	// nothing, no exception for "just one tile".

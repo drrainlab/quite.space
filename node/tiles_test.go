@@ -151,6 +151,14 @@ func TestUpstreamDisciplineTwoLanesOneFlight(t *testing.T) {
 	defer rt.Close()
 
 	var inflight, high, hits atomic.Int64
+	// hold gates the SECOND phase. Single-flight only coalesces requests
+	// that genuinely overlap, so a test that launches eight goroutines and
+	// hopes they overlap is testing the scheduler, not the code: on a fast
+	// machine the first can finish before the last has started, and then
+	// the assertion is measuring luck. CI's slower two-core runner is what
+	// exposed that — so the overlap is now made rather than wished for.
+	hold := make(chan struct{})
+	var gated atomic.Bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits.Add(1)
 		cur := inflight.Add(1)
@@ -161,6 +169,9 @@ func TestUpstreamDisciplineTwoLanesOneFlight(t *testing.T) {
 			}
 		}
 		defer inflight.Add(-1)
+		if gated.Load() {
+			<-hold
+		}
 		w.Header().Set("Content-Type", "image/png")
 		_, _ = w.Write(tinyPNG)
 	}))
@@ -181,8 +192,11 @@ func TestUpstreamDisciplineTwoLanesOneFlight(t *testing.T) {
 		t.Fatalf("upstream saw %d parallel fetches; the policy says %d", h, tileUpstreamConcurrency)
 	}
 
-	// One tile asked for 8 times at once: single-flight makes one request.
+	// One tile asked for 8 times AT ONCE: single-flight makes one request.
+	// The upstream is held open until every asker has had time to arrive,
+	// so "at once" is a fact of the test rather than a hope about timing.
 	before := hits.Load()
+	gated.Store(true)
 	wg = sync.WaitGroup{}
 	for i := 0; i < 8; i++ {
 		wg.Add(1)
@@ -191,6 +205,10 @@ func TestUpstreamDisciplineTwoLanesOneFlight(t *testing.T) {
 			_, _ = rt.FetchTile(t.Context(), 11, 7, 7)
 		}()
 	}
+	// The leader is now blocked inside the handler; the rest queue behind
+	// its in-flight entry. Releasing lets all eight finish from one fetch.
+	time.Sleep(300 * time.Millisecond)
+	close(hold)
 	wg.Wait()
 	if n := hits.Load() - before; n != 1 {
 		t.Fatalf("8 concurrent asks for one tile made %d upstream requests", n)
