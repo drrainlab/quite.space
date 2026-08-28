@@ -30,7 +30,10 @@
        already says "mine"; the tint only confirms it), incoming is nearly
        neutral graphite. The old 3-4% glass fills read violet because the
        sky's own hue leaked through them; these are darker and calmer. */
-    --bubble-own: rgba(35,27,38,.72); --bubble-other: rgba(24,22,27,.55);
+    /* Re-graded 2026-08-28 (owner's number): one neutral grey glass for both
+       sides — 74/74/74 at 28%. Lighter than the charcoal pair but far more
+       transparent; the blur carries legibility, the side still says "mine". */
+    --bubble-own: rgb(74 74 74 / 28%); --bubble-other: rgb(74 74 74 / 28%);
     --bubble-own-border: rgba(190,140,220,.07);
     --composer: rgba(21,18,23,.62); --composer-line: rgba(255,255,255,.055);
     /* geometry + type */
