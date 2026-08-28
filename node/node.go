@@ -124,6 +124,9 @@ type Runtime struct {
 	// tileState is the basemap tile machinery (SP-3.1), built lazily on
 	// the first tile request; nil until the Field view asks for one.
 	tileState *tileState
+	// sweeps are live recording sessions (SP-3.2), keyed by SweepID;
+	// identity and saga state persist in ks.Sweeps, fixes in the spool.
+	sweeps map[[16]byte]*sweepRuntime
 
 	// agent is the local assistant's participant (AI-0). Its own terminal
 	// and device keys, the person's principal as controller.
@@ -737,6 +740,10 @@ func Open(dataDir string, passphrase []byte, displayName string) (rt *Runtime, e
 	// saga does: reopened and re-driven, never merely present on disk.
 	r.resumeConnectors()
 	r.restoreInstruments()
+	// Sweeps restore the same promise: a session that was recording when
+	// the node went down is findable when it comes back — resumed within
+	// the grace, or finalized as interrupted with its track preserved.
+	r.restoreSweeps()
 	// The radio this device was last attached to, brought back on its own.
 	// Best effort by design — see restoreRadio: a radio that is unplugged, or
 	// that came back under a different serial path, must never stop somebody
