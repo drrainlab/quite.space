@@ -31,6 +31,24 @@ func (r *Runtime) pickHealthy(addrs []string) string {
 		if a == "" {
 			continue
 		}
+		// A RADIO SEGMENT IS NOT A RELAY, so the relay pool's breaker has
+		// no standing to judge it. It was judging it anyway: the pool
+		// cannot dial "radio:…", marks it offline, and this ladder then
+		// reports that the node has no rendezvous at all — so a person
+		// whose only rendezvous IS a radio segment was told to "set a
+		// relay in Settings", which is the relay they had already set.
+		// That is the exact sentence mintLink's own comment says was
+		// removed once before, arriving back through a different door.
+		//
+		// Found by the constrained-CPU run (docker --cpus=2) before the
+		// 1.0 tag: on fast iron the breaker had not gotten around to the
+		// address yet and the honest refusal came out, which is why the
+		// suite was green everywhere else. Slow iron is not a worse
+		// machine here — it is the one that gave the breaker time to be
+		// wrong, and it is also somebody's actual phone.
+		if custodyOf(a) == custodyLiveOnly {
+			return a
+		}
 		switch r.pool().health(a) {
 		case "untrusted", "offline":
 			continue

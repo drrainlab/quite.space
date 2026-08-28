@@ -122,9 +122,19 @@ Honest about the edges:
 - **Proven on hardware, still young:** LoRa radio. Two boards, no relay and no
   internet: an introduction, a joined space, and text both ways. Media over
   radio is not promised.
+- **New in this release, and young:** a doorbell for a sleeping phone. A
+  relay you have parked with can ring an opt-in push endpoint when mail
+  arrives — a contentless ping, never the message. It is off until you
+  turn it on, because the endpoint is a stable identifier handed to a
+  relay, and that is a trade worth making deliberately rather than by
+  default. Proven on one phone so far.
 - **Experimental:** the desktop shell, and both desktop packages are unsigned.
-- **Not built yet:** a wake plane for a sleeping phone, a general multi-hop
-  mesh, group calls.
+- **A limit worth knowing in the field:** a shared position travels one hop.
+  Two people on opposite sides of a relay-less segment will see each other
+  age to "unknown" rather than appear — honest, but a real edge if you are
+  planning around it. The measurement that would widen it is the next
+  hardware step ([ADR-031](adr/ADR-031-the-field-is-a-map-of-claims.md)).
+- **Not built yet:** a general multi-hop mesh, group calls.
 
 ## Licence
 

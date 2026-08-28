@@ -138,6 +138,21 @@ API-layer arithmetic over signed expiry and never enter the digest.
 hardware gate decides whether operational positions earn 3 — the
 decision lands here after measurement.
 
+**As shipped in 1.0.0-beta.1: it stays 1, and the measurement has not
+been done.** Saying so plainly is the point of this paragraph. A
+position therefore reaches direct neighbours only; on a segment where
+the people are two hops apart, the map ages to ○ rather than filling in
+— which is the honest failure and not a silent one, but it is a real
+limit somebody planning around this should know about before they walk
+into a valley.
+
+The pending measurement is Alice → hop → Bob on real boards. If it shows
+operational positions need 3, that is a change to a value this node
+CHOOSES when it emits, not to any format: the envelope field already
+exists and every replica already reads it. So it can land in a 1.x
+without touching the promise ADR-033 makes, and it is written down here
+so that nobody later mistakes the change for a broken freeze.
+
 ## Consequences
 
 A team can lose the internet, then the LAN, and keep a shared,
