@@ -14,9 +14,15 @@ const FIELD = {
   data: null,          // last /field bundle
   canvas: null,
   ctx: null,
-  // viewport: pan offset in CSS px, zoom as scale multiplier over fit
-  panX: 0, panY: 0, zoom: 1,
-  proj: null,          // computed each draw from data bbox
+  tiles: new Map(),    // "z/x/y" → basemap tile entry (LRU, decoded)
+  rafPending: false,   // one-shot redraw latch — never a running loop
+  // The viewport is ABSOLUTE (SP-3.1): a place in the world and a zoom
+  // level, not an offset over whatever the data happened to span. The
+  // old fit-relative form re-derived itself from the bbox on every 10 s
+  // poll, so an arriving marker moved the map under the person's hand.
+  // null = "not placed yet" — the next draw fits to content once.
+  view: null,          // {lat, lon, z} — z is continuous, tile-style
+  proj: null,          // computed each draw from FIELD.view
   timer: null,         // poll while the view is open
   shareTimer: null,    // position emission loop
   placing: false,      // "tap the map to place a marker"
@@ -51,6 +57,10 @@ function fieldTeardown() {
   if (FIELD.timer) { clearInterval(FIELD.timer); FIELD.timer = null; }
   fieldStopSharing(false);
   FIELD.placing = false;
+  // The viewport belongs to the space being looked at: leaving drops it
+  // so the next space fits to its OWN claims rather than opening on
+  // somebody else's valley.
+  FIELD.view = null;
 }
 
 function fieldOnEnter() {
@@ -89,6 +99,40 @@ function fieldBuild(box) {
   ind.className = 'field-share-ind';
   share.appendChild(ind);
   bar.appendChild(share);
+
+  // The basemap toggle, and its label is the disclosure (ADR-032): a
+  // tile request tells a server which square of the world is on this
+  // screen, so the switch says exactly that and starts OFF.
+  const base = document.createElement('label');
+  base.className = 'field-share';
+  const bcb = document.createElement('input');
+  bcb.type = 'checkbox';
+  bcb.checked = fieldBasemapOn();
+  bcb.onchange = async () => {
+    if (bcb.checked && !localStorage.getItem(FIELD_BASEMAP_ASKED)) {
+      let server = '';
+      try { server = (await api('/api/settings')).tiles.server; } catch { /* name it generically */ }
+      const ok = confirm(t('field.basemap_consent', { server: server || 'the tile server' }));
+      if (!ok) { bcb.checked = false; return; }
+      localStorage.setItem(FIELD_BASEMAP_ASKED, '1');
+    }
+    localStorage.setItem(fieldBasemapKey(), bcb.checked ? '1' : '0');
+    if (!bcb.checked) FIELD.tiles.clear();
+    fieldScheduleDraw();
+  };
+  base.appendChild(bcb);
+  const baseTxt = document.createElement('span');
+  baseTxt.textContent = t('field.basemap_label');
+  base.appendChild(baseTxt);
+  bar.appendChild(base);
+
+  // Fit is now an ACT, not a side effect of new data arriving: the map
+  // holds still under the hand and re-frames when asked.
+  const fitBtn = document.createElement('button');
+  fitBtn.className = 'btn-plain';
+  fitBtn.textContent = '⌖ ' + t('field.fit');
+  fitBtn.onclick = () => { FIELD.view = null; fieldScheduleDraw(); };
+  bar.appendChild(fitBtn);
 
   const spread = document.createElement('span');
   spread.style.flex = '1';
@@ -156,9 +200,34 @@ function fieldBuild(box) {
 
 // ---- projection ----
 
-// A local equirectangular projection about the content's own bbox:
-// x scaled by cos(lat0) so metres look like metres at this latitude.
-function fieldProjection(w, h) {
+// SPHERICAL WEB MERCATOR, the projection raster tiles are cut in (SP-3.1).
+// The world is the unit square: at zoom z it is S = 256·2^z CSS px across,
+// tile (x,y) at that zoom covers 1/2^z of it. Drawing tiles under any
+// other projection smears them, so the map adopts theirs rather than
+// asking them to adopt ours.
+//
+//   mercX(lon) = (lon + 180) / 360
+//   mercY(lat) = 0.5 − ln(tan(π/4 + lat/2)) / 2π      [lat clamped ±85.05]
+//
+// The returned closure keeps the same four functions every layer already
+// calls — x, y, invert, metersToPx — so nothing downstream changes.
+// metersToPx becomes latitude-honest here, which the accuracy rings and
+// the metre grid quietly wanted all along.
+const MERC_LAT_MAX = 85.05112878;
+const EARTH_CIRC_M = 40075016.686;
+
+function mercX(lon) { return (lon + 180) / 360; }
+function mercY(lat) {
+  const l = Math.max(-MERC_LAT_MAX, Math.min(MERC_LAT_MAX, lat)) * Math.PI / 180;
+  return 0.5 - Math.log(Math.tan(Math.PI / 4 + l / 2)) / (2 * Math.PI);
+}
+function mercLon(mx) { return mx * 360 - 180; }
+function mercLat(my) {
+  return (2 * Math.atan(Math.exp((0.5 - my) * 2 * Math.PI)) - Math.PI / 2) * 180 / Math.PI;
+}
+
+// fieldContentPoints: every claim that has a place. Used only to FIT.
+function fieldContentPoints() {
   const pts = [];
   const d = FIELD.data || {};
   for (const p of d.people || []) {
@@ -169,6 +238,14 @@ function fieldProjection(w, h) {
     if (o.geo) pts.push([o.geo.lat, o.geo.lon]);
     for (const pp of o.path || []) pts.push(pp);
   }
+  return pts;
+}
+
+// fieldFitView derives {lat, lon, z} from the claims on hand. It runs
+// when the view has not been placed yet and when the person presses
+// "fit" — never on a poll, which is what used to move the map.
+function fieldFitView(w, h) {
+  const pts = fieldContentPoints();
   if (!pts.length) return null;
   let minLat = 90, maxLat = -90, minLon = 180, maxLon = -180;
   for (const [la, lo] of pts) {
@@ -178,34 +255,162 @@ function fieldProjection(w, h) {
     if (lo > maxLon) maxLon = lo;
   }
   const lat0 = (minLat + maxLat) / 2;
-  const cos = Math.max(0.05, Math.cos(lat0 * Math.PI / 180));
   // A lone point is a place, not a bbox: open a ~600 m window around it
   // rather than zooming to a degenerate span where any accuracy circle
   // swallows the viewport (found by the owner's first solo share).
-  const minSpanDeg = 600 / 111320;
-  const spanX = Math.max((maxLon - minLon) * cos, minSpanDeg);
-  const spanY = Math.max(maxLat - minLat, minSpanDeg);
-  const pad = 0.82; // fit-to-content with breathing room
-  const scale = Math.min(w / spanX, h / spanY) * pad * FIELD.zoom;
-  const cx = (minLon + maxLon) / 2, cy = lat0;
+  const minSpanMerc = 600 / (EARTH_CIRC_M * Math.cos(lat0 * Math.PI / 180));
+  const spanX = Math.max(mercX(maxLon) - mercX(minLon), minSpanMerc);
+  const spanY = Math.max(mercY(minLat) - mercY(maxLat), minSpanMerc);
+  const S = 0.82 * Math.min(w / spanX, h / spanY); // fit with breathing room
+  const z = Math.max(1, Math.min(19, Math.log2(S / 256)));
   return {
-    x: (lon) => w / 2 + ((lon - cx) * cos) * scale + FIELD.panX,
-    y: (lat) => h / 2 - (lat - cy) * scale + FIELD.panY,
-    invert: (px, py) => [
-      cy + (h / 2 + FIELD.panY - py) / scale,
-      cx + (px - w / 2 - FIELD.panX) / (scale * cos),
-    ],
-    metersToPx: (m, lat) => (m / 111_320) * scale,
+    lat: mercLat((mercY(minLat) + mercY(maxLat)) / 2),
+    lon: (minLon + maxLon) / 2,
+    z,
   };
+}
+
+function fieldProjection(w, h) {
+  if (!FIELD.view) FIELD.view = fieldFitView(w, h);
+  if (!FIELD.view) return null;
+  const v = FIELD.view;
+  const S = 256 * Math.pow(2, v.z);
+  const cmx = mercX(v.lon), cmy = mercY(v.lat);
+  return {
+    scale: S,
+    x: (lon) => w / 2 + (mercX(lon) - cmx) * S,
+    y: (lat) => h / 2 + (mercY(lat) - cmy) * S,
+    invert: (px, py) => [
+      mercLat(cmy + (py - h / 2) / S),
+      mercLon(cmx + (px - w / 2) / S),
+    ],
+    metersToPx: (m, lat) =>
+      m * S / (EARTH_CIRC_M * Math.cos((lat === undefined ? v.lat : lat) * Math.PI / 180)),
+  };
+}
+
+// ---- the basemap (SP-3.1, ADR-032) ----
+//
+// A COURTESY, never a dependency: the map of claims is complete without
+// it, so every failure here degrades to paper rather than to a spinner.
+// The node is the only source (the page's CSP forbids talking to a tile
+// server directly), and it is also where consent and the connectivity
+// gate live — this file just draws what arrives.
+
+function fieldBasemapKey() { return 'qp.field.basemap.' + current; }
+const FIELD_BASEMAP_ASKED = 'qp.field.basemap.asked';
+const FIELD_TILE_CAP = 160;      // decoded tiles held in memory
+const FIELD_TILE_RETRY_MS = 60_000;
+
+function fieldBasemapOn() {
+  return localStorage.getItem(fieldBasemapKey()) === '1';
+}
+
+// fieldTile returns a cache entry, starting a load at most once per tile
+// and remembering failures so an offline pan does not retry every frame.
+function fieldTile(z, x, y) {
+  const key = z + '/' + x + '/' + y;
+  const cache = FIELD.tiles;
+  const hit = cache.get(key);
+  if (hit) {
+    if (hit.err && Date.now() < hit.retryAt) return hit;
+    if (!hit.err) { cache.delete(key); cache.set(key, hit); return hit; } // LRU touch
+  }
+  const entry = { img: new Image(), ok: false, err: false, retryAt: 0 };
+  entry.img.onload = () => { entry.ok = true; fieldScheduleDraw(); };
+  entry.img.onerror = () => {
+    // The node answers 404 both for "policy said no" and "upstream is
+    // unreachable". Either way the honest local move is the same: fall
+    // back to paper and try again later.
+    entry.err = true;
+    entry.retryAt = Date.now() + FIELD_TILE_RETRY_MS;
+    fieldScheduleDraw();
+  };
+  entry.img.src = `/api/tiles/${z}/${x}/${y}.png?token=${token}`;
+  cache.set(key, entry);
+  while (cache.size > FIELD_TILE_CAP) cache.delete(cache.keys().next().value);
+  return entry;
+}
+
+// fieldDrawTiles paints the basemap under everything else and reports
+// how many tiles actually landed — the caller uses that to decide
+// whether the paper grid is still the honest thing to show.
+function fieldDrawTiles(ctx, proj, w, h) {
+  if (!fieldBasemapOn() || !FIELD.view) return 0;
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const v = FIELD.view;
+  const S = proj.scale;
+  const tz = Math.max(0, Math.min(19, Math.floor(v.z) + (dpr >= 1.5 ? 1 : 0)));
+  const n = Math.pow(2, tz);
+  const tileSize = S / n;              // CSS px on screen per tile
+  if (!isFinite(tileSize) || tileSize <= 0) return 0;
+  const cmx = mercX(v.lon), cmy = mercY(v.lat);
+  const x0 = Math.floor((cmx - (w / 2) / S) * n);
+  const x1 = Math.floor((cmx + (w / 2) / S) * n);
+  const y0 = Math.max(0, Math.floor((cmy - (h / 2) / S) * n));
+  const y1 = Math.min(n - 1, Math.floor((cmy + (h / 2) / S) * n));
+  // A sanity bound: a viewport should never ask for hundreds of tiles.
+  if ((x1 - x0 + 1) * (y1 - y0 + 1) > 400) return 0;
+
+  // THE DARK RESTYLE IS A VIEW DECISION (ADR-032): the cache holds the
+  // originals, and the theme is applied here, at draw. Flipping the app
+  // to light restyles instantly and refetches nothing.
+  const dark = !document.documentElement.matches('[data-theme="light"]');
+  const canFilter = 'filter' in ctx;
+  if (canFilter) {
+    ctx.filter = dark
+      ? 'invert(1) hue-rotate(180deg) brightness(0.66) contrast(1.05) saturate(0.30)'
+      : 'saturate(0.8) brightness(1.02)';
+  }
+  let drawn = 0;
+  for (let tx = x0; tx <= x1; tx++) {
+    for (let ty = y0; ty <= y1; ty++) {
+      const wrapped = ((tx % n) + n) % n;
+      const e = fieldTile(tz, wrapped, ty);
+      if (!e.ok) continue;
+      const px = w / 2 + (tx / n - cmx) * S;
+      const py = h / 2 + (ty / n - cmy) * S;
+      // Snap to whole pixels and overdraw half a pixel: fractional tile
+      // edges leave hairline seams the eye reads as a broken map.
+      ctx.drawImage(e.img, Math.round(px), Math.round(py),
+        Math.ceil(tileSize) + 1, Math.ceil(tileSize) + 1);
+      drawn++;
+    }
+  }
+  if (canFilter) ctx.filter = 'none';
+  if (drawn) {
+    // Sink the result into the app's own near-black violet. Without
+    // ctx.filter this wash is the whole treatment, so it goes heavier.
+    ctx.fillStyle = dark
+      ? (canFilter ? 'rgba(24,16,28,0.35)' : 'rgba(13,10,16,0.55)')
+      : 'rgba(243,241,247,0.25)';
+    ctx.fillRect(0, 0, w, h);
+  }
+  return drawn;
+}
+
+// fieldDrawAttribution: ODbL credit, drawn whenever OSM pixels are on
+// screen. Part of rendering, not a footnote somebody can forget.
+function fieldDrawAttribution(ctx, w, h, dim) {
+  const label = '© OpenStreetMap contributors';
+  ctx.font = '10px ui-monospace, monospace';
+  ctx.textAlign = 'right';
+  const wide = ctx.measureText(label).width;
+  ctx.fillStyle = 'rgba(13,10,16,0.6)';
+  ctx.fillRect(w - wide - 12, h - 20, wide + 8, 14);
+  ctx.fillStyle = dim;
+  ctx.fillText(label, w - 8, h - 10);
 }
 
 // ---- drawing (redraw-on-event, no permanent loop) ----
 
-// The map's own paper (no basemap tiles yet — SP-3.1): a metre grid
-// anchored to WORLD coordinates, so it pans and zooms with the claims it
-// carries, plus a scale bar. Together they are what makes a dot on a dark
-// canvas read as a place on a map.
-function fieldDrawPaper(ctx, proj, w, h, line, dim) {
+// The map's own paper, and the honest fallback when the basemap is off
+// or has nothing to show: a metre grid anchored to WORLD coordinates, so
+// it pans and zooms with the claims it carries, plus a scale bar.
+// grid=false draws only the scale bar: with a basemap under it the metre
+// grid would be a second, contradicting map — but the bar still has to
+// say how far a screen inch is.
+function fieldDrawPaper(ctx, proj, w, h, line, dim, grid) {
   const [latC] = proj.invert(w / 2, h / 2);
   const pxPerM = proj.metersToPx(1, latC);
   if (!isFinite(pxPerM) || pxPerM <= 0) return;
@@ -220,20 +425,22 @@ function fieldDrawPaper(ctx, proj, w, h, line, dim) {
   // The visible window in world coordinates, from the projection itself.
   const [latTop, lonLeft] = proj.invert(0, 0);
   const [latBot, lonRight] = proj.invert(w, h);
-  ctx.strokeStyle = line;
-  ctx.globalAlpha = 0.45;
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  for (let lo = Math.ceil(lonLeft / stepLonDeg) * stepLonDeg; lo < lonRight; lo += stepLonDeg) {
-    const x = Math.round(proj.x(lo)) + 0.5;
-    ctx.moveTo(x, 0); ctx.lineTo(x, h);
+  if (grid) {
+    ctx.strokeStyle = line;
+    ctx.globalAlpha = 0.45;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let lo = Math.ceil(lonLeft / stepLonDeg) * stepLonDeg; lo < lonRight; lo += stepLonDeg) {
+      const x = Math.round(proj.x(lo)) + 0.5;
+      ctx.moveTo(x, 0); ctx.lineTo(x, h);
+    }
+    for (let la = Math.ceil(latBot / stepLatDeg) * stepLatDeg; la < latTop; la += stepLatDeg) {
+      const y = Math.round(proj.y(la)) + 0.5;
+      ctx.moveTo(0, y); ctx.lineTo(w, y);
+    }
+    ctx.stroke();
+    ctx.globalAlpha = 1;
   }
-  for (let la = Math.ceil(latBot / stepLatDeg) * stepLatDeg; la < latTop; la += stepLatDeg) {
-    const y = Math.round(proj.y(la)) + 0.5;
-    ctx.moveTo(0, y); ctx.lineTo(w, y);
-  }
-  ctx.stroke();
-  ctx.globalAlpha = 1;
   // Scale bar, bottom-left: one grid cell long, so the label explains
   // the grid at the same time.
   const barPx = step * pxPerM;
@@ -289,7 +496,17 @@ function fieldDrawMap() {
   }
   const d = FIELD.data;
 
-  fieldDrawPaper(ctx, proj, w, h, line, dim);
+  // The basemap goes UNDER everything, and the paper grid is what
+  // honestly stands in when it is off or has nothing yet — never a
+  // spinner, never an empty pretence that something is loading.
+  const tiles = fieldDrawTiles(ctx, proj, w, h);
+  fieldDrawPaper(ctx, proj, w, h, line, dim, tiles === 0);
+  if (tiles === 0 && fieldBasemapOn()) {
+    ctx.fillStyle = dim;
+    ctx.font = '11px system-ui';
+    ctx.textAlign = 'center';
+    ctx.fillText(t('field.basemap_none'), w / 2, 18);
+  }
 
   // Zones and places.
   for (const o of d.objects || []) {
@@ -385,6 +602,9 @@ function fieldDrawMap() {
     ctx.fillStyle = dim;
     ctx.fillText(fieldAge(pos.age_seconds), x + 9, y + 8);
   }
+
+  // Last, above every layer: whoever's pixels are underneath gets said.
+  if (tiles > 0) fieldDrawAttribution(ctx, w, h, dim);
 }
 
 function fieldAge(sec) {
@@ -456,9 +676,9 @@ function fieldWireCanvas(cv, host) {
     if (!dragging) return;
     const dx = ev.clientX - lastX, dy = ev.clientY - lastY;
     if (Math.abs(dx) + Math.abs(dy) > 2) moved = true;
-    FIELD.panX += dx; FIELD.panY += dy;
+    fieldPanBy(dx, dy);
     lastX = ev.clientX; lastY = ev.clientY;
-    fieldDrawMap();
+    fieldScheduleDraw();
   });
   cv.addEventListener('pointerup', (ev) => {
     dragging = false;
@@ -470,9 +690,9 @@ function fieldWireCanvas(cv, host) {
   });
   cv.addEventListener('wheel', (ev) => {
     ev.preventDefault();
-    const f = ev.deltaY < 0 ? 1.15 : 1 / 1.15;
-    FIELD.zoom = Math.min(64, Math.max(0.25, FIELD.zoom * f));
-    fieldDrawMap();
+    const r = cv.getBoundingClientRect();
+    fieldZoomAt(ev.clientX - r.left, ev.clientY - r.top, ev.deltaY < 0 ? 0.28 : -0.28);
+    fieldScheduleDraw();
   }, { passive: false });
   // Pinch: two pointers tracked crudely and honestly.
   let pinchDist = 0;
@@ -483,15 +703,60 @@ function fieldWireCanvas(cv, host) {
     const dy = ev.touches[0].clientY - ev.touches[1].clientY;
     const d = Math.hypot(dx, dy);
     if (pinchDist > 0) {
-      FIELD.zoom = Math.min(64, Math.max(0.25, FIELD.zoom * (d / pinchDist)));
-      fieldDrawMap();
+      const r = cv.getBoundingClientRect();
+      const mx = (ev.touches[0].clientX + ev.touches[1].clientX) / 2 - r.left;
+      const my = (ev.touches[0].clientY + ev.touches[1].clientY) / 2 - r.top;
+      fieldZoomAt(mx, my, Math.log2(d / pinchDist));
+      fieldScheduleDraw();
     }
     pinchDist = d;
   }, { passive: false });
   if (typeof ResizeObserver !== 'undefined' && !FIELD.resizeObs) {
-    FIELD.resizeObs = new ResizeObserver(() => fieldDrawMap());
+    FIELD.resizeObs = new ResizeObserver(() => fieldScheduleDraw());
     FIELD.resizeObs.observe(host);
   }
+}
+
+// fieldPanBy moves the CENTRE, not an offset: the viewport is a place in
+// the world, so dragging changes where we are, not how far we have
+// strayed from a fit that keeps moving.
+function fieldPanBy(dx, dy) {
+  const v = FIELD.view;
+  if (!v) return;
+  const S = 256 * Math.pow(2, v.z);
+  const cmx = mercX(v.lon) - dx / S;
+  const cmy = Math.max(0, Math.min(1, mercY(v.lat) - dy / S));
+  v.lon = mercLon(cmx);
+  v.lat = mercLat(cmy);
+}
+
+// fieldZoomAt zooms about a point on the canvas: whatever is under the
+// cursor (or between the fingers) STAYS there. Zooming about the centre
+// makes a basemap feel like it is fighting the hand.
+function fieldZoomAt(px, py, dz) {
+  const v = FIELD.view;
+  if (!v || !FIELD.proj) return;
+  const [alat, alon] = FIELD.proj.invert(px, py);
+  const cv = FIELD.canvas, host = cv && cv.parentElement;
+  const w = host ? host.clientWidth : 0, h = host ? host.clientHeight : 0;
+  v.z = Math.max(1, Math.min(19, v.z + dz));
+  const S = 256 * Math.pow(2, v.z);
+  const cmx = mercX(alon) - (px - w / 2) / S;
+  const cmy = Math.max(0, Math.min(1, mercY(alat) - (py - h / 2) / S));
+  v.lon = mercLon(cmx);
+  v.lat = mercLat(cmy);
+}
+
+// fieldScheduleDraw coalesces redraws into one animation frame. There is
+// still NO permanent loop (the hardware floor law): the latch arms only
+// when something actually happened — a gesture, a tile arriving, a poll.
+function fieldScheduleDraw() {
+  if (FIELD.rafPending) return;
+  FIELD.rafPending = true;
+  requestAnimationFrame(() => {
+    FIELD.rafPending = false;
+    fieldDrawMap();
+  });
 }
 
 // ---- marker placement ----
