@@ -430,6 +430,12 @@ func (p *Participant) Emit(s *Space, schema string, payload []byte,
 		// marker.placed.v1 deliberately has NO case here: a marker is an
 		// ordinary custodied message-lane event, and that silence is a
 		// decision (ADR-031 §7), not an omission.
+		//
+		// sweep.completed.v1 keeps the same silence for the same reason
+		// (ADR-034): a completion is a custodied FACT that must arrive
+		// and stay — no expiry, no priority, the Message lane. The
+		// track it names is an asset and never enters this switch at
+		// all.
 	}
 	// Epoch distribution stays plaintext (its wraps are already encrypted
 	// per device); everything else in a private space gets sealed.

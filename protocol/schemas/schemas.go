@@ -26,6 +26,7 @@ const (
 	AssetAnnotated      = "asset.annotated.v1"
 	ObservationPosition = "observation.position.v1"
 	MarkerPlaced        = "marker.placed.v1"
+	SweepCompleted      = "sweep.completed.v1"
 	CheckinSent         = "checkin.sent.v1"
 	ReceiptDelivery     = "receipt.delivery.v1"
 	DeviceCertified     = "identity.device_certified.v1"

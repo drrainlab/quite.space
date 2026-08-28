@@ -51,6 +51,12 @@ var radioAdmittedPrefixes = []string{
 	// generic 8 KiB object revision still answers to the size gates and
 	// is NOT claimed radio-express-safe (C3 stands for it).
 	"object.", "marker.", "checkin.",
+	// SP-3.2 (ADR-034): the completion fact of a recording session. The
+	// TRACK never rides here — it is an asset, and radio refuses blobs
+	// by construction; this is the one-frame sentence about what
+	// happened. Forgetting this line is the object. gap again: custody
+	// silently released at every bridge.
+	"sweep.",
 }
 
 // ErrTooLarge marks a frame that will never fit this carrier. It is not

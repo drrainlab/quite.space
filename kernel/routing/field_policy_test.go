@@ -13,6 +13,7 @@ func TestFieldFamiliesRadioAdmitted(t *testing.T) {
 		"marker.placed.v1",
 		"checkin.sent.v1",
 		"observation.position.v1", // rode the observation. family all along
+		"sweep.completed.v1", // SP-3.2: the completion fact (ADR-034)
 	}
 	for _, s := range admitted {
 		if !RadioAdmits(s, 200) {
