@@ -242,6 +242,16 @@ func (s *Space) absorb(a eventlog.Applied) {
 			})
 		}
 	}
+	if env.Schema == schemas.ObservationPosition && env.SourceTerminal != nil {
+		if p, err := schemas.DecodePositionObservation(env.Payload); err == nil {
+			s.Trust.UpdatePosition(claims.Position{
+				LatE7U: p.Point.LatE7U, LonE7U: p.Point.LonE7U,
+				AccuracyM: p.AccuracyM, EmittedAt: env.CreatedAt,
+				ExpiresAt: p.ExpiresAt, ObservedAt: p.ObservedAt,
+				Source: *env.SourceTerminal, EventID: a.ID,
+			})
+		}
+	}
 	if s.OnAbsorb != nil {
 		s.OnAbsorb(a)
 	}
@@ -394,6 +404,32 @@ func (p *Participant) Emit(s *Space, schema string, payload []byte,
 			headerExpiry = vo.ObservedAt + vo.StaleAfter
 			maxForwards = 1
 		}
+	case schemas.ObservationPosition:
+		// The presence twin (SP-3, ADR-031): ephemeral state patch, the
+		// signed TTL mirrored into the custody-expiry header, NoCustody —
+		// a relay holding a stale position is aging inventory, not
+		// preserving history. maxForwards=1 starts as presence's value;
+		// the multi-hop hardware gate decides whether operational
+		// positions earn 3 (the decision lands in ADR-031 after
+		// measurement — owner's amendment).
+		priority = signal.PriorityStatePatch
+		if po, err := schemas.DecodePositionObservation(payload); err == nil {
+			headerExpiry = po.ExpiresAt
+			maxForwards = 1
+		}
+	case schemas.CheckinSent:
+		// A check-in is a FACT, not a state: custodied (no expiry, no
+		// forwarding cap) — it must arrive, and «Katya checked in at
+		// 16:42» is still true tomorrow. SOS rides PriorityEmergency —
+		// the first use of the lane declared back in ADR-015: in the
+		// custody queue it outranks every message on the link.
+		priority = signal.PriorityMessage
+		if ci, err := schemas.DecodeCheckin(payload); err == nil && ci.SOS {
+			priority = signal.PriorityEmergency
+		}
+		// marker.placed.v1 deliberately has NO case here: a marker is an
+		// ordinary custodied message-lane event, and that silence is a
+		// decision (ADR-031 §7), not an omission.
 	}
 	// Epoch distribution stays plaintext (its wraps are already encrypted
 	// per device); everything else in a private space gets sealed.

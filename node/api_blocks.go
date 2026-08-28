@@ -21,6 +21,7 @@ import (
 
 	"github.com/drrainlab/quiet_places/kernel/assets"
 	"github.com/drrainlab/quiet_places/kernel/reducers"
+	"github.com/drrainlab/quiet_places/protocol/geo"
 	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/protocol/schemas"
 	"github.com/drrainlab/quiet_places/protocol/signal"
@@ -492,11 +493,15 @@ type entryResp struct {
 	Mentions     []string `json:"mentions,omitempty"`
 	MentionNames []string `json:"mention_names,omitempty"`
 	MentionsMe   bool     `json:"mentions_me,omitempty"`
-	Revised      bool     `json:"revised,omitempty"`
-	Caption      string   `json:"caption,omitempty"`
-	Alt          string   `json:"alt,omitempty"`
-	ThumbB64     string   `json:"thumb_b64,omitempty"`
-	ThumbMIME    string   `json:"thumb_mime,omitempty"`
+	// ObjectRefs/ObjectRefNames: the domain objects this message claims
+	// to be about (SP-2.1), names resolved here like mention_names.
+	ObjectRefs     []string `json:"object_refs,omitempty"`
+	ObjectRefNames []string `json:"object_ref_names,omitempty"`
+	Revised        bool     `json:"revised,omitempty"`
+	Caption        string   `json:"caption,omitempty"`
+	Alt            string   `json:"alt,omitempty"`
+	ThumbB64       string   `json:"thumb_b64,omitempty"`
+	ThumbMIME      string   `json:"thumb_mime,omitempty"`
 
 	Title      string `json:"title,omitempty"`
 	Artist     string `json:"artist,omitempty"`
@@ -514,6 +519,19 @@ type entryResp struct {
 	Seed   uint64            `json:"seed,omitempty"`
 	Params map[string]uint64 `json:"params,omitempty"`
 	Schema string            `json:"schema,omitempty"` // for unknown kinds
+
+	// ObjectID/ObservedAt: a human observation's edges (SP-1, kind
+	// "observation") — which domain object it is about, and the author's
+	// claim of when it was seen.
+	ObjectID   string `json:"object_id,omitempty"`
+	ObservedAt uint64 `json:"observed_at,omitempty"`
+
+	// SOS: a check-in's emergency truth (SP-3, kind "checkin"). The signed
+	// flag, never inferred from the text (ADR-031).
+	SOS bool `json:"sos,omitempty"`
+	// Geo: the check-in's claimed point, degrees at the JSON boundary —
+	// so the feed row can print the coordinates beside the sentence.
+	Geo *geoJSON `json:"geo,omitempty"`
 
 	Asset *assetResp `json:"asset,omitempty"`
 }
@@ -691,6 +709,17 @@ func (a *APIServer) projectEntry(tid id.TerminalID, sp *terminals.Space,
 				resp.MentionsMe = true
 			}
 		}
+		// Object refs resolve to names the way mentions do — a chip must
+		// read "CNC-01", not eight hex characters, and a ref to an object
+		// this replica has not seen yet still travels as its id.
+		for _, oid := range e.Content.Text.ObjectRefs {
+			resp.ObjectRefs = append(resp.ObjectRefs, hex.EncodeToString(oid[:]))
+			name := ""
+			if o, ok := sp.State.ObjectByID(oid); ok {
+				name = o.Record.Name
+			}
+			resp.ObjectRefNames = append(resp.ObjectRefNames, name)
+		}
 	case e.Content.Visual != nil:
 		v := e.Content.Visual
 		resp.Caption, resp.Alt, resp.Fallback = v.Caption, v.Alt, v.Fallback()
@@ -743,6 +772,27 @@ func (a *APIServer) projectEntry(tid id.TerminalID, sp *terminals.Space,
 		resp.Params = map[string]uint64{}
 		for _, p := range v.Params {
 			resp.Params[p.Name] = p.Value
+		}
+	case e.Content.Observation != nil:
+		// A human observation (SP-1): the feed's quiet row. The object id
+		// rides along so the row can deep-link to the object card.
+		o := e.Content.Observation
+		resp.Text = o.Text
+		if o.ObjectID != nil {
+			resp.ObjectID = hex.EncodeToString(o.ObjectID[:])
+		}
+		if o.ObservedAt != 0 {
+			resp.ObservedAt = o.ObservedAt
+		}
+	case e.Content.Checkin != nil:
+		// A contact fact (SP-3): the feed's quiet row — loud only when it
+		// carries SOS. Text is always present (the node's emit-path fallback
+		// law fills an empty note); consumers key on SOS, never on the text.
+		resp.Text = e.Content.Checkin.Text
+		resp.SOS = e.Content.Checkin.SOS
+		if c := e.Content.Checkin; c.HasPoint {
+			p := geo.Point{LatE7U: c.LatE7U, LonE7U: c.LonE7U}
+			resp.Geo = &geoJSON{Lat: p.LatDeg(), Lon: p.LonDeg()}
 		}
 	case e.Content.Unknown != nil:
 		resp.Schema = e.Content.Unknown.Schema

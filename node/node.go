@@ -121,6 +121,9 @@ type Runtime struct {
 	passes    *passRegistry
 	joins     map[string]*joinAttempt
 	llmClient *llm.Client // nil → default; injectable for tests
+	// tileState is the basemap tile machinery (SP-3.1), built lazily on
+	// the first tile request; nil until the Field view asks for one.
+	tileState *tileState
 
 	// agent is the local assistant's participant (AI-0). Its own terminal
 	// and device keys, the person's principal as controller.
@@ -207,6 +210,16 @@ type Runtime struct {
 	// measured cost of politely waiting was the first third of every
 	// "фото ооочень медленно стартовало".
 	syncKick chan struct{}
+	// backgrounded is 1 while no person is looking (node/foreground.go).
+	// An atomic rather than a field under r.mu: read on every loop tick,
+	// including ticks that deliberately avoid the runtime lock.
+	backgrounded atomic.Int64
+	// EN-2 relay push: healthy parked listeners, and the per-ingress
+	// retry schedule (node/relaylisten.go).
+	listenParked  atomic.Int64
+	listenMu      sync.Mutex
+	listenRetry   map[string]listenRetryState
+	listenEpochCh chan struct{}
 	// rideAhead: assets whose BYTES should ride the next background push,
 	// once. Armed at the moment of sending — the one moment the sender is
 	// certainly awake — so a recipient's fetch finds the bytes already in
@@ -745,6 +758,10 @@ func Open(dataDir string, passphrase []byte, displayName string) (rt *Runtime, e
 	} else if s.Relay != "" {
 		r.applyRelaySync(s.Relay, relayInterval(s))
 	}
+	// EN-2: the listening lane — parked connections that let the polls
+	// above stretch while the relay itself rings the doorbell.
+	r.wg.Add(1)
+	go r.relayListenLoop()
 	return r, nil
 }
 
@@ -1382,6 +1399,8 @@ func (r *Runtime) canWrite(st *spaceState) error {
 type SayOptions struct {
 	ReplyTo  *id.EventID
 	Mentions []id.PrincipalID
+	// ObjectRefs: the domain objects this message is about (SP-2.1).
+	ObjectRefs [][16]byte
 }
 
 func (r *Runtime) Say(tid id.TerminalID, text string, opt SayOptions) (id.EventID, error) {
@@ -1395,7 +1414,8 @@ func (r *Runtime) Say(tid id.TerminalID, text string, opt SayOptions) (id.EventI
 		return id.EventID{}, err
 	}
 	a, err := human.Say(r.Self, st.space, text,
-		human.SayOptions{ReplyTo: opt.ReplyTo, Mentions: opt.Mentions},
+		human.SayOptions{ReplyTo: opt.ReplyTo, Mentions: opt.Mentions,
+			ObjectRefs: opt.ObjectRefs},
 		uint64(time.Now().Unix()))
 	if err != nil {
 		return id.EventID{}, err

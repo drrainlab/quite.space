@@ -507,6 +507,7 @@ class NotificationCoordinator(
         foreground = resumed
     }
 
+
     /**
      * The space currently on screen, or null. Setting it does NOT mark
      * anything read: showing a conversation is what reads it, and that is

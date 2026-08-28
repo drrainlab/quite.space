@@ -264,6 +264,34 @@ function chimeSyncUI() {
   }
 }
 
+// EN-3 — the doorbell row. Host-only: the endpoint lives between the
+// phone's UnifiedPush distributor and the core; this page only ever
+// learns the STATE and prints the honest sentence for it.
+function doorbellSet(on) {
+  if (typeof HOST === 'undefined' || !HOST.present) return;
+  if (on) {
+    if (!HOST.doorbellOn()) { doorbellSyncUI('no_distributor'); return; }
+  } else {
+    HOST.doorbellOff();
+  }
+  setTimeout(doorbellSyncUI, 400); // registration is asynchronous
+}
+function doorbellSyncUI(forced) {
+  const row = document.getElementById('doorbellRow');
+  const note = document.getElementById('doorbellNote');
+  if (!row || typeof HOST === 'undefined' || !HOST.present) return;
+  row.style.display = '';
+  const st = forced || HOST.doorbellStatus();
+  pickSeg('setDoorbell', st === 'off' || st === 'no_distributor' ? 'off' : 'on');
+  const lines = {
+    no_distributor: t('ui.set.doorbell.none'),
+    registering: t('ui.set.doorbell.registering'),
+    on: t('ui.set.doorbell.live'),
+  };
+  note.textContent = lines[st] || '';
+  note.style.display = lines[st] ? '' : 'none';
+}
+
 function pickSeg(groupId, v) {
   document.querySelectorAll('#' + groupId + ' button').forEach(b =>
     b.classList.toggle('sel', b.dataset.v === v));
@@ -581,6 +609,7 @@ function relayIntervalField() {
 function syncSettingsUI() {
   if (typeof chimeSyncUI === 'function') chimeSyncUI();
   if (typeof LINKS !== 'undefined') LINKS.syncUI();
+  doorbellSyncUI();
   const lang = (typeof localeName === 'function') ? localeName() : 'en';
   document.querySelectorAll('#setLang button').forEach(b =>
     b.classList.toggle('sel', b.dataset.v === lang));
@@ -821,7 +850,16 @@ function showScreen(which) {
   if (compactScreen() && compactPane) setPanel(compactPane, true);
   if (which !== 'catalog' && typeof CAT !== 'undefined' && CAT.leaving) CAT.leaving();
   if (which !== 'signals' && typeof qrLeaving === 'function') qrLeaving();
-  const screens = { conversation: 'content', catalog: 'catalogScreen', signals: 'signalsScreen' };
+  // The transient reader is a SCREEN like the others. It used to manage
+  // its own display by hand, which meant this function could not take the
+  // column back from it: opening a post whose space was already held
+  // revealed the conversation UNDER a Discover screen nobody had hidden,
+  // and the grid grew a fourth child — the layout that came out crooked.
+  if (which !== 'preview' && typeof PREV !== 'undefined' && PREV.leaving) PREV.leaving();
+  const screens = {
+    conversation: 'content', catalog: 'catalogScreen',
+    signals: 'signalsScreen', preview: 'previewScreen',
+  };
   for (const [name, id] of Object.entries(screens)) {
     const el = document.getElementById(id);
     if (el) el.style.display = name === which ? '' : 'none';
@@ -1821,6 +1859,16 @@ async function refreshSpace() {
   const sp = currentSpace();
   const char = sp?.character;
   applyTheme(char);
+  // Space Mode v1 (ADR-029): central=objects reorders the view switch and
+  // picks the landing view — nothing below the UI ever reads it.
+  // Space Mode (ADR-029, widened in the nav wave): the declared centre
+  // orders the views, decides which earn a tab, and names the creation
+  // act on screen. Rebuilt only when the SPACE changes — navigation must
+  // not rearrange itself under a working hand.
+  if (typeof applySpaceNav === 'function' && navBuiltFor !== current) {
+    navBuiltFor = current;
+    applySpaceNav(char);
+  }
   loadSpaceAppearance(current);
   // Conversation header: title + invite (owned private) + info toggle.
   const convTitleEl = document.getElementById('convTitle');
@@ -1830,6 +1878,21 @@ async function refreshSpace() {
   if (convTitleEl.textContent !== convTitleText) convTitleEl.textContent = convTitleText;
   // Click to rename — owner only, and local only. The note under the input
   // says so; nothing here touches the space itself.
+  // The subtitle carries what the space IS, so the title can be only its
+  // name: archetype first (the character's own word), then access.
+  const sub = document.getElementById('convSub');
+  if (sub) {
+    const arch = char ? (ARCHETYPES[char.archetype]?.name || char.archetype) : '';
+    sub.textContent = arch;
+  }
+  const modeEl = document.getElementById('convMode');
+  if (modeEl && typeof navModeGlyph === 'function') {
+    modeEl.textContent = navModeGlyph(char);
+    modeEl.title = char ? (char.central || '') : '';
+  }
+  // A space nobody here may write in offers no creation act at all —
+  // the header stops advertising doors that answer 403.
+  document.body.classList.toggle('space-readonly', !!sp && sp.can_write === false);
   convTitleEl.style.cursor = sp?.owned ? 'text' : '';
   convTitleEl.title = sp?.owned ? 'Rename — for this device only' : '';
   convTitleEl.onclick = sp?.owned ? () => startRename(sp) : null;
@@ -1885,6 +1948,10 @@ async function refreshSpace() {
       mentionsReset();
       mentionsLoadMembers(current);
     }
+    if (typeof objrefsReset === 'function') {
+      objrefsReset();
+      objrefsLoadObjects(current);
+    }
     if (typeof OUTBOX !== 'undefined') OUTBOX.paint();
     // Tell the node which room is open: QuietRank stays quiet about the one
     // you are already reading.
@@ -1894,7 +1961,11 @@ async function refreshSpace() {
     // the node ranks attention with it, an Android host stops posting
     // notifications about the conversation on the screen.
     if (typeof HOST !== 'undefined') HOST.visibleSpace(current);
-    if (typeof pubView !== 'undefined' && pubView !== 'chat') switchView('chat');
+    // The landing view is the space's own (SP-1, ADR-029): central=objects
+    // opens on Objects, everything else opens on chat. This is the ONE
+    // place a space switch decides the view, so mode cannot fight it.
+    const home = char?.central === 'objects' ? 'objects' : 'chat';
+    if (typeof pubView !== 'undefined' && pubView !== home) switchView(home);
   }
   // Incremental feed render, four paths: (1) nothing changed → nothing
   // re-renders (a playing <video>/<audio> is never torn down); (2) appended
@@ -2015,16 +2086,12 @@ async function refreshSpace() {
   feedResCounts = new Map(entries.map(e => [e.id, resCounts(e.resonance)]));
 
   const st = await api(`/api/spaces/${current}/state`);
-  const cards = document.getElementById('cards');
-  cards.innerHTML = '';
-  for (const c of st.cards) {
-    const el = document.createElement('span');
-    el.className = 'card' + (c.status === 'done' ? ' done' : '');
-    el.textContent = `[${c.status}] ${c.title}`;
-    el.title = 'click to toggle status';
-    el.onclick = () => toggleCard(c);
-    cards.appendChild(el);
-  }
+  // The strip of "[open] title" chips above the chat was the SP-0 sketch
+  // of tasks. Tasks have a HOME now — the object card's checklist (SP-1)
+  // — and the sketch on top of every conversation was noise wearing a
+  // strikethrough. The #cards div stays (switchView addresses it); it
+  // just never fills again.
+  document.getElementById('cards').innerHTML = '';
   const parts = [];
   if (st.undecryptable > 0)
     parts.push(`<span class="warn">${esc(t('honesty.undecryptable', { count: st.undecryptable }))}</span>`);
@@ -2482,8 +2549,10 @@ async function say(e) {
     } catch (err) { alert(err.message); }
     return false;
   }
-  // Mentions travel as a signed structural field, not as text markup.
+  // Mentions travel as a signed structural field, not as text markup —
+  // and so do object references (SP-2.1), their object twin.
   const mentions = typeof mentionsPayload === 'function' ? mentionsPayload(inp.value) : [];
+  const objectRefs = typeof objrefsPayload === 'function' ? objrefsPayload(inp.value) : [];
   try {
     // In the assistant's space a message is a QUESTION: the node emits it
     // as your event and then asks the provider. Sending it the ordinary way
@@ -2511,6 +2580,7 @@ async function say(e) {
     OUTBOX.enqueue(current, inp.value, {
       reply_to: replyTarget ? replyTarget.id : undefined,
       mentions,
+      object_refs: objectRefs,
       card: staged ? staged.card : undefined,
       bare: staged ? staged.bare : false,
     });
@@ -2519,6 +2589,7 @@ async function say(e) {
     cancelReply();
     if (typeof LINKS !== 'undefined') LINKS.reset();
     if (typeof mentionsReset === 'function') mentionsReset();
+    if (typeof objrefsReset === 'function') objrefsReset();
     // Your own send always answers with itself on screen — stickiness is
     // for READING; the author just spoke.
     const logEl = document.getElementById('log');
@@ -3048,13 +3119,6 @@ function openInviteFromPass() {
   openInvite({ id: passSpace, title: sp?.title, display_title: sp?.display_title });
 }
 
-
-async function toggleCard(c) {
-  const next = c.status === 'open' ? 'done' : 'open';
-  await api(`/api/spaces/${current}/cards/${c.id}/status`,
-    { method: 'POST', body: JSON.stringify({ title: c.title, status: next }) });
-  refreshSpace();
-}
 
 async function lanConnect() {
   const addr = document.getElementById('lanAddr').value.trim();
@@ -4032,7 +4096,17 @@ const FEED_RENDERERS = {
   // decorates the names, it never re-parses the message for addressing.
   // …and a plain message that is a video address gets a play control.
   // Nothing is fetched for it: LINKS.decorate adds a verb, not a card.
-  text: (e) => LINKS.decorate(typeof mentionText === 'function' ? mentionText(e) : textNode('txt', e.text)),
+  text: (e) => {
+    const body = LINKS.decorate(typeof mentionText === 'function' ? mentionText(e) : textNode('txt', e.text));
+    // Object chips (SP-2.1): what the author SIGNED this message as
+    // being about — names resolved by the node, one tap to the card.
+    const chips = typeof objrefChips === 'function' ? objrefChips(e) : null;
+    if (!chips) return body;
+    const wrap = document.createElement('div');
+    wrap.appendChild(body);
+    wrap.appendChild(chips);
+    return wrap;
+  },
   visual: (e) => renderVisual(e),
   video: (e) => renderVideo(e),
   voice: (e) => renderVoiceAudio(e),
@@ -4040,6 +4114,42 @@ const FEED_RENDERERS = {
   file: (e) => renderFile(e),
   link: (e) => renderLink(e),
   live_signal: (e) => renderSignal(e),
+  // A human observation (SP-1): the feed's QUIET row — the same event also
+  // sits on its object's timeline; this is a projection, not a copy.
+  observation: (e) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'obs-entry';
+    const txt = document.createElement('span');
+    txt.textContent = '🔎 ' + e.text;
+    wrap.appendChild(txt);
+    if (e.object_id) {
+      const go = document.createElement('button');
+      go.className = 'obs-goto';
+      go.textContent = '→ ' + t('conv.obs.about');
+      go.onclick = () => { switchView('objects'); openObject(e.object_id); };
+      wrap.appendChild(go);
+    }
+    return wrap;
+  },
+  checkin: (e) => {
+    // A contact fact (SP-3): quiet like an observation — loud only on SOS.
+    // The renderer keys on the signed flag, never on the text (ADR-031).
+    const wrap = document.createElement('div');
+    wrap.className = 'obs-entry' + (e.sos ? ' checkin-sos' : '');
+    const txt = document.createElement('span');
+    txt.textContent = e.text || '';
+    wrap.appendChild(txt);
+    // The claimed point, said out loud (owner's ask): a check-in read off
+    // the screen should be a complete sentence — place included. Rendered
+    // from the STRUCTURED geo, never parsed back out of the text.
+    if (e.geo) {
+      const at = document.createElement('span');
+      at.className = 'checkin-coords';
+      at.textContent = (+e.geo.lat).toFixed(5) + ', ' + (+e.geo.lon).toFixed(5);
+      wrap.appendChild(at);
+    }
+    return wrap;
+  },
 };
 
 // Telegram-style video card: poster + ▶ overlay; the player mounts on tap
@@ -4493,6 +4603,18 @@ function makeAudioPlayer(src, wave, durationMs) {
     else if (ev.key === 'ArrowLeft') { audio.currentTime = Math.max(0, audio.currentTime - 5); paint(); }
     else if (ev.key === ' ' || ev.key === 'Enter') { ev.preventDefault(); btn.click(); }
   });
+
+  // The SP-2 hook: enough surface for annotation markers to ride the
+  // scrubber without forking the player. Position math stays with the
+  // caller; the player only tells time and takes a seek.
+  player.seekMs = (ms) => {
+    const dur = total();
+    if (dur > 0) { audio.currentTime = Math.min(ms, dur) / 1000; paint(); }
+  };
+  player.currentMs = () => (audio.currentTime || 0) * 1000;
+  player.durationMs = () => total();
+  player.scrubEl = scrub;
+  player.onMeta = (cb) => audio.addEventListener('loadedmetadata', cb);
 
   return player;
 }

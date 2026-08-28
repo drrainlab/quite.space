@@ -39,6 +39,17 @@ const HOST = (() => {
     present: !!bridge,
 
     /**
+     * EN-3 — the doorbell (UnifiedPush). Status is one of "off",
+     * "registering", "on", "no_distributor" — the last is an answer the
+     * row prints as a sentence, never a dead switch. The endpoint itself
+     * never crosses this bridge into the page: the host hands it straight
+     * to the core, and the page only ever learns the state.
+     */
+    doorbellStatus() { return call('doorbellStatus') || 'off'; },
+    doorbellOn() { return call('doorbellOn') === true; },
+    doorbellOff() { return call('doorbellOff') === true; },
+
+    /**
      * The conversation on screen, or null.
      *
      * DEDUPED, because it is called from a poll: repeating the same answer
@@ -166,6 +177,13 @@ window.quietOpen = function quietOpen(target) {
     // the right answer.
     current = spaceId;
     refresh().then(() => {
+      // An object deep link (SP-1): land on the object card. The QR on a
+      // machine is this line — {space_id, object_id}.
+      if (target.object_id && typeof openObject === 'function') {
+        switchView('objects');
+        openObject(target.object_id);
+        return;
+      }
       const mid = target.message_id || target.event_id;
       if (!mid) return;
       const row = document.querySelector(`[data-eid="${CSS.escape(mid)}"]`);

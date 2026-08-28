@@ -255,11 +255,36 @@ const (
 	// two. Writes no durable state; metered like a collect.
 	MsgProbe   = 12
 	MsgProbeOK = 13
+	// EN-2 relay push: a client PARKS the hints it would otherwise poll,
+	// and the relay tells it when something lands. This is the verb that
+	// lets an idle phone's radio sleep: one parked connection with a
+	// keepalive every several minutes replaces a Collect every two
+	// seconds. MsgListen carries the hint set (REPLACING any prior set on
+	// this connection); MsgListenOK confirms it; MsgNotify travels
+	// server→client, unasked, one per hint with fresh arrivals; MsgPing/
+	// MsgPong keep NATs and the relay's idle reaper honest between
+	// notifications.
+	//
+	// Parking takes HINTS, not capabilities, on purpose: being told that
+	// a mailbox you can already name received something reveals only
+	// traffic existence — exactly what polling the same hint would have
+	// shown — while draining still demands the capability (PH-1 stands).
+	MsgListen   = 14
+	MsgListenOK = 15
+	MsgNotify   = 16
+	MsgPing     = 17
+	MsgPong     = 18
 )
 
-// RelayProtocolVersion is this build's wire protocol generation. Bumped
-// only on a break an old peer cannot skip past.
-const RelayProtocolVersion = 1
+// RelayProtocolVersion is this build's wire protocol generation.
+// Generation 2 adds the listen/notify verbs; everything a v1 peer says
+// still means what it meant, which is why RelayProtocolMin stays 1 — a
+// probe advertises the RANGE, and an old client seeing min=1 keeps
+// talking exactly as before.
+const (
+	RelayProtocolMin     = 1
+	RelayProtocolVersion = 2
+)
 
 // Load classes a relay may self-report (advisory — a client never owes
 // them blind trust, but respects draining/not-accepting).
@@ -301,6 +326,14 @@ const (
 	// sends it and an older client that never reads it both keep working — the
 	// client simply falls back to waiting out the limiter's own window.
 	keyRetryAfterMs = 15
+
+	// keyPush (EN-3): an opaque push endpoint riding MsgListen. Present
+	// and non-empty = "when these hints receive something and NO parked
+	// connection of mine is here to hear it, POST a contentless ping to
+	// this URL". Present and EMPTY = remove my endpoint's registrations.
+	// Absent = a pure park, and any standing registration ages out on its
+	// own TTL. Append-only; old peers skip it and part with a plain park.
+	keyPush = 16
 )
 
 // Msg is one relay protocol message.
@@ -317,6 +350,11 @@ type Msg struct {
 	RetryAfterMs uint64
 	Now          uint64   // unix ms (MsgTimeOK / MsgProbeOK)
 	Caps         [][]byte // PH-1: collect capabilities (MsgCollectCap)
+	// Push is the EN-3 doorbell endpoint riding MsgListen; see keyPush.
+	// A pointer-like tri-state is deliberately avoided: "" only means
+	// "clear" when PushSet says the key travelled at all.
+	Push    string
+	PushSet bool
 	// RR-3 probe fields.
 	Nonce     []byte
 	ProtoMin  uint64
@@ -347,6 +385,9 @@ func (m *Msg) Encode() []byte {
 		n++
 	}
 	if m.RetryAfterMs != 0 {
+		n++
+	}
+	if m.PushSet {
 		n++
 	}
 	if m.Now != 0 {
@@ -402,6 +443,10 @@ func (m *Msg) Encode() []byte {
 	if m.Reason != "" {
 		buf = codec.AppendUint(buf, keyReason)
 		buf = codec.AppendText(buf, m.Reason)
+	}
+	if m.PushSet {
+		buf = codec.AppendUint(buf, keyPush)
+		buf = codec.AppendText(buf, m.Push)
 	}
 	if m.RetryAfterMs != 0 {
 		buf = codec.AppendUint(buf, keyRetryAfterMs)
@@ -470,6 +515,9 @@ func DecodeMsg(data []byte) (*Msg, error) {
 			m.Now, er = d.ReadUint()
 		case keyRetryAfterMs:
 			m.RetryAfterMs, er = d.ReadUint()
+		case keyPush:
+			m.Push, er = d.ReadText()
+			m.PushSet = true
 		case keyReason:
 			// READ, because it was written and never read. The encoder has
 			// always sent the reason a relay refused for, and the decoder

@@ -37,6 +37,11 @@ type InstrumentRecord struct {
 	Simulated bool
 	// SimSeed makes the simulator deterministic (owner's amendment 8).
 	SimSeed uint64
+	// SimTickSeconds overrides the reference cadence (0 = the driver's
+	// default). Born on the first PUBLIC greenhouse: a 5s tick is fine in
+	// a private room, but in a broadcast space every reading republishes
+	// the projection, and the relay rate-limited the node for it.
+	SimTickSeconds uint64
 	// External marks an instrument whose private keys live ON THE DEVICE
 	// (QI-M, ADR-026): this node holds only the public halves below and
 	// can neither sign nor seal for it. Seeds above are empty for such a
@@ -69,13 +74,14 @@ func appendInstrumentRecord(buf []byte, r InstrumentRecord) []byte {
 	// stays a clean count of concerns.
 	// Items 2–5 (QI-M) carry the external device's public halves; an
 	// older reader skips them by the tail rule below.
-	buf = codec.AppendArray(buf, 6)
+	buf = codec.AppendArray(buf, 7)
 	buf = codec.AppendBool(buf, r.Simulated)
 	buf = codec.AppendUint(buf, r.SimSeed)
 	buf = codec.AppendBool(buf, r.External)
 	buf = codec.AppendBytes(buf, r.DevicePub[:])
 	buf = codec.AppendBytes(buf, r.X25519Pub[:])
 	buf = codec.AppendBytes(buf, r.TerminalPub[:])
+	buf = codec.AppendUint(buf, r.SimTickSeconds)
 	return buf
 }
 
@@ -146,6 +152,12 @@ func readInstrumentRecord(d *codec.Decoder) (InstrumentRecord, error) {
 			copy(dst, b)
 		}
 		read = 6
+	}
+	if simN >= 7 {
+		if r.SimTickSeconds, err = d.ReadUint(); err != nil {
+			return r, err
+		}
+		read = 7
 	}
 	for i := read; i < simN; i++ {
 		if e := d.SkipItem(); e != nil {

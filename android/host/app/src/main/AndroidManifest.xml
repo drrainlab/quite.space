@@ -6,6 +6,17 @@
          screen that asks for it: a permission declared before anything can
          use it is a promise with nothing behind it. A refusal is an ordinary
          state — the node still syncs and the log is still the truth. -->
+    <!-- EN-3: Android 11+ package visibility hides other apps' receivers
+         unless the intent is declared here — without this line the
+         distributor scan returns empty on a phone with ntfy installed,
+         and the doorbell's switch looks dead. Found live, on exactly
+         that phone. -->
+    <queries>
+        <intent>
+            <action android:name="org.unifiedpush.android.distributor.REGISTER" />
+        </intent>
+    </queries>
+
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- LAN discovery (T6-LAN): announces ride multicast UDP, and Android
@@ -18,6 +29,13 @@
          not at launch, and never held: the WebView's getUserMedia is denied
          until this is granted (see QuietActivity.onPermissionRequest). -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- SP-3 Field: geolocation for the page's navigator.geolocation.
+         FOREGROUND ONLY — there is deliberately no background-location
+         permission and no location foreground service: sharing a position
+         is an explicit act while the map is open (ADR-031), and the
+         toggle's label promises exactly that much. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <!-- AND THIS ONE, WHICH IS NOT OPTIONAL AND IS NOT ABOUT SETTINGS.
          Chromium's Android audio manager refuses to enumerate ANY input
          device unless the app holds both: "Requires MODIFY_AUDIO_SETTINGS
@@ -99,6 +117,23 @@
         <receiver
             android:name=".NotificationDismissReceiver"
             android:exported="false" />
+
+        <!-- EN-3 — the UnifiedPush doorbell. EXPORTED, deliberately: the
+             distributor app's broadcasts must reach this receiver on a dead
+             process, which is the whole reason the doorbell exists. What an
+             abuser gains by sending these is a sync kick or a nameless
+             nudge notification — the ping carries nothing and unlocks
+             nothing. -->
+        <receiver
+            android:name=".UnifiedPushReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="org.unifiedpush.android.connector.NEW_ENDPOINT" />
+                <action android:name="org.unifiedpush.android.connector.MESSAGE" />
+                <action android:name="org.unifiedpush.android.connector.UNREGISTERED" />
+                <action android:name="org.unifiedpush.android.connector.REGISTRATION_FAILED" />
+            </intent-filter>
+        </receiver>
 
     </application>
 

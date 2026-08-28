@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/drrainlab/quiet_places/node/llm"
+	"github.com/drrainlab/quiet_places/transports/relay"
 )
 
 // Settings is the local, per-device config blob.
@@ -46,6 +47,27 @@ type Settings struct {
 	// the security notes say out loud. They are never projected by the
 	// settings API.
 	Adapters map[string]AdapterConfig `json:"adapters,omitempty"`
+	// PushEndpoint is the EN-3 doorbell: an opaque UnifiedPush (or
+	// compatible) https URL this device's relays may POST a contentless
+	// ping to when mail arrives and no parked connection is left to hear
+	// it. OPT-IN and honest about the trade: the endpoint is a STABLE
+	// identifier handed to the relay, which joins what the rotating hints
+	// deliberately keep apart. Empty = off, and the next park clears any
+	// standing registration.
+	PushEndpoint string `json:"push_endpoint,omitempty"`
+	// Tiles configures the Field basemap source (SP-3.1, ADR-032). An empty
+	// Server means "no preference expressed" — the node resolves the default
+	// OSM template at use and never persists it (the relay-mode lesson:
+	// storing a default makes it indistinguishable from a choice).
+	Tiles TilesConfig `json:"tiles,omitempty"`
+}
+
+// TilesConfig is the basemap tile source. Server is a URL template with
+// {z}/{x}/{y} placeholders; a custom server is the owner's own
+// configuration (the LLM.BaseURL precedent) and may point anywhere,
+// including localhost.
+type TilesConfig struct {
+	Server string `json:"server,omitempty"`
 }
 
 // AdapterConfig is one connector's configuration. The zero Profile is the
@@ -132,6 +154,11 @@ func (r *Runtime) SetSettings(s Settings) error {
 	default:
 		return ErrBadRelayMode{Mode: s.RelayMode}
 	}
+	// And for the tile server: an unusable template stored is a basemap
+	// that silently never loads.
+	if err := validateTileServer(s.Tiles.Server); err != nil {
+		return err
+	}
 	r.mu.Lock()
 	var cur Settings
 	if len(r.ks.Settings) > 0 {
@@ -158,6 +185,11 @@ func (r *Runtime) SetSettings(s Settings) error {
 	if s.Adapters == nil {
 		s.Adapters = cur.Adapters
 	}
+	// The tile server too: no screen shows it in v1, so every settings
+	// write arrives without it.
+	if s.Tiles == (TilesConfig{}) {
+		s.Tiles = cur.Tiles
+	}
 	b, err := json.Marshal(s)
 	if err != nil {
 		r.mu.Unlock()
@@ -165,6 +197,12 @@ func (r *Runtime) SetSettings(s Settings) error {
 	}
 	r.ks.Settings = b
 	err = r.saveKeystore()
+	// The doorbell endpoint changed: end every parked session so the next
+	// park carries the new truth at once. An off switch that stays
+	// registered until the bucket rotates is not an off switch (EN-3).
+	if s.PushEndpoint != cur.PushEndpoint {
+		defer r.BounceListeners()
+	}
 	// Restart the loop when the address, the cadence OR THE MODE changed.
 	//
 	// The mode used to be missing from this list, and the consequence was
@@ -237,6 +275,10 @@ func settingsJSON(s Settings) map[string]any {
 			"provider": s.LLM.Provider, "model": s.LLM.Model,
 			"base_url": s.LLM.BaseURL, "has_key": s.LLM.APIKey != "",
 		},
+		// The template IN EFFECT, same honesty as relay_mode above: "" is
+		// resolved to the default here so the UI can name the server the
+		// basemap consent dialog will actually disclose.
+		"tiles": map[string]any{"server": tileServerOf(s)},
 	}
 }
 
@@ -265,6 +307,15 @@ func (a *APIServer) handleSetSettings(w http.ResponseWriter, r *http.Request) {
 			BaseURL  string `json:"base_url"`
 			APIKey   string `json:"api_key"` // omitted by the UI unless changed
 		} `json:"llm"`
+		// A pointer like the relay fields: no screen carries this in v1,
+		// so every UI save arrives without it and must not clear it.
+		Tiles *struct {
+			Server string `json:"server"`
+		} `json:"tiles"`
+		// The EN-3 doorbell endpoint. A pointer for the same hygiene as
+		// the relay fields: a save from a screen that does not show it
+		// must not clear a registration somebody turned on elsewhere.
+		PushEndpoint *string `json:"push_endpoint"`
 	}](r)
 	if err != nil {
 		httpErr(w, http.StatusBadRequest, err)
@@ -272,7 +323,24 @@ func (a *APIServer) handleSetSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	cur := a.rt.GetSettings()
 	s := Settings{Theme: body.Theme, Preset: body.Preset, RenderMode: body.RenderMode,
-		Relay: cur.Relay, RelayMode: cur.RelayMode, RelaySyncSeconds: cur.RelaySyncSeconds}
+		Relay: cur.Relay, RelayMode: cur.RelayMode, RelaySyncSeconds: cur.RelaySyncSeconds,
+		Tiles: cur.Tiles, PushEndpoint: cur.PushEndpoint}
+	if body.PushEndpoint != nil {
+		ep := strings.TrimSpace(*body.PushEndpoint)
+		// Validated HERE, with the relay's own rule, so a typo is a 400
+		// with a sentence instead of a listener quietly failing its park
+		// on a backoff schedule nobody is watching.
+		if ep != "" {
+			if err := relay.ValidatePushEndpoint(ep); err != nil {
+				httpErr(w, http.StatusBadRequest, err)
+				return
+			}
+		}
+		s.PushEndpoint = ep
+	}
+	if body.Tiles != nil {
+		s.Tiles = TilesConfig{Server: strings.TrimSpace(body.Tiles.Server)}
+	}
 	if body.Relay != nil {
 		s.Relay = strings.TrimSpace(*body.Relay)
 	}
@@ -308,6 +376,10 @@ func (a *APIServer) handleSetSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if _, badRelay := err.(ErrBadRelayMode); badRelay {
+			httpErr(w, http.StatusBadRequest, err)
+			return
+		}
+		if _, badTiles := err.(ErrBadTileServer); badTiles {
 			httpErr(w, http.StatusBadRequest, err)
 			return
 		}

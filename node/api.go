@@ -210,6 +210,14 @@ func (a *APIServer) Handler() http.Handler {
 	mux.HandleFunc("POST /api/spaces/{id}/objects/{oid}/archive", a.auth(a.handleArchiveObject))
 	mux.HandleFunc("POST /api/spaces/{id}/objects/{oid}/restore", a.auth(a.handleRestoreObject))
 	mux.HandleFunc("POST /api/spaces/{id}/objects/{oid}/observations", a.auth(a.handleNoteObservation))
+	mux.HandleFunc("POST /api/spaces/{id}/objects/{oid}/assets", a.auth(a.handleAttachAsset))
+	mux.HandleFunc("POST /api/spaces/{id}/objects/{oid}/assets/{asset}", a.auth(a.handleAttachAsset))
+	mux.HandleFunc("GET /api/spaces/{id}/assets/{asset}/annotations", a.auth(a.handleAssetAnnotations))
+	mux.HandleFunc("POST /api/spaces/{id}/assets/{asset}/annotations", a.auth(a.handleAssetAnnotations))
+	mux.HandleFunc("POST /api/spaces/{id}/position", a.auth(a.handleSetPosition))
+	mux.HandleFunc("POST /api/spaces/{id}/markers", a.auth(a.handlePlaceMarker))
+	mux.HandleFunc("POST /api/spaces/{id}/checkin", a.auth(a.handleCheckin))
+	mux.HandleFunc("GET /api/spaces/{id}/field", a.auth(a.handleField))
 	mux.HandleFunc("POST /api/spaces/{id}/invites", a.auth(a.handleMintInvite))
 	mux.HandleFunc("GET /api/spaces/{id}/members", a.auth(a.handleMembers))
 	mux.HandleFunc("GET /api/spaces/{id}/entries", a.auth(a.handleEntries))
@@ -241,6 +249,7 @@ func (a *APIServer) Handler() http.Handler {
 	mux.HandleFunc("GET /api/spaces/{id}/link", a.auth(a.handlePublicLink))
 	mux.HandleFunc("POST /api/spaces/{id}/join", a.auth(a.handlePublicJoin))
 	mux.HandleFunc("POST /api/spaces/{id}/policy", a.auth(a.handleRevisePolicy))
+	mux.HandleFunc("POST /api/spaces/{id}/central", a.auth(a.handleReviseCentral))
 	mux.HandleFunc("POST /api/spaces/{id}/mirror", a.auth(a.handleSetMirror))
 	// Sending a message somewhere else (SHARE-1). One act, one copy per
 	// target, each sealed with that space's own epoch.
@@ -291,6 +300,7 @@ func (a *APIServer) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/spaces/{id}/passes/{pass}", a.auth(a.handleRevokePass))
 	a.routeQuickLinks(mux)
 	a.routeBackup(mux)
+	a.routeTiles(mux)
 	mux.HandleFunc("POST /api/join-requests", a.auth(a.handleJoinRequest))
 	mux.HandleFunc("GET /api/join-requests/{req}", a.auth(a.handleJoinStatus))
 	mux.HandleFunc("GET /api/gateway", a.auth(a.handleGateway))
@@ -974,9 +984,10 @@ func (a *APIServer) handleSay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body, err := readBody[struct {
-		Text     string   `json:"text"`
-		ReplyTo  string   `json:"reply_to"`
-		Mentions []string `json:"mentions"`
+		Text       string   `json:"text"`
+		ReplyTo    string   `json:"reply_to"`
+		Mentions   []string `json:"mentions"`
+		ObjectRefs []string `json:"object_refs"`
 		// ClientRef makes this request IDEMPOTENT: the same (space, ref)
 		// answers with the event already minted, minting nothing. It is
 		// what lets a client retry a send it never heard back about —
@@ -1015,6 +1026,16 @@ func (a *APIServer) handleSay(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		opt.Mentions = append(opt.Mentions, p)
+	}
+	for _, o := range body.ObjectRefs {
+		b, err := hex.DecodeString(strings.TrimSpace(o))
+		if err != nil || len(b) != 16 {
+			httpErr(w, http.StatusBadRequest, errors.New("bad object ref"))
+			return
+		}
+		var oid [16]byte
+		copy(oid[:], b)
+		opt.ObjectRefs = append(opt.ObjectRefs, oid)
 	}
 	eid, err := a.rt.Say(tid, body.Text, opt)
 	if err != nil {
@@ -1231,12 +1252,15 @@ func (a *APIServer) handleSimulateInstrument(w http.ResponseWriter, r *http.Requ
 	body, err := readBody[struct {
 		Label string `json:"label"`
 		Seed  uint64 `json:"seed"`
+		// TickSeconds slows the reference driver (0 = its 5s default) —
+		// a broadcast greenhouse republishes its projection per reading.
+		TickSeconds uint64 `json:"tick_seconds"`
 	}](r)
 	if err != nil {
 		httpErr(w, http.StatusBadRequest, err)
 		return
 	}
-	iid, err := a.rt.AttachSimulatedInstrument(tid, body.Label, body.Seed)
+	iid, err := a.rt.AttachSimulatedInstrument(tid, body.Label, body.Seed, body.TickSeconds)
 	if err != nil {
 		httpErr(w, http.StatusBadRequest, err)
 		return

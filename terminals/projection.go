@@ -98,7 +98,11 @@ func prunable(schema string) bool {
 		schemas.ObservationValue,
 		// A human observation ages like a message: the object's structural
 		// record does not depend on it (SP-1).
-		schemas.ObservationNoted:
+		schemas.ObservationNoted,
+		// A media annotation is the same kind of sentence (SP-2): the
+		// structural truth — what is attached, what is current — lives on
+		// object.attached.v1 edges, which are structural by prefix.
+		schemas.AssetAnnotated:
 		return true
 	}
 	// Block media entries age out with their messages; resonance ages with
@@ -178,6 +182,14 @@ func (s *Space) BuildPublicProjection(seq uint64, publisher id.DeviceID,
 		for aid := range pub.Document.LiveAssetIDs() {
 			live[aid] = true
 		}
+	}
+	// Objects pin too (SP-2, ADR-030): a live structural reference —
+	// a non-detached asset edge or a record cover — keeps the carrier
+	// alive exactly the way a publication's cover does. Annotations are
+	// deliberately NOT in this set: commentary never immortalizes a
+	// deleted take.
+	for aid := range s.State.ObjectLiveAssetIDs() {
+		live[aid] = true
 	}
 	liveCarrier := map[id.EventID]bool{}
 	if len(live) > 0 {

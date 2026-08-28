@@ -120,6 +120,88 @@ func (r *Runtime) RestoreObject(tid id.TerminalID, objectID [16]byte, archiveEve
 	return err
 }
 
+// EmitAssetEdge emits the FULL state of one object→asset edge
+// (object.attached.v1). Callers hand the complete intended edge — the
+// wire is a whole-state LWW register, so "update one field" is the
+// API layer's read-modify-write job, not the runtime's.
+//
+// Two refusals live here, before anything is signed (the resolveLineage
+// discipline — checked bytes are signed bytes):
+//   - the asset must be indexed in THIS space (spaceAssetOK): an edge to
+//     an id no peer can serve would be a beautiful card over a dead file;
+//   - a NEW asset is refused once the object holds
+//     MaxAssetEdgesPerObject live registers. An authoring bound only —
+//     the reducer never evicts (see protocol/objects/edges.go).
+func (r *Runtime) EmitAssetEdge(tid id.TerminalID, edge *objects.AttachPayload) (id.EventID, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	st, ok := r.spaces[tid]
+	if !ok {
+		return id.EventID{}, errors.New("node: unknown space")
+	}
+	if err := r.canWrite(st); err != nil {
+		return id.EventID{}, err
+	}
+	if _, exists := st.space.State.ObjectByID(edge.ObjectID); !exists {
+		return id.EventID{}, errors.New("node: unknown object")
+	}
+	if !r.spaceAssetOK(tid)(edge.Asset) {
+		return id.EventID{}, errors.New("node: asset is not in this space — upload it first")
+	}
+	if edge.Supersedes != "" && !r.spaceAssetOK(tid)(edge.Supersedes) {
+		return id.EventID{}, errors.New("node: superseded asset is not in this space")
+	}
+	edges := st.space.State.EdgesForObject(edge.ObjectID)
+	var known bool
+	live := 0
+	for _, e := range edges {
+		if e.Asset == edge.Asset {
+			known = true
+		}
+		if !e.Detached {
+			live++
+		}
+	}
+	if !known && live >= objects.MaxAssetEdgesPerObject {
+		return id.EventID{}, errors.New("node: this object already holds the maximum number of attached assets")
+	}
+	payload, err := edge.Encode()
+	if err != nil {
+		return id.EventID{}, err
+	}
+	return r.emitLocked(st, objects.SchemaAttached, payload)
+}
+
+// AnnotateAsset records a media annotation. The asset must be indexed in
+// this space, but the annotation never pins it — commentary is not a
+// structural reference (ADR-030).
+func (r *Runtime) AnnotateAsset(tid id.TerminalID, assetHex, text string, positionMs uint64, hasPosition bool, objectID *[16]byte) (id.EventID, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	st, ok := r.spaces[tid]
+	if !ok {
+		return id.EventID{}, errors.New("node: unknown space")
+	}
+	if err := r.canWrite(st); err != nil {
+		return id.EventID{}, err
+	}
+	if !r.spaceAssetOK(tid)(assetHex) {
+		return id.EventID{}, errors.New("node: asset is not in this space")
+	}
+	a := &schemas.AssetAnnotation{Text: text, Asset: assetHex, ObjectID: objectID}
+	if hasPosition {
+		a.SetPosition(positionMs)
+	}
+	if _, err := rand.Read(a.AnnotationID[:]); err != nil {
+		return id.EventID{}, err
+	}
+	payload, err := a.Encode()
+	if err != nil {
+		return id.EventID{}, err
+	}
+	return r.emitLocked(st, schemas.AssetAnnotated, payload)
+}
+
 // NoteObservation records a human observation — on an object's timeline
 // when objectID is set, in the space journal otherwise. The same event is
 // also a feed entry (the reducer's two projections of one truth).

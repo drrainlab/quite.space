@@ -50,6 +50,11 @@ internal class HostBridge(
     private val stayRefused: () -> Boolean,
     private val revealPassphrase: () -> Boolean = { false },
     private val changeCode: () -> Boolean = { false },
+    // EN-3 — the UnifiedPush doorbell: status, on, off. Lambdas like
+    // everything else here, so the bridge keeps holding no Context.
+    private val doorbellStatus: () -> String = { "off" },
+    private val doorbellOn: () -> Boolean = { false },
+    private val doorbellOff: () -> Unit = {},
     // SR-0 — Radio Mode + push-to-talk. All still the page's own facts:
     // a local preference, and the person's finger on a button. The
     // transcript never crosses this bridge — it is pushed to the page by
@@ -192,6 +197,34 @@ internal class HostBridge(
     fun forgetPassphrase(pass: String?): Boolean {
         if (!admitted(pass)) return refuse("forgetPassphrase")
         forgetPassphrase()
+        return true
+    }
+
+    /**
+     * EN-3 — the doorbell's truth for the settings row: "off",
+     * "registering", "on", or "no_distributor" when nothing on this phone
+     * can carry it. The last one is an ANSWER, not an error — the parked
+     * connection and the background poll remain exactly as good as they
+     * were.
+     */
+    @JavascriptInterface
+    fun doorbellStatus(pass: String?): String {
+        if (!admitted(pass)) { refuse("doorbellStatus"); return "off" }
+        return doorbellStatus()
+    }
+
+    /** Turn the doorbell on; false = no distributor to ask. */
+    @JavascriptInterface
+    fun doorbellOn(pass: String?): Boolean {
+        if (!admitted(pass)) return refuse("doorbellOn")
+        return doorbellOn()
+    }
+
+    /** Turn it off: unregister at the distributor, clear the relays. */
+    @JavascriptInterface
+    fun doorbellOff(pass: String?): Boolean {
+        if (!admitted(pass)) return refuse("doorbellOff")
+        doorbellOff()
         return true
     }
 

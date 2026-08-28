@@ -14,24 +14,28 @@ import (
 
 // Core schema ids, v0.
 const (
-	MessageText       = "message.text.v1"
-	MessageRevised    = "message.revised.v1"
-	MessageTombstoned = "message.tombstoned.v1"
-	CardCreated       = "card.created.v1"
-	CardUpdated       = "card.updated.v1"
-	PresenceUpdate    = "presence.update.v1"
-	ObservationTemp   = "observation.temperature.v1"
-	ObservationValue  = "observation.value.v1"
-	ObservationNoted  = "observation.noted.v1"
-	ReceiptDelivery   = "receipt.delivery.v1"
-	DeviceCertified   = "identity.device_certified.v1"
-	DeviceRevoked     = "identity.device_revoked.v1"
-	ManifestUpdated   = "terminal.manifest.updated.v1"
-	MemberJoined      = "membership.joined.v1"
-	MemberLeft        = "membership.left.v1"
-	MembershipEpoch   = "membership.epoch.v1"
-	InstrumentEpoch   = "membership.instrument_epoch.v1"
-	MemberAdded       = "membership.member_added.v1"
+	MessageText         = "message.text.v1"
+	MessageRevised      = "message.revised.v1"
+	MessageTombstoned   = "message.tombstoned.v1"
+	CardCreated         = "card.created.v1"
+	CardUpdated         = "card.updated.v1"
+	PresenceUpdate      = "presence.update.v1"
+	ObservationTemp     = "observation.temperature.v1"
+	ObservationValue    = "observation.value.v1"
+	ObservationNoted    = "observation.noted.v1"
+	AssetAnnotated      = "asset.annotated.v1"
+	ObservationPosition = "observation.position.v1"
+	MarkerPlaced        = "marker.placed.v1"
+	CheckinSent         = "checkin.sent.v1"
+	ReceiptDelivery     = "receipt.delivery.v1"
+	DeviceCertified     = "identity.device_certified.v1"
+	DeviceRevoked       = "identity.device_revoked.v1"
+	ManifestUpdated     = "terminal.manifest.updated.v1"
+	MemberJoined        = "membership.joined.v1"
+	MemberLeft          = "membership.left.v1"
+	MembershipEpoch     = "membership.epoch.v1"
+	InstrumentEpoch     = "membership.instrument_epoch.v1"
+	MemberAdded         = "membership.member_added.v1"
 )
 
 var schemaIDRe = regexp.MustCompile(`^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*\.v[1-9][0-9]*$`)
@@ -120,7 +124,19 @@ type TextMessage struct {
 	// renderer speaks in ADR-019's voice: "{gateway} says this came from
 	// {address}. Their signature did not travel."
 	External *ExternalOrigin
+	// ObjectRefs is the author's SIGNED claim of which domain objects this
+	// message is about (SP-2.1, key 8) — the object twin of Mentions:
+	// anyone may reference any object, but the claim itself is
+	// authenticated, so readers never have to guess from the text. Raw
+	// object ids, not derived targets — the same rule as Card.ObjectID.
+	// A reader that predates the key skips it; authors keep the object's
+	// NAME in the text, so the sentence still reads everywhere.
+	ObjectRefs [][16]byte
 }
+
+// MaxObjectRefs bounds the reference list — a message is about a few
+// things, not a catalog.
+const MaxObjectRefs = 8
 
 // ExternalOrigin is the foreign provenance of an imported message.
 type ExternalOrigin struct {
@@ -243,6 +259,9 @@ func (t *TextMessage) Encode() ([]byte, error) {
 	if len(t.Mentions) > MaxMentions {
 		return nil, errors.New("schemas: too many mentions")
 	}
+	if len(t.ObjectRefs) > MaxObjectRefs {
+		return nil, errors.New("schemas: too many object refs")
+	}
 	if len(t.ProducedModel) > MaxModelLen {
 		return nil, errors.New("schemas: model name too long")
 	}
@@ -272,6 +291,9 @@ func (t *TextMessage) Encode() ([]byte, error) {
 		if len(t.Card.Reference) > MaxShareRef {
 			return nil, errors.New("schemas: card reference too long")
 		}
+	}
+	if len(t.ObjectRefs) > 0 {
+		n++
 	}
 	if x := t.External; x != nil {
 		n++
@@ -369,6 +391,13 @@ func (t *TextMessage) Encode() ([]byte, error) {
 			for _, f := range x.LossFlags {
 				buf = codec.AppendText(buf, f)
 			}
+		}
+	}
+	if len(t.ObjectRefs) > 0 {
+		buf = codec.AppendUint(buf, 8)
+		buf = codec.AppendArray(buf, len(t.ObjectRefs))
+		for i := range t.ObjectRefs {
+			buf = codec.AppendBytes(buf, t.ObjectRefs[i][:])
 		}
 	}
 	return buf, nil
@@ -575,6 +604,27 @@ func DecodeTextMessage(payload []byte) (*TextMessage, error) {
 				return nil, errors.New("schemas: external origin field too long")
 			}
 			t.External = &x
+		case 8:
+			var cnt int
+			cnt, err = d.ReadArray()
+			if err != nil {
+				return nil, err
+			}
+			if cnt > MaxObjectRefs {
+				return nil, errors.New("schemas: too many object refs")
+			}
+			for range cnt {
+				b, er := d.ReadBytes()
+				if er != nil {
+					return nil, er
+				}
+				if len(b) != 16 {
+					return nil, errors.New("schemas: object ref must be 16 bytes")
+				}
+				var oid [16]byte
+				copy(oid[:], b)
+				t.ObjectRefs = append(t.ObjectRefs, oid)
+			}
 		default:
 			err = d.SkipItem()
 		}
@@ -945,7 +995,6 @@ type EpochPayload struct {
 	Wraps []EpochWrap
 }
 
-
 // ---- observation.value.v1 (QI-0) ----
 //
 // The general reading of one INSTRUMENT CHANNEL. Three amendments from the
@@ -965,8 +1014,10 @@ type EpochPayload struct {
 //     reading that will one day be displayed as fresher than it is.
 //
 // {1: channel, 2: magnitude, 3: negative, 4: decimals,
-//  5: bool_value, 6: enum_value, 7: observed_at, 8: stale_after,
-//  9: simulated}. Exactly ONE of {magnitude(+3,4), bool_value, enum_value}
+//
+//	5: bool_value, 6: enum_value, 7: observed_at, 8: stale_after,
+//	9: simulated}. Exactly ONE of {magnitude(+3,4), bool_value, enum_value}
+//
 // families is present — the tag is the presence.
 type ValueObservation struct {
 	Channel string // paramNameRe grammar, same as live_signal params

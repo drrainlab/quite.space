@@ -36,17 +36,32 @@ func New(label string) (*terminals.Participant, error) {
 type SayOptions struct {
 	ReplyTo  *id.EventID
 	Mentions []id.PrincipalID
+	// ObjectRefs: which domain objects the message is about (SP-2.1) —
+	// the object twin of Mentions, signed with the text.
+	ObjectRefs [][16]byte
 }
 
 // Say publishes a human text message.
 func Say(p *terminals.Participant, s *terminals.Space, text string, opt SayOptions, at uint64) (eventlog.Applied, error) {
 	payload, err := (&schemas.TextMessage{
 		Text: text, ReplyTo: opt.ReplyTo, Mentions: opt.Mentions,
+		ObjectRefs: opt.ObjectRefs,
 	}).Encode()
 	if err != nil {
 		return eventlog.Applied{}, err
 	}
 	return p.Emit(s, schemas.MessageText, payload, signal.AuthorshipHuman, at)
+}
+
+// SetPosition publishes a geographic position claim with its mandatory
+// signed TTL (SP-3, ADR-031) — the presence twin.
+func SetPosition(p *terminals.Participant, s *terminals.Space, o *schemas.PositionObservation, at uint64) error {
+	payload, err := o.Encode()
+	if err != nil {
+		return err
+	}
+	_, err = p.Emit(s, schemas.ObservationPosition, payload, signal.AuthorshipHuman, at)
+	return err
 }
 
 // SetPresence publishes a presence state with mandatory TTL (plan §8.3).

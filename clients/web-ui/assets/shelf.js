@@ -86,6 +86,21 @@ function shelfObjectBody(it) {
     d.onclick = () => { switchView('posts'); openPub(it.publication.id); };
     return d;
   }
+  if (it.object) {
+    const d = document.createElement('div');
+    d.className = 'shelf-pub';
+    const t = document.createElement('div');
+    t.className = 'pub-title'; t.textContent = it.object.name || 'object';
+    d.appendChild(t);
+    const m = document.createElement('div');
+    m.className = 'pub-meta';
+    m.textContent = (it.object.kind || 'object') +
+      (it.object.status ? ' · ' + it.object.status : '');
+    d.appendChild(m);
+    d.style.cursor = 'pointer';
+    d.onclick = () => { switchView('objects'); openObject(it.object.object_id); };
+    return d;
+  }
   if (it.app) {
     const d = document.createElement('div');
     d.className = 'shelf-app';

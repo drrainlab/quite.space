@@ -44,6 +44,13 @@ var radioAdmittedPrefixes = []string{
 	"message.", "block.", "reaction.", "resonance.", "observation.",
 	"card.", "publication.", "appdef.", "poll.", "form.", "appearance.",
 	"composition.", "space.", "listening.",
+	// SP-3 (ADR-031). "object." also CLOSES A LATENT SP-1 GAP: domain
+	// objects shipped without radio admission, so an object revision
+	// could never cross a bridge — custody was silently released. Field
+	// spaces live on objects (places, routes), so they are admitted; a
+	// generic 8 KiB object revision still answers to the size gates and
+	// is NOT claimed radio-express-safe (C3 stands for it).
+	"object.", "marker.", "checkin.",
 }
 
 // ErrTooLarge marks a frame that will never fit this carrier. It is not

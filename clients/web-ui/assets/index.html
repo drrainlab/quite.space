@@ -59,15 +59,20 @@
     <div id="nav"></div>
   </div>
   <div id="content">
+    <!-- TWO STOREYS, because they answer two different questions.
+         The first is identity: what this place is, who may read it, and
+         the acts that belong to the SPACE. The second is the space's own
+         architecture — the views it offers, ordered by what it is centred
+         on (spacenav.js) — plus the one creation act belonging to the
+         view on screen. A "New post" button hovering over a map was an
+         action from somebody else's context. -->
     <div id="convbar">
-      <span id="convTitle"></span>
-      <div class="segmented" id="viewSwitch">
-        <button data-v="chat" class="sel" data-on-click="9" data-i18n="ui.convbar.view.chat">Chat</button>
-        <button data-v="posts" data-on-click="10" data-i18n="ui.convbar.view.posts">Posts</button>
-        <button data-v="shelf" data-on-click="11" data-i18n="ui.convbar.view.shelf">Shelf</button>
-      </div>
-      <span style="flex:1"></span>
-      <span id="visBadge" class="vis-badge" style="display:none"></span>
+      <div class="convbar-id">
+        <span id="convMode" class="conv-mode"></span>
+        <span id="convTitle"></span>
+        <span id="convSub" class="conv-sub"></span>
+        <span id="visBadge" class="vis-badge" style="display:none"></span>
+        <span style="flex:1"></span>
       <!-- MARKS, NOT EMOJI. A colour emoji next to the thin ⓘ read as a
            sticker stuck on the bar: its own palette, its own weight, its own
            idea of a baseline. These are drawn in the header's language —
@@ -80,7 +85,7 @@
           <path d="M6.7 9.3a2.7 2.7 0 0 0 3.8 0l2-2a2.7 2.7 0 0 0-3.8-3.8l-.9.9"/>
           <path d="M9.3 6.7a2.7 2.7 0 0 0-3.8 0l-2 2a2.7 2.7 0 0 0 3.8 3.8l.9-.9" opacity=".55"/>
         </svg><span class="act-label" data-i18n="ui.convbar.share_link.label">Share link</span></button>
-      <button id="newPostBtn" class="btn-tinted" data-on-click="13"
+      <button id="newPostBtn" class="btn-tinted" style="display:none" data-on-click="13"
               title="New post" aria-label="New post" data-i18n-title="ui.convbar.new_post.title">
         <svg class="act-mark" viewBox="0 0 16 16" aria-hidden="true">
           <path d="M3.1 12.9 3.9 10.2 10.1 4a1.65 1.65 0 0 1 2.3 2.3l-6.2 6.2z"/>
@@ -91,6 +96,10 @@
            what a directory is FOR, so it is one press, not "compose a
            publication of kind space and paste a link into a block". -->
       <button id="addSpaceBtn" class="btn-tinted" style="display:none" data-on-click="14" data-i18n="ui.convbar.add_space">+ Add space</button>
+      <!-- newPostBtn is hidden by default now: the per-view creation act
+           lives on the second storey (spacenav.js), and two "new post"
+           buttons in one header is one too many. It stays in the markup
+           because the shortcut and the directory paths still press it. -->
       <button id="customizeBtn" class="icon-btn" style="display:none" data-on-click="15" title="Customize" data-i18n-title="ui.convbar.customize.title" aria-label="Customize space" data-i18n-aria="ui.convbar.customize.aria">
         <svg class="act-mark" viewBox="0 0 16 16" aria-hidden="true">
           <path d="M8 1.9a6.1 6.1 0 1 0 0 12.2c.85 0 1.35-.55 1.35-1.25 0-.75-.65-1.15-.65-1.85 0-.6.5-1 1.1-1h1.25A3.05 3.05 0 0 0 14.1 6.95C14.1 4.15 11.4 1.9 8 1.9Z"/>
@@ -101,6 +110,15 @@
       <button id="resPalBtn" class="icon-btn" style="display:none" data-on-click="16" title="Reaction palette" aria-label="Reaction palette" data-i18n-title="ui.convbar.res_palette.title">✧</button>
       <button id="inviteBtn" class="btn-tinted" style="display:none" data-on-click="17" data-i18n="ui.convbar.invite">invite</button>
       <button class="icon-btn" data-on-click="18" title="Space info" aria-label="Space info" data-i18n-title="ui.convbar.space_info.title">ⓘ</button>
+      </div>
+      <!-- The space's own architecture. Built by spacenav.js when a space
+           opens: order and visibility come from the declared centre, so a
+           field space lands on its map and a workshop on its bench. -->
+      <div class="convbar-nav">
+        <nav id="viewSwitch" class="space-nav" aria-label="Space views"></nav>
+        <span style="flex:1"></span>
+        <button id="viewPrimary" class="btn-tinted" style="display:none"></button>
+      </div>
     </div>
     <div id="persona"></div>
     <div id="honesty"></div>
@@ -110,6 +128,8 @@
       <div id="pubArticle" style="display:none"></div>
     </div>
     <div id="shelf" style="display:none"></div>
+    <div id="objects" style="display:none"></div>
+    <div id="field" style="display:none"></div>
     <div id="log"></div>
     <div id="replyBar" style="display:none"></div>
     <!-- Where a question goes belongs beside the box you type it into,
@@ -399,9 +419,13 @@
     <p class="hint" data-i18n="ui.wiz.ritualsHint">up to three rituals — they define how people live here:</p>
     <div id="ritualList"></div>
     <p class="hint" data-i18n="ui.wiz.centralHint">central block:</p>
+    <!-- value= is LOAD-BEARING: the i18n applier rewrites option
+         textContent, and an option without an explicit value would have
+         its .value rewritten with it — a Russian locale used to submit
+         central="объекты" into a signed manifest. -->
     <select id="wCentral">
-      <option data-i18n="ui.wiz.central.chat">chat</option><option data-i18n="ui.wiz.central.objects">objects</option><option data-i18n="ui.wiz.central.audio">audio</option>
-      <option data-i18n="ui.wiz.central.members">members</option><option data-i18n="ui.wiz.central.telemetry">telemetry</option>
+      <option value="chat" data-i18n="ui.wiz.central.chat">chat</option><option value="objects" data-i18n="ui.wiz.central.objects">objects</option><option value="audio" data-i18n="ui.wiz.central.audio">audio</option>
+      <option value="members" data-i18n="ui.wiz.central.members">members</option><option value="telemetry" data-i18n="ui.wiz.central.telemetry">telemetry</option><option value="field" data-i18n="ui.wiz.central.field">field</option>
     </select>
     <p class="hint" data-i18n="ui.wiz.presenceHint">custom presence states (comma separated, optional — they may not
     impersonate system properties like online/verified/delivered):</p>
@@ -852,6 +876,19 @@
           <button data-v="off" data-i18n="ui.set.linkprev.off" data-on-click="247">Off</button>
         </div>
       </div>
+      <!-- EN-3 — the doorbell. Host-only (app.js shows it when a bridge is
+           present): the endpoint comes from a UnifiedPush distributor on
+           the phone and never crosses into this page. The honest trade is
+           in the sub line, because opt-in without the sentence is not
+           opt-in. -->
+      <div class="list-row" id="doorbellRow" style="display:none">
+        <span class="lr-label" data-i18n="ui.set.doorbell">Doorbell (UnifiedPush)<span class="lr-sub" data-i18n="ui.set.doorbell.sub"> · wakes a sleeping phone; hands your relay a stable push address</span></span>
+        <div class="segmented" id="setDoorbell">
+          <button data-v="on" data-i18n="ui.set.doorbell.on" data-on-click="252">On</button>
+          <button data-v="off" data-i18n="ui.set.doorbell.off" data-on-click="253">Off</button>
+        </div>
+      </div>
+      <p class="hint" id="doorbellNote" style="display:none"></p>
       <!-- The technical layer. It used to be a word above every conversation
            for a mode almost nobody turns on; whoever needs to read a
            capability set knows to come looking, and everybody else was
@@ -1391,6 +1428,62 @@
   <p class="out" id="keepMsg"></p>
 </dialog>
 
+<!-- Marker composer (SP-3). A marker is a CLAIM about a place, so the
+     dialog shows what is being claimed: the kind as glyph cards (the same
+     picker idiom the object editor uses), the note, and — for kinds that
+     age — how long the claim speaks for. The coordinates are shown, never
+     edited: they came from the map, and a typed number would be a
+     different claim than the one the finger made. -->
+<dialog id="dlgMarker">
+  <h3 data-i18n="ui.marker.title">Place a marker</h3>
+  <p class="hint" id="markerAt"></p>
+  <div id="markerKindPick" class="kind-pick"></div>
+  <label data-i18n="ui.marker.note">Note</label>
+  <input id="markerText" maxlength="120" data-i18n-ph="ui.marker.ph.note"
+         placeholder="what is here (optional)">
+  <p class="hint" id="markerTtlHint" style="display:none"
+     data-i18n="ui.marker.ttl_hint">A hazard can be temporary. After it expires the
+    marker stays as history, dimmed — never as present danger.</p>
+  <div class="row" id="markerTtlRow" style="display:none">
+    <label for="markerTtl" data-i18n="ui.marker.ttl">Speaks for</label>
+    <select id="markerTtl"></select>
+  </div>
+  <p class="hint" id="markerMsg"></p>
+  <div class="row">
+    <button class="btn-tinted" id="markerPlace" data-on-click="254"
+            data-i18n="ui.marker.place">Place</button>
+    <button class="btn-plain" data-on-click="255" data-i18n="ui.marker.cancel">Cancel</button>
+  </div>
+</dialog>
+
+<!-- Object editor (SP-1). One form for create and revise: a revision always
+     carries the WHOLE record — the props textarea IS the new set, and a
+     deleted line is a deleted prop. -->
+<dialog id="dlgObject">
+  <h3 data-i18n="ui.object.title">Object</h3>
+  <label data-i18n="ui.object.kind">Kind</label>
+  <!-- A picker, not a closed list: the suggestions are the SPACE's
+       vocabulary (a studio offers releases, a workshop offers machines —
+       ADR-029 mode territory), and «other» opens a free slug because the
+       protocol never closes the kind vocabulary. -->
+  <div id="objKindPick" class="kind-pick"></div>
+  <input id="objKindCustom" style="display:none" maxlength="32"
+         data-i18n-ph="ui.object.ph.kind_custom" placeholder="your own kind (slug)">
+  <label data-i18n="ui.object.name">Name</label>
+  <input id="objName" maxlength="200" data-i18n-ph="ui.object.ph.name" placeholder="CNC-01">
+  <label data-i18n="ui.object.status">Status</label>
+  <input id="objStatus" maxlength="40" data-i18n-ph="ui.object.ph.status" placeholder="operational">
+  <label data-i18n="ui.object.summary">Summary</label>
+  <textarea id="objSummary" maxlength="1000" rows="3"></textarea>
+  <label data-i18n="ui.object.props">Properties (key = value, one per line)</label>
+  <textarea id="objProps" rows="4" data-i18n-ph="ui.object.ph.props" placeholder="location = workshop corner"></textarea>
+  <div class="row">
+    <button class="btn-tinted" data-on-click="249" data-i18n="ui.object.save">Save</button>
+    <button data-on-click="250" data-i18n="ui.object.cancel">cancel</button>
+  </div>
+  <p class="out" id="objMsg"></p>
+</dialog>
+
 <script src="i18n.js"></script>
 <script src="chime-dsp.js"></script>
 <script src="chime.js"></script>
@@ -1407,7 +1500,11 @@
 <script src="resonance.js"></script>
 <script src="effects.js"></script>
 <script src="shelf.js"></script>
+<script src="objects.js"></script>
+<script src="field.js"></script>
+<script src="spacenav.js"></script>
 <script src="mentions.js"></script>
+<script src="objrefs.js"></script>
 <script src="quietrank.js"></script>
 <script src="audio.js"></script>
 <script src="brush.js"></script>

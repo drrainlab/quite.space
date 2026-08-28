@@ -52,7 +52,7 @@ func TestTheGreenhouseReachesEveryMember(t *testing.T) {
 	waitJoin(t, guest, req, JoinReady)
 
 	// The greenhouse, deterministic: seed 1, ticks driven by hand.
-	iid, err := owner.AttachSimulatedInstrument(tid, "Greenhouse", 1)
+	iid, err := owner.AttachSimulatedInstrument(tid, "Greenhouse", 1, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +140,7 @@ func TestInstrumentsSurviveARuntimeRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	iid, err := rt.AttachSimulatedInstrument(tid, "Greenhouse", 7)
+	iid, err := rt.AttachSimulatedInstrument(tid, "Greenhouse", 7, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -415,4 +415,86 @@ func TestAnExternalInstrumentEnrollsWithItsOwnKeys(t *testing.T) {
 		}
 		return nil
 	})
+}
+
+// PUBLIC TELEMETRY: a broadcast space is plaintext, so it has no epoch
+// membership and no instrument plane — attach must not try to turn a key
+// that does not exist. What the sensor DOES get is an attested writer
+// binding (the same law any curated writer lives under), signed into the
+// manifest before its first frame; detach takes that binding back — the
+// plaintext analogue of "the key turns".
+func TestASensorSpeaksPlaintextInABroadcastSpace(t *testing.T) {
+	rt := openRuntime(t, t.TempDir(), "owner")
+	defer rt.Close()
+
+	tid, err := rt.CreateSpaceWithOptions("greenhouse", CreateOptions{
+		Policy: terminals.SpacePolicy{
+			Visibility: terminals.VisibilityPublic,
+			Publish:    terminals.PublishCurated,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	iid, err := rt.AttachSimulatedInstrument(tid, "Greenhouse", 1, 0)
+	if err != nil {
+		t.Fatalf("attach refused in a broadcast space: %v", err)
+	}
+	rt.mu.Lock()
+	ir := rt.instruments[iid]
+	rt.mu.Unlock()
+	if ir == nil {
+		t.Fatal("the attached instrument is not in the runtime")
+	}
+	// The live ticker is left alone: it first fires at 5s, far beyond this
+	// test, and DetachInstrument below owns closing ir.stop.
+
+	// The sensor's device is an attested writer now; the owner's binding
+	// from creation is untouched.
+	pol := policyOf(t, rt, tid)
+	if !pol.AllowsWriter(rt.PrincipalID, ir.part.Device.ID) {
+		t.Fatal("the sensor's device is not an attested writer")
+	}
+	if !pol.AllowsWriter(rt.PrincipalID, rt.Device.ID) {
+		t.Fatal("binding the sensor cost the owner their own binding")
+	}
+
+	// A reading emits — and rides PLAINTEXT, like everything else in a
+	// public space: no plane exists to seal it to.
+	if err := rt.emitSimTick(ir, 1, uint64(time.Now().Unix())); err != nil {
+		t.Fatal(err)
+	}
+	sawReading := false
+	_ = rt.withSpace(tid, func(st *spaceState) error {
+		if st.space.InstrumentCount() != 0 {
+			t.Fatalf("a plaintext space grew an instrument plane: %d devices",
+				st.space.InstrumentCount())
+		}
+		return st.space.Log.Replay(func(a eventlog.Applied) error {
+			if a.Env.Schema == schemas.ObservationValue {
+				sawReading = true
+				if a.Env.PayloadEncoding == signal.PayloadEncrypted ||
+					a.Env.PayloadEncoding == signal.PayloadInstrumentSealed {
+					t.Fatalf("a public reading rode sealed encoding %d", a.Env.PayloadEncoding)
+				}
+			}
+			return nil
+		})
+	})
+	if !sawReading {
+		t.Fatal("no reading reached the log")
+	}
+
+	// Detach takes the binding back.
+	if err := rt.DetachInstrument(tid, iid); err != nil {
+		t.Fatal(err)
+	}
+	pol = policyOf(t, rt, tid)
+	if pol.AllowsWriter(rt.PrincipalID, ir.part.Device.ID) {
+		t.Fatal("a detached sensor still holds a writer binding")
+	}
+	if !pol.AllowsWriter(rt.PrincipalID, rt.Device.ID) {
+		t.Fatal("detaching the sensor removed the owner's binding")
+	}
 }

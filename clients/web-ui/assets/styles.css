@@ -30,7 +30,10 @@
        already says "mine"; the tint only confirms it), incoming is nearly
        neutral graphite. The old 3-4% glass fills read violet because the
        sky's own hue leaked through them; these are darker and calmer. */
-    --bubble-own: rgba(35,27,38,.72); --bubble-other: rgba(24,22,27,.55);
+    /* Re-graded 2026-08-28 (owner's number): one neutral grey glass for both
+       sides — 74/74/74 at 28%. Lighter than the charcoal pair but far more
+       transparent; the blur carries legibility, the side still says "mine". */
+    --bubble-own: rgb(74 74 74 / 28%); --bubble-other: rgb(74 74 74 / 28%);
     --bubble-own-border: rgba(190,140,220,.07);
     --composer: rgba(21,18,23,.62); --composer-line: rgba(255,255,255,.055);
     /* geometry + type */
@@ -1391,9 +1394,44 @@
     border-radius: 8px; padding: 7px 9px; font: inherit; margin: 0; }
 
   /* --- conversation header + members info drawer --- */
-  #convbar { display: flex; align-items: center; gap: 8px; padding: 8px 12px 8px 16px;
-    min-height: 48px; }
+  /* TWO STOREYS: identity above, the space's own architecture below. */
+  #convbar { display: flex; flex-direction: column; gap: 2px;
+    padding: 8px 12px 0 16px; }
+  .convbar-id { display: flex; align-items: center; gap: 8px; min-height: 34px; }
   #convTitle { font-weight: 600; font-size: calc(15px * var(--font-scale)); }
+  /* The archetype, said once and quietly: the title is the space's NAME,
+     this is what kind of place it is. */
+  .conv-sub { color: var(--dim); font-size: 12px; }
+  .conv-sub:not(:empty)::before { content: '· '; opacity: .5; }
+  /* A mark, not a sticker — it takes the header's own colour. */
+  .conv-mode { color: var(--acc); opacity: .75; font-size: 13px; }
+  /* The same mark in the space list, so a place is recognisable before
+     it is opened. */
+  .space-mode { color: var(--acc); opacity: .6; font-size: 11px; margin-right: 4px; }
+
+  /* The nav strip: almost-text tabs. The active one is brighter text and
+     a thin line under it, never a filled pill — this is part of the
+     space, not a row of controls stuck on top of it. */
+  .convbar-nav { display: flex; align-items: center; gap: 8px; min-height: 32px; }
+  .space-nav { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; }
+  .space-tab { background: none; border: 0; padding: 5px 10px 6px;
+    color: var(--dim); font-size: calc(13px * var(--font-scale));
+    font-family: inherit; cursor: pointer; border-radius: 0;
+    border-bottom: 2px solid transparent; min-height: 0;
+    transition: color .12s, border-color .12s; }
+  .space-tab:hover { color: var(--fg); }
+  .space-tab.sel { color: var(--fg); border-bottom-color: var(--acc);
+    text-shadow: 0 0 12px var(--glow); }
+  .space-more { letter-spacing: 1px; }
+  .space-more-menu { position: fixed; z-index: 60; display: flex; flex-direction: column;
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: var(--radius-md); padding: 4px; min-width: 120px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.35); }
+  .space-more-menu button { background: none; border: 0; text-align: left;
+    padding: 7px 10px; color: var(--fg); font-size: 13px; font-family: inherit;
+    cursor: pointer; border-radius: var(--radius-sm); }
+  .space-more-menu button:hover { background: var(--surface-raised); }
+  #viewPrimary { white-space: nowrap; }
   /* The panel's own class is kept for anything that still reads it; the
      FOLD is body.fold-info on the grid, so both sides work one way. */
   .info-toggle { cursor: pointer; }
@@ -3806,3 +3844,236 @@ div.reply-to { cursor: default; }
 @media (prefers-reduced-motion: reduce) {
   .entry.flash .bubble { animation: none; box-shadow: 0 0 0 2px var(--acc); }
 }
+
+/* ---- Objects & Studio (SP-1/SP-2) ----
+   One coherent block, in the house language: charcoal panels, hairline
+   borders, the accent only where it MEANS something (current, candidate,
+   a link to press). Inputs here live outside #composer and dialogs, so
+   they are dressed explicitly — the browser's white default in a dark
+   room was a bug, not a choice. */
+
+#objects { flex: 1; overflow-y: auto; overscroll-behavior: contain;
+  padding: 16px clamp(16px, 4vw, 32px) 32px; }
+#objects > * { max-width: 760px; margin-inline: auto; }
+
+/* -- the list -- */
+.obj-bar { display: flex; justify-content: flex-end; align-items: center;
+  gap: 8px; margin-bottom: 14px; }
+.obj-bar .btn-plain.sel { color: var(--acc); border-color: var(--acc); }
+.obj-grid { display: grid; gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); }
+.obj-card { border: 1px solid var(--line); border-radius: var(--radius-md);
+  background: var(--panel); padding: 14px 16px; cursor: pointer;
+  box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 8px;
+  transition: border-color .15s, background .15s; }
+.obj-card:hover { border-color: var(--acc); background: var(--surface-raised); }
+.obj-name { font-weight: 600; font-size: 15px; color: var(--fg); }
+.obj-meta { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.obj-tasks { font-size: 12px; color: var(--dim); margin-top: auto; }
+
+/* -- chips: kind is quiet, status carries the accent (it is the one
+      piece of state a human put there on purpose) -- */
+.obj-chip { font-size: 11px; padding: 2px 9px; border-radius: 999px;
+  border: 1px solid var(--line); color: var(--dim); white-space: nowrap; }
+.obj-chip.obj-status { border-color: color-mix(in srgb, var(--acc) 55%, transparent);
+  color: var(--acc); }
+
+/* -- the open card -- */
+.obj-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-bottom: 4px; }
+.obj-head .btn-plain, .obj-head .btn-tinted { white-space: nowrap; }
+.obj-crumb { color: var(--dim); }
+.obj-crumb:hover { color: var(--acc); }
+.obj-title { font-size: 20px; font-weight: 650; color: var(--fg); }
+.obj-chips { display: flex; gap: 6px; }
+.obj-actions { display: flex; gap: 8px; margin-left: auto; align-items: center; }
+.obj-summary { margin: 8px 0 4px; color: var(--dim); white-space: pre-wrap;
+  line-height: 1.5; }
+.obj-props { display: grid; grid-template-columns: max-content 1fr;
+  gap: 6px 16px; margin: 10px 0 4px; font-size: 13px; }
+.obj-prop { display: contents; }
+.obj-prop-k { color: var(--muted); }
+.obj-prop-v { color: var(--fg); }
+.obj-sect { font-size: 11px; text-transform: uppercase; letter-spacing: .1em;
+  color: var(--muted); margin: 22px 0 10px; padding-top: 14px;
+  border-top: 1px solid var(--line); }
+
+/* -- forms that live on the card (tasks, notes): the composer's manners,
+      the panel's clothes -- */
+.obj-task-add, .obj-obs-add { display: flex; gap: 8px; align-items: center;
+  margin-top: 10px; }
+.obj-task-add input, .obj-obs-add input { flex: 1; min-width: 0;
+  background: var(--panel); color: var(--fg); font: inherit;
+  border: 1px solid var(--line); border-radius: var(--radius-md);
+  padding: 9px 13px; outline: none; }
+.obj-task-add input:focus, .obj-obs-add input:focus { border-color: var(--acc); }
+.obj-task-add input::placeholder, .obj-obs-add input::placeholder { color: var(--muted); }
+.obj-add-btn { border: 1px solid var(--line); background: var(--panel);
+  color: var(--acc); border-radius: var(--radius-md);
+  width: 38px; height: 38px; flex: none; cursor: pointer; font-size: 16px; }
+.obj-add-btn:hover { border-color: var(--acc); }
+
+/* -- tasks -- */
+.obj-task-list { display: flex; flex-direction: column; gap: 2px; }
+.obj-task { display: flex; align-items: center; gap: 10px; cursor: pointer;
+  padding: 7px 10px; border-radius: var(--radius-sm); }
+.obj-task:hover { background: var(--surface-raised); }
+.obj-task input[type="checkbox"] { accent-color: var(--acc); }
+.obj-task.done span { text-decoration: line-through; color: var(--muted); }
+
+/* -- observations / notes -- */
+.obj-obs-list { display: flex; flex-direction: column; gap: 8px; }
+.obj-obs { display: flex; gap: 12px; align-items: baseline; font-size: 13px;
+  line-height: 1.45; }
+.obj-obs-when { font-size: 11px; color: var(--muted); white-space: nowrap;
+  font-variant-numeric: tabular-nums; }
+.obj-obs-seek { cursor: pointer; color: var(--acc); }
+.obj-obs-seek:hover { text-decoration: underline; }
+.obj-obs-text { color: var(--fg); }
+.obj-obs-empty { color: var(--muted); font-size: 13px; }
+
+/* -- the studio stage: the current mix is the room's centrepiece and
+      gets the raised surface -- */
+.obj-stage { background: var(--surface-raised); border: 1px solid var(--line);
+  border-radius: var(--radius-lg); padding: 16px 18px; display: flex;
+  flex-direction: column; gap: 12px; }
+.obj-stage .aplayer { width: 100%; }
+.obj-stage-which { font-size: 12px; color: var(--dim); }
+
+/* -- versions -- */
+.obj-ver-list { display: flex; flex-direction: column; gap: 2px; }
+.obj-ver { display: flex; align-items: center; gap: 10px; font-size: 13px;
+  padding: 8px 10px; border-radius: var(--radius-sm); cursor: pointer; }
+.obj-ver:hover { background: var(--surface-raised); }
+.obj-ver-name { color: var(--fg); min-width: 110px; }
+.obj-ver-tail { margin-left: auto; display: flex; gap: 10px; align-items: center; }
+.obj-ver-star { background: none; border: none; color: var(--acc);
+  cursor: default; font-size: 14px; padding: 0; min-width: 0; min-height: 0; }
+.obj-ver-star.dim { opacity: .35; cursor: pointer; }
+.obj-ver-star.dim:hover { opacity: 1; }
+.obj-ver-notes { font-size: 12px; color: var(--dim); }
+
+/* -- children (tracks, sessions) and takes -- */
+.obj-child-list, .obj-take-list { display: flex; flex-direction: column; gap: 8px; }
+.obj-child { display: flex; align-items: baseline; gap: 10px;
+  padding: 10px 14px; border: 1px solid var(--line);
+  border-radius: var(--radius-md); cursor: pointer; background: var(--panel);
+  transition: border-color .15s, background .15s; }
+.obj-child:hover { border-color: var(--acc); background: var(--surface-raised); }
+.obj-child-name { font-weight: 500; color: var(--fg); }
+.obj-child-meta { font-size: 12px; color: var(--dim); }
+.obj-take { border: 1px solid var(--line); border-radius: var(--radius-md);
+  background: var(--panel); padding: 10px 14px; display: flex;
+  flex-direction: column; gap: 8px; }
+.obj-take-head { display: flex; align-items: center; gap: 8px; }
+.obj-take .aplayer { width: 100%; }
+
+/* -- annotation pins on the scrubber -- */
+.ascrub { position: relative; }
+.ascrub .obj-mark { position: absolute; top: -7px; min-width: 0; min-height: 0;
+  width: 9px; height: 9px; line-height: 0; border-radius: 50%;
+  background: var(--acc); border: none; padding: 0; cursor: pointer;
+  transform: translateX(-50%); box-shadow: 0 0 6px color-mix(in srgb, var(--acc) 60%, transparent); }
+.ascrub .obj-mark:hover { transform: translateX(-50%) scale(1.35); }
+.obj-at-chip { border: 1px solid var(--line); background: var(--panel);
+  border-radius: 999px; height: 38px; padding: 0 13px; flex: none;
+  cursor: pointer; font-size: 12px; color: var(--dim);
+  font-variant-numeric: tabular-nums; }
+.obj-at-chip.sel { border-color: var(--acc); color: var(--acc); }
+
+/* -- section action buttons under lists -- */
+.obj-sect-act { margin-top: 10px; }
+
+/* -- the feed's quiet observation row -- */
+.obs-entry { display: flex; align-items: baseline; gap: 8px;
+  font-size: 13px; color: var(--dim); }
+.obs-entry .obs-goto { background: none; border: none; color: var(--acc);
+  cursor: pointer; font-size: 12px; padding: 0; min-height: 0; }
+.obs-entry .obs-goto:hover { text-decoration: underline; }
+/* "tap the map" — said in the toolbar the eyes are already on */
+.field-placing { color: var(--acc); font-size: 12px; }
+
+/* a check-in is the same quiet row — loud ONLY when it carries SOS */
+.obs-entry.checkin-sos { color: #e0635c; font-weight: 600; }
+/* its claimed point, said beside the sentence in the quiet monospace of
+   coordinates everywhere else in the app */
+.obs-entry .checkin-coords { font-family: ui-monospace, monospace;
+  font-size: 11px; color: var(--dim); }
+
+/* -- narrow screens: the head stacks, taps grow -- */
+@media (max-width: 600px) {
+  #objects { padding: 12px 12px 28px; }
+  .obj-head { row-gap: 8px; }
+  .obj-actions { margin-left: 0; width: 100%; justify-content: flex-start; }
+  .obj-title { font-size: 18px; }
+  .obj-add-btn, .obj-at-chip { height: var(--tap, 44px); }
+  .obj-task-add input, .obj-obs-add input { padding: 11px 13px; }
+}
+
+/* -- the kind picker: the space's vocabulary as cards, «other» keeps the
+      free slug door open -- */
+.kind-pick { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 8px; margin: 6px 0; }
+.kind-card { display: flex; flex-direction: column; align-items: center;
+  gap: 4px; padding: 10px 6px; border: 1px solid var(--line);
+  border-radius: var(--radius-md); background: var(--panel); cursor: pointer;
+  transition: border-color .12s, background .12s; }
+.kind-card:hover { border-color: var(--acc); }
+.kind-card.sel { border-color: var(--acc); background: var(--surface-raised);
+  box-shadow: inset 0 0 0 1px var(--acc); }
+.kind-glyph { font-size: 20px; line-height: 1; }
+.kind-label { font-size: 12px; color: var(--dim); }
+.kind-card.sel .kind-label { color: var(--acc); }
+/* «→ объект» is one gesture, not a paragraph — never let it wrap. */
+.obs-entry .obs-goto { white-space: nowrap; }
+
+/* -- object reference chips (SP-2.1): the "#" twin of mentions -- */
+.objref-glyph { font-size: 15px; width: 20px; text-align: center; }
+.objref-chip .objref-chip-x { background: none; border: none; color: var(--dim);
+  cursor: pointer; padding: 0 0 0 6px; min-width: 0; min-height: 0; font-size: 12px; }
+.objref-chip .objref-chip-x:hover { color: var(--acc); }
+.objref-row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+.objref-feed-chip { font-size: 12px; padding: 3px 10px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--panel); color: var(--acc);
+  cursor: pointer; min-height: 0; }
+.objref-feed-chip:hover { border-color: var(--acc); }
+.objref-feed-chip.unknown { color: var(--muted); cursor: default; }
+
+/* ---- Field view (SP-3): the map of claims ---- */
+#field { flex: 1; display: flex; flex-direction: column; overflow-y: auto;
+  padding: 12px clamp(12px, 3vw, 24px) 24px; gap: 10px; }
+.field-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.field-share { display: flex; align-items: center; gap: 8px; font-size: 13px;
+  color: var(--dim); cursor: pointer; }
+.field-share input { accent-color: var(--acc); }
+.field-share-ind { width: 8px; height: 8px; border-radius: 50%;
+  background: var(--line); }
+.field-share-ind.on { background: var(--acc);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--acc) 60%, transparent); }
+.field-sos { background: var(--panel); color: #e05555;
+  border: 1px solid color-mix(in srgb, #e05555 50%, transparent);
+  border-radius: var(--radius-md); cursor: pointer; }
+.field-sos:hover { background: color-mix(in srgb, #e05555 12%, var(--panel)); }
+#fieldMarkerBtn.sel { border-color: var(--acc); color: var(--acc); }
+.field-map { position: relative; flex: 1; min-height: 280px;
+  border: 1px solid var(--line); border-radius: var(--radius-lg);
+  background: var(--canvas-deep, #09070b); overflow: hidden; }
+.field-map canvas { display: block; touch-action: none; cursor: grab; }
+.field-map canvas:active { cursor: grabbing; }
+.field-people { display: flex; flex-direction: column; gap: 4px; }
+.field-person { display: flex; align-items: baseline; gap: 10px;
+  font-size: 13px; padding: 6px 10px; border-radius: var(--radius-sm); }
+.field-person:hover { background: var(--surface-raised); }
+.field-dot.live { color: var(--acc); }
+.field-dot.stale { color: var(--dim); }
+.field-dot.unknown { color: var(--muted); }
+.field-name { color: var(--fg); font-weight: 500; min-width: 90px; }
+.field-meta { color: var(--dim); font-variant-numeric: tabular-nums; }
+.field-ci { margin-left: auto; color: var(--dim); font-size: 12px; }
+.field-ci.sos { color: #e05555; font-weight: 600; }
+.field-ci.overdue { color: var(--warn, #d9a44a); }
+.field-cadence { display: flex; align-items: center; gap: 8px;
+  font-size: 12px; color: var(--muted); }
+.field-cadence select { background: var(--panel); color: var(--fg);
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  padding: 4px 8px; font: inherit; }

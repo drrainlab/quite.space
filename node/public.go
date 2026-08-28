@@ -717,6 +717,12 @@ func (r *Runtime) requestIncompleteAssets(tid id.TerminalID, frames [][]byte) {
 				docAssets = append(docAssets, aid)
 			}
 		}
+		// Objects' live structural references (SP-2, ADR-030): a mirror
+		// must hold the mixes and covers the space's objects still name,
+		// or "open the track" answers 409 forever on this replica.
+		for aid := range st.space.State.ObjectLiveAssetIDs() {
+			docAssets = append(docAssets, aid)
+		}
 		return nil
 	})
 	for _, aid := range docAssets {
@@ -1086,4 +1092,54 @@ func (r *Runtime) ingressHintLocked(st *spaceState, tid id.TerminalID,
 		return st.ingressHints[int(shard)]
 	}
 	return nil
+}
+
+// ReviseCentral changes what a space declares it is CENTRED ON — the one
+// character field the interface reads to decide how a space presents
+// itself (ADR-029). It exists because a mode was previously only
+// declarable at creation, which made "this turned out to be a field
+// space" unsayable without abandoning the space and its history.
+//
+// Only the centre moves: everything else in the character, and the whole
+// policy, is carried across verbatim. A character revision is a signed
+// manifest revision like any other.
+func (r *Runtime) ReviseCentral(tid id.TerminalID, central string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	st, ok := r.spaces[tid]
+	if !ok {
+		return errors.New("node: unknown space")
+	}
+	meta := r.ks.Spaces[tid]
+	if !meta.Owned {
+		return errors.New("node: only the owner revises the character")
+	}
+	title, character := st.space.Character()
+	character.Central = strings.TrimSpace(central)
+	if err := st.space.ReviseManifest(title, character, st.space.Policy()); err != nil {
+		return err
+	}
+	meta.ManifestFrame = st.space.ManifestFrame
+	r.ks.Spaces[tid] = meta
+	return r.saveKeystore()
+}
+
+func (a *APIServer) handleReviseCentral(w http.ResponseWriter, r *http.Request) {
+	tid, err := a.spaceID(r)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	body, err := readBody[struct {
+		Central string `json:"central"`
+	}](r)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := a.rt.ReviseCentral(tid, body.Central); err != nil {
+		httpErr(w, http.StatusForbidden, err)
+		return
+	}
+	writeJSON(w, map[string]string{"status": "revised"})
 }

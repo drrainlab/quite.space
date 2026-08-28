@@ -100,8 +100,10 @@ func TestRecordBounds(t *testing.T) {
 
 func TestRecordRawExtraSurvivesResave(t *testing.T) {
 	r := sampleRecord()
+	// Keys must sit ABOVE maxKnownRecKey (10 since SP-3 took 9/10 for
+	// geo/path) — that is the point of the retention discipline.
 	r.RawExtra = []Extra{
-		{Key: 9, Raw: codec.AppendText(nil, "future field")},
+		{Key: 11, Raw: codec.AppendText(nil, "future field")},
 		{Key: 12, Raw: codec.AppendUint(nil, 42)},
 	}
 	enc, err := r.Encode()
@@ -112,7 +114,7 @@ func TestRecordRawExtraSurvivesResave(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode with unknown keys: %v", err)
 	}
-	if len(got.RawExtra) != 2 || got.RawExtra[0].Key != 9 || got.RawExtra[1].Key != 12 {
+	if len(got.RawExtra) != 2 || got.RawExtra[0].Key != 11 || got.RawExtra[1].Key != 12 {
 		t.Fatalf("raw extra lost: %+v", got.RawExtra)
 	}
 	// The re-save round-trip: an older editor re-encoding must emit
@@ -128,7 +130,7 @@ func TestRecordRawExtraSurvivesResave(t *testing.T) {
 
 func TestRecordTooLarge(t *testing.T) {
 	r := sampleRecord()
-	r.RawExtra = []Extra{{Key: 9, Raw: codec.AppendBytes(nil, make([]byte, MaxRecordBytes))}}
+	r.RawExtra = []Extra{{Key: 11, Raw: codec.AppendBytes(nil, make([]byte, MaxRecordBytes))}}
 	// retainExtra drops over-budget extras rather than failing; the
 	// record bound still holds because the passenger was shed.
 	enc, err := r.Encode()

@@ -93,6 +93,40 @@ func (p Presence) Current(nowUnix uint64) bool {
 	return nowUnix < p.ExpiresAt
 }
 
+// Position is a member's geographic claim (SP-3, ADR-031): the last
+// signed statement about where this terminal was, with the AUTHOR'S
+// stated accuracy — never a measured truth. EventID rides along as the
+// LWW tiebreak: presence's ">" guard leaves equal-EmittedAt claims
+// arrival-order dependent, and the position twin closes that hole.
+type Position struct {
+	LatE7U     uint64
+	LonE7U     uint64
+	AccuracyM  uint64 // 0 = undeclared
+	EmittedAt  uint64
+	ExpiresAt  uint64
+	ObservedAt uint64 // 0 = EmittedAt
+	Source     id.TerminalID
+	EventID    id.EventID
+}
+
+// Current reports whether the claim is inside its signed TTL. Expired
+// positions project as "last known + age of knowledge", never as now.
+func (p Position) Current(nowUnix uint64) bool {
+	return nowUnix < p.ExpiresAt
+}
+
+// AgeSeconds is how old the knowledge is.
+func (p Position) AgeSeconds(nowUnix uint64) uint64 {
+	at := p.ObservedAt
+	if at == 0 {
+		at = p.EmittedAt
+	}
+	if nowUnix <= at {
+		return 0
+	}
+	return nowUnix - at
+}
+
 // AgeSeconds returns how old the announce is at the given time.
 func (p Presence) AgeSeconds(nowUnix uint64) uint64 {
 	if nowUnix <= p.EmittedAt {

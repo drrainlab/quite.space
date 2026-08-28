@@ -48,6 +48,11 @@ type ServerLimits struct {
 	FetchMaxHints   int
 	FetchMaxBytes   int
 	FetchRatePerMin int
+	// EN-2 listen bounds: hints one connection may park, and how long a
+	// parked connection may be silent before the reaper takes it. Zero
+	// values take the defaults.
+	ListenMaxHints int
+	ListenIdle     time.Duration
 
 	// MaxConns caps concurrent connections (RR-6): every accepted conn
 	// costs a goroutine and a poll ticker, so an accept flood must hit a
@@ -124,6 +129,27 @@ func (l ServerLimits) collectMaxHints() int {
 	return l.CollectMaxHints
 }
 
+// listenMaxHints bounds one connection's park (EN-2). Wider than a collect
+// on purpose: a park is a standing statement, not a per-request cost, and a
+// device with many spaces parks every inbox it owns plus its identity and
+// knock mailboxes.
+func (l ServerLimits) listenMaxHints() int {
+	if l.ListenMaxHints <= 0 {
+		return 256
+	}
+	return l.ListenMaxHints
+}
+
+// listenIdle is how long a parked connection may be silent before the
+// reaper takes it. The client is told this figure (MsgListenOK) and pings
+// well inside it; 45 minutes tolerates three missed 15-minute pings.
+func (l ServerLimits) listenIdle() time.Duration {
+	if l.ListenIdle <= 0 {
+		return 45 * time.Minute
+	}
+	return l.ListenIdle
+}
+
 func (l ServerLimits) collectMaxBytes() int {
 	if l.CollectMaxBytes <= 0 {
 		return 8 << 20
@@ -155,6 +181,26 @@ type Server struct {
 	stop   chan struct{}
 	connMu sync.Mutex
 	conns  int
+
+	// listeners maps a parked hint to the connections that asked to be
+	// told about it (EN-2 relay push). The VALUE side is each connection's
+	// own pending-notify set: a Put appends there under this one lock, and
+	// the connection's own serve loop — the only goroutine that ever
+	// writes to its socket — drains it on its next tick. Nothing here
+	// makes the relay less blind: it already knew which hints a client
+	// polls; parking states the same fact once instead of every 2s.
+	listenMu  sync.Mutex
+	listeners map[string]map[*connState]struct{}
+
+	// push is the EN-3 doorbell-beyond-the-socket registry; see push.go.
+	pushOnce sync.Once
+	pushV    *pushRegistry
+}
+
+// pushRegs returns the registry, created on first use.
+func (s *Server) pushRegs() *pushRegistry {
+	s.pushOnce.Do(func() { s.pushV = newPushRegistry() })
+	return s.pushV
 }
 
 // StartServer listens on addr (TLS, same session semantics as LAN: the
@@ -258,6 +304,16 @@ type connState struct {
 
 	writes      int
 	writeWindow time.Time
+
+	// The park (EN-2): hints this connection listens for, and the
+	// notifications waiting for its serve loop. pending is written by
+	// OTHER connections' Put handlers under Server.listenMu; the serve
+	// loop drains it under the same lock and sends on its own socket.
+	listenHints map[string]struct{}
+	pending     map[string]struct{}
+	// pushEndpoint is what THIS connection last registered (EN-3), so an
+	// empty keyPush on a later park can name what to remove.
+	pushEndpoint string
 }
 
 // spend counts one use in a one-minute window and reports whether the
@@ -317,16 +373,31 @@ func (s *Server) serve(c *lan.Conn) {
 			// graceful relay restart does to every client still attached.
 			// A closed listener refuses new callers; only closing the
 			// connection tells the ones already here.
+			s.unpark(cs)
 			c.Close()
 			return
 		case <-t.C:
 		}
 		if closed, _ := c.Closed(); closed {
+			s.unpark(cs)
 			return
 		}
-		if time.Since(idle) > 2*time.Minute {
+		// A PARKED connection is allowed a much longer silence: silence is
+		// its whole job, and its client pings inside listenIdle. Everyone
+		// else keeps the short reaper.
+		reap := 2 * time.Minute
+		if len(cs.listenHints) > 0 {
+			reap = s.limits.listenIdle()
+		}
+		if time.Since(idle) > reap {
+			s.unpark(cs)
 			c.Close()
 			return
+		}
+		// Deliver queued notifications on THIS loop — the only goroutine
+		// that ever writes to this socket.
+		for _, h := range s.takePending(cs) {
+			_ = c.Send((&relay.Msg{Type: relay.MsgNotify, Hint: []byte(h)}).Encode())
 		}
 		for _, pkt := range c.Poll() {
 			idle = time.Now()
@@ -365,6 +436,11 @@ func (s *Server) handle(m *relay.Msg, cs *connState) *relay.Msg {
 		})
 		if !ok {
 			return &relay.Msg{Type: relay.MsgError, Reason: relay.ReasonQuotaExceeded}
+		}
+		if s.notifyListeners(string(m.Hint)) == 0 {
+			// Nobody parked is here to hear it — ring the out-of-band
+			// doorbell, if one is registered for this hint (EN-3).
+			s.pushRegs().ring(string(m.Hint))
 		}
 		// The receipt proves exactly accepted_by_relay and nothing more
 		// (ADR-008): the expiry is echoed so the sender knows the deadline.
@@ -428,7 +504,7 @@ func (s *Server) handle(m *relay.Msg, cs *connState) *relay.Msg {
 		}
 		return &relay.Msg{
 			Type: relay.MsgProbeOK, Nonce: m.Nonce,
-			ProtoMin: relay.RelayProtocolVersion, ProtoMax: relay.RelayProtocolVersion,
+			ProtoMin: relay.RelayProtocolMin, ProtoMax: relay.RelayProtocolVersion,
 			Load: s.loadClass(), Accepting: 1,
 			Now: uint64(time.Now().UnixMilli()),
 		}
@@ -481,9 +557,142 @@ func (s *Server) handle(m *relay.Msg, cs *connState) *relay.Msg {
 			items = [][]byte{}
 		}
 		return &relay.Msg{Type: relay.MsgFetchItems, Items: items}
+	case relay.MsgListen:
+		// Parking replaces this connection's whole set: re-listening with
+		// fresh hints IS the bucket-rotation protocol, and a replace
+		// cannot leak stale registrations the way an append could.
+		// Metered like a collect — parking is cheap for the relay but not
+		// free, and an unmetered verb is an amplification invitation.
+		if !spend(&cs.collects, &cs.collectWindow, s.limits.collectRatePerMin()) {
+			return &relay.Msg{Type: relay.MsgError, Reason: relay.ReasonRateLimited,
+				RetryAfterMs: retryAfter(cs.collectWindow)}
+		}
+		if len(m.Hints) > s.limits.listenMaxHints() {
+			return &relay.Msg{Type: relay.MsgError, Reason: relay.ReasonTooManyHints}
+		}
+		for _, h := range m.Hints {
+			if len(h) != relay.HintLen {
+				return &relay.Msg{Type: relay.MsgError, Reason: "malformed hint"}
+			}
+		}
+		s.repark(cs, m.Hints)
+		// EN-3: an endpoint riding the park registers the out-of-band
+		// doorbell for the same hints; an EMPTY one removes whatever this
+		// connection last registered — the off switch, named by the only
+		// party who knows the endpoint. The registration deliberately
+		// SURVIVES the connection: its whole purpose is the time when no
+		// connection exists.
+		if m.PushSet {
+			if m.Push == "" {
+				if cs.pushEndpoint != "" {
+					s.pushRegs().remove(cs.pushEndpoint)
+					cs.pushEndpoint = ""
+				}
+			} else {
+				if err := relay.ValidatePushEndpoint(m.Push); err != nil {
+					return &relay.Msg{Type: relay.MsgError, Reason: "malformed push endpoint"}
+				}
+				if cs.pushEndpoint != "" && cs.pushEndpoint != m.Push {
+					s.pushRegs().remove(cs.pushEndpoint)
+				}
+				cs.pushEndpoint = m.Push
+				s.pushRegs().register(m.Push, m.Hints)
+			}
+		}
+		// The advisory hold: how long the reaper tolerates silence on a
+		// parked connection. The client pings well inside it.
+		return &relay.Msg{Type: relay.MsgListenOK,
+			Expires: uint64(s.limits.listenIdle() / time.Second)}
+	case relay.MsgPing:
+		// The keepalive that holds NATs and the idle reaper between
+		// notifications. Deliberately the cheapest verb on the wire and
+		// still metered by the conn loop's own idle bookkeeping — a ping
+		// flood is bounded by the read loop, not answered for free
+		// forever (writes budget, the roomiest one).
+		if !spend(&cs.writes, &cs.writeWindow, s.limits.writeRatePerMin()) {
+			return &relay.Msg{Type: relay.MsgError, Reason: relay.ReasonRateLimited,
+				RetryAfterMs: retryAfter(cs.writeWindow)}
+		}
+		return &relay.Msg{Type: relay.MsgPong}
 	default:
 		return &relay.Msg{Type: relay.MsgError, Reason: "unknown message type"}
 	}
+}
+
+// repark replaces one connection's parked hints under the registry lock.
+func (s *Server) repark(cs *connState, hints [][]byte) {
+	s.listenMu.Lock()
+	defer s.listenMu.Unlock()
+	if s.listeners == nil {
+		s.listeners = map[string]map[*connState]struct{}{}
+	}
+	for h := range cs.listenHints {
+		if set := s.listeners[h]; set != nil {
+			delete(set, cs)
+			if len(set) == 0 {
+				delete(s.listeners, h)
+			}
+		}
+	}
+	cs.listenHints = map[string]struct{}{}
+	for _, h := range hints {
+		k := string(h)
+		cs.listenHints[k] = struct{}{}
+		set := s.listeners[k]
+		if set == nil {
+			set = map[*connState]struct{}{}
+			s.listeners[k] = set
+		}
+		set[cs] = struct{}{}
+	}
+}
+
+// unpark removes a dying connection from the registry.
+func (s *Server) unpark(cs *connState) {
+	s.listenMu.Lock()
+	defer s.listenMu.Unlock()
+	for h := range cs.listenHints {
+		if set := s.listeners[h]; set != nil {
+			delete(set, cs)
+			if len(set) == 0 {
+				delete(s.listeners, h)
+			}
+		}
+	}
+	cs.listenHints = nil
+}
+
+// notifyListeners queues one hint's arrival for every parked connection.
+// Queued as a SET: ten Puts between two of a client's reads are one
+// notification, because the client's response — drain the mailbox — is
+// the same either way.
+func (s *Server) notifyListeners(hint string) int {
+	s.listenMu.Lock()
+	defer s.listenMu.Unlock()
+	n := 0
+	for cs := range s.listeners[hint] {
+		if cs.pending == nil {
+			cs.pending = map[string]struct{}{}
+		}
+		cs.pending[hint] = struct{}{}
+		n++
+	}
+	return n
+}
+
+// takePending drains one connection's queued notifications.
+func (s *Server) takePending(cs *connState) []string {
+	s.listenMu.Lock()
+	defer s.listenMu.Unlock()
+	if len(cs.pending) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(cs.pending))
+	for h := range cs.pending {
+		out = append(out, h)
+	}
+	cs.pending = nil
+	return out
 }
 
 // ---- Client ----

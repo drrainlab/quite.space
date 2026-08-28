@@ -28,6 +28,7 @@ import (
 	"fmt"
 
 	"github.com/drrainlab/quiet_places/protocol/codec"
+	"github.com/drrainlab/quiet_places/protocol/geo"
 	"github.com/drrainlab/quiet_places/protocol/id"
 )
 
@@ -56,12 +57,42 @@ const (
 	recKeySummary = 5
 	recKeyProps   = 6
 	recKeyCover   = 7
+	recKeyParent  = 8
+	recKeyGeo     = 9
+	recKeyPath    = 10
 
 	// maxKnownRecKey is the highest key this build understands; higher
 	// keys ride RawExtra verbatim so an older editor cannot strip a
 	// newer field by re-saving.
-	maxKnownRecKey = recKeyCover
+	maxKnownRecKey = recKeyPath
 )
+
+// Geo bounds (SP-3, ADR-031).
+const (
+	// MaxGeoRadiusM bounds a zone. Circles, not polygons — v1 says so
+	// out loud: point+radius covers base/camp/search-vicinity/rendezvous
+	// and proves the vertical without a geometry library.
+	MaxGeoRadiusM = 100_000
+	// MaxRoutePoints is DERIVED BY MEASUREMENT, not chosen — see
+	// TestMaxRoutePointsIsMeasured (transports/compact). The two-tier
+	// radio law (ADR-031): a route revision's envelope FLOOR (~246 B of
+	// signature + metadata + revision scaffolding) can never fit one
+	// Meshtastic frame, and chain blocking (C3) only bites at
+	// ErrTooLarge — so the HARD guarantee is one RNode frame (500 B)
+	// for the full signed warm-compact envelope with a worst-case
+	// 32-rune Cyrillic name. A route here is an operational INTENT
+	// (BASE → WP1 → ridge → RV), never a GPS track; breadcrumbs are
+	// position observations, a track log is a future bulk artifact.
+	MaxRoutePoints = 21
+)
+
+// GeoShape is an object's geographic claim: a point, optionally widened
+// to a zone by a radius. RadiusM 0 means "a point" and is never encoded —
+// one representation.
+type GeoShape struct {
+	Point   geo.Point
+	RadiusM uint64
+}
 
 // Prop is one key/value pair. Encoded as a sorted array of pairs rather
 // than a text-keyed map: the codec's canonical maps are integer-keyed,
@@ -91,6 +122,24 @@ type Record struct {
 	Summary string
 	Props   []Prop // sorted by Key, unique
 	Cover   string // hex asset id, optional
+	// Parent models PRIMARY CONTAINMENT — the one tree the object lives
+	// in (Track lives in a Release, Session lives in a Track). It is NOT
+	// an arbitrary object relationship: a track that also appears on a
+	// compilation is a future, separate edge primitive, and stretching
+	// this single pointer into that role would quietly turn a tree into
+	// an unmodelled graph (SP-2, ADR-030). The edge is DERIVED at
+	// projection time (ChildrenOf) — a parent record never lists its
+	// children.
+	Parent *[16]byte
+	// Geo places the object in the world (SP-3): ANY object may carry a
+	// coordinate — a machine on the shop-floor map as much as a base
+	// camp. A "Place" is not a new entity; it is a Record with Geo and a
+	// kind the renderer understands (ADR-029/031).
+	Geo *GeoShape
+	// Path is an ordered sequence of points — an operational route's
+	// INTENT. Meaningful on kind=route but not restricted to it; the
+	// renderer decides. Bounded by MaxRoutePoints (measured, see above).
+	Path []geo.Point
 	// RawExtra carries unknown higher keys through a re-save.
 	RawExtra []Extra
 }
@@ -148,6 +197,35 @@ func (r *Record) Validate() error {
 	if len(r.Cover) > 128 {
 		return errors.New("objects: cover id too long")
 	}
+	if r.Parent != nil {
+		if *r.Parent == ([16]byte{}) {
+			return errors.New("objects: parent id is zero")
+		}
+		if *r.Parent == r.ObjectID {
+			return errors.New("objects: an object cannot be its own parent")
+		}
+	}
+	if r.Geo != nil {
+		if !r.Geo.Point.Valid() {
+			return errors.New("objects: geo point out of range")
+		}
+		if r.Geo.RadiusM > MaxGeoRadiusM {
+			return errors.New("objects: geo radius too large")
+		}
+	}
+	if len(r.Path) > 0 {
+		if len(r.Path) < 2 {
+			return errors.New("objects: a path needs at least two points")
+		}
+		if len(r.Path) > MaxRoutePoints {
+			return errors.New("objects: path exceeds the one-frame route bound")
+		}
+		for _, p := range r.Path {
+			if !p.Valid() {
+				return errors.New("objects: path point out of range")
+			}
+		}
+	}
 	return nil
 }
 
@@ -169,6 +247,15 @@ func (r *Record) Encode() ([]byte, error) {
 		n++
 	}
 	if r.Cover != "" {
+		n++
+	}
+	if r.Parent != nil {
+		n++
+	}
+	if r.Geo != nil {
+		n++
+	}
+	if len(r.Path) > 0 {
 		n++
 	}
 	n += len(extra)
@@ -199,6 +286,31 @@ func (r *Record) Encode() ([]byte, error) {
 	if r.Cover != "" {
 		buf = codec.AppendUint(buf, recKeyCover)
 		buf = codec.AppendText(buf, r.Cover)
+	}
+	if r.Parent != nil {
+		buf = codec.AppendUint(buf, recKeyParent)
+		buf = codec.AppendBytes(buf, r.Parent[:])
+	}
+	if r.Geo != nil {
+		buf = codec.AppendUint(buf, recKeyGeo)
+		if r.Geo.RadiusM > 0 {
+			buf = codec.AppendArray(buf, 3)
+			buf = codec.AppendUint(buf, r.Geo.Point.LatE7U)
+			buf = codec.AppendUint(buf, r.Geo.Point.LonE7U)
+			buf = codec.AppendUint(buf, r.Geo.RadiusM)
+		} else {
+			buf = geo.AppendPoint(buf, r.Geo.Point)
+		}
+	}
+	if len(r.Path) > 0 {
+		// A flat array of 2N uints: the cheapest deterministic wire for
+		// an ordered point sequence.
+		buf = codec.AppendUint(buf, recKeyPath)
+		buf = codec.AppendArray(buf, len(r.Path)*2)
+		for _, p := range r.Path {
+			buf = codec.AppendUint(buf, p.LatE7U)
+			buf = codec.AppendUint(buf, p.LonE7U)
+		}
 	}
 	for _, e := range extra {
 		buf = codec.AppendUint(buf, e.Key)
@@ -265,6 +377,43 @@ func Decode(payload []byte) (*Record, error) {
 			}
 		case recKeyCover:
 			r.Cover, er = d.ReadText()
+		case recKeyParent:
+			var p [16]byte
+			er = read16(d, p[:])
+			r.Parent = &p
+		case recKeyGeo:
+			var cnt int
+			cnt, er = d.ReadArray()
+			if er == nil && cnt != 2 && cnt != 3 {
+				er = errors.New("objects: geo is not [lat,lon] or [lat,lon,radius]")
+			}
+			if er == nil {
+				g := &GeoShape{}
+				if g.Point.LatE7U, er = d.ReadUint(); er == nil {
+					if g.Point.LonE7U, er = d.ReadUint(); er == nil && cnt == 3 {
+						g.RadiusM, er = d.ReadUint()
+					}
+				}
+				if er == nil && cnt == 3 && g.RadiusM == 0 {
+					er = errors.New("objects: zero radius must be omitted")
+				}
+				r.Geo = g
+			}
+		case recKeyPath:
+			var cnt int
+			cnt, er = d.ReadArray()
+			if er == nil {
+				if cnt%2 != 0 || cnt > MaxRoutePoints*2 {
+					er = errors.New("objects: malformed path")
+				}
+				for i := 0; i < cnt/2 && er == nil; i++ {
+					var p geo.Point
+					if p.LatE7U, er = d.ReadUint(); er == nil {
+						p.LonE7U, er = d.ReadUint()
+					}
+					r.Path = append(r.Path, p)
+				}
+			}
 		default:
 			er = readExtra(d, k, maxKnownRecKey, &r.RawExtra)
 		}

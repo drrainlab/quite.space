@@ -85,6 +85,7 @@ type shelfItemResp struct {
 	Entry       *entryResp     `json:"entry,omitempty"`
 	Publication map[string]any `json:"publication,omitempty"`
 	App         map[string]any `json:"app,omitempty"`
+	Object      map[string]any `json:"object,omitempty"` // SP-1 domain object
 }
 
 func (a *APIServer) handleKeep(w http.ResponseWriter, r *http.Request) {
@@ -199,6 +200,18 @@ func (a *APIServer) handleShelf(w http.ResponseWriter, r *http.Request) {
 							"instance": rec.Instance.InstanceID,
 							"app_id":   rec.Instance.AppID,
 							"title":    rec.Instance.Props["title"],
+						}
+					}
+				case it.Kind == "object":
+					if oid, ok := sp.State.ObjectByTarget(it.Target); ok {
+						if o, ok := sp.State.ObjectByID(oid); ok {
+							resp.Object = map[string]any{
+								"object_id": hex.EncodeToString(oid[:]),
+								"name":      o.Record.Name,
+								"kind":      o.Record.Kind,
+								"status":    o.Record.Status,
+								"archived":  o.Archived,
+							}
 						}
 					}
 				default:

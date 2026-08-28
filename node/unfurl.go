@@ -196,6 +196,16 @@ func (r *Runtime) Unfurl(ctx context.Context, raw string) (*LinkCard, error) {
 	if err := schemas.ValidateHTTPURL(raw); err != nil {
 		return nil, err
 	}
+	// THE GATE RUNS BEFORE THE SOCKET OPENS. This call predates
+	// internetGate() by several waves and used to dial out regardless of
+	// the connectivity policy: a device set to radio-only — or to offline
+	// entirely — still reached a stranger's web server the moment somebody
+	// pasted a link. That is the exact shape the policy exists to refuse,
+	// and the refusal is typed (ErrTransportBlocked), so a client can say
+	// "you told me not to" rather than showing a preview that failed.
+	if err := r.internetGate(); err != nil {
+		return nil, err
+	}
 	u, err := url.Parse(raw)
 	if err != nil {
 		return nil, errors.New("unfurl: that address does not parse")

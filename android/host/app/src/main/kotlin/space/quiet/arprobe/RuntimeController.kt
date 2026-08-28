@@ -598,9 +598,13 @@ class RuntimeController private constructor(appContext: Context) {
                 // Multicast is dropped by the Wi-Fi stack unless a lock is
                 // held, and LAN discovery IS multicast — without this the
                 // phone announces into the void and hears nobody (T6-LAN).
-                // Held for the node's lifetime, released in stop(); the
-                // battery cost is the price of "stay connected", which is
-                // already this app's default posture.
+                // Held while a person is LOOKING and released with the
+                // screen (setForeground below): a pocket does not need to
+                // be discoverable, the relay covers delivery the moment
+                // LAN stops, and a held lock keeps the Wi-Fi chip from
+                // filtering multicast — a steady drain the energy survey
+                // put on the bill by name.
+                lanWanted = withLAN
                 if (withLAN) acquireMulticast()
                 Quietcore.startAs(
                     dataDir().absolutePath,
@@ -609,6 +613,9 @@ class RuntimeController private constructor(appContext: Context) {
                     android.os.Build.MODEL ?: "Android",
                     withLAN,
                 )
+                // EN-3: a doorbell registration made while the node was
+                // locked replays into the freshly opened core.
+                UnifiedPushConnector.replay(app)
             } catch (t: Throwable) {
                 // A failure is a RESULT, not something to swallow: "the core
                 // would not open" is a state a host must be able to show.
@@ -621,6 +628,99 @@ class RuntimeController private constructor(appContext: Context) {
     }
 
     private var multicast: WifiManager.MulticastLock? = null
+    @Volatile private var lanWanted = false
+
+    /**
+     * EN-3: the doorbell rang and the process may be cold. If a remembered
+     * passphrase can open the node, open it and kick the sync — the ping
+     * carried nothing, the drain fetches everything. A node locked at rest
+     * stays locked: the person gets a nameless nudge instead, because a
+     * doorbell that could bypass the lock would not be a doorbell.
+     */
+    fun wakeForDoorbell() {
+        worker.execute {
+            if (isAlive()) {
+                try {
+                    space.quiet.quietcore.Quietcore.kickSync()
+                } catch (t: Throwable) {
+                    Log.w(TAG, "doorbell kick", t)
+                }
+                return@execute
+            }
+            val stored = try {
+                PassphraseVault(app).load()
+            } catch (t: Throwable) {
+                null
+            }
+            if (stored != null) {
+                ensureStarted(stored, null, true)
+                // Queued AFTER ensureStarted's own worker task on this
+                // serial executor, so the kick meets an open node.
+                worker.execute {
+                    try {
+                        space.quiet.quietcore.Quietcore.kickSync()
+                    } catch (t: Throwable) {
+                        Log.w(TAG, "doorbell kick after open", t)
+                    }
+                }
+            } else {
+                doorbellNudge()
+            }
+        }
+    }
+
+    /**
+     * EN-3: the doorbell rang and the node is locked at rest. The nudge
+     * names NOTHING — no space, no sender, no count — because the lock is
+     * the person's decision and a notification that leaked around it
+     * would make the doorbell a hole. One fixed id: a second ring while
+     * the first nudge stands replaces it, which is also the truth.
+     */
+    private fun doorbellNudge() {
+        try {
+            NotificationChannels.ensure(app)
+            val open = android.app.PendingIntent.getActivity(
+                app, 0,
+                android.content.Intent(app, QuietActivity::class.java),
+                android.app.PendingIntent.FLAG_IMMUTABLE,
+            )
+            val n = android.app.Notification.Builder(app, NotificationPolicy.CHANNEL_MESSAGES)
+                .setSmallIcon(R.drawable.ic_stat_quiet)
+                .setContentTitle("Quiet")
+                .setContentText("Something is waiting — open to see it")
+                .setContentIntent(open)
+                .setAutoCancel(true)
+                .build()
+            val mgr = app.getSystemService(android.content.Context.NOTIFICATION_SERVICE)
+                as android.app.NotificationManager
+            mgr.notify(DOORBELL_NUDGE_ID, n)
+        } catch (t: Throwable) {
+            Log.w(TAG, "doorbell nudge", t)
+        }
+    }
+
+    /**
+     * The shell's one honest bit about attention, forwarded to the core
+     * (which stretches its relay heartbeat in the background — the idle
+     * radio was the battery bill) and applied to the multicast lock
+     * (which the Wi-Fi chip pays for even in a pocket). Called from the
+     * activity's own resume/pause, beside the notification coordinator's
+     * identical signal.
+     */
+    fun setForeground(fg: Boolean) {
+        worker.execute {
+            try {
+                Quietcore.setForeground(fg)
+            } catch (t: Throwable) {
+                Log.w(TAG, "setForeground", t)
+            }
+            if (fg) {
+                if (lanWanted) acquireMulticast()
+            } else {
+                releaseMulticast()
+            }
+        }
+    }
 
     private fun acquireMulticast() {
         try {
@@ -797,6 +897,8 @@ class RuntimeController private constructor(appContext: Context) {
     }
 
     companion object {
+        /** EN-3: the one nameless nudge a locked node may post. */
+        private const val DOORBELL_NUDGE_ID = 990_101
         private const val KEY_POLICY = "presentation_policy"
         private const val KEY_AVAILABILITY = "availability_mode"
         private const val KEY_AVAILABILITY_REFUSED = "availability_refused"

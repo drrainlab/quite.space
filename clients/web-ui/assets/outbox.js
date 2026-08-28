@@ -67,6 +67,7 @@ const OUTBOX = (() => {
       ref: newRef(), space, text,
       reply_to: (opts && opts.reply_to) || undefined,
       mentions: (opts && opts.mentions && opts.mentions.length) ? opts.mentions : undefined,
+      object_refs: (opts && opts.object_refs && opts.object_refs.length) ? opts.object_refs : undefined,
       card: (opts && opts.card) || undefined,
       bare: !!(opts && opts.bare),
       at: Math.floor(Date.now() / 1000),
@@ -121,6 +122,7 @@ const OUTBOX = (() => {
         r = await post(`/api/spaces/${item.space}/messages`, {
           text: item.text, mentions: item.mentions || [],
           ...(item.reply_to ? { reply_to: item.reply_to } : {}),
+          ...(item.object_refs ? { object_refs: item.object_refs } : {}),
           client_ref: item.ref,
         });
       } catch { return 'retry'; }
