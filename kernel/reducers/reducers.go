@@ -172,6 +172,8 @@ type State struct {
 	checkins       []CheckinRecord
 	checkinLatest  map[id.PrincipalID]*CheckinRecord
 	CheckinEvicted int
+	sweeps         []SweepFact
+	SweepEvicted   int
 
 	// apps (ADR-014, apps.go): definitions by revision event, instances by
 	// id, and per-instance state partitions.
@@ -429,6 +431,8 @@ func (s *State) Apply(env *signal.Envelope, eid id.EventID) {
 		s.applyAssetAnnotated(env, eid)
 	case schemas.MarkerPlaced:
 		s.applyMarkerPlaced(env, eid)
+	case schemas.SweepCompleted:
+		s.applySweepCompleted(env, eid)
 	case schemas.CheckinSent:
 		s.applyCheckin(env, eid)
 	case schemas.ObservationPosition:
@@ -731,6 +735,12 @@ func (s *State) Digest() [32]byte {
 			h.Write(p[:])
 			h.Write(s.checkinLatest[p].EventID[:])
 		}
+	}
+	// Sweeps (SP-3.2): a bounded list under the same eviction law —
+	// digest-safe. Empty-writes-nothing: pre-SP-3.2 digests stand.
+	for _, f := range s.sweeps {
+		h.Write(f.EventID[:])
+		h.Write(f.TrackAsset[:])
 	}
 	// Annotations (SP-2): bounded timelines under the deterministic
 	// observation eviction law — digest-safe. Sorted by asset hex;
