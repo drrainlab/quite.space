@@ -294,7 +294,14 @@ jobs:
           set -euo pipefail
           WANT="$(grep -oE 'version = "[0-9.]+"' android/host/asr/build.gradle.kts | grep -oE '[0-9.]+' | tail -1)"
           echo "asr pins CMake $WANT"
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "cmake;$WANT" >/dev/null
+          # `yes` dies of SIGPIPE the moment sdkmanager stops reading its
+          # licence prompt, and under pipefail that failed the step even
+          # though the install had just succeeded. The pipe is not the
+          # check — the test below is, and it is the one that can tell the
+          # difference between "installed" and "not there".
+          set +o pipefail
+          yes 2>/dev/null | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "cmake;$WANT" >/dev/null || true
+          set -o pipefail
           test -x "$ANDROID_HOME/cmake/$WANT/bin/cmake" \
             || { echo "::error::cmake $WANT did not install — is it an Android SDK package?"; exit 1; }
           "$ANDROID_HOME/cmake/$WANT/bin/cmake" --version | head -1
