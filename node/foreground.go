@@ -43,9 +43,15 @@ func (r *Runtime) foregrounded() bool {
 }
 
 // syncInterval is the relay heartbeat the current attention state earns.
+// With a parked listener vouching for arrivals (EN-2), the background
+// poll stretches further still: the doorbell covers the news, and the
+// slow poll stays only as the net under a lost notification.
 func (r *Runtime) syncInterval(base time.Duration) time.Duration {
 	if r.foregrounded() {
 		return base
+	}
+	if r.relayListenHealthy() {
+		return base * listenedMultiplier
 	}
 	return base * backgroundMultiplier
 }

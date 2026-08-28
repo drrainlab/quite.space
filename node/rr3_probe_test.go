@@ -27,7 +27,9 @@ func TestProbeRoundTripCarriesTheFacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.ProtoMin != 1 || res.ProtoMax != 1 {
+	// The range, not a point: generation 2 added the listen verbs and
+	// min stayed 1 so a v1 peer keeps talking exactly as before (EN-2).
+	if res.ProtoMin != 1 || res.ProtoMax != 2 {
 		t.Fatalf("protocol range %d..%d", res.ProtoMin, res.ProtoMax)
 	}
 	if res.Load != relay.LoadNormal || !res.Accepting {

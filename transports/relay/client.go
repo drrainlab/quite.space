@@ -9,6 +9,7 @@ package relay
 
 import (
 	"errors"
+	"net/url"
 	"time"
 
 	"github.com/drrainlab/quiet_places/transports/lan"
@@ -249,4 +250,109 @@ func (c *Client) Replace(hint []byte, expiresAt uint64, body []byte) (uint64, er
 		return 0, errors.New("relay: unexpected reply")
 	}
 	return reply.Expires, nil
+}
+
+// MaxPushEndpointLen bounds an EN-3 doorbell URL.
+const MaxPushEndpointLen = 512
+
+// ValidatePushEndpoint refuses everything but a plain public https URL.
+// http is refused outright — a doorbell over cleartext hands every
+// on-path observer the device's wake schedule for free. Lives on the
+// CLIENT side of the licence boundary so the node can validate a typo
+// into a sentence before a listener ever fails its park on it; the
+// server applies the same rule to what arrives.
+func ValidatePushEndpoint(raw string) error {
+	if len(raw) > MaxPushEndpointLen {
+		return errors.New("push endpoint too long")
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.Host == "" {
+		return errors.New("push endpoint must be a public https url")
+	}
+	return nil
+}
+
+// ListenPing is how often a parked connection speaks when nothing happens:
+// often enough to hold carrier NATs (whose TCP timeouts start around
+// fifteen minutes) and to stay far inside the relay's own listenIdle
+// reaper, rarely enough that the radio spends the minutes between in its
+// idle state — which is the whole point of parking.
+const ListenPing = 12 * time.Minute
+
+// Listen parks hints on this connection and blocks, invoking notify for
+// every arrival the relay reports, until the connection dies or stop
+// closes. It returns the error that ended it; a clean stop returns nil.
+//
+// The contract with the caller: this connection is the LISTENING lane and
+// nothing else — no other request may share it, because notifications
+// arrive unasked and a concurrent round trip would read them as its reply.
+// An old relay answers the park itself with "unknown message type"
+// (ErrRelay), which is the caller's signal to fall back to polling.
+func (c *Client) Listen(hints [][]byte, stop <-chan struct{}, notify func(hint []byte)) error {
+	return c.listen(&Msg{Type: MsgListen, Hints: hints}, stop, notify)
+}
+
+// ListenPush is Listen carrying an EN-3 doorbell endpoint: the relay will
+// POST a contentless ping there when these hints receive something and no
+// parked connection of this device is left to hear it. The registration
+// survives the connection — that is its whole purpose.
+func (c *Client) ListenPush(hints [][]byte, endpoint string, stop <-chan struct{}, notify func(hint []byte)) error {
+	return c.listen(&Msg{Type: MsgListen, Hints: hints, Push: endpoint, PushSet: true}, stop, notify)
+}
+
+// ListenPushClear is the off switch: park as usual and remove whatever
+// endpoint this connection last registered.
+func (c *Client) ListenPushClear(hints [][]byte, stop <-chan struct{}, notify func(hint []byte)) error {
+	return c.listen(&Msg{Type: MsgListen, Hints: hints, Push: "", PushSet: true}, stop, notify)
+}
+
+func (c *Client) listen(park *Msg, stop <-chan struct{}, notify func(hint []byte)) error {
+	reply, err := c.roundTrip(park, 10*time.Second)
+	if err != nil {
+		return err
+	}
+	if reply.Type != MsgListenOK {
+		return errors.New("relay: unexpected listen reply")
+	}
+	ping := time.NewTicker(ListenPing)
+	defer ping.Stop()
+	// The poll pace is a latency/CPU trade the radio does not see: bytes
+	// already delivered to the socket are read from local buffers. Half a
+	// second of notification latency costs nothing anybody notices.
+	poll := time.NewTicker(500 * time.Millisecond)
+	defer poll.Stop()
+	for {
+		select {
+		case <-stop:
+			return nil
+		case <-ping.C:
+			if err := c.conn.Send((&Msg{Type: MsgPing}).Encode()); err != nil {
+				return err
+			}
+		case <-poll.C:
+		}
+		for _, pkt := range c.conn.Poll() {
+			m, err := DecodeMsg(pkt)
+			if err != nil {
+				continue
+			}
+			switch m.Type {
+			case MsgNotify:
+				if len(m.Hint) == HintLen {
+					notify(m.Hint)
+				}
+			case MsgPong:
+				// the silence is still working
+			case MsgError:
+				return ErrRelay{Reason: m.Reason,
+					RetryAfter: time.Duration(m.RetryAfterMs) * time.Millisecond}
+			}
+		}
+		if closed, err := c.conn.Closed(); closed {
+			if err == nil {
+				err = errors.New("relay: listen connection closed")
+			}
+			return err
+		}
+	}
 }

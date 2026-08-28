@@ -211,6 +211,11 @@ type Runtime struct {
 	// An atomic rather than a field under r.mu: read on every loop tick,
 	// including ticks that deliberately avoid the runtime lock.
 	backgrounded atomic.Int64
+	// EN-2 relay push: healthy parked listeners, and the per-ingress
+	// retry schedule (node/relaylisten.go).
+	listenParked atomic.Int64
+	listenMu     sync.Mutex
+	listenRetry  map[string]listenRetryState
 	// rideAhead: assets whose BYTES should ride the next background push,
 	// once. Armed at the moment of sending — the one moment the sender is
 	// certainly awake — so a recipient's fetch finds the bytes already in
@@ -749,6 +754,10 @@ func Open(dataDir string, passphrase []byte, displayName string) (rt *Runtime, e
 	} else if s.Relay != "" {
 		r.applyRelaySync(s.Relay, relayInterval(s))
 	}
+	// EN-2: the listening lane — parked connections that let the polls
+	// above stretch while the relay itself rings the doorbell.
+	r.wg.Add(1)
+	go r.relayListenLoop()
 	return r, nil
 }
 
