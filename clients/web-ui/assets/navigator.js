@@ -231,7 +231,8 @@ const NAV = (() => {
     const closed = v.select && sp.can_write === false;
     const sig = [name, sp.events, sp.undecryptable || 0, sp.owned ? 1 : 0,
       sp.frozen ? 1 : 0, sp.id === currentId ? 1 : 0,
-      picked ? 1 : 0, closed ? 1 : 0, v.select ? 1 : 0, LOCALE].join('');
+      picked ? 1 : 0, closed ? 1 : 0, v.select ? 1 : 0, LOCALE,
+      sp.character?.central || ''].join('');
     return {
       key, sig, build: () => {
         const d = document.createElement('div');
@@ -258,6 +259,11 @@ const NAV = (() => {
             ? '<span class="nav-grip" title="drag to reorder">⠿</span>' : '') +
           `<span class="space-av"><span class="glyph g24">${glyphSVG(sp.id, sp.ai ? 'bot' : 'space', 24)}</span></span>` +
           `<span class="space-main"><span class="space-top">` +
+            // The mode glyph rides WITH the name: a field space is
+            // recognisable in the list before it is opened, and no row
+            // has to spell out "MODE: FIELD".
+            (typeof navModeGlyph === 'function' && navModeGlyph(sp.character)
+              ? `<span class="space-mode">${esc(navModeGlyph(sp.character))}</span>` : '') +
             `<span class="t">${esc(name)}</span>` +
             (sp.owned ? `<span class="owner-tag">${esc(t('spaces.owner'))}</span>` : '') +
           `</span><span class="m">${closed ? esc(t('share.closed')) : bits.join(' · ')}</span></span>` +

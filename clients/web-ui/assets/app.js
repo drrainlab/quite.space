@@ -1852,7 +1852,14 @@ async function refreshSpace() {
   applyTheme(char);
   // Space Mode v1 (ADR-029): central=objects reorders the view switch and
   // picks the landing view — nothing below the UI ever reads it.
-  if (typeof applyCentralView === 'function') applyCentralView(char);
+  // Space Mode (ADR-029, widened in the nav wave): the declared centre
+  // orders the views, decides which earn a tab, and names the creation
+  // act on screen. Rebuilt only when the SPACE changes — navigation must
+  // not rearrange itself under a working hand.
+  if (typeof applySpaceNav === 'function' && navBuiltFor !== current) {
+    navBuiltFor = current;
+    applySpaceNav(char);
+  }
   loadSpaceAppearance(current);
   // Conversation header: title + invite (owned private) + info toggle.
   const convTitleEl = document.getElementById('convTitle');
@@ -1862,6 +1869,21 @@ async function refreshSpace() {
   if (convTitleEl.textContent !== convTitleText) convTitleEl.textContent = convTitleText;
   // Click to rename — owner only, and local only. The note under the input
   // says so; nothing here touches the space itself.
+  // The subtitle carries what the space IS, so the title can be only its
+  // name: archetype first (the character's own word), then access.
+  const sub = document.getElementById('convSub');
+  if (sub) {
+    const arch = char ? (ARCHETYPES[char.archetype]?.name || char.archetype) : '';
+    sub.textContent = arch;
+  }
+  const modeEl = document.getElementById('convMode');
+  if (modeEl && typeof navModeGlyph === 'function') {
+    modeEl.textContent = navModeGlyph(char);
+    modeEl.title = char ? (char.central || '') : '';
+  }
+  // A space nobody here may write in offers no creation act at all —
+  // the header stops advertising doors that answer 403.
+  document.body.classList.toggle('space-readonly', !!sp && sp.can_write === false);
   convTitleEl.style.cursor = sp?.owned ? 'text' : '';
   convTitleEl.title = sp?.owned ? 'Rename — for this device only' : '';
   convTitleEl.onclick = sp?.owned ? () => startRename(sp) : null;

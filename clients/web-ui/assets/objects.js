@@ -846,18 +846,6 @@ const OBJ_RENDERERS = {
   },
 };
 
-// ---- Space Mode v1: reading qp.central (ADR-029: view order only) ----
-//
-// central=objects puts the Objects tab FIRST. The LANDING view is decided
-// by refreshSpace's space-switch block in app.js — the one place a switch
-// already resets the view, so mode and reset cannot fight. This function
-// only orders the buttons.
-function applyCentralView(char) {
-  const sw = document.getElementById('viewSwitch');
-  const objBtn = sw && sw.querySelector('button[data-v="objects"]');
-  if (!sw || !objBtn || !char) return;
-  const objectsCentral = char.central === 'objects';
-  const first = sw.querySelector('button');
-  if (objectsCentral && first !== objBtn) sw.insertBefore(objBtn, first);
-  if (!objectsCentral && first === objBtn) sw.appendChild(objBtn);
-}
+// Space Mode's view ordering moved to spacenav.js, where it grew from
+// "put objects first" into order + visibility + the view's own act.
+

@@ -39,8 +39,9 @@ function switchView(v) {
   // Chat and Shelf are not reading, and neither is the post FEED — only an
   // open article is. refreshPosts() below turns it off for the feed case.
   setReading(false);
-  document.querySelectorAll('#viewSwitch button').forEach(b =>
-    b.classList.toggle('sel', b.dataset.v === v));
+  // The tab strip and the header's creation act both follow the view
+  // (spacenav.js): one place decides what is active and what may be made.
+  if (typeof navMarkActive === 'function') navMarkActive(v);
   const posts = v === 'posts', shelf = v === 'shelf', objects = v === 'objects',
     field = v === 'field';
   const chat = !posts && !shelf && !objects && !field;
