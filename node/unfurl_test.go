@@ -28,7 +28,13 @@ func TestUnfurlRefusesTheLocalNetwork(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	rt := &Runtime{}
+	// A REAL runtime, not a bare struct: unfurl now consults the
+	// connectivity policy before dialling, and a policy has to be
+	// readable to say "allowed". The default (auto) permits the dial, so
+	// this test still exercises exactly what it always did — the dialer
+	// guard, reached and refusing.
+	rt := openRuntime(t, t.TempDir(), "alice")
+	defer rt.Close()
 	if _, err := rt.Unfurl(context.Background(), srv.URL); err == nil {
 		t.Fatal("unfurl reached a loopback address")
 	} else if !strings.Contains(err.Error(), "not a public address") {
@@ -180,4 +186,23 @@ func TestLiveUnfurl(t *testing.T) {
 	t.Logf("title=%q", c.Title)
 	t.Logf("descr=%q", c.Description)
 	t.Logf("thumb=%s, %d bytes on the wire", c.ThumbMIME, len(c.ThumbB64)/4*3)
+}
+
+// The gate the unfurl path spent several waves without: a device told to
+// stay off the internet must not dial a stranger's web server because
+// somebody pasted a link. Named as an open hole in ADR-032 and closed
+// here.
+func TestUnfurlObeysTheConnectivityPolicy(t *testing.T) {
+	rt := openRuntime(t, t.TempDir(), "alice")
+	defer rt.Close()
+	for _, m := range []ConnectivityMode{ModeOffline, ModeRadioOnly} {
+		setMode(t, rt, m)
+		_, err := rt.Unfurl(t.Context(), "https://example.org/a")
+		if err == nil {
+			t.Fatalf("mode %s let an unfurl dial out", m)
+		}
+		if _, blocked := err.(ErrTransportBlocked); !blocked {
+			t.Fatalf("mode %s refused with %v — the person cannot tell policy from an outage", m, err)
+		}
+	}
 }
