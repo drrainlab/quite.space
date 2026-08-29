@@ -57,3 +57,47 @@ code. If the answer turns out to be "an arrival taught it", that is a
 correctness bug in the routing trust model and should be treated as one
 the day it is confirmed — this note exists so that day starts with the
 output above rather than with somebody's recollection.
+
+---
+
+## `node.TestTheWaveEndToEnd` — DATA RACE on the keystore maps, seen once
+
+**Seen:** 2026-08-29, CI `race` job on 54025b7 (a commit touching only
+web-ui JavaScript — the race is in code that predates it by many waves,
+and beta.1 shipped with it).
+
+**The captured half, verbatim (annotations truncate the rest):**
+
+```
+WARNING: DATA RACE
+Write at 0x00c000d0e8a0 by goroutine 26658:
+  runtime.mapassign()
+  github.com/drrainlab/quiet_places/node.(*Runtime).persistEpochsLocked()
+      node/node.go:1014
+--- FAIL: TestTheWaveEndToEnd (5.23s)
+```
+
+Line 1014 is `r.ks.Spaces[tid] = meta`. The OTHER goroutine's stack —
+the half that would name the bug — was lost: check-run annotations carry
+single lines, and the full log needs admin auth the day someone has it.
+
+**What was audited, so nobody re-walks it:** every persistEpochsLocked
+caller holds r.mu (three via defer, one — the sync engine's OnApplied —
+fires only under eng.Handle, which lan.go calls locked). By eye, the
+likelier suspects were each checked and hold the lock too:
+recordStatedReturnRoutes (its saveKeystore is inside the lock despite
+sitting next to a "runs without r.mu" comment about a DIFFERENT block),
+EnsureAISpace, the join-saga commits, the knock paths. The unlocked
+accessor is therefore somewhere in the ~84 `r.ks.*` touchpoints not
+exercised by inspection — or in a reader that iterates the maps during
+SaveKeystore.
+
+**Reproduction attempts:** 15 runs GOMAXPROCS=2 local + 30 runs under
+`docker --cpus=2` with -race — all green. The window needs the CI
+runner's exact starvation.
+
+**What has NOT been done:** capturing the second stack. The next
+occurrence should be harvested from the FULL job log immediately
+(annotations will truncate it again). A data race in the keystore maps
+is at worst a concurrent-map panic — rare, but real when confirmed, and
+this entry exists so that day starts from the stack above.
