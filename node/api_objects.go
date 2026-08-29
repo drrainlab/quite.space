@@ -229,6 +229,9 @@ func observationJSON(n reducers.ObservationNote) map[string]any {
 	if n.ObjectID != nil {
 		j["object_id"] = hex.EncodeToString(n.ObjectID[:])
 	}
+	if n.Asset != nil {
+		j["asset"] = hex.EncodeToString(n.Asset[:])
+	}
 	return j
 }
 
@@ -663,12 +666,23 @@ func (a *APIServer) handleNoteObservation(w http.ResponseWriter, r *http.Request
 	body, err := readBody[struct {
 		Text       string `json:"text"`
 		ObservedAt uint64 `json:"observed_at"`
+		Asset      string `json:"asset"` // optional: ONE piece of evidence, hex
 	}](r)
 	if err != nil || strings.TrimSpace(body.Text) == "" {
 		httpErr(w, http.StatusBadRequest, errors.New("text required"))
 		return
 	}
-	eid, err := a.rt.NoteObservation(tid, strings.TrimSpace(body.Text), &oid, body.ObservedAt)
+	var asset *[32]byte
+	if body.Asset != "" {
+		ab, err := hex.DecodeString(body.Asset)
+		if err != nil || len(ab) != 32 {
+			httpErr(w, http.StatusBadRequest, errors.New("bad asset id"))
+			return
+		}
+		asset = new([32]byte)
+		copy(asset[:], ab)
+	}
+	eid, err := a.rt.NoteObservation(tid, strings.TrimSpace(body.Text), &oid, body.ObservedAt, asset)
 	if err != nil {
 		httpErr(w, http.StatusForbidden, err)
 		return

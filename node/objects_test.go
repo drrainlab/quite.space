@@ -5,9 +5,14 @@
 package node
 
 import (
+	"bytes"
+	"encoding/hex"
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/drrainlab/quiet_places/kernel/assets"
+	"github.com/drrainlab/quiet_places/protocol/schemas"
 
 	"github.com/drrainlab/quiet_places/kernel/reducers"
 	"github.com/drrainlab/quiet_places/protocol/objects"
@@ -75,7 +80,7 @@ func TestObjectLifecycleAtNode(t *testing.T) {
 	}
 
 	// Observation: one event, both projections.
-	if _, err := rt.NoteObservation(tid, "заметил люфт шпинделя", &oid, 0); err != nil {
+	if _, err := rt.NoteObservation(tid, "заметил люфт шпинделя", &oid, 0, nil); err != nil {
 		t.Fatal(err)
 	}
 	o, _ = sp.State.ObjectByID(oid)
@@ -177,9 +182,82 @@ func TestFrozenSpaceRefusesObjectAndCardWrites(t *testing.T) {
 	_, err = rt.ArchiveObject(tid, oid)
 	frozen("ArchiveObject", err)
 	frozen("RestoreObject", rt.RestoreObject(tid, oid, rev1))
-	_, err = rt.NoteObservation(tid, "note", &oid, 0)
+	_, err = rt.NoteObservation(tid, "note", &oid, 0, nil)
 	frozen("NoteObservation", err)
 	_, err = rt.MakeCard(tid, "task2", CardOptions{})
 	frozen("MakeCard", err)
 	frozen("SetCardStatus", rt.SetCardStatus(tid, cid, "", "done"))
+}
+
+// SP-3.2 follow-up: an observation may point at ONE piece of evidence.
+// The asset must already be indexed in the space (carrier first, note
+// second — the sweep finalize's own order), a note pointing at bytes the
+// space never heard of is refused, and the reference survives into both
+// projections.
+func TestObservationCarriesOnePieceOfEvidence(t *testing.T) {
+	rt := openRuntime(t, t.TempDir(), "alice")
+	defer rt.Close()
+	tid, err := rt.CreateSpace("Field")
+	if err != nil {
+		t.Fatal(err)
+	}
+	oid, _, err := rt.CreateObject(tid, testRecord("Sector B3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A reference into the void is refused: nothing indexed yet.
+	var phantom [32]byte
+	phantom[0] = 0xEE
+	if _, err := rt.NoteObservation(tid, "фото без байтов", &oid, 0, &phantom); err == nil {
+		t.Fatal("an un-indexed asset reference was accepted")
+	}
+
+	// Upload the evidence the honest way: bytes in, carrier emitted.
+	photo := []byte("not-really-a-jpeg-but-bytes-enough")
+	ref, err := rt.IngestAsset(bytes.NewReader(photo), int64(len(photo)),
+		assets.Metadata{MediaType: "image/jpeg", Role: "original"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := (&schemas.AttachedBlock{
+		Filename: "boot.jpg", MediaType: "image/jpeg", Original: ref,
+	}).Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.EmitBlock(tid, schemas.BlockAttached, payload); err != nil {
+		t.Fatal(err)
+	}
+
+	var asset [32]byte
+	ab, _ := hex.DecodeString(ref.PublicIDHex())
+	copy(asset[:], ab)
+	if _, err := rt.NoteObservation(tid, "нашёл ботинок, вот фото", &oid, 0, &asset); err != nil {
+		t.Fatalf("an indexed reference was refused: %v", err)
+	}
+
+	sp, _ := rt.spaceForTest(tid)
+	o, _ := sp.State.ObjectByID(oid)
+	found := false
+	for _, n := range o.Observations {
+		if n.Text == "нашёл ботинок, вот фото" {
+			found = true
+			if n.Asset == nil || *n.Asset != asset {
+				t.Fatalf("the timeline lost the evidence: %+v", n)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("the observation never reached the timeline")
+	}
+	for _, e := range sp.State.Entries() {
+		if e.Kind == reducers.KindObservation && e.Content.Observation.Text == "нашёл ботинок, вот фото" {
+			if e.Content.Observation.Asset == nil || *e.Content.Observation.Asset != asset {
+				t.Fatalf("the feed projection lost the evidence: %+v", e.Content.Observation)
+			}
+			return
+		}
+	}
+	t.Fatal("the observation never reached the feed")
 }

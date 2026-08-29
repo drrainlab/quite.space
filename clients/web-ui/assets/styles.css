@@ -4091,6 +4091,17 @@ div.reply-to { cursor: default; }
 .field-ci { margin-left: auto; color: var(--dim); font-size: 12px; }
 .field-ci.sos { color: #e05555; font-weight: 600; }
 .field-ci.overdue { color: var(--warn, #d9a44a); }
+/* SP-3.2 follow-up: one piece of evidence on an observation */
+/* The row is a baseline flex; the photo wraps under the text on narrow
+   screens instead of squeezing the sentence. */
+.obj-obs { flex-wrap: wrap; }
+.obj-obs-photo { display: block; max-width: 220px; max-height: 140px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line); cursor: zoom-in; object-fit: cover; }
+.obj-obs-photo-wait { display: inline-block; margin-left: 8px;
+  font-size: 12px; color: var(--dim); }
+.obj-obs-clip.armed { border-color: var(--acc); color: var(--acc); }
+
 /* SP-3.2 — the active-sweep banner and the sweep card */
 .field-sweep-banner { display: flex; flex-direction: column; gap: 6px; }
 .field-sweep-row { display: flex; align-items: center; gap: 10px;

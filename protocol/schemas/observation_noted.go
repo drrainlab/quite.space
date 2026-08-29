@@ -5,9 +5,17 @@ package schemas
 // line in the sand: observation.noted is the human channel and
 // observation.value is the machine channel, and a structured magnitude
 // inside a human note would be a second, weaker telemetry protocol born
-// by accident. Keys 4+ are UNALLOCATED; if a structured value ever
+// by accident. Keys 5+ are UNALLOCATED; if a structured value ever
 // returns here it must arrive as the machine form (value+scale+unit),
 // never an int64 with an implied scale.
+//
+// Key 4 (SP-3.2 follow-up) is a PHOTO, and it does not cross that line:
+// an asset reference is evidence a person points at — "нашёл ботинок,
+// вот фото" — not a magnitude a machine measured. ONE asset per
+// observation, by decision: an observation is a sentence plus one piece
+// of evidence; three photos are three observations. The event stays
+// radio-sized (32 reference bytes); the bytes themselves ride the media
+// plane and arrive when broadband does, like every asset.
 //
 // One event, two projections: reducers install it as a quiet feed entry
 // AND on the object's bounded timeline (when ObjectID is set). Without
@@ -28,6 +36,7 @@ const (
 	onKeyText     = 1
 	onKeyObject   = 2
 	onKeyObserved = 3
+	onKeyAsset    = 4
 )
 
 // NotedObservation is the payload of observation.noted.v1.
@@ -35,6 +44,7 @@ type NotedObservation struct {
 	Text       string    // key 1, required
 	ObjectID   *[16]byte // key 2, optional: the domain object observed
 	ObservedAt uint64    // key 3, optional: when it was seen (0 = event CreatedAt)
+	Asset      *[32]byte // key 4, optional: ONE piece of evidence (blob id)
 }
 
 func (o *NotedObservation) Encode() ([]byte, error) {
@@ -51,6 +61,9 @@ func (o *NotedObservation) Encode() ([]byte, error) {
 	if o.ObservedAt != 0 {
 		n++
 	}
+	if o.Asset != nil {
+		n++
+	}
 	buf := codec.AppendMap(nil, n)
 	buf = codec.AppendUint(buf, onKeyText)
 	buf = codec.AppendText(buf, o.Text)
@@ -61,6 +74,10 @@ func (o *NotedObservation) Encode() ([]byte, error) {
 	if o.ObservedAt != 0 {
 		buf = codec.AppendUint(buf, onKeyObserved)
 		buf = codec.AppendUint(buf, o.ObservedAt)
+	}
+	if o.Asset != nil {
+		buf = codec.AppendUint(buf, onKeyAsset)
+		buf = codec.AppendBytes(buf, o.Asset[:])
 	}
 	return buf, nil
 }
@@ -96,6 +113,17 @@ func DecodeNotedObservation(payload []byte) (*NotedObservation, error) {
 			}
 		case onKeyObserved:
 			o.ObservedAt, err = d.ReadUint()
+		case onKeyAsset:
+			var b []byte
+			if b, err = d.ReadBytes(); err == nil {
+				if len(b) != 32 {
+					err = errors.New("schemas: observation asset must be 32 bytes")
+				} else {
+					var a [32]byte
+					copy(a[:], b)
+					o.Asset = &a
+				}
+			}
 		default:
 			err = d.SkipItem()
 		}

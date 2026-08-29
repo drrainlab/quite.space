@@ -6,6 +6,7 @@ package node
 
 import (
 	"crypto/rand"
+	"encoding/hex"
 	"errors"
 
 	"github.com/drrainlab/quiet_places/protocol/id"
@@ -205,7 +206,13 @@ func (r *Runtime) AnnotateAsset(tid id.TerminalID, assetHex, text string, positi
 // NoteObservation records a human observation — on an object's timeline
 // when objectID is set, in the space journal otherwise. The same event is
 // also a feed entry (the reducer's two projections of one truth).
-func (r *Runtime) NoteObservation(tid id.TerminalID, text string, objectID *[16]byte, observedAt uint64) (id.EventID, error) {
+// NoteObservation emits one human note, optionally pointing at ONE piece
+// of evidence. The asset, when given, must already be indexed in this
+// space (the EmitAssetEdge law): a note referencing bytes this replica
+// has never heard of would be a pointer into the void, and the honest
+// order is carrier first, note second — the same order the sweep's
+// finalize saga enforces for its track.
+func (r *Runtime) NoteObservation(tid id.TerminalID, text string, objectID *[16]byte, observedAt uint64, asset *[32]byte) (id.EventID, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	st, ok := r.spaces[tid]
@@ -215,7 +222,10 @@ func (r *Runtime) NoteObservation(tid id.TerminalID, text string, objectID *[16]
 	if err := r.canWrite(st); err != nil {
 		return id.EventID{}, err
 	}
-	payload, err := (&schemas.NotedObservation{Text: text, ObjectID: objectID, ObservedAt: observedAt}).Encode()
+	if asset != nil && !r.spaceAssetOK(tid)(hex.EncodeToString(asset[:])) {
+		return id.EventID{}, errors.New("node: observation asset is not indexed in this space")
+	}
+	payload, err := (&schemas.NotedObservation{Text: text, ObjectID: objectID, ObservedAt: observedAt, Asset: asset}).Encode()
 	if err != nil {
 		return id.EventID{}, err
 	}

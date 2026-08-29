@@ -88,6 +88,7 @@ type ObservationNote struct {
 	ObservedAt uint64 // author's claim; 0 = CreatedAt
 	CreatedAt  uint64
 	Clock      uint64
+	Asset      *[32]byte // ONE piece of evidence, or nil (SP-3.2 follow-up)
 }
 
 // ObservationNoteContent is the feed-entry projection of the same event.
@@ -95,6 +96,7 @@ type ObservationNoteContent struct {
 	Text       string
 	ObjectID   *[16]byte
 	ObservedAt uint64
+	Asset      *[32]byte
 }
 
 // Object is the projection of one domain object.
@@ -208,11 +210,13 @@ func (s *State) applyObservationNoted(env *signal.Envelope, eid id.EventID) {
 		return
 	}
 	s.installEntry(eid, env, KindObservation, EntryContent{
-		Observation: &ObservationNoteContent{Text: o.Text, ObjectID: o.ObjectID, ObservedAt: o.ObservedAt},
+		Observation: &ObservationNoteContent{Text: o.Text, ObjectID: o.ObjectID,
+			ObservedAt: o.ObservedAt, Asset: o.Asset},
 	})
 	note := ObservationNote{
 		EventID: eid, Author: env.Principal, Text: o.Text, ObjectID: o.ObjectID,
 		ObservedAt: o.ObservedAt, CreatedAt: env.CreatedAt, Clock: env.LogicalClock,
+		Asset: o.Asset,
 	}
 	if o.ObjectID != nil {
 		rec := s.objRecFor(*o.ObjectID)

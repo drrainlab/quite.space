@@ -104,8 +104,35 @@ func TestNotedObservationRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got2.ObjectID != nil || got2.ObservedAt != 0 {
+	if got2.ObjectID != nil || got2.ObservedAt != 0 || got2.Asset != nil {
 		t.Fatalf("phantom fields: %+v", got2)
+	}
+}
+
+// SP-3.2 follow-up: key 4 — ONE piece of evidence. The reference is 32
+// exact bytes, present-or-absent; a wrong length is refused on decode the
+// way every fixed-width id in this package is.
+func TestNotedObservationEvidence(t *testing.T) {
+	var asset [32]byte
+	copy(asset[:], []byte("abcdefghijklmnopqrstuvwxyz012345"))
+	o := &NotedObservation{Text: "нашёл ботинок, вот фото", Asset: &asset}
+	enc, err := o.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := DecodeNotedObservation(enc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Asset == nil || *got.Asset != asset {
+		t.Fatalf("the evidence did not survive the trip: %+v", got)
+	}
+	// A truncated reference is not a smaller claim — it is a malformed one.
+	bad := append(codec.AppendUint(codec.AppendMap(nil, 2), 1), 0x62, 'h', 'm')
+	bad = codec.AppendUint(bad, 4)
+	bad = codec.AppendBytes(bad, asset[:16])
+	if _, err := DecodeNotedObservation(bad); err == nil {
+		t.Fatal("a 16-byte asset reference decoded")
 	}
 }
 

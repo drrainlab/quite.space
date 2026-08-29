@@ -354,6 +354,26 @@ async function openObject(oid) {
     const txt = document.createElement('span');
     txt.className = 'obj-obs-text'; txt.textContent = '🔎 ' + n.text;
     row.appendChild(txt);
+    if (n.asset) {
+      // ONE piece of evidence. The bytes may not have synced yet — the
+      // edge travels ahead of the blob — so a failed load is not an
+      // error: the node is asked to pull, and the row says "on its way"
+      // instead of showing a broken image glyph.
+      const ph = document.createElement('img');
+      ph.className = 'obj-obs-photo';
+      ph.loading = 'lazy';
+      ph.src = `/api/spaces/${current}/assets/${n.asset}?token=${encodeURIComponent(token)}`;
+      ph.onclick = () => window.open(ph.src, '_blank');
+      ph.onerror = () => {
+        const wait = document.createElement('span');
+        wait.className = 'obj-obs-photo-wait';
+        wait.textContent = '🖼 ' + t('objects.obs_photo_wait');
+        ph.replaceWith(wait);
+        api(`/api/spaces/${current}/assets/${n.asset}/fetch`, { method: 'POST', body: '{}' })
+          .catch(() => {});
+      };
+      row.appendChild(ph);
+    }
     oList.appendChild(row);
   }
   if (!obs.length) {
@@ -367,14 +387,54 @@ async function openObject(oid) {
   const oIn = document.createElement('input');
   oIn.type = 'text'; oIn.placeholder = t('objects.obs_ph'); oIn.maxLength = 1000;
   oAdd.appendChild(oIn);
+  // ONE piece of evidence per observation (owner's decision): the clip
+  // uploads immediately — carrier first, note second, the sweep
+  // finalize's own order — and the button becomes the receipt. Several
+  // photos are several observations.
+  let obsAsset = null;
+  const clip = document.createElement('button');
+  clip.type = 'button';
+  clip.className = 'obj-add-btn obj-obs-clip';
+  clip.textContent = '📎';
+  clip.title = t('objects.obs_attach');
+  clip.onclick = () => {
+    if (obsAsset) {
+      obsAsset = null;
+      clip.textContent = '📎';
+      clip.classList.remove('armed');
+      return;
+    }
+    const inp = document.createElement('input');
+    inp.type = 'file';
+    inp.accept = 'image/*';
+    inp.onchange = async () => {
+      const file = inp.files && inp.files[0];
+      if (!file) return;
+      clip.textContent = '⏳';
+      try {
+        const up = await uploadAssetFile(file);
+        obsAsset = up.asset_id;
+        clip.textContent = '📎✓';
+        clip.classList.add('armed');
+        oIn.focus();
+      } catch (e) {
+        console.error(e);
+        clip.textContent = '📎';
+      }
+    };
+    inp.click();
+  };
+  oAdd.appendChild(clip);
   oAdd.appendChild(objSubmitBtn());
   oAdd.onsubmit = async (ev) => {
     ev.preventDefault();
     const text = oIn.value.trim();
     if (!text) return;
     try {
+      const body = { text };
+      if (obsAsset) body.asset = obsAsset;
       await api(`/api/spaces/${current}/objects/${oid}/observations`,
-        { method: 'POST', body: JSON.stringify({ text }) });
+        { method: 'POST', body: JSON.stringify(body) });
       oIn.value = '';
       openObject(oid);
     } catch (e) { console.error(e); }

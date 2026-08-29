@@ -545,7 +545,7 @@ func (r *Runtime) finalizeSweep(sid [16]byte) error {
 	// as an observation, never inside the completion fact.
 	if len(rec.NoteEventID) == 0 && rec.Note != "" {
 		parent := rec.ParentID
-		neid, err := r.NoteObservation(space, rec.Note, &parent, rec.StoppedAt)
+		neid, err := r.NoteObservation(space, rec.Note, &parent, rec.StoppedAt, nil)
 		if err == nil {
 			r.updateSweepRecord(sid, func(s *storage.SweepRecord) { s.NoteEventID = neid[:] })
 			rec, _ = r.sweepRecord(sid)
