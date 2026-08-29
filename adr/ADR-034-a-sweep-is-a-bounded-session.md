@@ -181,6 +181,16 @@ the forced-Doze probe), not an assumption. If the measurement says the
 tracks are unusable without one, that is a v1.x decision made on
 evidence, recorded here.
 
+**Measured (2026-08-29, Nothing Phone (1), on water).** Two live
+sessions, screen off, no cable: 29 min / 4.0 km / 113 points and
+1 h 31 min / 5.0 km / 359 points — mean interval 15.2–15.4 s against
+the designed 15 s, median accuracy 3–6 m, and ZERO gaps across two
+hours. On this hardware the location-type foreground service keeps GPS
+flowing through the whole session; Doze never silenced the pump. The
+v1 answer stands on evidence: **no wake lock.** A different OEM may
+measure differently — the gap classifier is what makes that a data
+point rather than a corrupted track.
+
 ## Non-goals
 
 Coverage estimation ("71% of the sector") is a local projection a
