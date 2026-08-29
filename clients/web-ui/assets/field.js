@@ -831,7 +831,22 @@ function fieldArmMarker() {
 // that may lift. Offering a TTL on the first would invite a lie.
 const FIELD_MARKER_AGEING = ['hazard', 'casualty', 'extraction'];
 
+// A tap that OPENS a dialog is followed by the browser's compatibility
+// click at the same coordinates — which by then land on the dialog that
+// just appeared under the finger. On a phone the map's tappable band
+// overlaps the dialog's own button row, so the ghost click could press
+// «cancel» the instant the dialog opened (seen live: the place dialog
+// flashing and vanishing). One capture-phase swallow eats exactly that
+// click; the timer makes sure a later, intentional click is never eaten
+// when no ghost arrived.
+function fieldSwallowGhostClick() {
+  const swallow = (e) => { e.stopPropagation(); e.preventDefault(); };
+  document.addEventListener('click', swallow, { capture: true, once: true });
+  setTimeout(() => document.removeEventListener('click', swallow, { capture: true }), 400);
+}
+
 function fieldOpenMarkerDialog(lat, lon) {
+  fieldSwallowGhostClick();
   FIELD.placing = false;
   const armed = document.getElementById('fieldPlacingHint');
   if (armed) armed.style.display = 'none';
@@ -934,6 +949,7 @@ function fieldArmPlace() {
 }
 
 function fieldOpenPlaceDialog(lat, lon) {
+  fieldSwallowGhostClick();
   FIELD.placing = false;
   const armed = document.getElementById('fieldPlacingHint');
   if (armed) armed.style.display = 'none';
