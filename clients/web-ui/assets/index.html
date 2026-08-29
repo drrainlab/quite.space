@@ -1447,6 +1447,26 @@
      age — how long the claim speaks for. The coordinates are shown, never
      edited: they came from the map, and a typed number would be a
      different claim than the one the finger made. -->
+<!-- SP-3.2 follow-up: a PLACE is born the way a marker is — from a finger
+     on the map, never from typed coordinates. Buttons are wired from
+     field.js, not the positional handler table. -->
+<dialog id="dlgPlace">
+  <h3 data-i18n="field.place_title">New place</h3>
+  <p class="hint" id="placeAt"></p>
+  <label data-i18n="field.place_name">Name</label>
+  <input id="placeName" maxlength="80" data-i18n-ph="field.place_name_ph"
+         placeholder="Sector B3, the west meadow…">
+  <div class="row">
+    <label for="placeRadius" data-i18n="field.place_radius">Radius</label>
+    <select id="placeRadius"></select>
+  </div>
+  <p class="hint" id="placeMsg"></p>
+  <div class="row">
+    <button class="btn-tinted" id="placeCreate" data-i18n="field.place_create">Create</button>
+    <button class="btn-plain" id="placeCancel" data-i18n="ui.object.cancel">cancel</button>
+  </div>
+</dialog>
+
 <dialog id="dlgMarker">
   <h3 data-i18n="ui.marker.title">Place a marker</h3>
   <p class="hint" id="markerAt"></p>

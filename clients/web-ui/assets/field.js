@@ -25,7 +25,8 @@ const FIELD = {
   proj: null,          // computed each draw from FIELD.view
   timer: null,         // poll while the view is open
   shareTimer: null,    // position emission loop
-  placing: false,      // "tap the map to place a marker"
+  placing: false,      // "tap the map to place it"
+  placingWhat: 'marker', // what the next tap creates: 'marker' | 'place'
   resizeObs: null,
   // SP-3.2 — sweeps. `sweeps` is the space's completed list (event wins);
   // `actives` is THIS node's live sessions (GET /api/sweeps); `tracks`
@@ -148,6 +149,18 @@ function fieldBuild(box) {
   fitBtn.textContent = '⌖ ' + t('field.fit');
   fitBtn.onclick = () => { FIELD.view = null; fieldScheduleDraw(); };
   bar.appendChild(fitBtn);
+
+  // SP-3.2 follow-up: the door into sweeping was invisible. A sweep
+  // starts on a geo-bearing object, and until this button the only way
+  // to CREATE one was the HTTP API — the editor deliberately has no
+  // coordinate fields (a typed number is a different claim than a finger
+  // on the map, the marker dialog's own law). So a place is born here,
+  // like a marker: arm, tap, name it.
+  const placeBtn = document.createElement('button');
+  placeBtn.className = 'btn-plain';
+  placeBtn.textContent = '⊕ ' + t('field.new_place');
+  placeBtn.onclick = () => fieldArmPlace();
+  bar.appendChild(placeBtn);
 
   const spread = document.createElement('span');
   spread.style.flex = '1';
@@ -717,7 +730,8 @@ function fieldWireCanvas(cv, host) {
     if (!moved && FIELD.placing && FIELD.proj) {
       const r = cv.getBoundingClientRect();
       const [lat, lon] = FIELD.proj.invert(ev.clientX - r.left, ev.clientY - r.top);
-      fieldOpenMarkerDialog(lat, lon);
+      if (FIELD.placingWhat === 'place') fieldOpenPlaceDialog(lat, lon);
+      else fieldOpenMarkerDialog(lat, lon);
     }
   });
   cv.addEventListener('wheel', (ev) => {
@@ -806,6 +820,7 @@ let markerDraft = null;
 function fieldArmMarker() {
   if (typeof pubView !== 'undefined' && pubView !== 'field') switchView('field');
   FIELD.placing = true;
+  FIELD.placingWhat = 'marker';
   const hint = document.getElementById('fieldPlacingHint');
   if (hint) hint.style.display = '';
   fieldScheduleDraw();
@@ -898,6 +913,78 @@ function fieldPlaceMarker() {
       refreshField();
     })
     .catch(e => { document.getElementById('markerMsg').textContent = e.message; });
+}
+
+// ---- place creation (SP-3.2 follow-up) ----
+
+// A place is an OBJECT with geo — the thing «Начать свип» lives on. It is
+// born from a finger on the map (the marker discipline: displayed
+// coordinates, never editable ones), and the reward for creating one is
+// immediate: the flow lands on the new object's card, where the sweep
+// button is.
+let placeDraft = null;
+
+function fieldArmPlace() {
+  if (typeof pubView !== 'undefined' && pubView !== 'field') switchView('field');
+  FIELD.placing = true;
+  FIELD.placingWhat = 'place';
+  const hint = document.getElementById('fieldPlacingHint');
+  if (hint) hint.style.display = '';
+  fieldScheduleDraw();
+}
+
+function fieldOpenPlaceDialog(lat, lon) {
+  FIELD.placing = false;
+  const armed = document.getElementById('fieldPlacingHint');
+  if (armed) armed.style.display = 'none';
+  placeDraft = { lat, lon };
+  const dlg = document.getElementById('dlgPlace');
+  document.getElementById('placeAt').textContent =
+    lat.toFixed(5) + ', ' + lon.toFixed(5);
+  const name = /** @type {HTMLInputElement} */(document.getElementById('placeName'));
+  name.value = '';
+  document.getElementById('placeMsg').textContent = '';
+  const rad = /** @type {HTMLSelectElement} */(document.getElementById('placeRadius'));
+  rad.innerHTML = '';
+  for (const m of [100, 300, 1000, 0]) {
+    const o = document.createElement('option');
+    o.value = String(m);
+    o.textContent = m ? m + ' m' : t('field.radius_point');
+    rad.appendChild(o);
+  }
+  rad.value = '300';
+  document.getElementById('placeCancel').onclick = () => dlg.close();
+  document.getElementById('placeCreate').onclick = () => fieldCreatePlace();
+  dlg.showModal();
+  setTimeout(() => name.focus(), 30);
+}
+
+function fieldCreatePlace() {
+  if (!placeDraft) return;
+  const name = /** @type {HTMLInputElement} */(document.getElementById('placeName'));
+  if (!name.value.trim()) {
+    document.getElementById('placeMsg').textContent = t('objects.name_required');
+    return;
+  }
+  const rad = Number((/** @type {HTMLSelectElement} */(document.getElementById('placeRadius'))).value);
+  const geo = { lat: placeDraft.lat, lon: placeDraft.lon };
+  if (rad > 0) geo.radius_m = rad;
+  api(`/api/spaces/${current}/objects`, {
+    method: 'POST',
+    body: JSON.stringify({ object: { kind: 'place', name: name.value.trim(), geo } }),
+  })
+    .then(o => {
+      document.getElementById('dlgPlace').close();
+      placeDraft = null;
+      refreshField();
+      // The payoff lands where the person is going anyway: the new
+      // place's card, sweep button and all.
+      if (o && o.object_id && typeof openObject === 'function') {
+        switchView('objects');
+        openObject(o.object_id);
+      }
+    })
+    .catch(e => { document.getElementById('placeMsg').textContent = e.message; });
 }
 
 // ---- position sharing: while the map is open, and nothing more ----
