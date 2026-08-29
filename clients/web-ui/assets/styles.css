@@ -3901,7 +3901,11 @@ div.reply-to { cursor: default; }
 .obj-crumb:hover { color: var(--acc); }
 .obj-title { font-size: 20px; font-weight: 650; color: var(--fg); }
 .obj-chips { display: flex; gap: 6px; }
-.obj-actions { display: flex; gap: 8px; margin-left: auto; align-items: center; }
+.obj-actions { display: flex; gap: 8px; margin-left: auto; align-items: center;
+  /* SP-3.2 made this row one button longer («Начать свип»), and on a phone
+     four nowrap buttons overflowed the card and dragged the whole view
+     sideways — the row wraps instead of stretching the page. */
+  flex-wrap: wrap; }
 .obj-summary { margin: 8px 0 4px; color: var(--dim); white-space: pre-wrap;
   line-height: 1.5; }
 .obj-props { display: grid; grid-template-columns: max-content 1fr;
