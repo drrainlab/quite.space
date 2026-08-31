@@ -1,26 +1,9 @@
 <div align="center">
 
-```
-
- ·✦   ·                                                     ·
-                                                           .
-·    ✦
-    ·                  -------------------
-              -----                           -----         ·
-          //                  @@0o:                  \\
-        /                    @@@@0o.                    \
-   ✦    \                    o00oo:.                    /    ✦
-.   ·     \\                  .....                  //
-.             -----                           -----
-    .                  -------------------
-      ·
-.
-                                                             ·
-
-                q  u  i  t  e  ·  s  p  a  c  e
-
-               the space between us belongs to us
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/brand/orbit-dark.svg">
+  <img src="docs/brand/orbit-light.svg" alt="quite.space — a planet on a quiet orbit" width="640">
+</picture>
 
 **A quiet place for the people you choose.**
 
@@ -247,10 +230,6 @@ Reporting a vulnerability: [SECURITY.md](SECURITY.md)
 ---
 
 <div align="center">
-
-```
-     ·   ✦        ●        ✦   ·
-```
 
 *the space between us belongs to us*
 
