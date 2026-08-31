@@ -1,17 +1,25 @@
 <div align="center">
 
 ```
-      ·  ✦                                              ·           ✦
 
-                         _.-·´¯¯¯¯¯¯¯¯`·-._
-             ✦         /                    \
-                ------(----------●----------)------
-                       \                    /
-           ·             `·-..________..-·´             ✦
+ ·✦   ·                                                     ·
+                                                           .
+·    ✦
+    ·                  -------------------
+              -----                           -----         ·
+          //                  @@0o:                  \\
+        /                    @@@@0o.                    \
+   ✦    \                    o00oo:.                    /    ✦
+.   ·     \\                  .....                  //
+.             -----                           -----
+    .                  -------------------
+      ·
+.
                                                              ·
-               q  u  i  t  e  ·  s  p  a  c  e
 
-      ✦         the space between us belongs to us          ·
+                q  u  i  t  e  ·  s  p  a  c  e
+
+               the space between us belongs to us
 ```
 
 **A quiet place for the people you choose.**
