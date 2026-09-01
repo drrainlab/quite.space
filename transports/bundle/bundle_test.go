@@ -59,11 +59,12 @@ func TestRoutesRideBesidePlainFrames(t *testing.T) {
 }
 
 // TestAnUnknownKeyIsSkippedNotFatal — the compat contract itself. A
-// future key 9 must decode on today's code with every known field
-// intact, or the network cannot ever learn another word.
+// future key (9 when this was written; 9 became receipts, so now 99)
+// must decode on today's code with every known field intact, or the
+// network cannot ever learn another word.
 func TestAnUnknownKeyIsSkippedNotFatal(t *testing.T) {
 	tid := id.TerminalID{0x0F}
-	// Hand-build a bundle with an extra key 9 carrying a nested array —
+	// Hand-build a bundle with an extra key 99 carrying a nested array —
 	// the shape most likely to trip a lazy skip.
 	buf := []byte(magic)
 	buf = codec.AppendMap(buf, 4)
@@ -74,7 +75,7 @@ func TestAnUnknownKeyIsSkippedNotFatal(t *testing.T) {
 	buf = codec.AppendUint(buf, keyFrames)
 	buf = codec.AppendArray(buf, 1)
 	buf = codec.AppendBytes(buf, []byte("frame"))
-	buf = codec.AppendUint(buf, 9) // a word this decoder has never heard
+	buf = codec.AppendUint(buf, 99) // a word this decoder has never heard
 	buf = codec.AppendArray(buf, 2)
 	buf = codec.AppendText(buf, "future")
 	buf = codec.AppendArray(buf, 1)

@@ -458,6 +458,13 @@ type entryResp struct {
 	// payload alone would hand every member a stencil for forging mail.
 	External *externalResp `json:"external,omitempty"`
 	Clock    uint64        `json:"clock"`
+	// Delivery is DR-1's answer for THIS DEVICE's own entries only:
+	// "sent" (still owed to a relay), "relayed" (every routed relay took
+	// it), "delivered" (a device outside this principal signed for
+	// holding it). Empty for everything else — including the same
+	// person's messages authored on a sibling device, whose receipts
+	// live there.
+	Delivery string `json:"delivery,omitempty"`
 	// CreatedAt is the AUTHOR's wall clock from the signed envelope —
 	// advisory, it can lie. Display only; never trust it for local policy.
 	CreatedAt uint64 `json:"created_at,omitempty"`
@@ -578,6 +585,14 @@ func (a *APIServer) handleEntries(w http.ResponseWriter, r *http.Request) {
 			resp := a.projectEntry(tid, st.space, &entries[i], me, who)
 			resp.Kept, _ = st.space.State.KeepState(entries[i].ID, me)
 			resp.KeepCount = st.space.State.KeepCount(entries[i].ID)
+			// DR-1: the ladder, for frames THIS device authored.
+			if resp.Mine {
+				if frame, ok := st.space.Log.Get(entries[i].ID); ok {
+					if env, err := signal.Decode(frame); err == nil && env.Device == a.rt.Device.ID {
+						resp.Delivery = a.rt.deliveryStatusLocked(tid, entries[i].ID, env.Sequence)
+					}
+				}
+			}
 			out = append(out, resp)
 		}
 		return nil

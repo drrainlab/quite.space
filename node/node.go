@@ -300,6 +300,8 @@ type Runtime struct {
 	// relaySync is the background relay push/pull loop (nil until first
 	// configured). r.mu guards the pointer; the state has its own lock.
 	relaySync *relaySyncState
+	// receipts is the DR-1 send-side high-water (node/receipts.go).
+	receipts *receiptState
 
 	// relayPool holds the persistent relay connections (RR-2): two lanes
 	// per address, health, backoff. Created lazily under poolOnce; the

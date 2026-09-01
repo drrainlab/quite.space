@@ -267,6 +267,15 @@ function chimeSyncUI() {
 // EN-3 — the doorbell row. Host-only: the endpoint lives between the
 // phone's UnifiedPush distributor and the core; this page only ever
 // learns the STATE and prints the honest sentence for it.
+// DR-1: the receipts switch talks straight to the node — it is node
+// state, not a page preference, so no localStorage shadow copy.
+async function receiptsSet(on) {
+  pickSeg('setReceipts', on ? 'on' : 'off');
+  try {
+    await api('/api/settings', { method: 'POST',
+      body: JSON.stringify({ ...currentSettingsBody(), delivery_receipts: !!on }) });
+  } catch (e) { /* the next openSettings re-reads the stored truth */ }
+}
 function doorbellSet(on) {
   if (typeof HOST === 'undefined' || !HOST.present) return;
   if (on) {
@@ -360,6 +369,7 @@ async function openSettings() {
     syncConnModeUI();
     renderRelayDiagnostics();
     renderRelayPublicPanel();
+    pickSeg('setReceipts', s.delivery_receipts === false ? 'off' : 'on');
   } catch (e) { /* settings unavailable */ }
   pickSeg('setProtocol', PROTOCOL ? 'on' : 'off');
   showSettingsCat(settingsCat);
@@ -3565,8 +3575,20 @@ function renderEntry(log, e, fresh, grouped) {
     const stamp = document.createElement('span');
     stamp.className = 'stamp';
     const d = new Date(e.created_at * 1000);
-    stamp.textContent = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    stamp.title = d.toLocaleString();
+    let stampText = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    let stampTitle = d.toLocaleString();
+    // DR-1: the quiet ladder, only on frames THIS device authored.
+    // "delivered" means a device outside this principal signed for
+    // holding the bytes — never that anybody looked.
+    if (own && e.delivery) {
+      const marks = { sent: '·', relayed: '✓', delivered: '✓✓' };
+      if (marks[e.delivery]) {
+        stampText += '\u00a0' + marks[e.delivery];
+        stampTitle += ' · ' + t('conv.dlv.' + e.delivery);
+      }
+    }
+    stamp.textContent = stampText;
+    stamp.title = stampTitle;
     bubble.appendChild(stamp);
     bubble.classList.add('stamped');
   }

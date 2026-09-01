@@ -40,6 +40,12 @@ const (
 	// the weak, unsigned form of T3's signed advertisements and will be
 	// retired by them. Old decoders skip it (append-only, ADR-009).
 	keyReturnRoutes = 8
+	// keyReceipts: DR-1 delivery receipts riding beside (or instead of)
+	// frames — each entry an opaque signed statement "device D holds
+	// author A's chain in this space up to position P". Opaque HERE on
+	// purpose (ADR-007): the node layer signs and verifies; the transport
+	// only carries. Old decoders skip the key (ADR-009).
+	keyReceipts = 9
 )
 
 // Encode serializes frames for one terminal (same bytes as the file form —
@@ -170,6 +176,27 @@ func Decode(data []byte) (id.TerminalID, [][]byte, error) {
 
 // Parts is the fully decoded content of a bundle. Wants/Wanter are set only on
 // a relay media request (see EncodeWithWants); they are empty otherwise.
+// EncodeReceipts is the receipt-only bundle (DR-1): no frames, just the
+// signed statements. It still carries an EMPTY frames array so that every
+// decoder — including pre-DR-1 ones — sees the shape it expects and
+// applies zero frames rather than refusing the item.
+func EncodeReceipts(terminal id.TerminalID, receipts [][]byte) []byte {
+	buf := []byte(magic)
+	buf = codec.AppendMap(buf, 4)
+	buf = codec.AppendUint(buf, keyVersion)
+	buf = codec.AppendUint(buf, version)
+	buf = codec.AppendUint(buf, keyTerminal)
+	buf = codec.AppendBytes(buf, terminal[:])
+	buf = codec.AppendUint(buf, keyFrames)
+	buf = codec.AppendArray(buf, 0)
+	buf = codec.AppendUint(buf, keyReceipts)
+	buf = codec.AppendArray(buf, len(receipts))
+	for _, rc := range receipts {
+		buf = codec.AppendBytes(buf, rc)
+	}
+	return buf
+}
+
 type Parts struct {
 	Terminal id.TerminalID
 	Frames   [][]byte
@@ -183,6 +210,8 @@ type Parts struct {
 	// beside its wants. A claim by the wanter, never a fact about the
 	// connection — see keyReturnRoutes.
 	ReturnRoutes []string
+	// Receipts: opaque signed delivery statements (DR-1, keyReceipts).
+	Receipts [][]byte
 }
 
 // DecodeFull returns the terminal, frames, and carried asset blobs. Frames and
@@ -292,6 +321,18 @@ func DecodeParts(data []byte) (Parts, error) {
 					return p, e
 				}
 				p.ReturnRoutes = append(p.ReturnRoutes, ep)
+			}
+		case keyReceipts:
+			n, e := d.ReadArray()
+			if e != nil {
+				return p, e
+			}
+			for range n {
+				rc, e := d.ReadBytes()
+				if e != nil {
+					return p, e
+				}
+				p.Receipts = append(p.Receipts, append([]byte(nil), rc...))
 			}
 		default:
 			if err := d.SkipItem(); err != nil {

@@ -681,6 +681,9 @@ func (r *Runtime) relaySyncOnce(addr string) {
 	// pending set is derived and usually empty, and the fetch is one
 	// non-destructive round trip on the mailbox this device already owns.
 	r.offerGrants()
+	// DR-1 receipts ride the same heartbeat: cheap when nothing grew
+	// (the per-chain high-water is derived from the log each pass).
+	r.sendReceipts()
 	// SYMMETRIC WITH THE PULL ABOVE, deliberately: every once-advertised
 	// ingress stays live for space mailboxes, so it must stay live for
 	// the identity mailbox too. Reading only the armed address was

@@ -902,6 +902,16 @@
         </div>
       </div>
       <p class="hint" id="doorbellNote" style="display:none"></p>
+      <!-- DR-1 — delivery receipts. A machine's word about machines: the
+           switch controls what THIS device signs for others, never what
+           it learns. The sub line says exactly what crosses the wire. -->
+      <div class="list-row">
+        <span class="lr-label" data-i18n="ui.set.receipts">Delivery receipts<span class="lr-sub" data-i18n="ui.set.receipts.sub"> · your device confirms to senders that their message arrived here; never when you read</span></span>
+        <div class="segmented" id="setReceipts">
+          <button data-v="on" data-i18n="ui.set.receipts.on" data-on-click="254">On</button>
+          <button data-v="off" data-i18n="ui.set.receipts.off" data-on-click="255">Off</button>
+        </div>
+      </div>
       <!-- The technical layer. It used to be a word above every conversation
            for a mode almost nobody turns on; whoever needs to read a
            capability set knows to come looking, and everybody else was

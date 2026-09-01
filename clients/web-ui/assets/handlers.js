@@ -299,6 +299,8 @@ const UI_HANDLERS = [
   /* 251 retired  */ null,
   /* 252 click    */ (event, el) => { doorbellSet(true); },
   /* 253 click    */ (event, el) => { doorbellSet(false); },
+  /* 254 click    */ (event, el) => { receiptsSet(true); },
+  /* 255 click    */ (event, el) => { receiptsSet(false); },
   /* 254 click    */ (event, el) => { fieldPlaceMarker(); },
   /* 255 click    */ (event, el) => { document.getElementById('dlgMarker').close(); },
 ];

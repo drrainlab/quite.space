@@ -47,6 +47,11 @@ type Settings struct {
 	// the security notes say out loud. They are never projected by the
 	// settings API.
 	Adapters map[string]AdapterConfig `json:"adapters,omitempty"`
+	// DeliveryReceipts is the DR-1 switch: whether THIS device signs
+	// receipts telling authors their frames arrived here. nil means on —
+	// it is machine state about machines, never about the person; the
+	// read-state stays on this device either way (ADR-017).
+	DeliveryReceipts *bool `json:"delivery_receipts,omitempty"`
 	// PushEndpoint is the EN-3 doorbell: an opaque UnifiedPush (or
 	// compatible) https URL this device's relays may POST a contentless
 	// ping to when mail arrives and no parked connection is left to hear
@@ -185,6 +190,11 @@ func (r *Runtime) SetSettings(s Settings) error {
 	if s.Adapters == nil {
 		s.Adapters = cur.Adapters
 	}
+	// DR-1 receipts follow suit: nil is "not mentioned", and a save from
+	// a screen without the switch must not silently re-enable it.
+	if s.DeliveryReceipts == nil {
+		s.DeliveryReceipts = cur.DeliveryReceipts
+	}
 	// The tile server too: no screen shows it in v1, so every settings
 	// write arrives without it.
 	if s.Tiles == (TilesConfig{}) {
@@ -279,6 +289,8 @@ func settingsJSON(s Settings) map[string]any {
 		// resolved to the default here so the UI can name the server the
 		// basemap consent dialog will actually disclose.
 		"tiles": map[string]any{"server": tileServerOf(s)},
+		// DR-1: reported as the value IN EFFECT (nil means on).
+		"delivery_receipts": s.DeliveryReceipts == nil || *s.DeliveryReceipts,
 	}
 }
 
@@ -316,6 +328,10 @@ func (a *APIServer) handleSetSettings(w http.ResponseWriter, r *http.Request) {
 		// the relay fields: a save from a screen that does not show it
 		// must not clear a registration somebody turned on elsewhere.
 		PushEndpoint *string `json:"push_endpoint"`
+		// DR-1: whether this device signs delivery receipts. A pointer
+		// for the usual hygiene — absent must not flip a switch the
+		// person set from another screen.
+		DeliveryReceipts *bool `json:"delivery_receipts"`
 	}](r)
 	if err != nil {
 		httpErr(w, http.StatusBadRequest, err)
@@ -324,7 +340,11 @@ func (a *APIServer) handleSetSettings(w http.ResponseWriter, r *http.Request) {
 	cur := a.rt.GetSettings()
 	s := Settings{Theme: body.Theme, Preset: body.Preset, RenderMode: body.RenderMode,
 		Relay: cur.Relay, RelayMode: cur.RelayMode, RelaySyncSeconds: cur.RelaySyncSeconds,
-		Tiles: cur.Tiles, PushEndpoint: cur.PushEndpoint}
+		Tiles: cur.Tiles, PushEndpoint: cur.PushEndpoint,
+		DeliveryReceipts: cur.DeliveryReceipts}
+	if body.DeliveryReceipts != nil {
+		s.DeliveryReceipts = body.DeliveryReceipts
+	}
 	if body.PushEndpoint != nil {
 		ep := strings.TrimSpace(*body.PushEndpoint)
 		// Validated HERE, with the relay's own rule, so a typo is a 400

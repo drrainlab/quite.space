@@ -175,6 +175,13 @@ type Keystore struct {
 	// routes.go for why the inversion is the bug class this exists to end.
 	SelfIngress []Route
 	PeerRoutes  map[id.DeviceID][]Route
+	// Delivered is the delivery-receipt high-water table (DR-1): for each
+	// space, the highest position of THIS device's own chain that each
+	// peer device has SIGNED for holding. Machine state about machines —
+	// it never says when a person looked, only that a device has the
+	// bytes. Max-merged on receipt; clamped to the real chain length at
+	// install (a peer cannot "confirm" frames that do not exist).
+	Delivered map[id.TerminalID]map[id.DeviceID]uint64
 	// Settings is an opaque local-settings blob owned by the node layer
 	// (UI prefs + LLM config, including the API key). Encrypted at rest with
 	// the rest of the keystore; never leaves the device except to the
@@ -399,6 +406,7 @@ const (
 	ksKeyInstrs    = 23 // QI-1 attached instrument participants
 	ksKeyRefusals  = 24 // ADR-027 people this person declined to hear from
 	ksKeySweeps    = 25 // SP-3.2 recording sessions (identity + saga state)
+	ksKeyDelivered = 26 // DR-1 delivery-receipt high-water per space per device
 )
 
 // ksMapArity is how many top-level pairs encode() writes, and it MUST equal
@@ -406,7 +414,7 @@ const (
 // which is a poor place for a number that bricks every keystore when it is
 // wrong: too few and the trailing pair goes unread, so Done() fails and
 // nobody can open their data again. Named here, next to the keys it counts.
-const ksMapArity = 25
+const ksMapArity = 26
 
 func (k *Keystore) encode() []byte {
 	buf := codec.AppendMap(nil, ksMapArity)
@@ -535,7 +543,38 @@ func (k *Keystore) encode() []byte {
 	for _, sw := range k.Sweeps {
 		buf = appendSweepRecord(buf, sw)
 	}
+	buf = codec.AppendUint(buf, ksKeyDelivered)
+	buf = codec.AppendArray(buf, len(k.Delivered))
+	for _, tid := range sortedTerminalKeysDelivered(k.Delivered) {
+		devs := k.Delivered[tid]
+		buf = codec.AppendArray(buf, 2)
+		buf = codec.AppendBytes(buf, tid[:])
+		buf = codec.AppendArray(buf, len(devs))
+		for _, dev := range sortedDeviceKeysDelivered(devs) {
+			buf = codec.AppendArray(buf, 2)
+			buf = codec.AppendBytes(buf, dev[:])
+			buf = codec.AppendUint(buf, devs[dev])
+		}
+	}
 	return buf
+}
+
+func sortedTerminalKeysDelivered(m map[id.TerminalID]map[id.DeviceID]uint64) []id.TerminalID {
+	out := make([]id.TerminalID, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Slice(out, func(i, j int) bool { return string(out[i][:]) < string(out[j][:]) })
+	return out
+}
+
+func sortedDeviceKeysDelivered(m map[id.DeviceID]uint64) []id.DeviceID {
+	out := make([]id.DeviceID, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Slice(out, func(i, j int) bool { return string(out[i][:]) < string(out[j][:]) })
+	return out
 }
 
 type forgottenEntry struct {
@@ -807,6 +846,69 @@ func decodeKeystore(data []byte) (*Keystore, error) {
 					return nil, er
 				}
 				k.Sweeps = append(k.Sweeps, sw)
+			}
+		case ksKeyDelivered:
+			var cnt int
+			cnt, er = d.ReadArray()
+			if er != nil {
+				return nil, er
+			}
+			k.Delivered = map[id.TerminalID]map[id.DeviceID]uint64{}
+			for range cnt {
+				var pairN int
+				if pairN, er = d.ReadArray(); er != nil || pairN < 2 {
+					if er == nil {
+						er = errors.New("storage: malformed delivered table")
+					}
+					return nil, er
+				}
+				var raw []byte
+				if raw, er = d.ReadBytes(); er != nil || len(raw) != id.Size {
+					if er == nil {
+						er = errors.New("storage: malformed delivered table")
+					}
+					return nil, er
+				}
+				var tid id.TerminalID
+				copy(tid[:], raw)
+				var devN int
+				if devN, er = d.ReadArray(); er != nil {
+					return nil, er
+				}
+				devs := map[id.DeviceID]uint64{}
+				for range devN {
+					var dn int
+					if dn, er = d.ReadArray(); er != nil || dn < 2 {
+						if er == nil {
+							er = errors.New("storage: malformed delivered table")
+						}
+						return nil, er
+					}
+					if raw, er = d.ReadBytes(); er != nil || len(raw) != id.Size {
+						if er == nil {
+							er = errors.New("storage: malformed delivered table")
+						}
+						return nil, er
+					}
+					var dev id.DeviceID
+					copy(dev[:], raw)
+					var pos uint64
+					if pos, er = d.ReadUint(); er != nil {
+						return nil, er
+					}
+					devs[dev] = pos
+					for j := 2; j < dn; j++ {
+						if er = d.SkipItem(); er != nil {
+							return nil, er
+						}
+					}
+				}
+				k.Delivered[tid] = devs
+				for j := 2; j < pairN; j++ {
+					if er = d.SkipItem(); er != nil {
+						return nil, er
+					}
+				}
 			}
 		case ksKeyRefusals:
 			var cnt int

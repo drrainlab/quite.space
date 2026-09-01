@@ -1190,6 +1190,13 @@ func (r *Runtime) applyHeldRelayItem(client *relay.Client, heldItem storage.Held
 	if client != nil && len(parts.ReturnRoutes) > 0 {
 		r.recordStatedReturnRoutes(parts.Wanter, parts.ReturnRoutes)
 	}
+	// DR-1: fold delivery receipts BEFORE frames are judged — a receipt
+	// bundle usually carries no frames at all, and it must count exactly
+	// once, so the replay guard is the same as the wants': only on the
+	// live pass, never on an ingress-hold reconsideration.
+	if client != nil && len(parts.Receipts) > 0 {
+		r.installReceipts(terminal, parts.Receipts)
+	}
 	if client != nil && len(parts.Wants) > 0 {
 		// Gated, bounded, and the routes above were recorded BEFORE the
 		// answer is routed, so the very bundle that states "answer me at
