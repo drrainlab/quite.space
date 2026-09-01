@@ -35,6 +35,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"log"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -781,6 +782,40 @@ func (r *Runtime) mailboxTags(offers []offerItem, own string, now uint64) map[st
 		})
 	}
 	return present
+}
+
+// siblingIngresses is where the OTHER devices of this person live, by
+// their own signed statements — the relays a courtesy offer may have
+// been left at. A grant is put either at this device's stated relay or,
+// when the grantor's book holds no route for us, at the grantor's OWN
+// relay as the honest guess. That guess is only findable if the fetch
+// knocks where the grantor lives too: without this, a fresh pairing
+// whose devices picked different relays strands the very first grant
+// forever — each side waiting at a door the other never uses.
+// `already` is skipped: those doors this cycle knocks on anyway.
+func (r *Runtime) siblingIngresses(already []string) []string {
+	seen := map[string]bool{}
+	for _, ep := range already {
+		seen[ep] = true
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	self := r.Device.ID
+	var out []string
+	for _, dev := range r.ownDevicesLocked() {
+		if dev == self {
+			continue
+		}
+		for _, rt := range r.ks.PeerRoutes[dev] {
+			if rt.Transport != "relay" || rt.Endpoint == "" || seen[rt.Endpoint] {
+				continue
+			}
+			seen[rt.Endpoint] = true
+			out = append(out, rt.Endpoint)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // fetchGrants runs once per sync cycle on the receiving side: read the

@@ -703,6 +703,14 @@ func (r *Runtime) relaySyncOnce(addr string) {
 			// last heard where to find it.
 			r.fetchKnocks(ingress)
 		}
+		// AND the siblings' own doors: a courtesy offer is left at the
+		// grantor's relay when its book holds no route for this device,
+		// so this device must knock where its siblings live too — or a
+		// fresh pairing whose devices picked different relays strands
+		// the first grant forever (field bug, 2026-09-01).
+		for _, ingress := range r.siblingIngresses(ingresses) {
+			r.fetchGrants(ingress)
+		}
 	}
 
 	rs.mu.Lock()
