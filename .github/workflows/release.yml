@@ -424,6 +424,13 @@ jobs:
           device ever refuses an update because the signature changed, do not
           work around it — tell us instead.
           NOTES
+          # IDEMPOTENT ON PURPOSE. A moved tag re-runs this workflow, and
+          # the stale run may already have created the release — seen live
+          # on v1.0.0-beta.3, where the correct build failed on "release
+          # already exists" while the stale one published. Republishing is
+          # delete-and-create: the release page is derived state, the tag
+          # and the note in the repository are the source of truth.
+          gh release delete "$TAG" --yes 2>/dev/null || true
           gh release create "$TAG" dist/* \
             --title "$TITLE" \
             --notes-file notes.md \
