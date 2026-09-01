@@ -31,6 +31,7 @@ import (
 
 	"github.com/drrainlab/quiet_places/kernel/eventlog"
 	"github.com/drrainlab/quiet_places/kernel/storage"
+	"github.com/drrainlab/quiet_places/protocol/claims"
 	"github.com/drrainlab/quiet_places/protocol/codec"
 	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/transports/bundle"
@@ -336,12 +337,19 @@ func (r *Runtime) deliveryStatusLocked(tid id.TerminalID, eid id.EventID, seq ui
 	if r.deliveredByForeignLocked(tid, seq) {
 		return "delivered"
 	}
-	if r.ledger != nil {
-		if _, live := r.ledger.Get(eid); live {
-			return "sent"
+	// The middle rung comes from the trust engine — the one place that
+	// records "a relay accepted these bytes" at the moment it happened.
+	// (The custody ledger is the wrong witness here: its intents track
+	// radio/gateway responsibility and stay live for ordinary relay
+	// mail, which read as "still sending" forever.) Trust records are
+	// in-memory, so after a restart un-receipted history drops back to
+	// the dot — pessimistic, never false.
+	if st, ok := r.spaces[tid]; ok && st.space != nil && st.space.Trust != nil {
+		if st.space.Trust.Delivery(eid, tid).Level >= claims.DeliveryAcceptedByRelay {
+			return "relayed"
 		}
 	}
-	return "relayed"
+	return "sent"
 }
 
 // deliveredByForeignLocked answers the UI's question for ONE own frame:
