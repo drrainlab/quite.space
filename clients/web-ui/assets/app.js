@@ -2285,6 +2285,30 @@ async function refreshSpace() {
         else openInstruments.add(iid);
         refreshSpace();
       };
+      // Protocol view only: detach the instrument from the space. Two
+      // taps, not a dialog — the first turns the button into a question,
+      // and doing nothing for a moment withdraws it. A live board that
+      // gets detached by mistake re-enrolls on the stand's next invite,
+      // so the honest cost of the mistake is small and said here.
+      if (PROTOCOL) {
+        const rm = document.createElement('button');
+        rm.className = 'btn-plain member-knock';
+        rm.textContent = t('instr.remove');
+        let armed = false, disarm = null;
+        rm.onclick = async (e) => {
+          e.stopPropagation();
+          if (!armed) {
+            armed = true;
+            rm.textContent = t('instr.remove.sure');
+            disarm = setTimeout(() => { armed = false; rm.textContent = t('instr.remove'); }, 3000);
+            return;
+          }
+          clearTimeout(disarm);
+          await api(`/api/spaces/${current}/instruments/${iid}`, { method: 'DELETE' });
+          lastPanelSig = ''; refreshSpace();
+        };
+        d.appendChild(rm);
+      }
       mbox.appendChild(d);
     }
   }
