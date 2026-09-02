@@ -2113,6 +2113,16 @@ async function refreshSpace() {
   document.getElementById('honesty').innerHTML = parts.join(' · ');
 
   const members = await api(`/api/spaces/${current}/members`);
+  // Resident USB stand (QI-M4): the plugs this machine sees + the stand's
+  // life. Tolerant of an older node without the door — the panel simply
+  // has no socket then.
+  let usbStand = null;
+  try { usbStand = await api('/api/instruments/serial'); } catch (e) { }
+  const usbPorts = (usbStand && usbStand.ports) || [];
+  const usbSt = (usbStand && usbStand.status) || {};
+  // Volatile fields (last frame time) stay OUT of the redraw signature.
+  const usbSig = [usbSt.armed, usbSt.port, usbSt.space, usbSt.state,
+    usbSt.instrument_id, usbSt.last_error, usbPorts];
   // Our own card is the source of truth for the composer's presence button,
   // including on a tab that has only just opened.
   presenceAdopt(members);
@@ -2128,7 +2138,7 @@ async function refreshSpace() {
   // space and its name, the view mode, and the locale — a language switch
   // must still redraw.
   const panelSig = JSON.stringify([current, st.events, st.observations,
-    char?.relic, members, PROTOCOL, [...openInstruments].sort(),
+    char?.relic, members, PROTOCOL, usbSig, [...openInstruments].sort(),
     spaceName(currentSpace() || {}),
     typeof localeName === 'function' ? localeName() : '']);
   if (panelSig === lastPanelSig) return;
@@ -2279,6 +2289,64 @@ async function refreshSpace() {
     }
   }
 
+  // ---- Resident USB stand (QI-M4): the socket beside the panel ----
+  //
+  // The CLI dev stand moved into the node; this row is its only face.
+  // Honest by construction: a listed plug is an OFFER, never a claim —
+  // only enrollment (the board speaking) makes an instrument card above.
+  if (usbSt.armed || usbPorts.length) {
+    if (!instrCards.length) {
+      const ih = document.createElement('h3');
+      ih.textContent = t('instr.title');
+      mbox.appendChild(ih);
+    }
+    const u = document.createElement('div');
+    u.className = 'member instr usb';
+    if (usbSt.armed) {
+      const portName = (usbSt.port || '').split('/').pop();
+      const here = usbSt.space === current;
+      const stateWord = usbSt.state === 'listening'
+        ? t('instr.usb.listening') : t('instr.usb.waiting');
+      let inner = `<div class="mhead"><span class="mname">USB · ${esc(portName)}</span></div>` +
+        `<div class="pres ${usbSt.state === 'listening' ? 'current' : 'stale'}">` +
+        `${usbSt.state === 'listening' ? '●' : '○'} ${esc(here ? stateWord : t('instr.usb.elsewhere'))}</div>`;
+      // The stand's last complaint is protocol detail, not panel weather.
+      if (usbSt.last_error && PROTOCOL)
+        inner += `<div class="caps">${esc(usbSt.last_error)}</div>`;
+      u.innerHTML = inner;
+      if (!here) {
+        const rebind = document.createElement('button');
+        rebind.className = 'btn-plain';
+        rebind.textContent = t('instr.usb.rebind');
+        rebind.onclick = async () => {
+          await api(`/api/spaces/${current}/instruments/serial`,
+            { method: 'POST', body: JSON.stringify({ port: usbSt.port }) });
+          lastPanelSig = ''; refreshSpace();
+        };
+        u.appendChild(rebind);
+      }
+      const off = document.createElement('button');
+      off.className = 'btn-plain';
+      off.textContent = t('instr.usb.detach');
+      off.onclick = async () => {
+        await api('/api/instruments/serial', { method: 'DELETE' });
+        lastPanelSig = ''; refreshSpace();
+      };
+      u.appendChild(off);
+    } else {
+      const b = document.createElement('button');
+      b.className = 'btn-plain';
+      b.textContent = t('instr.usb.connect') + ' · ' + usbPorts[0].split('/').pop();
+      b.onclick = async () => {
+        await api(`/api/spaces/${current}/instruments/serial`,
+          { method: 'POST', body: JSON.stringify({ port: usbPorts[0] }) });
+        lastPanelSig = ''; refreshSpace();
+      };
+      u.appendChild(b);
+    }
+    mbox.appendChild(u);
+  }
+
   // SR-0: the Radio section and the PTT composer — only where a host
   // bridge exists (the Android app); a plain browser renders neither.
   if (typeof RADIO !== 'undefined') {
@@ -2356,6 +2424,30 @@ async function refreshSpace() {
   // that shares it. The wording is the feature — "from this device" is the
   // whole promise, and putting it on the button means nobody has to have read
   // the dialog to know what they pressed.
+  // Protocol view: the space's raw id — what a stand, a curl or another
+  // node needs. The settings toggle promises "id, capabilities, raw
+  // state"; the id part is delivered here, beside the place it names.
+  if (PROTOCOL && current) {
+    const proto = document.createElement('div');
+    proto.className = 'pane-protocol';
+    const lbl = document.createElement('div');
+    lbl.className = 'caps';
+    lbl.textContent = t('space.id.title');
+    const idv = document.createElement('div');
+    idv.className = 'caps space-id';
+    idv.textContent = current;
+    const cp = document.createElement('button');
+    cp.className = 'btn-plain';
+    cp.textContent = t('space.id.copy');
+    cp.onclick = async () => {
+      await copyText(current);
+      cp.textContent = t('space.id.copied');
+      setTimeout(() => { cp.textContent = t('space.id.copy'); }, 1500);
+    };
+    proto.appendChild(lbl); proto.appendChild(idv); proto.appendChild(cp);
+    mbox.appendChild(proto);
+  }
+
   const danger = document.createElement('div');
   danger.className = 'space-danger';
   const del = document.createElement('button');

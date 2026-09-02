@@ -154,6 +154,11 @@ func (s *Shell) open(c lockgate.Credentials) error {
 		fmt.Println("video player disabled:", err)
 	}
 
+	// Re-arm the resident USB stand a previous session left armed
+	// (QI-M4): the desktop is exactly the host it exists for. Explicitly
+	// here, never inside node.Open — headless tools must not grab plugs.
+	rt.ArmInstrumentSerialFromSettings()
+
 	s.swap(api.Handler())
 	return nil
 }

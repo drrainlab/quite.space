@@ -60,6 +60,10 @@ type Settings struct {
 	// deliberately keep apart. Empty = off, and the next park clears any
 	// standing registration.
 	PushEndpoint string `json:"push_endpoint,omitempty"`
+	// InstrumentSerial arms the resident USB stand (QI-M4): hold this
+	// serial port open as the QI dev stand for that space. Persisted so
+	// the stand re-arms when the app reopens; nil = no stand.
+	InstrumentSerial *InstrumentSerialConfig `json:"instrument_serial,omitempty"`
 	// Tiles configures the Field basemap source (SP-3.1, ADR-032). An empty
 	// Server means "no preference expressed" — the node resolves the default
 	// OSM template at use and never persists it (the relay-mode lesson:

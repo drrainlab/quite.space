@@ -557,6 +557,11 @@
   #members .space-acts button { border-radius: 999px; }
   #relic { border-radius: var(--radius-md); }
   .member .caps { color: var(--dim); font-size: 10px; word-break: break-word; }
+  /* QI-M4: the USB stand row + the protocol-view space id */
+  .pane-protocol { margin-top: 14px; }
+  .pane-protocol .caps { color: var(--dim); font-size: 10px; word-break: break-all;
+    font-family: var(--font-mono); }
+  .pane-protocol .space-id { user-select: all; margin: 2px 0 6px; }
   .member .pres { font-size: 11px; margin-top: 2px; }
   .member .pres.current { color: var(--acc); }
   .member .pres.stale { color: var(--dim); }

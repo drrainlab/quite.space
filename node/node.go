@@ -57,6 +57,12 @@ type Runtime struct {
 	// never r.mu — a preview touches no runtime state by design.
 	previews previewStore
 
+	// Resident USB stand (QI-M4): its own lock, never r.mu — status is
+	// read by the UI poll while the loop may be inside a runtime call.
+	standMu   sync.Mutex
+	standStop chan struct{}
+	standStat SerialStandStatus
+
 	root *storage.Root
 	ks   *storage.Keystore
 	// PrincipalID is who this node acts as. Always present, on every device.

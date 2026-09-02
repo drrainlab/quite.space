@@ -234,6 +234,9 @@ func (a *APIServer) Handler() http.Handler {
 	mux.HandleFunc("POST /api/spaces/{id}/instruments/enroll", a.auth(a.handleEnrollInstrument))
 	mux.HandleFunc("POST /api/spaces/{id}/instruments/{iid}/ingest", a.auth(a.handleIngestInstrument))
 	mux.HandleFunc("GET /api/spaces/{id}/instruments/epochs", a.auth(a.handleInstrumentEpochs))
+	mux.HandleFunc("GET /api/instruments/serial", a.auth(a.handleSerialStand))
+	mux.HandleFunc("POST /api/spaces/{id}/instruments/serial", a.auth(a.handleSerialStandAttach))
+	mux.HandleFunc("DELETE /api/instruments/serial", a.auth(a.handleSerialStandDetach))
 	mux.HandleFunc("POST /api/invites/accept", a.auth(a.handleJoin))
 	mux.HandleFunc("POST /api/public/open", a.auth(a.handlePublicOpen))
 	// The transient post preview (PS-3): a card invites a look, and looking
@@ -1848,4 +1851,44 @@ func (a *APIServer) handleInstrumentEpochs(w http.ResponseWriter, r *http.Reques
 		out = append(out, hex.EncodeToString(f))
 	}
 	writeJSON(w, map[string][]string{"frames_hex": out})
+}
+
+// ---- Resident USB stand (QI-M4) ----
+
+// handleSerialStand: the plugs this machine sees + the stand's life, in
+// one reply — the info panel polls it beside /state and /members.
+func (a *APIServer) handleSerialStand(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, map[string]any{
+		"ports":  SerialInstrumentPorts(),
+		"status": a.rt.SerialInstrumentStatus(),
+	})
+}
+
+// handleSerialStandAttach arms the resident stand: this port, this space.
+func (a *APIServer) handleSerialStandAttach(w http.ResponseWriter, r *http.Request) {
+	tid, err := a.spaceID(r)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	body, err := readBody[struct {
+		Port string `json:"port"`
+	}](r)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := a.rt.AttachSerialInstrument(tid, body.Port); err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true})
+}
+
+func (a *APIServer) handleSerialStandDetach(w http.ResponseWriter, r *http.Request) {
+	if err := a.rt.DetachSerialInstrument(); err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true})
 }

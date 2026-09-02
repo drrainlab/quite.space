@@ -459,6 +459,16 @@ const I18N = {
 
     // instruments (QI-2)
     'instr.title': 'Instruments',
+    // resident USB stand (QI-M4)
+    'instr.usb.connect': 'Connect USB instrument',
+    'instr.usb.waiting': 'waiting for the board',
+    'instr.usb.listening': 'listening',
+    'instr.usb.detach': 'Disconnect',
+    'instr.usb.elsewhere': 'serving another space',
+    'instr.usb.rebind': 'Rebind here',
+    'space.id.title': 'space id',
+    'space.id.copy': 'Copy id',
+    'space.id.copied': 'Copied',
 
     // radio mode (SR-0)
     'radio.title': 'Radio',
@@ -1597,6 +1607,16 @@ const I18N = {
 
     // instruments (QI-2)
     'instr.title': 'Инструменты',
+    // resident USB stand (QI-M4)
+    'instr.usb.connect': 'Подключить USB-инструмент',
+    'instr.usb.waiting': 'жду плату',
+    'instr.usb.listening': 'слушаю',
+    'instr.usb.detach': 'Отключить',
+    'instr.usb.elsewhere': 'служит другому пространству',
+    'instr.usb.rebind': 'Перевязать сюда',
+    'space.id.title': 'id пространства',
+    'space.id.copy': 'Скопировать id',
+    'space.id.copied': 'Скопировано',
 
     // radio mode (SR-0)
     'radio.title': 'Рация',

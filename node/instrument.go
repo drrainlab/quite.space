@@ -510,6 +510,16 @@ func (r *Runtime) IngestInstrumentFrames(space, instrumentID id.TerminalID, fram
 	if !r.DevIngest {
 		return 0, ErrDevIngestClosed
 	}
+	return r.ingestInstrumentFrames(space, instrumentID, frames)
+}
+
+// ingestInstrumentFrames is the body behind the door. The DevIngest flag
+// guards the TOKENED HTTP ROUTE — anything holding the API token could
+// otherwise feed frames in — while the resident serial stand enters here
+// directly: its arming was an explicit owner action in the UI, already
+// scoped to one instrument and one space, so the flag would gate a
+// decision that has been made. Identity binding below is not relaxed.
+func (r *Runtime) ingestInstrumentFrames(space, instrumentID id.TerminalID, frames [][]byte) (int, error) {
 	applied := 0
 	err := r.withSpace(space, func(st *spaceState) error {
 		var rec *storage.InstrumentRecord

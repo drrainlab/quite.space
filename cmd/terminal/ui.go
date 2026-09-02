@@ -90,6 +90,10 @@ func runUI(args []string, withUI bool) error {
 	// Dev-only door for external instrument frames (QI-M3 stand). Not a
 	// bearer: off unless asked for by name.
 	rt.DevIngest = flags["dev-ingest"] != ""
+	// The resident USB stand (QI-M4) re-arms regardless of --dev-ingest:
+	// its arming was an owner action in the UI, and it enters the runtime
+	// beside the flag, not through the tokened HTTP door the flag guards.
+	rt.ArmInstrumentSerialFromSettings()
 	defer rt.Close()
 	fmt.Println("node open — principal", rt.Principal.Fingerprint())
 	fmt.Println("data root:", dataDir)
