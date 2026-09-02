@@ -282,7 +282,12 @@ const qi_epoch_key *qi_instrument_current_epoch(const qi_instrument *c, const ui
 /* ---- state record ---- */
 static qi_status persist_now(qi_instrument *c) {
   if (!c->persist) return QI_OK; /* tests/tools without durability opt out explicitly */
-  uint8_t rec[QI_MAX_SPACES * (QI_MAX_FRAME + 512) + 64];
+  /* STATIC, not stack: this is ~5KB, and an MCU loop task owns ~8KB of
+     stack — the first live enrollment on a Heltec V3 tripped the stack
+     canary right here. The core is single-threaded by contract (no call
+     re-enters it), so one static scratch is safe and honest about the
+     footprint: it moves the cost to .bss where the linker can SEE it. */
+  static uint8_t rec[QI_MAX_SPACES * (QI_MAX_FRAME + 512) + 64];
   size_t n;
   qi_status s = qi_instrument_state_encode(c, rec, sizeof rec, &n);
   if (s) return s;
@@ -474,7 +479,9 @@ qi_status qi_instrument_emit(qi_instrument *c, const uint8_t space[32], const qi
   qi_observation obs = *o;
   if (!obs.observed_at) obs.observed_at = now;
   if (!obs.stale_after) return QI_ERR_ARG;
-  uint8_t payload[QI_MAX_PAYLOAD]; size_t pn;
+  /* STATIC trio (~3.2KB together): same MCU-stack law as the envelope
+     scratch — the emit path must not tax the loop task's stack. */
+  static uint8_t payload[QI_MAX_PAYLOAD]; size_t pn;
   qi_status s = qi_observation_encode(&obs, payload, sizeof payload, &pn);
   if (s) return s;
   /* seal: aad = plane ‖ cbor(n) ‖ schema; nonce random */
@@ -485,9 +492,9 @@ qi_status qi_instrument_emit(qi_instrument *c, const uint8_t space[32], const qi
   memcpy(aad + an, SCHEMA_OBS, sizeof SCHEMA_OBS - 1); an += sizeof SCHEMA_OBS - 1;
   uint8_t nonce[24];
   qi_random(nonce, 24);
-  uint8_t ct[QI_MAX_PAYLOAD + 16]; size_t ctn;
+  static uint8_t ct[QI_MAX_PAYLOAD + 16]; size_t ctn;
   if ((s = qi_xchacha_seal(key->key, nonce, payload, pn, aad, an, ct, sizeof ct, &ctn))) return s;
-  uint8_t sealed[QI_MAX_PAYLOAD + 64]; size_t sn;
+  static uint8_t sealed[QI_MAX_PAYLOAD + 64]; size_t sn;
   qi_w_init(&w, sealed, sizeof sealed);
   qi_w_map(&w, 3); qi_w_uint(&w, 1); qi_w_uint(&w, key->n); qi_w_uint(&w, 2); qi_w_bytes(&w, nonce, 24);
   qi_w_uint(&w, 3); qi_w_bytes(&w, ct, ctn);

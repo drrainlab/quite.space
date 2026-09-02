@@ -155,7 +155,11 @@ qi_status qi_envelope_decode_verify(const uint8_t *frame, size_t n, qi_envelope 
   size_t hn; qi_w_done(&hw, &hn);
   size_t mid = sig_entry_start - head_n;
   if (hn + mid > QI_MAX_FRAME * 4) return QI_ERR_LIMIT;
-  uint8_t scratch[QI_MAX_FRAME * 4];
+  /* STATIC: 8KB dwarfs an MCU loop task's whole stack (the Heltec V3
+     overflowed right here on its first intact epoch frame). The core is
+     single-threaded by contract; one static scratch, visible to the
+     linker, is the honest footprint. */
+  static uint8_t scratch[QI_MAX_FRAME * 4];
   memcpy(scratch, head_new, hn);
   memcpy(scratch + hn, frame + head_n, mid);
   if (!qi_ed25519_verify(e->device, scratch, hn + mid, e->signature)) return QI_ERR_VERIFY;
