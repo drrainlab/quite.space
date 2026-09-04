@@ -224,9 +224,10 @@ func (r *Runtime) announceOnce(announceAddr string, port int, nonce uint64) {
 	_ = lan.AnnounceOnce(announceAddr, port, hints, nonce)
 }
 
-// adoptConn attaches a LAN connection with realtime cadence.
+// adoptConn hands a LAN connection to the classifier (QI-B1): the first
+// message decides whether this is a peer or an instrument at the door.
 func (r *Runtime) adoptConn(c *lan.Conn) {
-	r.adoptLink(c, pumpEvery, 2*time.Second, "lan")
+	r.classifyLANConn(c)
 }
 
 // liveLink is one adopted link plus the filter it was adopted under. The
@@ -413,6 +414,14 @@ func (r *Runtime) adoptLink(c link, pump, summaryEvery time.Duration, label stri
 // its spaces without adopting the full router.
 func (r *Runtime) adoptLinkFiltered(c link, pump, summaryEvery time.Duration,
 	label string, allow func(routing.FrameMeta) bool) {
+	r.adoptLinkFilteredOpts(c, pump, summaryEvery, label, allow, true)
+}
+
+// adoptLinkFilteredOpts is adoptLinkFiltered with the hello made explicit:
+// the classifier in front of the LAN accept (QI-B1) says hello BEFORE it
+// reads, so the adoption that follows must not say it twice.
+func (r *Runtime) adoptLinkFilteredOpts(c link, pump, summaryEvery time.Duration,
+	label string, allow func(routing.FrameMeta) bool, sayHello bool) {
 	linkKind := transportOfLink(label)
 	r.mu.Lock()
 	for tid, st := range r.spaces {
@@ -437,7 +446,9 @@ func (r *Runtime) adoptLinkFiltered(c link, pump, summaryEvery time.Duration,
 	// Introduce this device on the new wire (T6-LAN). Only links that can
 	// bind a signature to their own session say anything; the rest stay
 	// anonymous and never become route candidates.
-	r.sendLANHello(c)
+	if sayHello {
+		r.sendLANHello(c)
+	}
 
 	r.wg.Add(1)
 	go func() {

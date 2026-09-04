@@ -224,16 +224,18 @@ type summary struct {
 
 // message is one decoded sync message.
 type message struct {
-	msgType uint64
-	term    id.TerminalID
-	sum     *summary
-	frames  [][]byte
-	hashes  []id.Hash
-	blobs   [][]byte
-	receipt []byte
-	attempt []byte
-	beacon  []byte
-	hello   []byte
+	msgType  uint64
+	term     id.TerminalID
+	sum      *summary
+	frames   [][]byte
+	hashes   []id.Hash
+	blobs    [][]byte
+	receipt  []byte
+	attempt  []byte
+	beacon   []byte
+	hello    []byte
+	epochReq []byte
+	epochs   []byte
 }
 
 func decodeMessage(data []byte) (*message, error) {
@@ -345,6 +347,18 @@ func decodeMessage(data []byte) (*message, error) {
 			b, err = d.ReadBytes()
 			if err == nil {
 				msg.hello = append([]byte(nil), b...)
+			}
+		case keyEpochReq:
+			var b []byte
+			b, err = d.ReadBytes()
+			if err == nil {
+				msg.epochReq = append([]byte(nil), b...)
+			}
+		case keyEpochs:
+			var b []byte
+			b, err = d.ReadBytes()
+			if err == nil {
+				msg.epochs = append([]byte(nil), b...)
 			}
 		case keyReceipt:
 			var b []byte
