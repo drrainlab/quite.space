@@ -248,10 +248,13 @@ func (r *Runtime) standSession(stop chan struct{}, rw io.ReadWriter, space id.Te
 		}
 	}()
 
-	// Epoch watcher: rotations ride down the same wire the frames ride
-	// up, and time rides with them so the board's clock floor advances.
+	// Epoch watcher, and the stand's pulse: every tick sends TIME — the
+	// board's clock floor advances, and its serial bearer learns the wire
+	// is ATTENDED (it claims delivery only while a stand has spoken
+	// recently; see SerialHexBearer). A rotation rides along when the
+	// epoch actually changed.
 	go func() {
-		t := time.NewTicker(20 * time.Second)
+		t := time.NewTicker(15 * time.Second)
 		defer t.Stop()
 		for {
 			select {
@@ -263,6 +266,7 @@ func (r *Runtime) standSession(stop chan struct{}, rw io.ReadWriter, space id.Te
 				return
 			case <-t.C:
 			}
+			send("QI TIME " + fmt.Sprint(time.Now().Unix()))
 			imu.Lock()
 			enrolled := haveIID
 			imu.Unlock()
@@ -281,7 +285,6 @@ func (r *Runtime) standSession(stop chan struct{}, rw io.ReadWriter, space id.Te
 			}
 			imu.Unlock()
 			if changed {
-				send("QI TIME " + fmt.Sprint(time.Now().Unix()))
 				send("QI EPOCH " + cur)
 			}
 		}

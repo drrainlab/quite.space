@@ -182,8 +182,13 @@ func (s *stand) ingest(hexFrame string) {
 	fmt.Printf("stand: frame applied=%d (%d bytes)\n", r.Applied, len(hexFrame)/2)
 }
 
+// epochWatch is also the stand's pulse: TIME every tick, so the board's
+// serial bearer knows the wire is attended (it claims delivery only while
+// a stand has spoken recently); an epoch rides along when it changed.
 func (s *stand) epochWatch() {
 	for {
+		time.Sleep(15 * time.Second)
+		s.send("QI TIME " + fmt.Sprint(time.Now().Unix()))
 		var r struct {
 			FramesHex []string `json:"frames_hex"`
 		}
@@ -191,10 +196,8 @@ func (s *stand) epochWatch() {
 			cur := r.FramesHex[len(r.FramesHex)-1]
 			if cur != s.lastEpoch && s.iid != "" {
 				s.lastEpoch = cur
-				s.send("QI TIME " + fmt.Sprint(time.Now().Unix()))
 				s.send("QI EPOCH " + cur)
 			}
 		}
-		time.Sleep(20 * time.Second)
 	}
 }

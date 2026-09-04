@@ -2,6 +2,7 @@
 #include "QuietInstrument.h"
 
 bool SerialHexBearer::send(const uint8_t *frame, size_t n) {
+  if (!attended()) return false;  // nobody is listening: the frame stays owed
   s_.print("QI FRAME ");
   for (size_t i = 0; i < n; i++) { if (frame[i] < 16) s_.print('0'); s_.print(frame[i], HEX); }
   s_.println();
@@ -20,6 +21,7 @@ void SerialHexBearer::poll(QuietInstrument &qi) {
 
 void SerialHexBearer::handle(QuietInstrument &qi, char *line) {
   if (strncmp(line, "QI ", 3) != 0) return;
+  lastHeardMs_ = millis();  // a stand spoke: the wire is attended
   char *cmd = line + 3;
   char *arg = strchr(cmd, ' ');
   if (arg) *arg++ = 0;

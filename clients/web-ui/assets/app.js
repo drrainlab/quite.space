@@ -533,6 +533,27 @@ async function remeasureRelays() {
   renderRelayDiagnostics();
 }
 
+// honestyParts is the line under the feed that says what this room holds
+// and cannot show. Two kinds of unreadable moment, each named for its own
+// reason: no KEY (undecryptable — an epoch this device was not in), and no
+// PREDECESSOR (pending — frames parked behind a hole in some device's
+// chain). They used to be one silence: a newcomer whose history stopped one
+// frame upstream saw a room that looked simply empty. Pure, so the harness
+// in scripts/webui/honesty.cjs can run the real thing.
+function honestyParts(st) {
+  const parts = [];
+  if (st.undecryptable > 0)
+    parts.push(`<span class="warn">${esc(t('honesty.undecryptable', { count: st.undecryptable }))}</span>`);
+  if (st.pending > 0)
+    parts.push(`<span class="warn">${esc(t('honesty.pending', { count: st.pending }))}</span>`);
+  if (st.observation) {
+    const o = st.observation;
+    parts.push(`${esc(o.display)}${o.simulated ? ' <span class="warn">' + t('honesty.simulated') + '</span>' : ''}` +
+      ` · ${esc(o.freshness)}${o.freshness !== 'current' ? ` (${esc(relTime(o.age_seconds))})` : ''}`);
+  }
+  return parts;
+}
+
 // renderRelayDiagnostics paints the honest one-screen state: which relay,
 // under what trust, how healthy, how fast (bucketed).
 async function renderRelayDiagnostics() {
@@ -558,6 +579,19 @@ async function renderRelayDiagnostics() {
   line(t('relay.diag.load'), d.load_class || '');
   line(t('relay.diag.sync'), d.sync_active ? t('relay.diag.on') : t('relay.diag.off'));
   if (d.last_error) line(t('relay.diag.error'), d.last_error);
+  // Members without a stated route. RT-0 holds their copies rather than
+  // guessing an address — the right call — but the count reached only the
+  // JSON somebody copies into a bug report, never the screen. The owner
+  // whose newcomer sits in an empty room is the one person who can act on
+  // it, and this is the one screen they open.
+  if (d.no_route_peers)
+    line(t('relay.diag.no_route'), t('relay.diag.no_route_value', { count: d.no_route_peers }));
+  // Frames no relay item can carry. Each one stalls a device's whole chain
+  // for anybody who reads through a relay — so the row names the chain, not
+  // only the frame.
+  for (const s of d.stranded || [])
+    line(t('relay.diag.stranded'), t('relay.diag.stranded_value',
+      { seq: s.seq, device: s.device, kb: Math.ceil((s.bytes || 0) / 1024) }));
 }
 
 // copyText: navigator.clipboard first, textarea+execCommand as the
@@ -2102,15 +2136,7 @@ async function refreshSpace() {
   // strikethrough. The #cards div stays (switchView addresses it); it
   // just never fills again.
   document.getElementById('cards').innerHTML = '';
-  const parts = [];
-  if (st.undecryptable > 0)
-    parts.push(`<span class="warn">${esc(t('honesty.undecryptable', { count: st.undecryptable }))}</span>`);
-  if (st.observation) {
-    const o = st.observation;
-    parts.push(`${esc(o.display)}${o.simulated ? ' <span class="warn">' + t('honesty.simulated') + '</span>' : ''}` +
-      ` · ${esc(o.freshness)}${o.freshness !== 'current' ? ` (${esc(relTime(o.age_seconds))})` : ''}`);
-  }
-  document.getElementById('honesty').innerHTML = parts.join(' · ');
+  document.getElementById('honesty').innerHTML = honestyParts(st).join(' · ');
 
   const members = await api(`/api/spaces/${current}/members`);
   // Resident USB stand (QI-M4): the plugs this machine sees + the stand's
@@ -2285,12 +2311,13 @@ async function refreshSpace() {
         else openInstruments.add(iid);
         refreshSpace();
       };
-      // Protocol view only: detach the instrument from the space. Two
-      // taps, not a dialog — the first turns the button into a question,
-      // and doing nothing for a moment withdraws it. A live board that
-      // gets detached by mistake re-enrolls on the stand's next invite,
-      // so the honest cost of the mistake is small and said here.
-      if (PROTOCOL) {
+      // Detach the instrument from the space. Two taps, not a dialog —
+      // the first turns the button into a question, and doing nothing for
+      // a moment withdraws it. A live board detached by mistake re-enrolls
+      // on the stand's next invite, so the honest cost is small. Always
+      // visible: a ghost row from a re-minted identity is the owner's to
+      // end, and hiding the verb behind Protocol view left them stuck.
+      {
         const rm = document.createElement('button');
         rm.className = 'btn-plain member-knock';
         rm.textContent = t('instr.remove');

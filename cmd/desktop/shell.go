@@ -139,8 +139,15 @@ func (s *Shell) open(c lockgate.Credentials) error {
 
 	// Best effort, and said so: a laptop with no local network is an
 	// ordinary situation, not a startup failure.
-	if err := rt.StartLAN(":0", node.DefaultLANMulticast); err != nil {
-		fmt.Println("LAN disabled:", err)
+	// A STABLE PORT FIRST. A board built with a static node address
+	// (QI-B1: networks that filter multicast) must find this node after a
+	// restart, which an ephemeral port cannot promise. 47181 is asked for;
+	// if something else holds it the node falls back to any free port —
+	// discovery still works, only the static address does not.
+	if err := rt.StartLAN(":47181", node.DefaultLANMulticast); err != nil {
+		if err := rt.StartLAN(":0", node.DefaultLANMulticast); err != nil {
+			fmt.Println("LAN disabled:", err)
+		}
 	}
 
 	// AN HTTP ORIGIN FOR THE VIDEO PLAYER, and only for it.
