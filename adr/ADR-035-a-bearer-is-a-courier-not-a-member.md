@@ -48,11 +48,23 @@ only means append — the collision is recorded here so nobody "fixes" it.
 ## 3. The knock is session-bound; the door is not an oracle
 
 `msgEpochReq` carries `{space, device, sig}` where sig is Ed25519 over
-`"qp-instr-door-v0:" ‖ EKM ‖ space` — keying material exported from the
-very TLS session it rides, the lanhello law applied to devices that are
-not people. A knock recorded on one conn proves nothing on another; a
-person in the middle exports different material on each of their two
-sessions.
+`"qp-instr-door-v0:" ‖ certfp ‖ space` — certfp being sha256 of the leaf
+certificate DER the node presented on this very session (RFC 5929
+tls-server-end-point binding). The lanhello binds through exported
+keying material; the door cannot, and the reason is a spike finding, not
+a preference: arduino-esp32's TLS stack keeps the peer certificate and
+fingerprints it (`getFingerprintSHA256`) but exposes no RFC-5705
+exporter, and the `mbedtls_ssl_context` behind it is private. The
+fingerprint spike matched the board's 32 bytes to the node's own, byte
+for byte.
+
+The binding holds because the node's cert is ephemeral and its private
+key never leaves the process: a person in the middle must present a
+DIFFERENT cert, so the board signs the wrong fingerprint and opens
+nothing. Replay is not a separate worry — the knock travels inside TLS,
+so recording one already requires the MITM the binding defeats. What the
+fingerprint does NOT give is per-connection uniqueness within one node
+lifetime; nothing here needs it.
 
 The door opens only for an ENROLLED EXTERNAL INSTRUMENT of that space —
 the same keystore record the serial stand's ingest binds to. A member's

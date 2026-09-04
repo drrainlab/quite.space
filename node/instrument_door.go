@@ -35,10 +35,15 @@ import (
 	"github.com/drrainlab/quiet_places/protocol/id"
 )
 
-// instrDoorLabel is both the TLS exporter label and the signature domain
-// of the door knock — session-unique, so a knock recorded on one conn
-// proves nothing on another (the lanHello law, applied to devices that
-// are not people).
+// instrDoorLabel is the signature domain of the door knock. The knock
+// binds to the SESSION through the node's certificate fingerprint —
+// sha256 of the leaf DER the board saw — not through exported keying
+// material: an ESP32's TLS stack keeps the peer cert and fingerprints it
+// (arduino-esp32 getFingerprintSHA256) but exposes no RFC-5705 exporter.
+// The cert is ephemeral and its key never leaves the node, so a relaying
+// MITM must present a DIFFERENT cert, and the board's signature over the
+// wrong fingerprint opens nothing; the knock itself travels inside TLS,
+// so a replay needs a MITM the binding already defeats (ADR-035 §3).
 const instrDoorLabel = "qp-instr-door-v0"
 
 // Door-knock payload keys (append-only).
@@ -285,17 +290,23 @@ func (r *Runtime) openInstrumentDoor(c link, req []byte, rest [][]byte) {
 		closeQuiet()
 		return
 	}
-	sb, ok := c.(sessionBound)
+	// The binding: the certificate THIS node presents. A knock on a conn
+	// this node dialed cannot verify — a TLS client presents no cert, so
+	// the peer had nothing to fingerprint — which is the right answer: a
+	// board is always the dialer.
+	r.mu.Lock()
+	ln := r.lanNode
+	r.mu.Unlock()
+	if ln == nil {
+		closeQuiet()
+		return
+	}
+	fp, ok := ln.CertFingerprint()
 	if !ok {
 		closeQuiet()
 		return
 	}
-	ekm, ok := sb.SessionBinding(instrDoorLabel)
-	if !ok {
-		closeQuiet()
-		return
-	}
-	msg := append([]byte(instrDoorLabel+":"), ekm...)
+	msg := append([]byte(instrDoorLabel+":"), fp[:]...)
 	msg = append(msg, space[:]...)
 	if !ed25519.Verify(ed25519.PublicKey(device[:]), msg, sig) {
 		closeQuiet()

@@ -2,7 +2,8 @@ package node
 
 // The instrument door (QI-B1 Ф2), gated in CI: a synthetic instrument —
 // the externalDevice fixture over a REAL TLS dial — knocks on the LAN
-// listener and the four laws get their pins: the knock earns the epochs
+// listener with the node's cert fingerprint as its binding, and the four
+// laws get their pins: the knock earns the epochs
 // and a frame reaches the reducer; the link scopes to its one space; a
 // bad knock is a silent close with no epochs and no distinguishable
 // refusal; a rotation is pushed to the live conn.
@@ -41,11 +42,11 @@ func dialDoor(t *testing.T, rt *Runtime) *doorClient {
 
 func (dc *doorClient) knock(t *testing.T, ext *externalDevice, space id.TerminalID) {
 	t.Helper()
-	ekm, ok := dc.conn.SessionBinding(instrDoorLabel)
+	fp, ok := dc.conn.PeerCertFingerprint()
 	if !ok {
-		t.Fatal("the dialed conn cannot bind a session")
+		t.Fatal("the dialed conn cannot fingerprint the node's certificate")
 	}
-	msg := append([]byte(instrDoorLabel+":"), ekm...)
+	msg := append([]byte(instrDoorLabel+":"), fp[:]...)
 	msg = append(msg, space[:]...)
 	sig := ed25519.Sign(ext.dev.SignKey(), msg)
 	dc.send(t, kernelsync.EncodeEpochReqMessage(
@@ -216,16 +217,16 @@ func TestTheDoorIsNotAnOracle(t *testing.T) {
 	refused("unknown space", func(dc *doorClient) {
 		var ghost id.TerminalID
 		ghost[0] = 0xEE
-		ekm, _ := dc.conn.SessionBinding(instrDoorLabel)
-		msg := append([]byte(instrDoorLabel+":"), ekm...)
+		fp, _ := dc.conn.PeerCertFingerprint()
+		msg := append([]byte(instrDoorLabel+":"), fp[:]...)
 		msg = append(msg, ghost[:]...)
 		dc.send(t, kernelsync.EncodeEpochReqMessage(
 			encodeEpochReqPayload(ghost, ext.dev.ID, ed25519.Sign(ext.dev.SignKey(), msg))))
 	})
 	refused("uncertified device", func(dc *doorClient) {
 		stranger := newExternalDevice(t, rt.PrincipalID, tid, "Impostor")
-		ekm, _ := dc.conn.SessionBinding(instrDoorLabel)
-		msg := append([]byte(instrDoorLabel+":"), ekm...)
+		fp, _ := dc.conn.PeerCertFingerprint()
+		msg := append([]byte(instrDoorLabel+":"), fp[:]...)
 		msg = append(msg, tid[:]...)
 		dc.send(t, kernelsync.EncodeEpochReqMessage(
 			encodeEpochReqPayload(tid, stranger.dev.ID, ed25519.Sign(stranger.dev.SignKey(), msg))))

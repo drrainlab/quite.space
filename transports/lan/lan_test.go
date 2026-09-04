@@ -281,3 +281,39 @@ func TestPeersStillNegotiateTLS13AndExportKeyingMaterial(t *testing.T) {
 		t.Fatalf("two Go peers negotiated 0x%04x, not TLS 1.3 — the floor leaked into the ceiling", v)
 	}
 }
+
+// ADR-035 §3: the instrument door's channel binding. The client's view of
+// the server's certificate and the server's view of its own must be the
+// same 32 bytes — that agreement is the whole binding.
+func TestPeerCertFingerprintMatchesTheServersOwn(t *testing.T) {
+	server, err := NewNode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	connCh := make(chan *Conn, 1)
+	port, err := server.Listen("127.0.0.1:0", func(c *Conn) { connCh <- c })
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := NewNode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cb, err := client.Dial("127.0.0.1:" + itoa(port))
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-connCh
+	seen, ok := cb.PeerCertFingerprint()
+	if !ok {
+		t.Fatal("client could not fingerprint the server certificate")
+	}
+	own, ok := server.CertFingerprint()
+	if !ok {
+		t.Fatal("server has no certificate to fingerprint")
+	}
+	if seen != own {
+		t.Fatal("the client's view of the server cert and the server's own differ")
+	}
+}

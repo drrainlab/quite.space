@@ -148,6 +148,28 @@ func (c *Conn) Capabilities() transports.Capabilities {
 	return transports.Capabilities{MaxPayload: 0, Realtime: true, Ack: transports.AckTransport}
 }
 
+// PeerCertFingerprint is sha256 of the peer's leaf certificate DER — the
+// channel binding the instrument door uses in place of an exported
+// keying material an ESP32's TLS stack does not expose (ADR-035 §3). It
+// is exactly what arduino-esp32's getFingerprintSHA256 computes on the
+// board, so the two ends agree on the same 32 bytes. Forces the lazy
+// accept-side handshake, like SessionBinding.
+func (c *Conn) PeerCertFingerprint() ([32]byte, bool) {
+	var zero [32]byte
+	tc, ok := c.c.(*tls.Conn)
+	if !ok {
+		return zero, false
+	}
+	if err := tc.Handshake(); err != nil {
+		return zero, false
+	}
+	st := tc.ConnectionState()
+	if len(st.PeerCertificates) == 0 {
+		return zero, false
+	}
+	return sha256.Sum256(st.PeerCertificates[0].Raw), true
+}
+
 // Closed reports whether the connection died, and why.
 func (c *Conn) Closed() (bool, error) {
 	c.mu.Lock()
@@ -275,6 +297,17 @@ func (n *Node) DialPinned(addr string, verify func(pin string) error) (*Conn, er
 		return nil, err
 	}
 	return newConn(c, n.maxPkt), nil
+}
+
+// CertFingerprint is sha256 of this node's own leaf certificate DER —
+// what a peer computes as its PeerCertFingerprint. The instrument door
+// verifies a knock against this (ADR-035 §3).
+func (n *Node) CertFingerprint() ([32]byte, bool) {
+	var zero [32]byte
+	if len(n.tlsCert.Certificate) == 0 {
+		return zero, false
+	}
+	return sha256.Sum256(n.tlsCert.Certificate[0]), true
 }
 
 func (n *Node) serverConfig() *tls.Config {
