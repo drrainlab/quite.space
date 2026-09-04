@@ -47,6 +47,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "node:", err)
 		os.Exit(1)
 	}
+	st.principalHex = principal
 	s, err := serial.Open(*port, &serial.Mode{BaudRate: *baud})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "serial:", err)
@@ -69,8 +70,20 @@ func main() {
 			st.enroll(strings.TrimPrefix(line, "QI ENROLLMENT "))
 		case strings.HasPrefix(line, "QI FRAME "):
 			st.ingest(strings.TrimPrefix(line, "QI FRAME "))
+		case line == "QI TIME?":
+			// A clockless board asks; the session's one-shot TIME is not
+			// repeated by itself after a reboot that kept the USB session.
+			st.send("QI TIME " + fmt.Sprint(time.Now().Unix()))
 		case strings.HasPrefix(line, "QI NOTE "):
 			fmt.Println("board:", strings.TrimPrefix(line, "QI NOTE "))
+			// A boot marker on a live session: the board came back without
+			// the wire noticing. Re-run the greeting so it gets its clock and
+			// its invitation again (idempotent on the node side).
+			if strings.HasSuffix(line, " ready") {
+				st.send("QI TIME " + fmt.Sprint(time.Now().Unix()))
+				st.send("QI PRINCIPAL " + st.principalHex)
+				st.send("QI ENROLL?")
+			}
 		case line != "":
 			fmt.Println("board?", line)
 		}
@@ -79,6 +92,7 @@ func main() {
 
 type stand struct {
 	api, token, space string
+	principalHex      string
 	iid               string
 	out               io.Writer
 	lastEpoch         string

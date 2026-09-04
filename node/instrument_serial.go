@@ -262,6 +262,19 @@ func (r *Runtime) standSession(stop chan struct{}, rw io.ReadWriter, space id.Te
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
 		switch {
+		case line == "QI TIME?":
+			// A clockless board asks. A reboot keeps the USB session alive
+			// (the bridge chip never drops), so the greeting's one-shot
+			// TIME was never repeated — and a board without a clock neither
+			// emits nor computes its discovery hint. Found on the owner's
+			// desk: "in the space" beside "wifi: no-time".
+			send("QI TIME " + fmt.Sprint(time.Now().Unix()))
+		case strings.HasPrefix(line, "QI NOTE ") && strings.HasSuffix(line, " ready"):
+			// A boot marker on a live session: re-run the greeting so the
+			// board gets its clock and its invitation again.
+			send("QI TIME " + fmt.Sprint(time.Now().Unix()))
+			send("QI PRINCIPAL " + r.PrincipalID.Hex())
+			send("QI ENROLL?")
 		case strings.HasPrefix(line, "QI ENROLLMENT "):
 			raw, err := hex.DecodeString(strings.TrimPrefix(line, "QI ENROLLMENT "))
 			if err != nil {

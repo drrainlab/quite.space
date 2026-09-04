@@ -97,6 +97,7 @@ class QuietInstrument {
   bool warnedNoTime_ = false;
   uint64_t hostTime_ = 0;      // unix seconds at hostTimeMillis_
   uint32_t hostTimeMillis_ = 0;
+  uint32_t lastTimeAsk_ = 0;   // millis of the last "QI TIME?"
   uint8_t space_[32];
   bool haveSpace_ = false;
   uint8_t frame_[QI_MAX_FRAME];

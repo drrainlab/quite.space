@@ -264,6 +264,15 @@ void QuietInstrument::flushOwed() {
 
 void QuietInstrument::loop() {
   if (bearer_) bearer_->poll(*this);
+  // NO TIME IS A QUESTION, NOT A SECRET. A reboot keeps the USB session
+  // alive (the bridge chip never drops), so the stand's one-shot TIME is
+  // never repeated — and a board without a clock neither emits nor can
+  // compute the discovery hint. Asking every ten seconds until answered
+  // is the whole cure; a stand that hears "QI TIME?" answers.
+  if (clockThunk(this) == 0 && millis() - lastTimeAsk_ > 10000) {
+    lastTimeAsk_ = millis();
+    Serial.println("QI TIME?");
+  }
   if (!c_.provisioned) return;
   flushOwed();  // a frame owed from before a reboot goes first
   uint32_t nowSec = millis() / 1000;

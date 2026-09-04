@@ -103,6 +103,27 @@ func TestResidentStandSpeaksTheWireGrammar(t *testing.T) {
 	if owner.DevIngest {
 		t.Fatal("the resident stand must not have opened the HTTP door")
 	}
+
+	// A reboot that kept the USB session: the board asks for its clock,
+	// and a boot marker earns the whole greeting again.
+	if _, err := board.Write([]byte("QI TIME?\n")); err != nil {
+		t.Fatal(err)
+	}
+	if l := readLine(); !strings.HasPrefix(l, "QI TIME ") {
+		t.Fatalf("a clockless board's question went unanswered: %q", l)
+	}
+	if _, err := board.Write([]byte("QI NOTE SensorTerminal ready\n")); err != nil {
+		t.Fatal(err)
+	}
+	if l := readLine(); !strings.HasPrefix(l, "QI TIME ") {
+		t.Fatalf("no clock after a boot marker: %q", l)
+	}
+	if l := readLine(); l != "QI PRINCIPAL "+owner.PrincipalID.Hex() {
+		t.Fatalf("no principal after a boot marker: %q", l)
+	}
+	if l := readLine(); l != "QI ENROLL?" {
+		t.Fatalf("no invitation after a boot marker: %q", l)
+	}
 }
 
 // Arming persists and re-arms: the settings blob carries (port, space)
