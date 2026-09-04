@@ -15,6 +15,7 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
@@ -204,10 +205,24 @@ func NewNodeWithMaxPacket(maxPkt int) (*Node, error) {
 	if err != nil {
 		return nil, err
 	}
+	// WELL-FORMED, not minimal (QI-B1 Ф0). The old template carried only a
+	// serial and validity dates — enough for crypto/tls, which is lenient,
+	// and REJECTED by a strict embedded parser: a Heltec V3's mbedTLS quit
+	// with "ASN1 out of data" on the empty Subject before setInsecure could
+	// even skip the trust check. A Subject, key usage, basic constraints
+	// and a SAN cost nothing and make the DER something a conforming
+	// parser accepts. The trust model is UNCHANGED: still self-signed,
+	// still InsecureSkipVerify on the other side, still no identity claim —
+	// identity lives in event signatures (ADR-015), never in this cert.
 	tmpl := &x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(24 * time.Hour),
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "quiet.local"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(10 * 365 * 24 * time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+		BasicConstraintsValid: true,
+		DNSNames:              []string{"quiet.local"},
 	}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &priv.PublicKey, priv)
 	if err != nil {
@@ -263,14 +278,22 @@ func (n *Node) DialPinned(addr string, verify func(pin string) error) (*Conn, er
 }
 
 func (n *Node) serverConfig() *tls.Config {
-	return &tls.Config{Certificates: []tls.Certificate{n.tlsCert}, MinVersion: tls.VersionTLS13}
+	// TLS 1.2 FLOOR, not because two nodes settle for it — crypto/tls
+	// negotiates the highest both offer, so peer-to-peer stays 1.3 — but
+	// because an ESP32's mbedTLS speaks only up to 1.2 (QI-B1 Ф0: it
+	// offered [1.2 1.1 1.0] and a 1.3 floor sent it a fatal alert). The
+	// floor is what an INSTRUMENT gets; peers are untouched. Both paths
+	// keep ECDHE forward secrecy and RFC-5705 exported keying material,
+	// which is all the door's session binding needs — and the TLS version
+	// was never the identity story here (ADR-035 §7).
+	return &tls.Config{Certificates: []tls.Certificate{n.tlsCert}, MinVersion: tls.VersionTLS12}
 }
 
 func (n *Node) clientConfig() *tls.Config {
 	// InsecureSkipVerify is deliberate and documented: the session makes no
 	// identity claim (see package comment). Do not "fix" this by trusting
 	// the certificate — identity lives in event signatures.
-	return &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}
+	return &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12}
 }
 
 // Listen starts accepting direct connections; each is handed to onConn.

@@ -1,6 +1,7 @@
 package lan
 
 import (
+	"crypto/tls"
 	"strconv"
 	"sync"
 	"testing"
@@ -230,3 +231,53 @@ func TestDiscoveryHints(t *testing.T) {
 }
 
 func itoa(n int) string { return strconv.Itoa(n) }
+
+// QI-B1 Ф0: the TLS-floor decision, pinned. Two Go nodes must still
+// negotiate TLS 1.3 between themselves — lowering the FLOOR to 1.2 for an
+// ESP32's sake does not downgrade peer-to-peer, because crypto/tls picks
+// the highest both offer. And the exported keying material the instrument
+// door's knock signs over must be available on the negotiated session.
+func TestPeersStillNegotiateTLS13AndExportKeyingMaterial(t *testing.T) {
+	server, err := NewNode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	connCh := make(chan *Conn, 1)
+	port, err := server.Listen("127.0.0.1:0", func(c *Conn) { connCh <- c })
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := NewNode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cb, err := client.Dial("127.0.0.1:" + itoa(port))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ca := <-connCh
+
+	// The exporter forces the lazy accept-side handshake to complete.
+	ekmA, okA := ca.SessionBinding("qp-instr-door-v0")
+	ekmB, okB := cb.SessionBinding("qp-instr-door-v0")
+	if !okA || !okB {
+		t.Fatal("no exported keying material on a peer session")
+	}
+	if len(ekmA) != 32 || len(ekmB) != 32 {
+		t.Fatal("exported keying material is the wrong length")
+	}
+	// Same label, same session, both ends: the two exporters MUST match —
+	// that agreement is exactly what makes the door's knock unforgeable.
+	if string(ekmA) != string(ekmB) {
+		t.Fatal("the two ends exported different keying material")
+	}
+
+	sa, ok := ca.c.(*tls.Conn)
+	if !ok {
+		t.Fatal("not a TLS conn")
+	}
+	if v := sa.ConnectionState().Version; v != tls.VersionTLS13 {
+		t.Fatalf("two Go peers negotiated 0x%04x, not TLS 1.3 — the floor leaked into the ceiling", v)
+	}
+}

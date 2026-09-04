@@ -197,6 +197,18 @@ func (p *prefixLink) SessionBinding(label string) ([]byte, bool) {
 	return nil, false
 }
 
+// Close forwards to the inner link. The link interface (transports.Endpoint
+// + Closed) does NOT declare Close, so the embedding alone hid it — and
+// StopLAN closes a link exactly by asserting interface{ Close() error }.
+// Without this the wrapped socket could not be closed, its peer never saw
+// EOF, and a downed LAN link's binding survived it forever.
+func (p *prefixLink) Close() error {
+	if cl, ok := p.link.(interface{ Close() error }); ok {
+		return cl.Close()
+	}
+	return nil
+}
+
 // classifyLANConn is the seam in front of adoption: say hello first (both
 // sides speaking first is what makes two classifying nodes converge
 // instead of deadlocking; a board simply ignores it), then let the first
