@@ -2438,6 +2438,7 @@ function setLocale(l) {
   // would lose a half-typed query — is relabelled explicitly.
   if (typeof syncSettingsUI === 'function') syncSettingsUI();
   if (typeof NAV !== 'undefined' && NAV.relabel) NAV.relabel();
+  if (typeof navRelabel === 'function') navRelabel();
   if (typeof refresh === 'function') refresh();
 }
 

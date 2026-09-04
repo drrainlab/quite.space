@@ -90,6 +90,7 @@ function applySpaceNav(char) {
     more.type = 'button';
     more.className = 'space-tab space-more';
     more.textContent = '···';
+    more.dataset.hidden = hidden.join(',');
     more.title = hidden.map(v => t('ui.convbar.view.' + v)).join(' · ');
     more.onclick = (ev) => {
       ev.stopPropagation();
@@ -140,6 +141,23 @@ function navOpenOverflow(anchor, hidden) {
     const off = () => { menu.remove(); document.removeEventListener('click', off); };
     document.addEventListener('click', off);
   }, 0);
+}
+
+// navRelabel: the strip is built once per space with the language of that
+// moment, and a language switch used to leave it there — "чат · посты"
+// under an English interface, "Chat · Posts" under a Russian one, with
+// only a tab promoted later wearing the new tongue. Relabel in place:
+// the tabs, the "···" hint, and the view's creation button.
+function navRelabel() {
+  document.querySelectorAll('#viewSwitch .space-tab[data-v]').forEach(b => {
+    b.textContent = t('ui.convbar.view.' + b.dataset.v);
+  });
+  const more = document.querySelector('#viewSwitch .space-more');
+  if (more && more.dataset.hidden) {
+    more.title = more.dataset.hidden.split(',').filter(Boolean).map(v => t('ui.convbar.view.' + v)).join(' · ');
+  }
+  const sel = document.querySelector('#viewSwitch .space-tab.sel');
+  if (sel && sel.dataset.v) navApplyPrimary(sel.dataset.v);
 }
 
 // navMarkActive: the active tab is brighter text and a thin line, not a

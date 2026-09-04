@@ -4229,3 +4229,32 @@ div.reply-to { cursor: default; }
   .nav-act, #inviteBtn, #viewPrimary, .btn-filled, .space-new { animation: none; }
   .shelf-card, .shelf-card:hover { transform: none; }
 }
+
+/* --- the same relief for posts and objects (UI-R1b) ------------------ */
+/* A kept thing, a post, an object: cards of the same family get the same
+   spine, surface and lean. One recipe, three grids — not three looks. */
+#pubFeed, .obj-grid, #objList { perspective: 900px; }
+.pub-card, .obj-card {
+  position: relative;
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--surface-raised) 70%, var(--panel)) 0%, var(--panel) 62%);
+  box-shadow: 0 14px 24px -18px rgba(0, 0, 0, .8), inset 0 1px 0 rgba(255, 255, 255, .05);
+  transform-origin: 50% 100%;
+  transition: transform .22s ease, box-shadow .22s ease, border-color .22s ease, background .22s ease;
+}
+.pub-card::after, .obj-card::after {   /* the spine, drawn ABOVE a cover that bleeds */
+  content: ""; position: absolute; left: 10px; right: 10px; top: 0; height: 2px;
+  border-radius: 2px; z-index: 2; pointer-events: none;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--acc) 55%, transparent), transparent);
+  opacity: .55;
+}
+.pub-card:hover, .obj-card:hover {
+  transform: perspective(900px) rotateX(2.5deg) translateY(-3px);
+  border-color: color-mix(in srgb, var(--acc) 35%, var(--line));
+  box-shadow: 0 22px 30px -18px rgba(0, 0, 0, .85), 0 0 22px -8px color-mix(in srgb, var(--acc) 45%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, .08);
+}
+.pub-card:hover::after, .obj-card:hover::after { opacity: 1; }
+@media (prefers-reduced-motion: reduce) {
+  .pub-card, .obj-card, .pub-card:hover, .obj-card:hover { transform: none; }
+}
