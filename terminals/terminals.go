@@ -224,9 +224,23 @@ func (s *Space) absorb(a eventlog.Applied) {
 	if env.Schema == schemas.ManifestUpdated {
 		// A member published its interaction contract: install it. Errors
 		// (stale revision, broken chain) are ignored here — the registry
-		// keeps the last valid manifest and never downgrades.
-		_, _ = s.Registry.Upsert(env.Payload)
+		// keeps the last valid manifest and never downgrades. The device
+		// is recorded only when the terminal published for ITSELF: a
+		// manifest published on an instrument's behalf rides the owner's
+		// envelope, and the owner's device is not the instrument's.
+		if t, err := s.Registry.Upsert(env.Payload); err == nil && t != nil && env.SourceTerminal == nil {
+			t.Device = env.Device
+		}
 		return
+	}
+	// AN INSTRUMENT NAMES ITS DEVICE THE FIRST TIME IT SPEAKS. Its manifest
+	// arrived on the owner's behalf, but every frame it emits carries its
+	// own device beside its terminal in the envelope — a fact every replica
+	// reads the same way, and the one that lets a card say "attached".
+	if env.SourceTerminal != nil {
+		if t, ok := s.Registry.Get(*env.SourceTerminal); ok && t != nil && t.Device == (id.DeviceID{}) {
+			t.Device = env.Device
+		}
 	}
 	s.State.Apply(env, a.ID)
 	if s.OnBlock != nil && schemas.IsBlockSchema(env.Schema) {

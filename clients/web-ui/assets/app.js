@@ -2331,7 +2331,14 @@ async function refreshSpace() {
             return;
           }
           clearTimeout(disarm);
-          await api(`/api/spaces/${current}/instruments/${iid}`, { method: 'DELETE' });
+          try {
+            await api(`/api/spaces/${current}/instruments/${iid}`, { method: 'DELETE' });
+          } catch (err) {
+            // Silence is the one answer a verb must never give.
+            rm.textContent = String(err.message || err);
+            armed = false;
+            return;
+          }
           lastPanelSig = ''; refreshSpace();
         };
         d.appendChild(rm);

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/drrainlab/quiet_places/protocol/enrollment"
+	"github.com/drrainlab/quiet_places/protocol/id"
 	"github.com/drrainlab/quiet_places/terminals"
 )
 
@@ -248,5 +249,82 @@ func TestAnExternalSensorEnrollsIntoABroadcastSpace(t *testing.T) {
 	}
 	if policyOf(t, rt, tid).AllowsWriter(rt.PrincipalID, ext.dev.ID) {
 		t.Fatal("detach left the board an attested writer")
+	}
+	// And the card is gone from every screen — the manifest stays in the
+	// log, but membership is the binding, not the manifest.
+	for _, c := range mustMembers(t, rt, tid) {
+		if c.Terminal == iid {
+			t.Fatal("a detached instrument still has a card")
+		}
+	}
+}
+
+func mustProvision(t *testing.T, rt *Runtime, tid id.TerminalID, ext *externalDevice) []byte {
+	t.Helper()
+	prov, _, err := rt.AttachInstrumentByEnrollment(tid, ext.enroll, 1001) // idempotent: a fresh provision
+	if err != nil {
+		t.Fatal(err)
+	}
+	return prov
+}
+
+func mustMembers(t *testing.T, rt *Runtime, tid id.TerminalID) []terminals.MemberCard {
+	t.Helper()
+	cards, err := rt.Members(tid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cards
+}
+
+// A GHOST CAN BE ENDED. A card whose keystore record is gone — an identity
+// re-minted by a wiped board, a card synced from elsewhere — still has its
+// manifest in the log; detaching it turns the key on the manifest's
+// device, and the card leaves with the epoch. The owner met the old
+// refusal as "unknown instrument" beside a card nothing could end.
+func TestAGhostInstrumentCanBeDetachedWithoutARecord(t *testing.T) {
+	rt := openRuntime(t, t.TempDir(), "owner")
+	defer rt.Close()
+	tid, err := rt.CreateSpace("workbench")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ext := newExternalDevice(t, rt.PrincipalID, tid, "Heltec")
+	if _, _, err := rt.AttachInstrumentByEnrollment(tid, ext.enroll, 1000); err != nil {
+		t.Fatal(err)
+	}
+	seen := false
+	for _, c := range mustMembers(t, rt, tid) {
+		if c.Terminal == ext.part.TerminalID {
+			seen = true
+		}
+	}
+	if !seen {
+		t.Fatal("an attached instrument has no card")
+	}
+	// The ghost spoke once in its life — the frame taught every replica
+	// which device it is.
+	ext.provision(t, mustProvision(t, rt, tid, ext))
+	rt.DevIngest = true
+	if _, err := rt.IngestInstrumentFrames(tid, ext.part.TerminalID,
+		[][]byte{ext.reading(t, 200, uint64(time.Now().Unix()))}); err != nil {
+		t.Fatal(err)
+	}
+	// The record vanishes (a wiped board's old life), the card stays.
+	rt.mu.Lock()
+	rt.ks.Instruments = nil
+	rt.mu.Unlock()
+	if err := rt.DetachInstrument(tid, ext.part.TerminalID); err != nil {
+		t.Fatalf("a ghost could not be ended: %v", err)
+	}
+	for _, c := range mustMembers(t, rt, tid) {
+		if c.Terminal == ext.part.TerminalID {
+			t.Fatal("the ghost's card survived its detachment")
+		}
+	}
+	// Ending it twice is answered, not refused: the manifest is still
+	// there to name the device, and turning an already-turned key is safe.
+	if err := rt.DetachInstrument(tid, ext.part.TerminalID); err != nil {
+		t.Fatalf("a second detach was refused: %v", err)
 	}
 }

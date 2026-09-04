@@ -22,6 +22,11 @@ type Terminal struct {
 	Manifest      *manifest.Manifest
 	ManifestFrame []byte // received bytes, verbatim (ADR-003)
 	ManifestHash  id.Hash
+	// Device is the device that signed the envelope this manifest arrived
+	// in — set by the space on apply, not by the registry (the manifest
+	// payload itself does not name it). For an instrument it is the key
+	// the instrument plane addresses, which is what "still attached" means.
+	Device id.DeviceID
 
 	// Observed labels are local claims about behavior (plan §7.3): never
 	// global truth, always origin peer_observed.

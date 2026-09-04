@@ -184,9 +184,6 @@ func (r *Runtime) DetachInstrument(space, instrumentID id.TerminalID) error {
 	if ir != nil {
 		close(ir.stop)
 	}
-	if !found && ir == nil {
-		return errors.New("node: unknown instrument")
-	}
 	var dev id.DeviceID
 	if ir != nil {
 		dev = ir.part.Device.ID
@@ -196,6 +193,28 @@ func (r *Runtime) DetachInstrument(space, instrumentID id.TerminalID) error {
 		dev = detachedDev
 	}
 	return r.withSpace(space, func(st *spaceState) error {
+		if found || ir != nil {
+			// The record knows the device; teach the registry so the card
+			// judges "attached" correctly on this node even for an
+			// instrument that never spoke.
+			if t, ok := st.space.Registry.Get(instrumentID); ok && t != nil {
+				t.Device = dev
+			}
+		}
+		if !found && ir == nil {
+			// NO RECORD, BUT A CARD. A ghost — an identity this node once
+			// enrolled and whose record is gone, or a card synced from
+			// another replica — still has its manifest in the log, and the
+			// manifest's envelope names the device. Detaching it is turning
+			// the key on that device; refusing was what left the owner
+			// staring at "unknown instrument" beside a card nothing could
+			// end.
+			t, ok := st.space.Registry.Get(instrumentID)
+			if !ok || t == nil || t.Device == (id.DeviceID{}) {
+				return errors.New("node: unknown instrument")
+			}
+			dev = t.Device
+		}
 		if pol := st.space.Policy(); pol.IsPublic() {
 			// The plaintext analogue of "the key turns": a detached sensor
 			// must stop being an attested writer, or its device keeps the

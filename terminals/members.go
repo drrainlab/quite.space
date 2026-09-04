@@ -109,8 +109,25 @@ func AutonomyLabel(a manifest.Autonomy) string {
 func (s *Space) MemberCards(nowUnix uint64) []MemberCard {
 	terminals := s.Registry.All()
 	out := make([]MemberCard, 0, len(terminals))
+	pol := s.Policy()
 	for _, t := range terminals {
 		m := t.Manifest
+		// A DETACHED INSTRUMENT IS NOT A MEMBER. Its manifest stays in the
+		// log forever (append-only), but detachment is a log fact too: the
+		// key turned and the device left the current instrument epoch (a
+		// public space took its writer binding back). Every replica reads
+		// that fact the same way, so the card goes on every screen at once
+		// — never only on the node that clicked. A replica that has not
+		// seen an epoch yet shows no instruments: fail closed, briefly.
+		if IsInstrumentKind(m.Kind) && t.Device != (id.DeviceID{}) {
+			attached := s.InstrumentAuthorized(t.Device)
+			if pol.IsPublic() {
+				attached = pol.Publish != PublishCurated || pol.AllowsWriter(m.Controller, t.Device)
+			}
+			if !attached {
+				continue
+			}
+		}
 		name := ""
 		if len(m.DeclaredLabels) > 0 {
 			name = m.DeclaredLabels[0]
