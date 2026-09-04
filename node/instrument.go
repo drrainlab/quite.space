@@ -444,9 +444,32 @@ func (r *Runtime) AttachInstrumentByEnrollment(space id.TerminalID, enrollBytes 
 		for _, other := range r.spaces {
 			r.publishCertLocked(other.space)
 		}
-		st.space.AddInstrument(e.Device, e.X25519Pub)
-		if _, err := r.Self.RotateInstrumentEpoch(st.space); err != nil {
-			return err
+		// The policy fork the simulated path always had (QI-B1 Ф3): a
+		// public space is plaintext — no epoch membership, no instrument
+		// plane, no key to turn. What a broadcast sensor gets instead is
+		// the ATTESTED WRITER BINDING, revised into the manifest BEFORE
+		// the manifest frame this device rides in — the emit gate refuses
+		// an unbound writer's first frame. Before this fork the external
+		// path rotated unconditionally and died on "no members".
+		if pol := st.space.Policy(); pol.IsPublic() {
+			if pol.Publish == terminals.PublishCurated &&
+				!pol.AllowsWriter(r.PrincipalID, e.Device) {
+				title, character := st.space.Character()
+				next := pol
+				next.Writers = append(next.Writers,
+					terminals.WriterBinding{Principal: r.PrincipalID, Device: e.Device})
+				if err := st.space.ReviseManifest(title, character, next); err != nil {
+					return err
+				}
+				meta := r.ks.Spaces[space]
+				meta.ManifestFrame = st.space.ManifestFrame
+				r.ks.Spaces[space] = meta
+			}
+		} else {
+			st.space.AddInstrument(e.Device, e.X25519Pub)
+			if _, err := r.Self.RotateInstrumentEpoch(st.space); err != nil {
+				return err
+			}
 		}
 		if _, _, err := r.Self.PublishManifestFrameOnBehalf(st.space, e.ManifestFrame); err != nil {
 			return err
@@ -490,11 +513,22 @@ func (r *Runtime) provisionLocked(st *spaceState, space id.TerminalID, rec stora
 		}
 		return nil
 	})
-	if certFrame == nil || epochFrame == nil {
-		return nil, errors.New("node: provision incomplete — certificate or epoch missing")
+	if certFrame == nil {
+		return nil, errors.New("node: provision incomplete — certificate missing")
+	}
+	// A public space HAS no instrument epoch — the plane does not exist
+	// there — so the provision carries none, honestly. A sealed space
+	// without one is still broken freight and still refused. (The C core
+	// as shipped refuses an epochless provision: plaintext emission from
+	// a real board is QI-B2's named slice, not a thing this fix grants.)
+	var frames [][]byte
+	if epochFrame != nil {
+		frames = append(frames, epochFrame)
+	} else if !st.space.Policy().IsPublic() {
+		return nil, errors.New("node: provision incomplete — epoch missing")
 	}
 	p := &enrollment.Provision{Space: space, Principal: r.PrincipalID,
-		CertFrame: certFrame, EpochFrames: [][]byte{epochFrame},
+		CertFrame: certFrame, EpochFrames: frames,
 		ManifestAck: sha256.Sum256(rec.ManifestFrame)}
 	return p.Encode()
 }

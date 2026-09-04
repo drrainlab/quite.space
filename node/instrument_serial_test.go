@@ -15,6 +15,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/drrainlab/quiet_places/protocol/enrollment"
+	"github.com/drrainlab/quiet_places/terminals"
 )
 
 func TestResidentStandSpeaksTheWireGrammar(t *testing.T) {
@@ -140,5 +143,89 @@ func TestResidentStandArmingSurvivesRestart(t *testing.T) {
 	}
 	if cfg := again.GetSettings().InstrumentSerial; cfg != nil {
 		t.Fatal("detach left the arming persisted")
+	}
+}
+
+// The external half of public telemetry (QI-B1 Ф3): a real board's
+// enrollment lands in a BROADCAST space. The simulated path learned this
+// fork long ago; the external path rotated an epoch that cannot exist in
+// a plaintext space and died on "no members". Now both halves fork the
+// same way — no plane, no key to turn, an attested writer binding
+// instead — and the provision carries NO epoch frames, honestly. (The C
+// core as shipped still refuses an epochless provision: plaintext
+// emission from a real board is QI-B2's named slice, and this test
+// deliberately claims only enrollment.)
+func TestAnExternalSensorEnrollsIntoABroadcastSpace(t *testing.T) {
+	rt := openRuntime(t, t.TempDir(), "owner")
+	defer rt.Close()
+	tid, err := rt.CreateSpaceWithOptions("balcony", CreateOptions{
+		Policy: terminals.SpacePolicy{
+			Visibility: terminals.VisibilityPublic,
+			Publish:    terminals.PublishCurated,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ext := newExternalDevice(t, rt.PrincipalID, tid, "Heltec")
+	prov, iid, err := rt.AttachInstrumentByEnrollment(tid, ext.enroll, 1000)
+	if err != nil {
+		t.Fatalf("broadcast enrollment refused: %v", err)
+	}
+	if iid != ext.part.TerminalID {
+		t.Fatal("instrument id is not the device's terminal")
+	}
+	p, err := enrollment.DecodeProvision(prov)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.EpochFrames) != 0 {
+		t.Fatalf("a plaintext space handed out %d epoch frames — no plane exists to key", len(p.EpochFrames))
+	}
+	if len(p.CertFrame) == 0 {
+		t.Fatal("provision carries no certificate")
+	}
+
+	pol := policyOf(t, rt, tid)
+	if !pol.AllowsWriter(rt.PrincipalID, ext.dev.ID) {
+		t.Fatal("the board's device is not an attested writer")
+	}
+	if !pol.AllowsWriter(rt.PrincipalID, rt.Device.ID) {
+		t.Fatal("binding the board cost the owner their own binding")
+	}
+	_ = rt.withSpace(tid, func(st *spaceState) error {
+		if st.space.InstrumentCount() != 0 {
+			t.Fatalf("a plaintext space grew an instrument plane: %d devices", st.space.InstrumentCount())
+		}
+		return nil
+	})
+
+	// Idempotent (owner's amendment 5): the same freight again earns a
+	// fresh provision, no second binding.
+	prov2, _, err := rt.AttachInstrumentByEnrollment(tid, ext.enroll, 1001)
+	if err != nil {
+		t.Fatalf("re-enrollment refused: %v", err)
+	}
+	if _, err := enrollment.DecodeProvision(prov2); err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, w := range policyOf(t, rt, tid).Writers {
+		if w.Device == ext.dev.ID {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("re-enrollment left %d bindings for one device", n)
+	}
+
+	// Detach is the plaintext analogue of the key turning: the binding
+	// goes back.
+	if err := rt.DetachInstrument(tid, iid); err != nil {
+		t.Fatal(err)
+	}
+	if policyOf(t, rt, tid).AllowsWriter(rt.PrincipalID, ext.dev.ID) {
+		t.Fatal("detach left the board an attested writer")
 	}
 }

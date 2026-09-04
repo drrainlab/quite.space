@@ -317,8 +317,13 @@ type Provision struct {
 }
 
 func (p *Provision) Encode() ([]byte, error) {
-	if len(p.CertFrame) == 0 || len(p.EpochFrames) == 0 {
-		return nil, errors.New("provision: certificate and at least one epoch frame are required")
+	// The certificate is always required. Epoch frames are required only
+	// by the plane's existence: a PUBLIC space is plaintext, has no
+	// instrument plane, and its provision honestly carries none (QI-B1
+	// Ф3) — the device sees the empty array and knows exactly what it
+	// was not handed.
+	if len(p.CertFrame) == 0 {
+		return nil, errors.New("provision: certificate is required")
 	}
 	if len(p.EpochFrames) > MaxEpochFrames {
 		return nil, errors.New("provision: too many epoch frames")
@@ -398,8 +403,10 @@ func DecodeProvision(b []byte) (*Provision, error) {
 	if err := d.Done(); err != nil {
 		return nil, err
 	}
-	if len(p.CertFrame) == 0 || len(p.EpochFrames) == 0 {
-		return nil, errors.New("provision: certificate and at least one epoch frame are required")
+	// Symmetric with Encode: the certificate is the one hard requirement;
+	// an empty epoch list is a public space's honest freight.
+	if len(p.CertFrame) == 0 {
+		return nil, errors.New("provision: certificate is required")
 	}
 	return p, nil
 }
