@@ -127,12 +127,34 @@ static void test_hpke_unwrap_and_seal(void) {
         memcmp(pt, obs, obsn) == 0, "open == observation");
 }
 
+/* The two-implementation law: transports/lan.Hint computed these bytes
+ * once (Go), and both sides pin them forever. terminal[i] = i*7. */
+static void test_lan_hint_vectors(void) {
+  uint8_t space[32];
+  for (int i = 0; i < 32; i++) space[i] = (uint8_t)(i * 7);
+  static const uint8_t v0[16]  = {0x4b,0x70,0x9c,0x48,0x1f,0x8f,0x7a,0x43,
+                                  0x4d,0x69,0x2c,0xfc,0xbc,0x89,0xfb,0x2b};
+  static const uint8_t v1[16]  = {0x7c,0x04,0x8f,0xee,0xc8,0x58,0x2e,0x92,
+                                  0x4d,0xb7,0x01,0x0b,0x95,0xea,0x0d,0xb2};
+  static const uint8_t v2[16]  = {0x43,0xeb,0x85,0x0b,0x48,0xb0,0x8f,0xc7,
+                                  0x09,0x79,0x62,0xe9,0x66,0xa5,0xb0,0x52};
+  uint8_t out[16];
+  qi_lan_hint(space, 0, out);
+  CHECK(memcmp(out, v0, 16) == 0, "hint bucket 0 == Go");
+  qi_lan_hint(space, 82911, out);
+  CHECK(memcmp(out, v1, 16) == 0, "hint bucket 82911 == Go");
+  CHECK(qi_lan_bucket(1788400000u) == 82796u, "bucket formula == Go");
+  qi_lan_hint(space, 82796, out);
+  CHECK(memcmp(out, v2, 16) == 0, "hint current bucket == Go");
+}
+
 int main(int argc, char **argv) {
   if (argc < 2 || !vec_load(argv[1])) { printf("usage: test_core instrument_v1.json\n"); return 2; }
   if (qi_crypto_init() != QI_OK) { printf("sodium init failed\n"); return 2; }
   test_cbor_thresholds();
   test_ids_and_keys();
   test_hpke_unwrap_and_seal();
+  test_lan_hint_vectors();
   printf(fails ? "FAILED: %d\n" : "PASS\n", fails);
   return fails ? 1 : 0;
 }

@@ -8,6 +8,7 @@
 #include <math.h>
 
 #include "../../Mq135.h"
+#include "../../../../src/BearerChain.h"
 
 void setUp(void) {}
 void tearDown(void) {}
@@ -77,6 +78,88 @@ static void start_is_idempotent(void) {
   TEST_ASSERT_TRUE(g.warm(1180));
 }
 
+// ---- BearerChain: several roads, one honest answer (QI-B1 Ф4) --------
+//
+// Law 4 (every road listens) is exercised on hardware only: poll() needs
+// a real QuietInstrument, which drags the whole core + sodium into a
+// native build — and faking the reference would be UB wearing a test's
+// clothes. Laws 1-3 are pure arithmetic and live here.
+
+struct FakeBearer : QuietBearer {
+  bool ok = true;
+  int sends = 0;
+  bool send(const uint8_t *, size_t) override { sends++; return ok; }
+  void poll(QuietInstrument &) override {}
+};
+
+static uint32_t fakeNow = 0;
+static uint32_t fakeClock(void) { return fakeNow; }
+static const uint8_t kFrame[4] = {1, 2, 3, 4};
+
+static void the_first_road_carries_while_it_works(void) {
+  fakeNow = 0;
+  FakeBearer wifi, serial;
+  BearerChain ch(fakeClock);
+  ch.add(&wifi, "wifi");
+  ch.add(&serial, "serial");
+  TEST_ASSERT_TRUE(ch.send(kFrame, sizeof kFrame));
+  TEST_ASSERT_EQUAL_INT(1, wifi.sends);
+  TEST_ASSERT_EQUAL_INT(0, serial.sends);
+  TEST_ASSERT_EQUAL_STRING("wifi", ch.lastLabel());
+}
+
+static void three_strikes_exile_a_road(void) {
+  fakeNow = 0;
+  FakeBearer wifi, serial;
+  wifi.ok = false;
+  BearerChain ch(fakeClock);
+  ch.add(&wifi, "wifi");
+  ch.add(&serial, "serial");
+  for (int i = 0; i < 3; i++) TEST_ASSERT_TRUE(ch.send(kFrame, sizeof kFrame));
+  TEST_ASSERT_EQUAL_INT(3, wifi.sends);
+  TEST_ASSERT_TRUE(ch.linkDown(0));
+  TEST_ASSERT_TRUE(ch.send(kFrame, sizeof kFrame));
+  TEST_ASSERT_EQUAL_INT(3, wifi.sends);
+  TEST_ASSERT_EQUAL_STRING("serial", ch.lastLabel());
+}
+
+static void a_down_road_is_probed_then_rearmed(void) {
+  fakeNow = 0;
+  FakeBearer wifi, serial;
+  wifi.ok = false;
+  BearerChain ch(fakeClock);
+  ch.add(&wifi, "wifi");
+  ch.add(&serial, "serial");
+  for (int i = 0; i < 3; i++) ch.send(kFrame, sizeof kFrame);
+  fakeNow = BearerChain::kProbeMs - 1;
+  ch.send(kFrame, sizeof kFrame);
+  TEST_ASSERT_EQUAL_INT(3, wifi.sends);
+  fakeNow = BearerChain::kProbeMs;
+  ch.send(kFrame, sizeof kFrame);
+  TEST_ASSERT_EQUAL_INT(4, wifi.sends);
+  fakeNow += BearerChain::kProbeMs / 2;
+  ch.send(kFrame, sizeof kFrame);
+  TEST_ASSERT_EQUAL_INT(4, wifi.sends);  // still waiting (law 2)
+  wifi.ok = true;
+  fakeNow += BearerChain::kProbeMs;
+  TEST_ASSERT_TRUE(ch.send(kFrame, sizeof kFrame));
+  TEST_ASSERT_FALSE(ch.linkDown(0));
+  TEST_ASSERT_EQUAL_STRING("wifi", ch.lastLabel());
+}
+
+static void false_only_when_every_road_refused(void) {
+  fakeNow = 0;
+  FakeBearer wifi, serial;
+  wifi.ok = false;
+  serial.ok = false;
+  BearerChain ch(fakeClock);
+  ch.add(&wifi, "wifi");
+  ch.add(&serial, "serial");
+  TEST_ASSERT_FALSE(ch.send(kFrame, sizeof kFrame));  // law 3: stays owed
+  serial.ok = true;
+  TEST_ASSERT_TRUE(ch.send(kFrame, sizeof kFrame));
+}
+
 int main(int, char **) {
   UNITY_BEGIN();
   RUN_TEST(ratio_at_the_clean_air_anchor_is_one);
@@ -87,5 +170,9 @@ int main(int, char **) {
   RUN_TEST(an_unstarted_gate_is_cold);
   RUN_TEST(a_backwards_clock_neither_warms_nor_unwarms);
   RUN_TEST(start_is_idempotent);
+  RUN_TEST(the_first_road_carries_while_it_works);
+  RUN_TEST(three_strikes_exile_a_road);
+  RUN_TEST(a_down_road_is_probed_then_rearmed);
+  RUN_TEST(false_only_when_every_road_refused);
   return UNITY_END();
 }

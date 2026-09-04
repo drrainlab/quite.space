@@ -6,6 +6,16 @@ qi_status qi_crypto_init(void) { return sodium_init() < 0 ? QI_ERR_CRYPTO : QI_O
 
 void qi_sha256(const uint8_t *in, size_t n, uint8_t out[32]) { crypto_hash_sha256(out, in, n); }
 
+void qi_lan_hint(const uint8_t space[32], uint64_t bucket, uint8_t out[16]) {
+  uint8_t buf[15 + 32 + 8];
+  memcpy(buf, "qp-lan-hint-v0:", 15);
+  memcpy(buf + 15, space, 32);
+  for (int i = 0; i < 8; i++) buf[47 + i] = (uint8_t)(bucket >> (56 - 8 * i));
+  uint8_t h[32];
+  qi_sha256(buf, sizeof buf, h);
+  memcpy(out, h, 16);
+}
+
 void qi_ed25519_from_seed(const uint8_t seed[32], uint8_t pub[32], uint8_t sk[64]) {
   crypto_sign_seed_keypair(pub, sk, seed);
 }

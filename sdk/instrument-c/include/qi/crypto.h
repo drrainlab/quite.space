@@ -26,6 +26,16 @@ qi_status qi_crypto_init(void);
 
 void qi_sha256(const uint8_t *in, size_t n, uint8_t out[32]);
 
+/* qi_lan_hint: the Go transports/lan.Hint twin (QI-B1). A device on the
+ * LAN recognises its node by this 16-byte tag inside announcements:
+ * sha256("qp-lan-hint-v0:" || space[32] || be64(bucket)), truncated.
+ * Buckets are 6-hour windows of unix time — qi_lan_bucket — and a
+ * listener honours the previous bucket too, so a device's clock may lag
+ * a whole window before it goes deaf (the residual ADR-035 names).
+ * Two implementations, one vector: tests pin bytes computed by Go. */
+void qi_lan_hint(const uint8_t space[32], uint64_t bucket, uint8_t out[16]);
+static inline uint64_t qi_lan_bucket(uint64_t unix_now) { return unix_now / 21600u; }
+
 /* Ed25519 from a 32-byte seed: public key and the 64-byte secret key
  * libsodium signs with. */
 void qi_ed25519_from_seed(const uint8_t seed[32], uint8_t pub[32], uint8_t sk[64]);
