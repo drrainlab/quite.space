@@ -106,40 +106,36 @@ The exact scope of that claim, including where it does **not** hold, is in
 
 ```
 $ quite log --releases
+  1.0.1-rc.1     the board found the door by itself
+  1.0.0-beta.3   delivered is about machines, read is about you
   1.0.0-beta.2   where you actually went
-  1.0.0-beta.1   the formats hold still now
 ```
 
-**1.0.0-beta.2** answers the field's second question. The map already said
-*where you are now*; this release records **where you actually went** —
-[release notes](docs/releases/1.0.0-beta.2.md).
+**1.0.1-rc.1** is the second episode of Quiet Instruments: a sensor on a
+shelf, a laptop in another room, **no cable between them** —
+[release notes](docs/releases/1.0.1-rc.1.md).
 
-- 🥾 **Field Sessions.** On a sector: *Start sweep*. The phone records the
-  route with the screen off, in a pocket, for as long as the operation runs —
-  and only there: an explicitly started, visibly active, bounded session,
-  with a persistent notification carrying the Stop. The manifest still
-  declares no background-location permission at all.
-- 〰 **A gap is a sample, not a silence.** GPS lost for 52 seconds, a phone
-  asleep, two fixes far apart — different claims, and the track format makes
-  each gap an item with a cause the recorder can defend (`no_fix` only when
-  the platform said so; `suspended` only when sleep was measured; `unknown`
-  otherwise). The map draws a gap as a gap. GPX exports break their segments
-  in the same places.
-- 📡 **The completion fact is radio-sized** — 348 bytes worst-case, measured
-  cold, inside one LoRa frame — so a receiver two ridges away can learn
-  *"Sector B3 swept · 13:02–13:47 · 2.7 km · nothing found"* without the
-  internet, and the detailed track follows when broadband does.
-- 🖐 **A place is born from a finger on the map** — arm, tap, name it. Typed
-  coordinates were never offered on purpose.
-- 📎 **An observation can point at its evidence** — one photo per note,
-  radio-sized fact now, picture when a fatter pipe appears.
-- 🌡 **Public telemetry** — a sensor can publish into a broadcast space,
-  bound as an attested writer before its first frame, honestly badged when
-  it is a simulation.
+- 📡 **Wi-Fi courier.** A provisioned board joins your network, hears the
+  node announce itself, recognises its own space from the hint, dials over
+  TLS and knocks with a signature bound to the node's certificate. Readings
+  ride up that connection; key rotations and the clock ride down. USB
+  becomes the rescue road — unplug it and the readings keep arriving.
+- 🔌 **Plug in, click.** The USB stand lives in the app: open a space, plug a
+  board in, *Connect USB instrument*. The choice survives restarts.
+- ✦ **Something new, said quietly.** A space with moments you have not seen
+  earns one small breathing star. Opening it quiets the star. No badges.
+- 🧊 **Relief.** The verbs that carry intent tilt toward you and breathe;
+  kept things, posts and objects wear a spine and lean toward the cursor.
+- 👻 **A ghost can be ended.** An instrument is a member while it speaks
+  under the current epoch — cards appear with the first reading and leave
+  with the key, on every replica at once.
+- 🕳 **Held, not lost.** The panel says when moments arrived ahead of what
+  came before them and wait for it — the line that found this release's
+  deepest bug.
 
-Measured, not assumed: two live sessions on open water — 29 minutes and an
-hour and a half, screen off — recorded 472 points at the designed 15-second
-cadence with zero gaps and no wake lock held.
+What the first board taught us is in the notes, so nobody rediscovers it:
+a board that never restored its identity, and a stand that claimed
+delivery to a cable nobody was reading. Both fixed, both pinned.
 
 ## 🖥 Running it from source
 
