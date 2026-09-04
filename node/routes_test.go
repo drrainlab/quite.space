@@ -60,8 +60,9 @@ func TestJoinExchangeTeachesBothSides(t *testing.T) {
 }
 
 // THE INVERSION BAN. A frame arriving through an endpoint proves that WE
-// were reachable there; it must never mint a peer route. The book after a
-// pure receive is exactly the book before it.
+// were reachable there; the arrival itself must never mint a peer route.
+// What a receive MAY add is what the push carried on purpose: the sender's
+// stated return address (bundle key 8) — his statement, not our inference.
 func TestArrivalNeverMintsAPeerRoute(t *testing.T) {
 	srv, addr := startRelay(t)
 	defer srv.Close()
@@ -94,17 +95,32 @@ func TestArrivalNeverMintsAPeerRoute(t *testing.T) {
 		return countMsg(t, alice, tid, "a frame from bob") >= 1
 	})
 
-	// Arrival taught alice NOTHING about where bob listens. The one entry
-	// she may hold is her OWN recorded assumption — the legacy bootstrap her
-	// delivery decision wrote down, labeled for what it is — never a route
-	// with a provenance that claims bob stated it.
+	// Arrival taught alice NOTHING about where bob listens. What she may
+	// hold: her OWN recorded assumption — the legacy bootstrap her delivery
+	// decision wrote down, labeled for what it is — and bob's own stated
+	// return address (bundle key 8, RouteAdvertised), which is not an
+	// inference from ingress but a statement RIDING the push, cert-gated at
+	// the receiver. Whether that statement lands here is a timing accident
+	// (the cert gate closes on the bundle that carries the cert itself; a
+	// re-push under load records), so it is allowed, not required — but ONLY
+	// at an endpoint bob actually advertises. Anything else — an invitation
+	// provenance nobody's exchange minted, or an advertised route at an
+	// endpoint bob never stated — is the inversion this test bans.
+	bobIngress := map[string]bool{}
+	for _, ep := range bob.SelfIngressRoutes() {
+		bobIngress[ep] = true
+	}
 	alice.mu.Lock()
 	routes := append([]storage.Route(nil), alice.ks.PeerRoutes[bob.Device.ID]...)
 	alice.mu.Unlock()
 	for _, rt := range routes {
-		if rt.Provenance != storage.RouteLegacy {
-			t.Fatalf("an arrival minted a %d-provenance route: %+v", rt.Provenance, rt)
+		if rt.Provenance == storage.RouteLegacy {
+			continue
 		}
+		if rt.Provenance == storage.RouteAdvertised && rt.Transport == "relay" && bobIngress[rt.Endpoint] {
+			continue // bob's own cert-gated self-statement, at an address he owns
+		}
+		t.Fatalf("an arrival minted a %d-provenance route: %+v", rt.Provenance, rt)
 	}
 }
 

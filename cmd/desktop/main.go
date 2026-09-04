@@ -19,6 +19,7 @@ import (
 	"context"
 	"embed"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	_ "net/http/pprof" // registers /debug/pprof on DefaultServeMux (debug flag only)
@@ -59,11 +60,25 @@ func main() {
 		}
 	}
 
+	// WHERE THE LOG GOES when nobody is watching stderr. Launched from
+	// /Applications, this process has a stderr the window server discards,
+	// and every verdict the node said — the relay that refused, the route
+	// learned and not persisted — was gone before anybody could ask for it.
+	// So the standard logger also lands in <data>/logs/node.log: rolling,
+	// owner-only, and created only once the data directory exists (a fresh
+	// machine's disk stays untouched until a passphrase is chosen). Only the
+	// logger goes there — the --debug request lines stay on stdout, because
+	// a durable file of what somebody read and when is a diary, not a log.
+	nodeLog := node.NewRollingLog(dataDir)
+	defer nodeLog.Close()
+	log.SetOutput(io.MultiWriter(os.Stderr, nodeLog))
+
 	shell, err := NewShell(dataDir, webui.FS())
 	if err != nil {
 		log.Fatalf("quite space: %v", err)
 	}
 	fmt.Println("data root:", dataDir)
+	fmt.Println("log file:", nodeLog.Path())
 
 	var handler http.Handler = shell
 	if debug {

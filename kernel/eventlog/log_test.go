@@ -310,3 +310,47 @@ func TestAHoleInTheChainIsNeverApplied(t *testing.T) {
 		t.Fatalf("chain tip advanced past the hole: seq=%d", seq)
 	}
 }
+
+// A hole in the chain is COUNTED, not merely respected. The frames parked
+// behind it are the difference between an empty room and a room whose past
+// is stuck one frame upstream, and a reader who cannot see that number
+// cannot tell those apart.
+func TestParkedFramesAreCountedAndTheHoleIsNamed(t *testing.T) {
+	var term id.TerminalID
+	term[0] = 9
+	log := New(term, nil)
+	a := newAuthor(t, term, 0x0C)
+	f1 := a.next(t, "one")
+	f2 := a.next(t, "two — too big to travel by relay, and everything after it waits")
+	f3 := a.next(t, "three")
+	f4 := a.next(t, "four")
+
+	if log.Pending() != 0 || len(log.PendingGaps()) != 0 {
+		t.Fatalf("a fresh log reports pending=%d gaps=%d", log.Pending(), len(log.PendingGaps()))
+	}
+	for _, f := range [][]byte{f1, f3, f4} {
+		if _, err := log.Ingest(f); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := log.Pending(); got != 2 {
+		t.Fatalf("pending = %d, want 2 — three and four are held behind the hole", got)
+	}
+	gaps := log.PendingGaps()
+	if len(gaps) != 1 {
+		t.Fatalf("gaps = %+v, want exactly one hole", gaps)
+	}
+	if gaps[0].Device != a.dev || gaps[0].WaitingFor != 2 || gaps[0].Held != 2 {
+		t.Fatalf("the hole is misnamed: %+v (want device %s waiting for seq 2 with 2 held)",
+			gaps[0], a.dev)
+	}
+
+	// The predecessor arrives: the buffer drains and the count says so.
+	applied, err := log.Ingest(f2)
+	if err != nil || len(applied) != 3 {
+		t.Fatalf("seq 2 arrived: applied=%d err=%v (want 2, 3 and 4)", len(applied), err)
+	}
+	if log.Pending() != 0 || len(log.PendingGaps()) != 0 {
+		t.Fatalf("drained log still reports pending=%d gaps=%d", log.Pending(), len(log.PendingGaps()))
+	}
+}

@@ -730,6 +730,7 @@ type spaceResp struct {
 	Events        int           `json:"events"`
 	Messages      int           `json:"messages"`
 	Undecryptable int           `json:"undecryptable"`
+	Pending       int           `json:"pending,omitempty"`
 	Peers         int           `json:"peers"`
 	Character     characterResp `json:"character"`
 	// PA-0 access surface.
@@ -767,7 +768,7 @@ func (a *APIServer) handleSpaces(w http.ResponseWriter, r *http.Request) {
 			Dyad:   s.Dyad,
 			AI:     aiSpace != "" && s.ID.Hex() == aiSpace,
 			Events: s.Events, Messages: s.Messages,
-			Undecryptable: s.Undecryptable, Peers: s.Peers,
+			Undecryptable: s.Undecryptable, Pending: s.Pending, Peers: s.Peers,
 		}
 		// One locked scope per space. The replica read and the keystore read
 		// used to be separate critical sections with an unlocked projection
@@ -1099,12 +1100,28 @@ type stateResp struct {
 	Cards         []cardResp       `json:"cards"`
 	Observation   *observationResp `json:"observation,omitempty"`
 	Undecryptable int              `json:"undecryptable"`
-	Events        int              `json:"events"`
+	// Pending counts frames this space HOLDS and cannot show: signed,
+	// verified, parked in the reorder buffer behind a sequence that has
+	// not arrived. The honest twin of Undecryptable — that one is "no
+	// key", this one is "no predecessor" — and until it was reported, a
+	// newcomer whose history stopped one oversized frame upstream saw a
+	// room that looked simply empty. PendingGaps names each hole: which
+	// device, which sequence, how many wait behind it.
+	Pending     int              `json:"pending"`
+	PendingGaps []pendingGapResp `json:"pending_gaps,omitempty"`
+	Events      int              `json:"events"`
 	// Observations is the instrument plane's latest state (QI-2):
 	// instrument_id → channel → reading. Display text is composed HERE,
 	// from the fixed-point value and the manifest's declared unit — the
 	// frame carries neither unit nor kind by design.
 	Observations map[string]map[string]valueObsResp `json:"observations,omitempty"`
+}
+
+// pendingGapResp is one hole in one device's chain, as the screen sees it.
+type pendingGapResp struct {
+	Device     string `json:"device"` // short prefix — enough to correlate
+	WaitingFor uint64 `json:"waiting_for"`
+	Held       int    `json:"held"`
 }
 
 type valueObsResp struct {
@@ -1123,6 +1140,11 @@ func (a *APIServer) handleState(w http.ResponseWriter, r *http.Request) {
 	resp := stateResp{Cards: []cardResp{}}
 	if err := a.rt.withSpace(tid, func(st *spaceState) error {
 		resp.Undecryptable, resp.Events = st.space.Undecryptable, st.space.Log.Len()
+		resp.Pending = st.space.Log.Pending()
+		for _, g := range st.space.Log.PendingGaps() {
+			resp.PendingGaps = append(resp.PendingGaps, pendingGapResp{
+				Device: g.Device.Hex()[:8], WaitingFor: g.WaitingFor, Held: g.Held})
+		}
 		for _, c := range st.space.State.Cards() {
 			resp.Cards = append(resp.Cards, cardResp{ID: c.ID.Hex(), Title: c.Title, Status: c.Status})
 		}

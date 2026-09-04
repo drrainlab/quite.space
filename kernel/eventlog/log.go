@@ -4,6 +4,7 @@
 package eventlog
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"sort"
@@ -250,6 +251,48 @@ func (l *Log) Get(eid id.EventID) ([]byte, bool) {
 
 // Len returns the number of applied events.
 func (l *Log) Len() int { return len(l.order) }
+
+// PendingGap names one device whose chain has a hole: frames past it sit
+// in the reorder buffer, signed and verified, waiting for WaitingFor to
+// arrive. Held is how many are parked behind that one sequence.
+type PendingGap struct {
+	Device     id.DeviceID
+	WaitingFor uint64
+	Held       int
+}
+
+// Pending counts frames parked in the reorder buffer across every chain.
+//
+// They are the log's SECOND kind of unreadable moment. Undecryptable is "no
+// key"; this is "no predecessor" — and until it was counted, a newcomer
+// whose history stopped one oversized frame upstream sat in a room that
+// looked simply empty, while the frames were right here, held and
+// invisible. Said out loud, the number tells the difference between a
+// space with nothing in it and a space whose past is stuck.
+func (l *Log) Pending() int {
+	n := 0
+	for _, c := range l.chains {
+		n += len(c.pending)
+	}
+	return n
+}
+
+// PendingGaps lists every hole, ordered by device so two readings compare.
+// Each entry is exactly what a person or a peer needs to unstick it: WHICH
+// device, and WHICH sequence nothing can move without.
+func (l *Log) PendingGaps() []PendingGap {
+	var out []PendingGap
+	for dev, c := range l.chains {
+		if len(c.pending) == 0 {
+			continue
+		}
+		out = append(out, PendingGap{Device: dev, WaitingFor: c.next, Held: len(c.pending)})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return bytes.Compare(out[i].Device[:], out[j].Device[:]) < 0
+	})
+	return out
+}
 
 // Replay iterates applied events in append order.
 func (l *Log) Replay(fn func(Applied) error) error {

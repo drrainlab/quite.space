@@ -62,6 +62,10 @@ type RelayDiagnostics struct {
 	Held      []HeldSpace      `json:"held,omitempty"`
 	WantHolds []WantHoldStatus `json:"want_holds,omitempty"`
 	Fetches   []FetchBrief     `json:"fetches,omitempty"`
+	// Stranded is every frame this node holds that no relay item can
+	// carry — and therefore every device chain that relay-only peers
+	// cannot read past a certain point. See stranded.go.
+	Stranded []StrandedFrame `json:"stranded,omitempty"`
 }
 
 // FetchBrief is one in-flight or failed asset fetch, for diagnostics.
@@ -176,6 +180,7 @@ func (r *Runtime) RelayDiagnosticsSnapshot() RelayDiagnostics {
 		}
 		d.Peers = append(d.Peers, brief)
 	}
+	d.Stranded = r.strandedLocked()
 	// Fetch verdicts: what this node is pulling, waiting on, or done
 	// asking for. Failed entries keep their reason; a silent entry is one
 	// the person is probably staring at right now.

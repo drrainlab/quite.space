@@ -61,14 +61,18 @@ const bundleHeadroom = 8 << 10
 //
 // The wants ride on the FIRST item only — asking once is asking.
 //
-// Returns the bodies in order, and how many frames were too large to travel at
-// all. A frame bigger than one item cannot be split here: it is one signed
-// object, and cutting it would produce something no verifier would accept.
-func splitBundles(tid id.TerminalID, frames, blobs, wants [][]byte, wanter []byte, returnRoutes []string) ([][]byte, int) {
+// Returns the bodies in order, and the indices (into frames) of the frames
+// too large to travel at all. A frame bigger than one item cannot be split
+// here: it is one signed object, and cutting it would produce something no
+// verifier would accept. The indices rather than a count, because the caller
+// owes the owner the frame's NAME — a count says "something is stuck", an id
+// says what.
+func splitBundles(tid id.TerminalID, frames, blobs, wants [][]byte, wanter []byte, returnRoutes []string) ([][]byte, []int) {
 	limit := maxRelayItem - bundleHeadroom
 	var out [][]byte
 	var batch [][]byte
-	oversize, size := 0, 0
+	var oversize []int
+	size := 0
 
 	flush := func(isFirst bool) {
 		if len(batch) == 0 {
@@ -81,9 +85,9 @@ func splitBundles(tid id.TerminalID, frames, blobs, wants [][]byte, wanter []byt
 		}
 		batch, size = nil, 0
 	}
-	for _, f := range frames {
+	for i, f := range frames {
 		if len(f) > limit {
-			oversize++
+			oversize = append(oversize, i)
 			continue
 		}
 		if size+len(f) > limit {
@@ -484,7 +488,7 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 			returnRoutes = returnRoutes[:3]
 		}
 	}
-	bodies, oversize := splitBundles(tid, frames, blobs, wants, wanter, returnRoutes)
+	bodies, oversizeIdx := splitBundles(tid, frames, blobs, wants, wanter, returnRoutes)
 	// The fleeting frames get a bundle of their own, so their short deadline
 	// cannot land on anybody's messages.
 	var fleetingBodies [][]byte
@@ -669,13 +673,10 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 	if relayReached == 0 && relayTentative == 0 && lanReached == 0 && sendErr != nil {
 		return 0, 0, noRoute, 0, 0, sendErr
 	}
-	if oversize > 0 {
-		// Said out loud rather than dropped in silence: a single frame past
-		// the item cap can never travel this way, and nothing downstream can
-		// tell that from a peer being offline.
-		log.Printf("relay: %d frame(s) in space %s exceed the %d-byte item cap and were not pushed",
-			oversize, tid.String()[:8], maxRelayItem)
-	}
+	// Said out loud rather than dropped in silence: a single frame past the
+	// item cap can never travel this way, and nothing downstream can tell
+	// that from a peer being offline. Named, not counted — see noteStranded.
+	r.noteStranded(tid, frames, eventIDs, oversizeIdx)
 
 	if relayReached > 0 {
 		// Record the honest receipt level for every pushed event: the relay
