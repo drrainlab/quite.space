@@ -207,19 +207,49 @@ func (r *Runtime) standSession(stop chan struct{}, rw io.ReadWriter, space id.Te
 		defer wmu.Unlock()
 		fmt.Fprint(rw, line+"\n")
 	}
-	send("QI TIME " + fmt.Sprint(time.Now().Unix()))
-	send("QI PRINCIPAL " + r.PrincipalID.Hex())
-	send("QI ENROLL?")
+	greet := func() {
+		send("QI TIME " + fmt.Sprint(time.Now().Unix()))
+		send("QI PRINCIPAL " + r.PrincipalID.Hex())
+		send("QI ENROLL?")
+	}
+	greet()
 
 	var imu sync.Mutex
 	var iid id.TerminalID
 	var haveIID bool
 	var lastEpoch string
+	// heard flips on the first line from the board. Opening the port
+	// asserts DTR, and on these boards DTR is wired to reset: the board
+	// reboots under the greeting and the greeting lands on a UART that is
+	// not up yet. A board silent four seconds after a greeting is greeted
+	// again, up to three times.
+	var heard bool
+
+	sessionDone := make(chan struct{})
+	defer close(sessionDone)
+	go func() {
+		for tries := 0; tries < 3; tries++ {
+			select {
+			case <-sessionDone:
+				return
+			case <-stop:
+				return
+			case <-r.stop:
+				return
+			case <-time.After(4 * time.Second):
+			}
+			imu.Lock()
+			h := heard
+			imu.Unlock()
+			if h {
+				return
+			}
+			greet()
+		}
+	}()
 
 	// Epoch watcher: rotations ride down the same wire the frames ride
 	// up, and time rides with them so the board's clock floor advances.
-	sessionDone := make(chan struct{})
-	defer close(sessionDone)
 	go func() {
 		t := time.NewTicker(20 * time.Second)
 		defer t.Stop()
@@ -261,6 +291,9 @@ func (r *Runtime) standSession(stop chan struct{}, rw io.ReadWriter, space id.Te
 	sc.Buffer(make([]byte, 1<<16), 1<<16)
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
+		imu.Lock()
+		heard = true
+		imu.Unlock()
 		switch {
 		case line == "QI TIME?":
 			// A clockless board asks. A reboot keeps the USB session alive
@@ -272,9 +305,7 @@ func (r *Runtime) standSession(stop chan struct{}, rw io.ReadWriter, space id.Te
 		case strings.HasPrefix(line, "QI NOTE ") && strings.HasSuffix(line, " ready"):
 			// A boot marker on a live session: re-run the greeting so the
 			// board gets its clock and its invitation again.
-			send("QI TIME " + fmt.Sprint(time.Now().Unix()))
-			send("QI PRINCIPAL " + r.PrincipalID.Hex())
-			send("QI ENROLL?")
+			greet()
 		case strings.HasPrefix(line, "QI ENROLLMENT "):
 			raw, err := hex.DecodeString(strings.TrimPrefix(line, "QI ENROLLMENT "))
 			if err != nil {

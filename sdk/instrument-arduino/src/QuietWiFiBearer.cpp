@@ -92,6 +92,17 @@ void QuietWiFiBearer::drop(const char *why) {
 
 void QuietWiFiBearer::poll(QuietInstrument &qi) {
   static const char *lastWord = NULL;
+  // THE CLOCK COMES WITH THE NETWORK. A board on a wall wart reboots and
+  // has no stand to hand it the time — and without time there is no
+  // hint and no dial: deaf until somebody plugs a cable in. SNTP once
+  // the link is up makes the network its own clock source; the serial
+  // stand stays the rescue for a LAN with no way out. What leaves the
+  // board is a UDP time query and nothing else.
+  static bool sntpStarted = false;
+  if (!sntpStarted && WiFi.status() == WL_CONNECTED) {
+    sntpStarted = true;
+    configTime(0, 0, "pool.ntp.org", "time.google.com");
+  }
   if (stateWord_ != lastWord) {
     lastWord = stateWord_;
     Serial.print("QI NOTE wifi: ");
