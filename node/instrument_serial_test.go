@@ -293,6 +293,21 @@ func TestAGhostInstrumentCanBeDetachedWithoutARecord(t *testing.T) {
 	if _, _, err := rt.AttachInstrumentByEnrollment(tid, ext.enroll, 1000); err != nil {
 		t.Fatal(err)
 	}
+	// Before its first reading an instrument has no card: membership is
+	// speaking under the epoch, and it has not spoken yet.
+	for _, c := range mustMembers(t, rt, tid) {
+		if c.Terminal == ext.part.TerminalID {
+			t.Fatal("an instrument that never spoke has a card")
+		}
+	}
+	// It speaks once — the frame teaches every replica which device it
+	// is, and the card appears.
+	ext.provision(t, mustProvision(t, rt, tid, ext))
+	rt.DevIngest = true
+	if _, err := rt.IngestInstrumentFrames(tid, ext.part.TerminalID,
+		[][]byte{ext.reading(t, 200, uint64(time.Now().Unix()))}); err != nil {
+		t.Fatal(err)
+	}
 	seen := false
 	for _, c := range mustMembers(t, rt, tid) {
 		if c.Terminal == ext.part.TerminalID {
@@ -300,15 +315,7 @@ func TestAGhostInstrumentCanBeDetachedWithoutARecord(t *testing.T) {
 		}
 	}
 	if !seen {
-		t.Fatal("an attached instrument has no card")
-	}
-	// The ghost spoke once in its life — the frame taught every replica
-	// which device it is.
-	ext.provision(t, mustProvision(t, rt, tid, ext))
-	rt.DevIngest = true
-	if _, err := rt.IngestInstrumentFrames(tid, ext.part.TerminalID,
-		[][]byte{ext.reading(t, 200, uint64(time.Now().Unix()))}); err != nil {
-		t.Fatal(err)
+		t.Fatal("a speaking instrument has no card")
 	}
 	// The record vanishes (a wiped board's old life), the card stays.
 	rt.mu.Lock()

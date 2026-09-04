@@ -119,7 +119,16 @@ func (s *Space) MemberCards(nowUnix uint64) []MemberCard {
 		// that fact the same way, so the card goes on every screen at once
 		// — never only on the node that clicked. A replica that has not
 		// seen an epoch yet shows no instruments: fail closed, briefly.
-		if IsInstrumentKind(m.Kind) && t.Device != (id.DeviceID{}) {
+		if IsInstrumentKind(m.Kind) {
+			// AN INSTRUMENT IS A MEMBER WHILE IT SPEAKS UNDER THE CURRENT
+			// EPOCH. Its manifest arrived on the owner's behalf and names
+			// no device; the device is learned from the instrument's own
+			// frames. One that never spoke here has no card — not before
+			// its first reading (a few seconds after enrolling), and never
+			// if its frames were lost — which is exactly what a ghost is.
+			if t.Device == (id.DeviceID{}) {
+				continue
+			}
 			attached := s.InstrumentAuthorized(t.Device)
 			if pol.IsPublic() {
 				attached = pol.Publish != PublishCurated || pol.AllowsWriter(m.Controller, t.Device)

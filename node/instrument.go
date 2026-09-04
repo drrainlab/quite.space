@@ -210,8 +210,14 @@ func (r *Runtime) DetachInstrument(space, instrumentID id.TerminalID) error {
 			// staring at "unknown instrument" beside a card nothing could
 			// end.
 			t, ok := st.space.Registry.Get(instrumentID)
-			if !ok || t == nil || t.Device == (id.DeviceID{}) {
+			if !ok || t == nil {
 				return errors.New("node: unknown instrument")
+			}
+			if t.Device == (id.DeviceID{}) {
+				// A card that never spoke: no device to turn a key on, and
+				// no card to end — it was never a member here. Answered,
+				// not refused.
+				return nil
 			}
 			dev = t.Device
 		}
