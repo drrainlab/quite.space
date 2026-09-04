@@ -83,6 +83,66 @@ epoch → no readings. A detached board's frames are refused by every
 member even if it still holds an old key. Nothing is ever simulated
 unless the driver says so.
 
+## Wi-Fi: the courier (QI-B1, ADR-035)
+
+A provisioned board can carry its own frames over the local network and
+receive epoch rotations and the clock the same way — the USB stand
+becomes the rescue road, not the only one. `examples/SensorTerminal`
+shows the shape:
+
+```cpp
+QuietWiFiBearer wifiBearer(QI_WIFI_SSID, QI_WIFI_PASS);
+BearerChain chain(clockMs);        // several roads, one honest answer
+chain.add(&wifiBearer, "wifi");    // first road
+chain.add(&serialBearer, "serial"); // the rescue that also feeds time
+qi.setBearer(&chain);
+```
+
+**Credentials never enter the repository.** Copy `secrets.ini.example`
+to `secrets.ini` (git-ignored) beside the sketch; PlatformIO folds
+`ssid`/`pass` into build flags. ESP32 radios speak 2.4 GHz only — a
+5 GHz-only network is invisible and the failure looks like a wrong
+password.
+
+**How the board finds the node.** The node announces itself on the LAN
+(multicast `239.255.71.80:47180`) with a hint per space —
+`sha256("qp-lan-hint-v0:" ‖ space ‖ 6-hour bucket)`, truncated. The board
+computes the same hint from the space it was provisioned into and its
+clock, and dials the announcer whose hint matches. Two consequences:
+
+- **No time, no hint.** A board that does not know the time cannot
+  compute the hint and stays deaf (the face says `wifi: no-time`) until a
+  bearer with time feeds it — the serial stand does, on connect. Fail
+  closed, extended to discovery.
+- **Some networks filter multicast** between wireless clients. Name the
+  node statically instead:
+  `PLATFORMIO_BUILD_FLAGS='-DQI_NODE_HOST=\"192.168.1.10\" -DQI_NODE_PORT=49611' pio run -t upload`.
+  Three failed dials forget the address and the board listens for
+  announcements again, so discovery remains the way back.
+
+**The door.** The board dials the node over TLS (the node's cert is
+ephemeral and trusted by nobody; identity lives in signatures) and knocks
+with `sign("qp-instr-door-v0:" ‖ sha256(node cert) ‖ space)` by its
+device key — the certificate fingerprint arduino-esp32 already computes.
+Only an enrolled instrument of that space passes; every refusal is one
+silent close. The node answers with the current epoch and its clock, and
+pushes every later rotation down the same connection.
+
+**Provisioning stays on the stand.** A board enrolls over serial once —
+the resident stand in the desktop app, or `cmd/instrument-serial` — and
+keeps its space and certificate in NVS from then on. Wi-Fi carries
+frames, not enrollment.
+
+**The face.** While the courier is not yet in, the bottom line names its
+state: `joining` · `no-time` · `listening` · `dialing` · `knocked`; then
+`via wifi · Ns` after every delivered frame. Unplug the network and the
+chain falls back: `via serial`.
+
+**Power.** The courier keeps the radio awake (`WiFi.setSleep(false)`): a
+dozing station misses the multicast the access point holds for the DTIM
+beacon, and announcements are multicast. About 40 mA on a mains-powered
+terminal; the portable line decides its own trade with its own numbers.
+
 ## Quick start: LilyGo T3-S3 + DHT22 (`examples/ClimateDHT`)
 
 One command from sketch to a running board — build, flash, serial monitor:

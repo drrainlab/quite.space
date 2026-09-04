@@ -117,6 +117,9 @@ func (s *Shell) open(c lockgate.Credentials) error {
 	if err != nil {
 		return err
 	}
+	// A desktop is on mains and is not a pocket: instruments find this
+	// node by its announcements whether or not the window is in front.
+	rt.DiscoverableInBackground = true
 	// THE CODE IS BOUND ONLY ONCE THE KEY HAS PROVED ITSELF — and the gate
 	// does the binding, because the passcode is the gate's business. All
 	// that is known here, and nowhere else, is that Open said yes.

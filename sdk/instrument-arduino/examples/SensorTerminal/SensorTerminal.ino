@@ -28,6 +28,10 @@
 // byte, which is exactly how ClimateDHT's T3-S3-shaped init died here.
 #include <QuietInstrument.h>
 #include <SerialHexBearer.h>
+#include <BearerChain.h>
+#ifdef QI_WIFI_SSID
+#include <QuietWiFiBearer.h>
+#endif
 #include <QuietGlyph.h>
 #include <DHT.h>
 #include <U8g2lib.h>
@@ -61,6 +65,16 @@
 
 QuietInstrument qi;
 SerialHexBearer serialBearer(Serial);
+#ifdef QI_WIFI_SSID
+// The courier (QI-B1): first road in the chain. Built only when
+// secrets.ini named a network — a sketch without one is the serial
+// terminal it always was, not a board forever "joining" nothing.
+QuietWiFiBearer wifiBearer(QI_WIFI_SSID, QI_WIFI_PASS);
+#endif
+// Several roads, one honest answer: wifi first, serial as the rescue
+// that also feeds time (BearerChain laws 1-4).
+static uint32_t clockMs() { return (uint32_t)millis(); }  // ESP32's millis is unsigned long
+BearerChain chain(clockMs);
 DHT dht(DHT_PIN, DHT22);
 U8G2_SSD1306_128X64_NONAME_F_HW_I2C oled(U8G2_R0, OLED_RST);
 
@@ -79,7 +93,7 @@ struct TattlingBearer : QuietBearer {
   }
   void poll(QuietInstrument &q) override { inner->poll(q); }
 };
-TattlingBearer bearer(&serialBearer, "serial");
+TattlingBearer bearer(&chain, "chain");
 
 float lastT = NAN, lastH = NAN, lastAir = NAN;
 WarmGate warmGate;
@@ -155,8 +169,15 @@ void status() {
   flip = !flip;
   if (flip && bearer.lastSentMs > 0) {
     uint32_t age = (millis() - bearer.lastSentMs) / 1000;
-    snprintf(line, sizeof line, "via %s * %lus", bearer.label, (unsigned long)age);
+    snprintf(line, sizeof line, "via %s * %lus", chain.lastLabel(), (unsigned long)age);
     oled.drawStr(0, 62, line);
+#ifdef QI_WIFI_SSID
+  } else if (!flip && !wifiBearer.ready()) {
+    // the courier's honest word while it is not yet in: joining,
+    // no-time, listening, dialing, knocked
+    snprintf(line, sizeof line, "wifi: %s", wifiBearer.state());
+    oled.drawStr(0, 62, line);
+#endif
   } else {
     const char *state = !qi.declared() ? "waiting for owner"
                         : !qi.provisioned() ? "enrolling..."
@@ -211,6 +232,11 @@ void setup() {
   qi.booleanSensor("relay", "Реле", readRelay, 60, 120);
 #endif
   qi.setClock(clockNow);
+#ifdef QI_WIFI_SSID
+  wifiBearer.begin();
+  chain.add(&wifiBearer, "wifi");
+#endif
+  chain.add(&serialBearer, "serial");
   qi.setBearer(&bearer);
   Serial.println("QI NOTE SensorTerminal ready");
   delay(1200);

@@ -57,6 +57,15 @@ type Runtime struct {
 	// never r.mu — a preview touches no runtime state by design.
 	previews previewStore
 
+	// DiscoverableInBackground: keep announcing on the LAN when the shell
+	// reports the window is not in front (QI-B1). The pocket law — a
+	// phone need not be discoverable with its screen dark — is a battery
+	// law, and a desktop on mains is not a pocket: a board that must find
+	// its node by announcement would otherwise go deaf whenever the owner
+	// looks at another window. Hosts that are pockets leave this false.
+	DiscoverableInBackground bool
+	announceFailOnce         sync.Once
+
 	// Resident USB stand (QI-M4): its own lock, never r.mu — status is
 	// read by the UI poll while the loop may be inside a runtime call.
 	standMu   sync.Mutex
@@ -122,7 +131,11 @@ type Runtime struct {
 	ingressArmed        bool
 	startupReconsidered chan struct{}
 
-	spaces    map[id.TerminalID]*spaceState
+	spaces map[id.TerminalID]*spaceState
+	// stranded: per space, the frames the last push could not hand to
+	// ANY relay because one item cannot carry them (see StrandedFrame).
+	// Rewritten on every delivery, r.mu-guarded, lazily created.
+	stranded  map[id.TerminalID][]StrandedFrame
 	assetIdx  *assetIndex
 	passes    *passRegistry
 	joins     map[string]*joinAttempt
@@ -1598,7 +1611,11 @@ type SpaceInfo struct {
 	Events        int
 	Messages      int
 	Undecryptable int
-	Peers         int
+	// Pending: frames held behind a hole in some device's chain — see
+	// stateResp.Pending. Counted here too so a list of rooms can tell
+	// "empty" from "stuck" without opening each one.
+	Pending int
+	Peers   int
 }
 
 // Spaces lists known spaces.
@@ -1624,6 +1641,7 @@ func (r *Runtime) Spaces() []SpaceInfo {
 			Events:        events,
 			Messages:      len(st.space.State.Messages()),
 			Undecryptable: st.space.Undecryptable,
+			Pending:       st.space.Log.Pending(),
 			Peers:         len(st.conns),
 		})
 		// DisplayTitle stays as the English rendering: it is what sorts the

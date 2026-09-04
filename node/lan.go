@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/drrainlab/quiet_places/kernel/routing"
@@ -84,7 +85,7 @@ func (r *Runtime) StartLAN(listenAddr, announceAddr string) error {
 			// with it. The LISTENER stays up: a peer that still announces
 			// can be heard for free, and the Android shell releases its
 			// multicast lock in the background anyway.
-			if r.foregrounded() {
+			if r.foregrounded() || r.DiscoverableInBackground {
 				r.announceOnce(announceAddr, port, selfNonce)
 			}
 			select {
@@ -221,7 +222,15 @@ func (r *Runtime) announceOnce(announceAddr string, port int, nonce uint64) {
 	if len(hints) == 0 {
 		return
 	}
-	_ = lan.AnnounceOnce(announceAddr, port, hints, nonce)
+	// A refused announce is a fact worth one line: macOS answers a
+	// process without the Local Network permission with EPIPE on every
+	// multicast write, and a node that logs "announcing to" while nothing
+	// leaves the socket sends a person hunting a phantom (QI-B1 gate).
+	if err := lan.AnnounceOnce(announceAddr, port, hints, nonce); err != nil {
+		r.announceFailOnce.Do(func() {
+			fmt.Println("LAN: announce refused —", err, "— peers and instruments cannot find this node by announcement")
+		})
+	}
 }
 
 // adoptConn hands a LAN connection to the classifier (QI-B1): the first

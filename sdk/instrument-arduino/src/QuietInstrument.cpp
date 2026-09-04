@@ -19,7 +19,28 @@ static uint64_t stateGeneration(const uint8_t *rec, size_t n) {
   if (qi_r_uint(&r, &g)) return 0;
   return g ? g : 1;
 }
-static uint64_t identityGeneration(const uint8_t *rec, size_t n) { return stateGeneration(rec, n) ? 1 : 0; }
+// An identity record has no generation: there is only ever one, and a
+// valid CRC is the whole verdict. It must NOT be judged by the state
+// record's grammar — its key 1 is the device seed (bytes), and reading
+// that as a generation uint refused every identity ever stored, so each
+// reboot minted a fresh one. The first board that rebooted on a desk
+// found this; the hardware gate is the only place it could have shown.
+static uint64_t identityGeneration(const uint8_t *rec, size_t n) {
+  if (n < 5) return 0;
+  uint32_t want = (uint32_t)rec[n - 4] | (uint32_t)rec[n - 3] << 8 | (uint32_t)rec[n - 2] << 16 | (uint32_t)rec[n - 1] << 24;
+  return qi_crc32(rec, n - 4) == want ? 1 : 0;
+}
+
+// "sp": the space this instrument speaks in — the one it was provisioned
+// into most recently. The core keeps up to QI_MAX_SPACES states and does
+// not rank them; a board re-provisioned into a new space would otherwise
+// keep emitting into the old one after a reboot (found live: a restored
+// state from a previous enrollment carried yesterday's space first).
+static uint64_t spaceGeneration(const uint8_t *rec, size_t n) {
+  if (n != 36) return 0;
+  uint32_t want = (uint32_t)rec[32] | (uint32_t)rec[33] << 8 | (uint32_t)rec[34] << 16 | (uint32_t)rec[35] << 24;
+  return qi_crc32(rec, 32) == want ? 1 : 0;
+}
 
 void QuietInstrument::setUnixTime(uint64_t unixSec) {
   hostTime_ = unixSec; hostTimeMillis_ = millis();
@@ -51,13 +72,27 @@ bool QuietInstrument::begin(const char *label, uint8_t kind) {
   static uint8_t rec[8192];
   size_t n = journal_.load("id", rec, sizeof rec, identityGeneration);
   if (n && qi_instrument_identity_decode(&c_, rec, n) == QI_OK) {
-    note("identity restored");
+    { char who[64]; snprintf(who, sizeof who, "identity restored dev=%02x%02x%02x%02x term=%02x%02x%02x%02x",
+        c_.device_pub[0], c_.device_pub[1], c_.device_pub[2], c_.device_pub[3],
+        c_.terminal_pub[0], c_.terminal_pub[1], c_.terminal_pub[2], c_.terminal_pub[3]);
+      note(who); }
     size_t sn = journal_.load("st", rec, sizeof rec, stateGeneration);
     if (sn && qi_instrument_state_decode(&c_, rec, sn) == QI_OK) note("chain state restored");
-    if (c_.nspaces) { memcpy(space_, c_.spaces[0].space, 32); haveSpace_ = true; }
+    uint8_t sp[36];
+    if (journal_.load("sp", sp, sizeof sp, spaceGeneration) == 36) {
+      for (size_t i = 0; i < c_.nspaces; i++)
+        if (!memcmp(c_.spaces[i].space, sp, 32)) { memcpy(space_, sp, 32); haveSpace_ = true; }
+    }
+    if (!haveSpace_ && c_.nspaces) { memcpy(space_, c_.spaces[c_.nspaces - 1].space, 32); haveSpace_ = true; }
   } else {
     if (qi_instrument_keygen(&c_) != QI_OK) { note("keygen"); return false; }
-    note("new identity minted");
+    // A fresh identity starts with a fresh journal: state and space
+    // records of a previous life must not be mistaken for this one's.
+    journal_.wipe();
+    { char who[64]; snprintf(who, sizeof who, "new identity minted dev=%02x%02x%02x%02x term=%02x%02x%02x%02x",
+        c_.device_pub[0], c_.device_pub[1], c_.device_pub[2], c_.device_pub[3],
+        c_.terminal_pub[0], c_.terminal_pub[1], c_.terminal_pub[2], c_.terminal_pub[3]);
+      note(who); }
     persistIdentity();
   }
   return true;
@@ -146,7 +181,14 @@ bool QuietInstrument::provisionHex(const char *hexs) {
   if (!n) { note("provision: bad hex"); return false; }
   qi_status s = qi_instrument_provision(&c_, buf, n);
   if (s != QI_OK) { note("provision", s); return false; }
-  memcpy(space_, c_.spaces[0].space, 32); haveSpace_ = true;
+  {
+    // The provision's own space (key 1 of its map) is the one to speak in.
+    qi_cbor_r r; qi_r_init(&r, buf, n);
+    size_t fields; uint64_t k; const uint8_t *sp; size_t spn;
+    if (qi_r_map(&r, &fields) == QI_OK && fields && qi_r_uint(&r, &k) == QI_OK && k == 1 &&
+        qi_r_bytes(&r, &sp, &spn) == QI_OK && spn == 32) rememberSpace(sp);
+    else if (c_.nspaces) rememberSpace(c_.spaces[c_.nspaces - 1].space);
+  }
   persistIdentity();
   // the epoch keys live in the state record
   static uint8_t rec[8192]; size_t rn;
@@ -159,6 +201,25 @@ bool QuietInstrument::ingestHex(const char *hexs) {
   static uint8_t buf[QI_MAX_FRAME * 2];
   size_t n = unhex(hexs, buf, sizeof buf);
   if (!n) { note("epoch: bad hex"); return false; }
+  return ingestEpochFrame(buf, n);
+}
+
+bool QuietInstrument::space(uint8_t out[32]) const {
+  if (!haveSpace_) return false;
+  memcpy(out, space_, 32);
+  return true;
+}
+
+void QuietInstrument::rememberSpace(const uint8_t sp[32]) {
+  memcpy(space_, sp, 32); haveSpace_ = true;
+  uint8_t rec[36];
+  memcpy(rec, sp, 32);
+  uint32_t crc = qi_crc32(rec, 32);
+  rec[32] = (uint8_t)crc; rec[33] = (uint8_t)(crc >> 8); rec[34] = (uint8_t)(crc >> 16); rec[35] = (uint8_t)(crc >> 24);
+  journal_.store("sp", rec, sizeof rec, spaceGeneration);
+}
+
+bool QuietInstrument::ingestEpochFrame(const uint8_t *buf, size_t n) {
   qi_status s = qi_instrument_absorb_epoch_frame(&c_, buf, n);
   if (s == QI_ERR_NOT_ADDRESSED) { note("epoch turned without me — detached?"); return false; }
   if (s != QI_OK) { note("epoch", s); return false; }

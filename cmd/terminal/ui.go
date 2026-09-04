@@ -90,6 +90,7 @@ func runUI(args []string, withUI bool) error {
 	// Dev-only door for external instrument frames (QI-M3 stand). Not a
 	// bearer: off unless asked for by name.
 	rt.DevIngest = flags["dev-ingest"] != ""
+	rt.DiscoverableInBackground = true // a CLI node has no window to be behind
 	// The resident USB stand (QI-M4) re-arms regardless of --dev-ingest:
 	// its arming was an owner action in the UI, and it enters the runtime
 	// beside the flag, not through the tokened HTTP door the flag guards.
@@ -99,7 +100,13 @@ func runUI(args []string, withUI bool) error {
 	fmt.Println("data root:", dataDir)
 
 	if flags["no-lan"] == "" {
-		if err := rt.StartLAN(":0", lan.MulticastAddr); err != nil {
+		// --lan-port: a fixed listener port, so a board built with a static
+		// node address (QI-B1) still finds this node after a restart.
+		listen := ":0"
+		if p := flags["lan-port"]; p != "" {
+			listen = ":" + p
+		}
+		if err := rt.StartLAN(listen, lan.MulticastAddr); err != nil {
 			fmt.Println("LAN disabled:", err)
 		} else {
 			fmt.Printf("LAN: listening on :%d, announcing to %s\n", rt.LAN().Port, lan.MulticastAddr)

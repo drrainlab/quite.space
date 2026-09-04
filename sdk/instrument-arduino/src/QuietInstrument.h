@@ -56,6 +56,14 @@ class QuietInstrument {
   void printEnrollment();
   void wipe();
 
+  // A real bearer's half of the same seam (QI-B1): the epoch frame as
+  // bytes, and the clock the instrument currently believes — what the
+  // Wi-Fi bearer needs to compute the discovery hint.
+  bool ingestEpochFrame(const uint8_t *frame, size_t n);
+  uint64_t unixNow() { return clockThunk(this); }
+  // The one space this instrument was provisioned into (false = none yet).
+  bool space(uint8_t out[32]) const;
+
   bool provisioned() const { return c_.provisioned; }
   bool declared() const { return c_.declared; }
   const qi_instrument &core() const { return c_; }
@@ -95,6 +103,7 @@ class QuietInstrument {
 
   bool declare();
   bool persistIdentity();
+  void rememberSpace(const uint8_t sp[32]);
   static qi_status persistState(void *ud, const uint8_t *rec, size_t n);
   static uint64_t clockThunk(void *ud);
   void publish(Channel &c, uint32_t nowSec);

@@ -163,7 +163,38 @@ downgrade listener and no second port. The handshake cost is paid once
 per connection; the chain's 60 s probe cadence keeps a flapping network
 from turning it into a treadmill.
 
-## 8. What the bearer is NOT
+## 8. What the live gate added (Ф4/Ф5)
+
+Three findings from the first board that walked through the door, each
+now law or code:
+
+- **A refused announce is logged, once.** macOS answers a process
+  without the Local Network permission with `EPIPE` on every multicast
+  write; the node used to swallow that and print "announcing to" while
+  nothing left the socket. It says so now. A CLI node run from a
+  terminal without the permission is exactly such a process; the desktop
+  app, which asked for the permission on first launch, is not.
+- **A static node address is an option, not a hack.** Many routers
+  filter multicast between wireless clients. `QI_NODE_HOST`/`QI_NODE_PORT`
+  let a build name the node directly; three failed dials forget the
+  address and the courier listens for announcements like any other, so
+  discovery remains the way back. (Open: the desktop app listens on an
+  ephemeral port, which a static address cannot name across restarts.)
+- **The courier does not sleep.** `WiFi.setSleep(false)`: a dozing STA
+  misses the multicast the AP holds for the DTIM beacon, and
+  announcements are multicast. The mains-powered terminal pays ~40 mA;
+  the portable line (QI-P) decides its own trade with its own numbers.
+- **Announcing does not pause with attention on mains.** The pocket law
+  (a phone need not be discoverable with its screen dark) is a battery
+  law; `DiscoverableInBackground` keeps a desktop or CLI node
+  announcing whatever window is in front. Android leaves it off.
+
+Gate log, Heltec V3, 2026-09-04: provisioned over the serial stand;
+`wifi: knocked` → `epoch learned` → `door answered — in the space`;
+stand killed; readings `current`, age 7 s, forty seconds later — every
+frame after the door answered rode Wi-Fi, none rode the stand.
+
+## 9. What the bearer is NOT
 
 - Not a member: it holds no conversation key, appears on no member
   card, and its link grants nothing beyond carriage (ADR-025 §2).
