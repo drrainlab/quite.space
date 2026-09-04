@@ -166,6 +166,12 @@ const I18N = {
     'relay.diag.on': 'running',
     'relay.diag.off': 'off',
     'relay.diag.error': 'Last error',
+    'relay.diag.no_route': 'No route',
+    'relay.diag.no_route_value': ({ count }) =>
+      `${count} ${plural(count, 'member', 'members')} with no stated route — their copies are not sent`,
+    'relay.diag.stranded': 'Cannot travel by relay',
+    'relay.diag.stranded_value': ({ seq, device, kb }) =>
+      `frame ${seq} from ${device} is ${kb} KB, over one relay item — relay-only readers see nothing from that device past it`,
 
     // spaces list
     'spaces.new': '+ space',
@@ -175,6 +181,7 @@ const I18N = {
     'spaces.empty.title': "It's quiet here so far.",
     'spaces.empty.body': 'Create your own space, or enter with a pass.',
     'spaces.activity.events': ({ count }) => `${count} ${plural(count, 'moment', 'moments')}`,
+    'spaces.fresh': 'something new since you looked',
     'spaces.unread': ({ count }) => `${count} new`,
 
     // Navigator (NAV-1). Sections a person arranged, not a list we sorted.
@@ -445,6 +452,8 @@ const I18N = {
     // honesty
     'honesty.undecryptable': ({ count }) =>
       `${count} ${plural(count, 'moment', 'moments')} you can't read here yet (no key — shown, not hidden)`,
+    'honesty.pending': ({ count }) =>
+      `${count} ${plural(count, 'moment', 'moments')} arrived ahead of what came before ${plural(count, 'it', 'them')} and ${plural(count, 'waits', 'wait')} for it (held, not lost)`,
     'honesty.simulated': 'SIMULATED',
 
     // presence
@@ -1288,6 +1297,7 @@ const I18N = {
     'spaces.empty.title': 'Пока здесь тихо.',
     'spaces.empty.body': 'Создайте своё пространство или войдите по пропуску.',
     'spaces.activity.events': ({ count }) => `${count} ${pluralRu(count, 'момент', 'момента', 'моментов')}`,
+    'spaces.fresh': 'новое с тех пор, как ты заглядывал',
     'spaces.unread': ({ count }) => `${count} ${pluralRu(count, 'новое', 'новых', 'новых')}`,
     'nav.search': 'Поиск',
     'nav.search.clear': 'очистить поиск',
@@ -1533,6 +1543,12 @@ const I18N = {
     'relay.diag.on': 'идёт',
     'relay.diag.off': 'выключена',
     'relay.diag.error': 'Последняя ошибка',
+    'relay.diag.no_route': 'Без маршрута',
+    'relay.diag.no_route_value': ({ count }) =>
+      `${count} ${pluralRu(count, 'участник', 'участника', 'участников')} без заявленного маршрута — их копии не отправляются`,
+    'relay.diag.stranded': 'Не проходит через реле',
+    'relay.diag.stranded_value': ({ seq, device, kb }) =>
+      `кадр ${seq} от ${device} весит ${kb} КБ — больше одного элемента реле; те, кто читает только через реле, дальше него это устройство не увидят`,
     'ai.window.remote': ({ provider, model }) =>
       `Quite AI видит последние 20 сообщений этого пространства и больше ничего. ` +
       `Каждый вопрос заново отправляет это окно на ${provider} · ${model} через интернет.`,
@@ -1597,6 +1613,8 @@ const I18N = {
     'sys.connection_changed_body': 'Сообщения пойдут дальше по локальной сети.',
     'honesty.undecryptable': ({ count }) =>
       `${count} ${pluralRu(count, 'момент', 'момента', 'моментов')} вам здесь пока не прочесть (нет ключа — показано, не спрятано)`,
+    'honesty.pending': ({ count }) =>
+      `${count} ${pluralRu(count, 'момент пришёл', 'момента пришли', 'моментов пришли')} раньше своих предшественников и ${pluralRu(count, 'ждёт', 'ждут', 'ждут')} их (удержаны, не потеряны)`,
     'honesty.simulated': 'симуляция',
     'presence.here': 'здесь',
     'presence.away': 'ненадолго отошли',

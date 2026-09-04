@@ -4134,3 +4134,98 @@ div.reply-to { cursor: default; }
 .field-cadence select { background: var(--panel); color: var(--fg);
   border: 1px solid var(--line); border-radius: var(--radius-sm);
   padding: 4px 8px; font: inherit; }
+
+/* ===================================================================
+   Relief (UI-R1): the key verbs stand off the glass.
+   A few buttons carry the app's intent — make a space, enter one,
+   discover, signals; invite; the view's primary act. They get a faint
+   keycap tilt toward the viewer (rotateX on a bottom origin), a thrown
+   shadow behind, an extruded lower edge, and a slow breathing halo so
+   the eye finds them without being shouted at. Everything is CSS; the
+   markup is untouched, and motion respects the reader's preference.
+   =================================================================== */
+:root { --relief-tilt: 7deg; --relief-lift: 2px; }
+.nav-act, #inviteBtn, #viewPrimary, .btn-filled {
+  transform-style: preserve-3d;
+  transform-origin: 50% 100%;
+  transform: perspective(520px) rotateX(var(--relief-tilt));
+  box-shadow:
+    0 var(--relief-lift) 0 0 hsl(var(--n, 265 45% 66%) / .34),     /* the extruded edge */
+    0 10px 18px -10px rgba(0, 0, 0, .75),                          /* thrown back */
+    inset 0 1px 0 rgba(255, 255, 255, .07);                         /* a lit top rim */
+  transition: transform .18s ease, box-shadow .18s ease,
+    border-color .18s ease, background .18s ease, color .18s ease;
+  animation: relief-breathe 4.2s ease-in-out infinite;
+}
+#inviteBtn, #viewPrimary, .btn-filled { --n: 265 45% 66%; }
+.nav-act:hover, .nav-act:focus-visible,
+#inviteBtn:hover, #viewPrimary:hover, .btn-filled:hover {
+  transform: perspective(520px) rotateX(calc(var(--relief-tilt) * .45)) translateY(-1px);
+  box-shadow:
+    0 calc(var(--relief-lift) + 1px) 0 0 hsl(var(--n, 265 45% 66%) / .48),
+    0 14px 22px -10px rgba(0, 0, 0, .8),
+    0 0 0 1px hsl(var(--n, 265 45% 66%) / .22),
+    0 0 18px -2px hsl(var(--n, 265 45% 66%) / .35),
+    inset 0 1px 0 rgba(255, 255, 255, .10);
+  animation-play-state: paused;
+}
+.nav-act:active, #inviteBtn:active, #viewPrimary:active, .btn-filled:active {
+  transform: perspective(520px) rotateX(calc(var(--relief-tilt) * .3)) translateY(var(--relief-lift));
+  box-shadow: 0 0 0 0 transparent, 0 4px 10px -8px rgba(0, 0, 0, .8);
+}
+/* the halo breathes — a slow tide, never a blink */
+@keyframes relief-breathe {
+  0%, 100% { filter: drop-shadow(0 0 0 hsl(var(--n, 265 45% 66%) / 0)); }
+  50%      { filter: drop-shadow(0 0 6px hsl(var(--n, 265 45% 66%) / .28)); }
+}
+[data-theme="light"] .nav-act, [data-theme="light"] #inviteBtn,
+[data-theme="light"] #viewPrimary, [data-theme="light"] .btn-filled {
+  box-shadow:
+    0 var(--relief-lift) 0 0 hsl(var(--n, 265 45% 56%) / .28),
+    0 10px 16px -10px rgba(40, 20, 60, .35),
+    inset 0 1px 0 rgba(255, 255, 255, .6);
+}
+
+/* --- the shelf gains a spine and a lean ---------------------------- */
+.shelf-grid { perspective: 900px; }
+.shelf-card {
+  position: relative;
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--surface-raised) 70%, var(--panel)) 0%, var(--panel) 62%);
+  box-shadow: 0 14px 24px -18px rgba(0, 0, 0, .8), inset 0 1px 0 rgba(255, 255, 255, .05);
+  transform-origin: 50% 100%;
+  transition: transform .22s ease, box-shadow .22s ease, border-color .22s ease;
+}
+.shelf-card::before {             /* the spine: a kept thing has an edge */
+  content: ""; position: absolute; left: 10px; right: 10px; top: 0; height: 2px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--acc) 55%, transparent), transparent);
+  opacity: .55;
+}
+.shelf-card:hover {
+  transform: perspective(900px) rotateX(2.5deg) translateY(-3px);
+  border-color: color-mix(in srgb, var(--acc) 35%, var(--line));
+  box-shadow: 0 22px 30px -18px rgba(0, 0, 0, .85), 0 0 22px -8px color-mix(in srgb, var(--acc) 45%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, .08);
+}
+.shelf-card:hover::before { opacity: 1; }
+
+/* --- something new in a space: a star, not a badge ------------------ */
+/* The row remembers how many moments it had shown you; more than that
+   and one small star breathes beside the name, the glyph gains a faint
+   halo. Opening the space quiets it. First launch seeds "seen" from the
+   present, so nothing cries wolf on day one. */
+.space-new { color: var(--acc); font-size: 11px; margin-left: 4px; flex: 0 0 auto;
+  text-shadow: 0 0 8px color-mix(in srgb, var(--acc) 80%, transparent);
+  animation: star-breathe 2.8s ease-in-out infinite; }
+.space.fresh .space-av { box-shadow: 0 0 0 1px color-mix(in srgb, var(--acc) 35%, transparent),
+  0 0 14px -2px color-mix(in srgb, var(--acc) 55%, transparent); border-radius: 50%; }
+.space.fresh .t { color: var(--fg); }
+@keyframes star-breathe {
+  0%, 100% { opacity: .55; transform: scale(.9); }
+  50%      { opacity: 1;   transform: scale(1.15); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .nav-act, #inviteBtn, #viewPrimary, .btn-filled, .space-new { animation: none; }
+  .shelf-card, .shelf-card:hover { transform: none; }
+}

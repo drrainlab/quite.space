@@ -229,15 +229,28 @@ const NAV = (() => {
     // A place you cannot write to is not a destination — and saying so
     // where the choice is made beats refusing after somebody has decided.
     const closed = v.select && sp.can_write === false;
+    // SOMETHING NEW, SAID QUIETLY. The row remembers how many moments it
+    // had shown; more than that — and not the space you are looking at —
+    // earns one breathing star beside the name. Opening the space quiets
+    // it (the count is written while it is current). First launch seeds
+    // the memory from the present so day one does not cry wolf.
+    let fresh = false;
+    try {
+      const seenKey = 'qp.seen.' + sp.id;
+      const raw = localStorage.getItem(seenKey);
+      const have = Number(sp.events) || 0;
+      if (raw === null || sp.id === currentId) localStorage.setItem(seenKey, String(have));
+      else fresh = !v.select && have > (Number(raw) || 0);
+    } catch (e) { /* storage may be unavailable: no signal, no harm */ }
     const sig = [name, sp.events, sp.undecryptable || 0, sp.owned ? 1 : 0,
-      sp.frozen ? 1 : 0, sp.id === currentId ? 1 : 0,
+      sp.frozen ? 1 : 0, sp.id === currentId ? 1 : 0, fresh ? 1 : 0,
       picked ? 1 : 0, closed ? 1 : 0, v.select ? 1 : 0, LOCALE,
       sp.character?.central || ''].join('');
     return {
       key, sig, build: () => {
         const d = document.createElement('div');
         d.dataset.navKey = key; d.dataset.navSig = sig;
-        d.className = 'space' + (!v.select && sp.id === currentId ? ' active' : '') +
+        d.className = 'space' + (!v.select && sp.id === currentId ? ' active' : '') + (fresh ? ' fresh' : '') +
           (picked ? ' picked' : '') + (closed ? ' nav-closed' : '');
         d.setAttribute('role', v.select ? 'checkbox' : 'button');
         if (v.select) d.setAttribute('aria-checked', String(picked));
@@ -265,6 +278,7 @@ const NAV = (() => {
             (typeof navModeGlyph === 'function' && navModeGlyph(sp.character)
               ? `<span class="space-mode">${esc(navModeGlyph(sp.character))}</span>` : '') +
             `<span class="t">${esc(name)}</span>` +
+            (fresh ? `<span class="space-new" title="${esc(t('spaces.fresh'))}" aria-label="${esc(t('spaces.fresh'))}">✦</span>` : '') +
             (sp.owned ? `<span class="owner-tag">${esc(t('spaces.owner'))}</span>` : '') +
           `</span><span class="m">${closed ? esc(t('share.closed')) : bits.join(' · ')}</span></span>` +
           (v.select ? '' : `<button class="nav-more" aria-label="${esc(t('nav.more'))}">⋯</button>`);
