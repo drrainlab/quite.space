@@ -2038,8 +2038,13 @@ async function refreshSpace() {
   // whatever the row wore at its last content change: applied forever
   // after the hold cleared, or never applied at all.
   const spaceHeld = heldSpaceIds.has(current);
+  // A sky's stroke count and the DR-1 delivery rung are row content too:
+  // the picture behind a card grows without the entry changing, and the
+  // checkmark climbs without the words changing. Both patch in place.
   const aSig = entries.map(e => (e.asset ? (e.asset.state + '/' + (e.asset.missing || 0) + '/' + (e.asset.total || 0)) : '') +
-    (entryReleasing(e, spaceHeld) ? '~R' : ''));
+    (entryReleasing(e, spaceHeld) ? '~R' : '') +
+    (e.sky ? '~S' + (e.sky.strokes || 0) + '/' + (e.sky.hands || 0) : '') +
+    (e.delivery ? '~D' + e.delivery : ''));
   const rSig = entries.map(e => resSig(e.resonance));
   const sig = contentSig.map((c, i) => c + '|' + aSig[i] + '|' + rSig[i]);
   const unchanged = !switched && sig.length === feedSig.length && sig.every((s, i) => s === feedSig[i]);
@@ -4320,6 +4325,7 @@ const FEED_RENDERERS = {
   audio: (e) => renderVoiceAudio(e),
   file: (e) => renderFile(e),
   link: (e) => renderLink(e),
+  sky: (e) => renderSky(e),
   live_signal: (e) => renderSignal(e),
   // A human observation (SP-1): the feed's QUIET row — the same event also
   // sits on its object's timeline; this is a projection, not a copy.

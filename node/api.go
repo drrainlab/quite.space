@@ -222,6 +222,11 @@ func (a *APIServer) Handler() http.Handler {
 	mux.HandleFunc("GET /api/spaces/{id}/members", a.auth(a.handleMembers))
 	mux.HandleFunc("GET /api/spaces/{id}/entries", a.auth(a.handleEntries))
 	mux.HandleFunc("POST /api/spaces/{id}/blocks", a.auth(a.handlePostBlock))
+	// SK-1 — a shared sky: start one, read it, draw on it, erase your own.
+	mux.HandleFunc("POST /api/spaces/{id}/sky", a.auth(a.handleStartSky))
+	mux.HandleFunc("GET /api/spaces/{id}/sky/{sky}", a.auth(a.handleSky))
+	mux.HandleFunc("POST /api/spaces/{id}/sky/{sky}/strokes", a.auth(a.handleSkyStroke))
+	mux.HandleFunc("POST /api/spaces/{id}/sky/{sky}/erase", a.auth(a.handleSkyErase))
 	mux.HandleFunc("GET /api/spaces/{id}/assets/{asset}", a.auth(a.handleGetAsset))
 	mux.HandleFunc("POST /api/spaces/{id}/assets/{asset}/fetch", a.auth(a.handleFetchAsset))
 	mux.HandleFunc("POST /api/spaces/{id}/reactions", a.auth(a.handleResonance))

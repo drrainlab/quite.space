@@ -541,6 +541,8 @@ type entryResp struct {
 	Geo *geoJSON `json:"geo,omitempty"`
 
 	Asset *assetResp `json:"asset,omitempty"`
+	// Sky (SK-1): how much picture there is behind a sky message.
+	Sky *skyResp `json:"sky,omitempty"`
 }
 
 func (a *APIServer) handleEntries(w http.ResponseWriter, r *http.Request) {
@@ -774,6 +776,11 @@ func (a *APIServer) projectEntry(tid id.TerminalID, sp *terminals.Space,
 		v := e.Content.File
 		resp.Filename, resp.Fallback = v.Filename, v.Fallback()
 		attachAsset(v.Original)
+	case e.Content.Sky != nil:
+		v := e.Content.Sky
+		n, hands, evicted := sp.State.SkyStats(e.ID)
+		resp.Title, resp.Fallback = v.Title, v.Fallback()
+		resp.Sky = &skyResp{Title: v.Title, Strokes: n, Hands: hands, Evicted: evicted}
 	case e.Content.Link != nil:
 		v := e.Content.Link
 		resp.URL, resp.Title, resp.Descr, resp.Fallback = v.URL, v.Title, v.Description, v.Fallback()
@@ -870,6 +877,10 @@ func momentSummary(e *reducers.Entry) (string, bool) {
 			return clipMoment(c.Link.Title), true
 		}
 		return clipMoment(c.Link.URL), true
+	case c.Sky != nil:
+		// The title when there is one; otherwise empty, so the interface
+		// names the wordless moment in the reader's language.
+		return clipMoment(c.Sky.Title), true
 	}
 	return "", false
 }

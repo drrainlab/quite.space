@@ -180,6 +180,9 @@
               <path d="M9 1.9v3.1h3" opacity=".6"/>
               <path d="M6.1 8.4h3.8M6.1 10.6h3.8" opacity=".45"/>
             </svg>Document</button>
+          <!-- SK-1: a shared sky — a drawing that is a message. -->
+          <button type="button" data-on-click="256" data-i18n="ui.composer.attach.sky">
+            <svg class="act-mark" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5v3M8 10.5v3M2.5 8h3M10.5 8h3M4.1 4.1l2.1 2.1M9.8 9.8l2.1 2.1M4.1 11.9l2.1-2.1M9.8 6.2l2.1-2.1"/></svg>Sky</button>
         </div>
       </div>
       <button type="button" class="ic" id="voiceBtn" data-on-click="25" title="record voice" data-i18n-title="ui.composer.voice.title" aria-label="Record voice message" data-i18n-aria="ui.composer.voice.aria">
@@ -237,6 +240,30 @@
     <input type="file" id="fileInput" style="display:none" data-on-change="34">
   </div>
   <!-- The share picker IS the Navigator in selection mode (SHARE-0). -->
+  <!-- SK-1: the sky, open. A dark square, three levels of glow, undo
+       your own, watch how it was drawn. No cursors, no "who is drawing". -->
+  <dialog id="dlgSky" class="sky-dlg">
+    <div class="sky-dlg-head">
+      <span class="sky-dlg-title"></span>
+      <span class="sky-dlg-meta hint"></span>
+      <span style="flex:1"></span>
+      <button type="button" class="icon-btn" data-on-click="261" title="Close" aria-label="Close">✕</button>
+    </div>
+    <div class="sky-stage">
+      <div class="sky-tools">
+        <button type="button" class="sky-bright" data-b="3" data-on-click="257" title="bright">●</button>
+        <button type="button" class="sky-bright" data-b="2" data-on-click="258" title="soft">●</button>
+        <button type="button" class="sky-bright" data-b="1" data-on-click="259" title="faint">●</button>
+        <button type="button" class="sky-undo" data-on-click="260" data-i18n-title="sky.undo" title="Undo your last stroke">↶</button>
+      </div>
+      <canvas class="sky-canvas" width="640" height="640"></canvas>
+    </div>
+    <div class="sky-dlg-foot">
+      <button type="button" class="btn-plain" data-on-click="262" data-i18n="sky.play">▶ Watch how it was drawn</button>
+      <span style="flex:1"></span>
+      <button type="button" class="btn-tinted" data-on-click="261" data-i18n="sky.leave">Leave</button>
+    </div>
+  </dialog>
   <dialog id="dlgShare">
     <h3 data-i18n="ui.share.title">Forward</h3>
     <div id="shareAbout" class="hint"></div>
@@ -1541,6 +1568,7 @@
 <script src="glyphs.js"></script>
 <script src="icons.js"></script>
 <script src="library.js"></script>
+<script src="sky.js"></script>
 <script src="modes.js"></script>
 <script src="registry.js"></script>
 <script src="renderers.js"></script>

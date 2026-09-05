@@ -56,6 +56,7 @@ type EntryContent struct {
 	Audio       *schemas.AudioBlock
 	File        *schemas.FileBlock
 	Link        *schemas.LinkBlock
+	Sky         *schemas.SkyBlock
 	Signal      *schemas.LiveSignalBlock
 	Observation *ObservationNoteContent
 	Checkin     *CheckinContent
@@ -164,6 +165,9 @@ type State struct {
 	// counter.
 	annots            map[string][]AnnotationNote
 	AnnotationEvicted int
+
+	// skies (SK-1, sky.go): strokes per sky message, a commutative set.
+	skies map[id.EventID]*skyRec
 
 	// field (SP-3, field.go): markers and check-ins. Positions live in
 	// the trust engine (presence twin), not here.
@@ -362,6 +366,15 @@ func (s *State) Apply(env *signal.Envelope, eid id.EventID) {
 		} else {
 			s.installUnknown(eid, env)
 		}
+	case schemas.BlockSky:
+		if b, err := schemas.DecodeSkyBlock(env.Payload); err == nil {
+			s.installEntry(eid, env, KindSky, EntryContent{Sky: b})
+		} else {
+			s.installUnknown(eid, env)
+		}
+	case schemas.SkyStroke:
+		// Never a feed entry: a stroke is part of a picture, not a moment.
+		s.applySkyStroke(env, eid)
 	case schemas.BlockLiveSignal:
 		if b, err := schemas.DecodeLiveSignalBlock(env.Payload); err == nil {
 			s.installEntry(eid, env, KindSignal, EntryContent{Signal: b})

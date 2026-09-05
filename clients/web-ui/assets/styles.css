@@ -4286,3 +4286,29 @@ div.reply-to { cursor: default; }
 .lib-t { display: block; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lib-m { display: block; color: var(--dim); font-size: 12px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lib-empty { color: var(--dim); padding: 28px 16px; text-align: center; }
+
+/* ---- SK-1: the sky ---- */
+.skycard { display: flex; align-items: center; gap: 12px; padding: 8px; border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--fg) 5%, transparent); max-width: 420px; }
+.sky-preview { width: 80px; height: 80px; border-radius: 10px; overflow: hidden; flex: 0 0 auto;
+  background: #05060c; box-shadow: 0 0 0 1px color-mix(in srgb, var(--acc) 30%, transparent); }
+.sky-preview canvas { width: 80px; height: 80px; display: block; }
+.sky-main { flex: 1; min-width: 0; }
+.sky-t { font-weight: 600; }
+.sky-m { color: var(--dim); font-size: 12px; margin-top: 2px; }
+.sky-dlg { width: min(92vw, 720px); padding: 0; border: 1px solid var(--line); border-radius: 16px;
+  background: var(--panel); color: var(--fg); }
+.sky-dlg::backdrop { background: rgba(0,0,0,.6); }
+.sky-dlg-head, .sky-dlg-foot { display: flex; align-items: center; gap: 10px; padding: 12px 14px; }
+.sky-dlg-title { font-weight: 600; }
+.sky-stage { position: relative; background: #05060c; }
+.sky-canvas { display: block; width: 100%; aspect-ratio: 1 / 1; height: auto; touch-action: none; cursor: crosshair; }
+.sky-tools { position: absolute; left: 10px; top: 10px; display: flex; flex-direction: column; gap: 6px;
+  background: color-mix(in srgb, var(--panel) 80%, transparent); border-radius: 12px; padding: 6px; }
+.sky-tools button { width: 34px; height: 34px; min-height: 0; padding: 0; border-radius: 9px; border: 1px solid transparent;
+  background: transparent; color: var(--dim); cursor: pointer; }
+.sky-tools .sky-bright[data-b="3"] { font-size: 16px; }
+.sky-tools .sky-bright[data-b="2"] { font-size: 12px; }
+.sky-tools .sky-bright[data-b="1"] { font-size: 8px; }
+.sky-tools button.sel { color: var(--acc); border-color: color-mix(in srgb, var(--acc) 40%, transparent); }
+.sky-tools button:hover { color: var(--fg); }

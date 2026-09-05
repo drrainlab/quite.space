@@ -301,6 +301,13 @@ const UI_HANDLERS = [
   /* 253 click    */ (event, el) => { doorbellSet(false); },
   /* 254 click    */ (event, el) => { receiptsSet(true); },
   /* 255 click    */ (event, el) => { receiptsSet(false); },
+  /* 256 click    */ (event, el) => { SKY.start(); },
+  /* 257 click    */ (event, el) => { SKY.setBright(3); },
+  /* 258 click    */ (event, el) => { SKY.setBright(2); },
+  /* 259 click    */ (event, el) => { SKY.setBright(1); },
+  /* 260 click    */ (event, el) => { SKY.undo(); },
+  /* 261 click    */ (event, el) => { SKY.closeSky(); },
+  /* 262 click    */ (event, el) => { SKY.play(); },
   /* 254 click    */ (event, el) => { fieldPlaceMarker(); },
   /* 255 click    */ (event, el) => { document.getElementById('dlgMarker').close(); },
 ];
