@@ -88,6 +88,12 @@ func TestResidentStandSpeaksTheWireGrammar(t *testing.T) {
 	if _, err := board.Write([]byte("QI FRAME " + hex.EncodeToString(frame) + "\n")); err != nil {
 		t.Fatal(err)
 	}
+	// Delivered means acknowledged: the stand names the frame it applied
+	// by event id, and only that line lets the board clear its owed frame.
+	eid := id.EventIDOf(frame)
+	if l := readLine(); l != "QI ACK "+hex.EncodeToString(eid[:]) {
+		t.Fatalf("the applied frame was not acknowledged by event id: %q", l)
+	}
 	deadline := time.Now().Add(3 * time.Second)
 	for {
 		if mag, ok := guestTemperature(t, owner, tid, ext.part.TerminalID); ok {

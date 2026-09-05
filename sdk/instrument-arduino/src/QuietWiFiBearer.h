@@ -55,7 +55,9 @@ class QuietWiFiBearer : public QuietBearer {
   // For the face: one honest word about where the courier stands.
   //   "joining" · "no-time" · "listening" · "dialing" · "knocked" · "in"
   const char *state() const { return stateWord_; }
-  bool ready() const { return ready_; }
+  // The courier is a road only once the door answered (law 3); before
+  // that the chain skips it without a strike (QuietBearer::ready).
+  bool ready() const override { return ready_; }
   int rssi() const { return WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0; }
 
  private:

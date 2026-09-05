@@ -28,12 +28,25 @@
 // kAttendedMs; stands pulse "QI TIME" every 15 s exactly so this can be
 // known. Unattended, the frame stays owed and the chain waits — the
 // chain's honesty over the reading's freshness, every time.
+//
+// DELIVERED MEANS ACKNOWLEDGED. Attendance says a stand is probably
+// there; it does not say this frame arrived, and a stand that vanished
+// in the last few seconds — or a node that refused the frame — made a
+// hole in the chain that nothing could fill (378 held moments on the
+// owner's panel). So a frame is delivered only when the stand answers
+// "QI ACK <event id>" for it: the bearer prints the frame, waits a short
+// while for exactly that line (still feeding every other line it hears
+// to the instrument), and says false otherwise. An unanswered frame is
+// offered again after kResendMs, never sooner.
 class SerialHexBearer : public QuietBearer {
  public:
   static const uint32_t kAttendedMs = 45000;
+  static const uint32_t kAckWaitMs = 400;
+  static const uint32_t kResendMs = 5000;
   explicit SerialHexBearer(Stream &s = Serial) : s_(s) {}
   bool send(const uint8_t *frame, size_t n) override;
   void poll(QuietInstrument &qi) override;
+  bool ready() const override { return attended(); }
   bool attended() const { return lastHeardMs_ && (uint32_t)(millis() - lastHeardMs_) < kAttendedMs; }
 
  private:
@@ -41,5 +54,11 @@ class SerialHexBearer : public QuietBearer {
   char line_[4600];
   size_t lineLen_ = 0;
   uint32_t lastHeardMs_ = 0;
+  QuietInstrument *qi_ = nullptr;   // the instrument last polled: lines heard while waiting go to it
+  uint8_t awaiting_[32];            // event id of the frame on the wire
+  bool haveAwaiting_ = false;
+  bool acked_ = false;
+  uint32_t sentMs_ = 0;
   void handle(QuietInstrument &qi, char *line);
+  void pump();
 };

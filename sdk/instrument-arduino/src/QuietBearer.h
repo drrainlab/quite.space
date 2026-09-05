@@ -15,4 +15,9 @@ class QuietBearer {
   virtual bool send(const uint8_t *frame, size_t n) = 0;
   // Give the bearer a chance to feed inbound bytes to the instrument.
   virtual void poll(QuietInstrument &qi) = 0;
+  // NOT READY IS NOT REFUSED. A road that is still joining, dialing or
+  // unattended has not failed a frame — it is simply not there yet. The
+  // chain skips it without a strike; only a road that was ready and
+  // still refused counts against itself.
+  virtual bool ready() const { return true; }
 };

@@ -18,6 +18,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -28,6 +29,8 @@ import (
 	"time"
 
 	"go.bug.st/serial"
+
+	"github.com/drrainlab/quiet_places/protocol/id"
 )
 
 func main() {
@@ -176,8 +179,14 @@ func (s *stand) ingest(hexFrame string) {
 	}
 	if err := s.call("POST", "/api/spaces/"+s.space+"/instruments/"+s.iid+"/ingest",
 		map[string][]string{"frames_hex": {hexFrame}}, &r); err != nil {
-		fmt.Println("ingest refused:", err)
+		fmt.Println("ingest refused:", err) // no ACK: the board keeps owing it
 		return
+	}
+	// Delivered means acknowledged: the board clears its owed frame only
+	// for this line, named by the frame's event id.
+	if raw, err := hex.DecodeString(hexFrame); err == nil {
+		eid := id.EventIDOf(raw)
+		s.send("QI ACK " + hex.EncodeToString(eid[:]))
 	}
 	fmt.Printf("stand: frame applied=%d (%d bytes)\n", r.Applied, len(hexFrame)/2)
 }

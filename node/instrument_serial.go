@@ -345,8 +345,12 @@ func (r *Runtime) standSession(stop chan struct{}, rw io.ReadWriter, space id.Te
 			}
 			if _, err := r.ingestInstrumentFrames(space, target, [][]byte{raw}); err != nil {
 				r.standSet(func(s *SerialStandStatus) { s.LastError = "ingest: " + err.Error() })
-				continue
+				continue // no ACK: the board keeps owing it, and says so
 			}
+			// DELIVERED MEANS ACKNOWLEDGED (SerialHexBearer): the board
+			// clears its owed frame only for this line, named by event id.
+			eid := id.EventIDOf(raw)
+			send("QI ACK " + hex.EncodeToString(eid[:]))
 			r.standSet(func(s *SerialStandStatus) {
 				s.LastFrameUnix = time.Now().Unix()
 				s.LastError = ""

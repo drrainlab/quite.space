@@ -27,6 +27,8 @@ package node
 import (
 	"crypto/ed25519"
 	"errors"
+	"fmt"
+	"log"
 	"time"
 
 	"github.com/drrainlab/quiet_places/kernel/routing"
@@ -285,9 +287,17 @@ func (r *Runtime) openInstrumentDoor(c link, req []byte, rest [][]byte) {
 			_ = cl.Close()
 		}
 	}
+	// THE WIRE STAYS SILENT; THE LOG DOES NOT. Every decision here is a
+	// line in the node's own log (node.log on the desktop) with its
+	// reason — a person debugging their own board is not the prober the
+	// silence protects against.
+	refuse := func(why string) {
+		log.Printf("instrument door: refused — %s", why)
+		closeQuiet()
+	}
 	space, device, sig, err := decodeEpochReqPayload(req)
 	if err != nil {
-		closeQuiet()
+		refuse("malformed knock: " + err.Error())
 		return
 	}
 	// The binding: the certificate THIS node presents. A knock on a conn
@@ -298,18 +308,18 @@ func (r *Runtime) openInstrumentDoor(c link, req []byte, rest [][]byte) {
 	ln := r.lanNode
 	r.mu.Unlock()
 	if ln == nil {
-		closeQuiet()
+		refuse("LAN not started")
 		return
 	}
 	fp, ok := ln.CertFingerprint()
 	if !ok {
-		closeQuiet()
+		refuse("no listener certificate")
 		return
 	}
 	msg := append([]byte(instrDoorLabel+":"), fp[:]...)
 	msg = append(msg, space[:]...)
 	if !ed25519.Verify(ed25519.PublicKey(device[:]), msg, sig) {
-		closeQuiet()
+		refuse(fmt.Sprintf("bad signature from device %x for space %x", device[:4], space[:4]))
 		return
 	}
 	// The device must be an ENROLLED EXTERNAL INSTRUMENT of that space —
@@ -326,9 +336,11 @@ func (r *Runtime) openInstrumentDoor(c link, req []byte, rest [][]byte) {
 	_, hasSpace := r.spaces[space]
 	r.mu.Unlock()
 	if !known || !hasSpace {
-		closeQuiet()
+		refuse(fmt.Sprintf("device %x is not an enrolled instrument of space %x (known=%v, space here=%v)",
+			device[:4], space[:4], known, hasSpace))
 		return
 	}
+	log.Printf("instrument door: opened for device %x, space %x", device[:4], space[:4])
 
 	r.adoptLinkFilteredOpts(&prefixLink{link: c, prefix: rest},
 		pumpEvery, 2*time.Second, "lan",

@@ -16,6 +16,10 @@
 //   4. EVERY ROAD LISTENS. poll() feeds all links, downed ones included
 //      — epochs and time may arrive on a road we would not choose for
 //      sending, and hearing is free.
+//   5. NOT READY IS NOT A STRIKE. A road still joining, dialing or
+//      unattended is skipped, not punished: the first live board struck
+//      Wi-Fi out for a minute at every boot for the crime of not having
+//      dialed yet, and readings waited on a probe that need not exist.
 //
 // Pure machine: the clock is injected, so the native suite drives years
 // in microseconds and the sketch passes millis.
@@ -46,6 +50,7 @@ class BearerChain : public QuietBearer {
     uint32_t now = clock_();
     for (int i = 0; i < n_; i++) {
       Link &l = links_[i];
+      if (!l.b->ready()) continue;  // not there yet: no strike (see QuietBearer)
       if (l.down && (uint32_t)(now - l.downSince) < kProbeMs) continue;
       if (l.b->send(frame, n)) {
         l.fails = 0;

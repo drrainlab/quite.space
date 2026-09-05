@@ -87,9 +87,11 @@ static void start_is_idempotent(void) {
 
 struct FakeBearer : QuietBearer {
   bool ok = true;
+  bool up = true;
   int sends = 0;
   bool send(const uint8_t *, size_t) override { sends++; return ok; }
   void poll(QuietInstrument &) override {}
+  bool ready() const override { return up; }
 };
 
 static uint32_t fakeNow = 0;
@@ -147,6 +149,22 @@ static void a_down_road_is_probed_then_rearmed(void) {
   TEST_ASSERT_EQUAL_STRING("wifi", ch.lastLabel());
 }
 
+static void a_road_not_ready_is_skipped_without_a_strike(void) {
+  fakeNow = 0;
+  FakeBearer wifi, serial;
+  wifi.up = false;  // still dialing: not a refusal
+  BearerChain ch(fakeClock);
+  ch.add(&wifi, "wifi");
+  ch.add(&serial, "serial");
+  for (int i = 0; i < 10; i++) TEST_ASSERT_TRUE(ch.send(kFrame, sizeof kFrame));
+  TEST_ASSERT_EQUAL_INT(0, wifi.sends);      // never offered a frame...
+  TEST_ASSERT_FALSE(ch.linkDown(0));         // ...and never struck (law 5)
+  wifi.up = true;                            // the door answered
+  TEST_ASSERT_TRUE(ch.send(kFrame, sizeof kFrame));
+  TEST_ASSERT_EQUAL_INT(1, wifi.sends);      // first road again, at once
+  TEST_ASSERT_EQUAL_STRING("wifi", ch.lastLabel());
+}
+
 static void false_only_when_every_road_refused(void) {
   fakeNow = 0;
   FakeBearer wifi, serial;
@@ -173,6 +191,7 @@ int main(int, char **) {
   RUN_TEST(the_first_road_carries_while_it_works);
   RUN_TEST(three_strikes_exile_a_road);
   RUN_TEST(a_down_road_is_probed_then_rearmed);
+  RUN_TEST(a_road_not_ready_is_skipped_without_a_strike);
   RUN_TEST(false_only_when_every_road_refused);
   return UNITY_END();
 }
