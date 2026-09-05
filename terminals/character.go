@@ -26,22 +26,37 @@ var Archetypes = []string{
 
 // Character is the parsed space character.
 type Character struct {
-	Archetype string   // campfire | forest | studio | workshop | orbit | home | radio_room
-	Mood      string   // dawn | day | dusk | night
-	Material  string   // light | wood | glass | metal | fog | paper
-	Motion    string   // still | slow | lively
-	Geometry  string   // fire | table | islands | orbit | corridor
-	Central   string   // chat | objects | audio | members | telemetry
-	Memory    string   // everything | manual | private_history
-	Relic     string   // ember_ring | tree | constellation | structure | garden | waveform
-	Rituals   []string // up to 3 chosen ritual slugs
-	Presence  []string // the space's presence vocabulary
+	Archetype string // campfire | forest | studio | workshop | orbit | home | radio_room
+	Mood      string // dawn | day | dusk | night
+	Material  string // light | wood | glass | metal | fog | paper
+	Motion    string // still | slow | lively
+	Geometry  string // fire | table | islands | orbit | corridor
+	Central   string // chat | objects | audio | members | telemetry
+	Memory    string // everything | manual | private_history
+	// Icon names one of the built-in space icons (UI-1) — an index into
+	// a set every client ships, validated against SpaceIcons on parse so
+	// the manifest can never carry markup or an invented name.
+	Icon     string
+	Relic    string   // ember_ring | tree | constellation | structure | garden | waveform
+	Rituals  []string // up to 3 chosen ritual slugs
+	Presence []string // the space's presence vocabulary
 	// PresenceGlyphs maps a state to the small symbol a card may show for
 	// it. AN EMOJI STRING, NEVER BYTES OR MARKUP — the same rule as a
 	// resonance palette slot: no user-supplied rendering code crosses the
 	// wire, and the whole map rides the manifest ONCE, so a presence
 	// update itself costs the radio nothing new.
 	PresenceGlyphs map[string]string
+}
+
+// SpaceIcons is the built-in icon set a character may name (UI-1). The
+// names are the contract; the drawings live in the clients. Append-only:
+// removing a name would make old manifests point at nothing.
+var SpaceIcons = map[string]bool{
+	"campfire": true, "forest": true, "studio": true, "workshop": true,
+	"orbit": true, "home": true, "radio": true, "planet": true,
+	"comet": true, "moon": true, "star": true, "bulb": true,
+	"layers": true, "box": true, "book": true, "flask": true,
+	"wave": true, "compass": true, "leaf": true, "signal": true,
 }
 
 // DefaultCharacter returns the archetype's seed character.
@@ -126,6 +141,7 @@ func (c Character) Labels(title string) []string {
 	add("central", c.Central)
 	add("memory", c.Memory)
 	add("relic", c.Relic)
+	add("icon", c.Icon)
 	for _, r := range c.Rituals {
 		add("ritual", r)
 	}
@@ -184,6 +200,10 @@ func ParseCharacter(labels []string) (string, Character) {
 			c.Memory = kv[1]
 		case "relic":
 			c.Relic = kv[1]
+		case "icon":
+			if SpaceIcons[kv[1]] {
+				c.Icon = kv[1]
+			}
 		case "ritual":
 			if len(c.Rituals) < 3 {
 				c.Rituals = append(c.Rituals, kv[1])

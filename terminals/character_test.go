@@ -179,3 +179,24 @@ func TestAnOversizedVocabularyIsCutToTheBound(t *testing.T) {
 		t.Errorf("the cut vocabulary does not validate: %v", err)
 	}
 }
+
+// UI-1: the icon is an index into a shipped set. A known name rides the
+// manifest round trip; an invented one is dropped at parse rather than
+// carried to clients that could never draw it.
+func TestCharacterIconIsAnAllowlistedName(t *testing.T) {
+	c := terminals.DefaultCharacter("orbit")
+	c.Icon = "comet"
+	_, back := terminals.ParseCharacter(c.Labels("Deep Field"))
+	if back.Icon != "comet" {
+		t.Fatalf("a known icon name was lost: %+v", back)
+	}
+	forged := append([]string(nil), c.Labels("Deep Field")...)
+	forged = append(forged, "qp.icon=<svg onload=x>")
+	_, back = terminals.ParseCharacter(forged)
+	if back.Icon != "comet" {
+		t.Fatalf("an unknown icon name was carried: %q", back.Icon)
+	}
+	if !terminals.SpaceIcons["campfire"] || terminals.SpaceIcons[""] {
+		t.Fatal("the allowlist lost its shape")
+	}
+}

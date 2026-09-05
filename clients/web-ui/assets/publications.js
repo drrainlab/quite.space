@@ -43,8 +43,8 @@ function switchView(v) {
   // (spacenav.js): one place decides what is active and what may be made.
   if (typeof navMarkActive === 'function') navMarkActive(v);
   const posts = v === 'posts', shelf = v === 'shelf', objects = v === 'objects',
-    field = v === 'field';
-  const chat = !posts && !shelf && !objects && !field;
+    field = v === 'field', files = v === 'files', links = v === 'links';
+  const chat = !posts && !shelf && !objects && !field && !files && !links;
   document.getElementById('log').style.display = chat ? '' : 'none';
   document.getElementById('composer').style.display = chat ? '' : 'none';
   document.getElementById('cards').style.display = chat ? '' : 'none';
@@ -52,12 +52,16 @@ function switchView(v) {
   document.getElementById('shelf').style.display = shelf ? '' : 'none';
   document.getElementById('objects').style.display = objects ? '' : 'none';
   document.getElementById('field').style.display = field ? '' : 'none';
+  document.getElementById('files').style.display = files ? '' : 'none';
+  document.getElementById('links').style.display = links ? '' : 'none';
   // Leaving the field takes its timers with it (the ATMO.unmount rule).
   if (!field && typeof fieldTeardown === 'function') fieldTeardown();
   if (posts) refreshPosts();
   if (shelf) refreshShelf();
   if (objects) refreshObjects();
   if (field) { refreshField(); fieldOnEnter(); }
+  if (files && typeof refreshLibrary === 'function') refreshLibrary('files');
+  if (links && typeof refreshLibrary === 'function') refreshLibrary('links');
 }
 
 // pubNav is a navigation token: refreshPosts (the LIST) and openPub (an

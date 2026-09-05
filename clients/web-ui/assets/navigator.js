@@ -222,6 +222,18 @@ const NAV = (() => {
    * message elsewhere repaints nothing.
    * @param {View} v @param {any} sp @param {string} section @param {string} owner
    */
+  // navWhen: the time of the last moment the way an inbox says it —
+  // HH:MM today, a weekday inside the week, a short date beyond. The
+  // author's own clock (advisory), shown, never trusted for policy.
+  function navWhen(at) {
+    const d = new Date(at * 1000);
+    if (isNaN(d.getTime())) return '';
+    const now = new Date();
+    if (d.toDateString() === now.toDateString()) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    if ((now - d) / 86400000 < 6) return d.toLocaleDateString([], { weekday: 'short' });
+    return d.toLocaleDateString([], { day: '2-digit', month: '2-digit' });
+  }
+
   function spaceRow(v, sp, section, owner) {
     const key = section + (owner ? '/' + owner : '') + '/' + sp.id;
     const name = spaceName(sp);
@@ -242,10 +254,14 @@ const NAV = (() => {
       if (raw === null || sp.id === currentId) localStorage.setItem(seenKey, String(have));
       else fresh = !v.select && have > (Number(raw) || 0);
     } catch (e) { /* storage may be unavailable: no signal, no harm */ }
+    const last = sp.last || null;
     const sig = [name, sp.events, sp.undecryptable || 0, sp.owned ? 1 : 0,
       sp.frozen ? 1 : 0, sp.id === currentId ? 1 : 0, fresh ? 1 : 0,
       picked ? 1 : 0, closed ? 1 : 0, v.select ? 1 : 0, LOCALE,
-      sp.character?.central || ''].join('');
+      sp.character?.central || '', sp.character?.icon || '',
+      last ? (last.kind + '|' + (last.text || '') + '|' + (last.author || '') + '|' + (last.at || 0)) : '',
+      // The clock line changes at midnight without any moment changing.
+      new Date().toDateString()].join('');
     return {
       key, sig, build: () => {
         const d = document.createElement('div');
@@ -257,8 +273,17 @@ const NAV = (() => {
         d.tabIndex = 0;
         const an = ARCHETYPES[sp.character?.archetype]?.name || '';
         const bits = [];
-        if (an) bits.push(esc(an));
-        bits.push(esc(t('spaces.activity.events', { count: sp.events })));
+        // THE INBOX LINE (UI-1): what was said last, by whom — the line
+        // every messenger taught people to read before opening a room.
+        // A room with no moment yet still says what kind of place it is.
+        if (last) {
+          const who = last.mine ? t('conv.you') : (last.author || '');
+          const what = last.text || t('spaces.last.' + last.kind) || '';
+          bits.push(esc(who ? who + ': ' + what : what));
+        } else {
+          if (an) bits.push(esc(an));
+          bits.push(esc(t('spaces.activity.events', { count: sp.events })));
+        }
         // Number(), not esc(): this is a count, and the honest way to keep a
     // count out of markup is to make it a number rather than to escape
     // whatever arrived. Every other field on this row is esc()-wrapped;
@@ -270,7 +295,7 @@ const NAV = (() => {
           (v.select ? `<span class="nav-tick">${picked ? '✓' : ''}</span>` : '') +
           (!v.select && (section === 'pinned' || owner)
             ? '<span class="nav-grip" title="drag to reorder">⠿</span>' : '') +
-          `<span class="space-av"><span class="glyph g24">${glyphSVG(sp.id, sp.ai ? 'bot' : 'space', 24)}</span></span>` +
+          `<span class="space-av"><span class="glyph g24">${(typeof spaceAvatarSVG === 'function' ? spaceAvatarSVG(sp, 24) : glyphSVG(sp.id, sp.ai ? 'bot' : 'space', 24))}</span></span>` +
           `<span class="space-main"><span class="space-top">` +
             // The mode glyph rides WITH the name: a field space is
             // recognisable in the list before it is opened, and no row
@@ -280,6 +305,7 @@ const NAV = (() => {
             `<span class="t">${esc(name)}</span>` +
             (fresh ? `<span class="space-new" title="${esc(t('spaces.fresh'))}" aria-label="${esc(t('spaces.fresh'))}">✦</span>` : '') +
             (sp.owned ? `<span class="owner-tag">${esc(t('spaces.owner'))}</span>` : '') +
+            (last && last.at ? `<span class="when">${esc(navWhen(last.at))}</span>` : '') +
           `</span><span class="m">${closed ? esc(t('share.closed')) : bits.join(' · ')}</span></span>` +
           (v.select ? '' : `<button class="nav-more" aria-label="${esc(t('nav.more'))}">⋯</button>`);
         if (v.select) {

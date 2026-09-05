@@ -817,3 +817,84 @@ func (a *APIServer) projectEntry(tid id.TerminalID, sp *terminals.Space,
 }
 
 var _ = time.Now
+
+// lastMomentLocked is the inbox line (UI-1): the newest entry a person
+// would call a moment, summarised in one clipped string. Wordless kinds
+// return an empty Text and let the interface name them in the reader's
+// language. Caller holds r.mu (inside withSpace).
+func (a *APIServer) lastMomentLocked(st *spaceState) *lastResp {
+	entries := st.space.State.Entries()
+	me := a.rt.PrincipalID
+	for i := len(entries) - 1; i >= 0; i-- {
+		e := &entries[i]
+		txt, ok := momentSummary(e)
+		if !ok {
+			continue
+		}
+		name := ""
+		if e.Author == me {
+			name = a.rt.displayNameLocked()
+		} else {
+			for _, c := range st.space.MemberCards(0) {
+				if c.Principal == e.Author && c.Name != "" {
+					name = c.Name
+					break
+				}
+			}
+		}
+		return &lastResp{Kind: string(e.Kind), Text: txt, Author: name,
+			Mine: e.Author == me, At: e.CreatedAt}
+	}
+	return nil
+}
+
+// momentSummary says what one entry is, in the fewest words its content
+// offers. false for entries that are structure rather than a moment.
+func momentSummary(e *reducers.Entry) (string, bool) {
+	c := &e.Content
+	switch {
+	case c.Text != nil:
+		return clipMoment(c.Text.Text), true
+	case c.Voice != nil:
+		return clipMoment(c.Voice.Transcript), true
+	case c.Visual != nil:
+		return clipMoment(c.Visual.Caption), true
+	case c.Video != nil:
+		return clipMoment(c.Video.Caption), true
+	case c.Audio != nil:
+		return clipMoment(c.Audio.Title), true
+	case c.File != nil:
+		return clipMoment(c.File.Filename), true
+	case c.Link != nil:
+		if c.Link.Title != "" {
+			return clipMoment(c.Link.Title), true
+		}
+		return clipMoment(c.Link.URL), true
+	}
+	return "", false
+}
+
+const momentClip = 96
+
+func clipMoment(s string) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if len(s) <= momentClip {
+		return s
+	}
+	r := []rune(s)
+	if len(r) <= momentClip {
+		return s
+	}
+	return string(r[:momentClip-1]) + "…"
+}
+
+// peopleHereLocked counts the distinct principals with a member card in
+// the space, this person included even before their own card lands.
+// Caller holds r.mu.
+func peopleHereLocked(st *spaceState, me id.PrincipalID) int {
+	seen := map[id.PrincipalID]bool{me: true}
+	for _, c := range st.space.MemberCards(0) {
+		seen[c.Principal] = true
+	}
+	return len(seen)
+}

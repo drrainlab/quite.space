@@ -678,23 +678,39 @@ func (a *APIServer) handleMeshConnect(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
+// lastResp — see spaceResp.Last. Kind lets the interface localise the
+// wordless moments ("voice message", "photo") in the reader's language;
+// Text is the summary when there is one, already clipped.
+type lastResp struct {
+	Kind   string `json:"kind"`
+	Text   string `json:"text,omitempty"`
+	Author string `json:"author,omitempty"`
+	Mine   bool   `json:"mine,omitempty"`
+	At     uint64 `json:"at,omitempty"`
+}
+
 type characterResp struct {
-	Archetype string   `json:"archetype"`
-	Mood      string   `json:"mood"`
-	Material  string   `json:"material"`
-	Motion    string   `json:"motion"`
-	Geometry  string   `json:"geometry"`
-	Central   string   `json:"central"`
-	Memory    string   `json:"memory"`
-	Relic     string   `json:"relic"`
-	Rituals   []string `json:"rituals"`
-	Presence  []string `json:"presence"`
+	Archetype string `json:"archetype"`
+	// Icon names one of the built-in space icons (UI-1). An index into a
+	// set both sides ship; never markup, never bytes — an unknown name
+	// simply falls back to the generated glyph.
+	Icon     string   `json:"icon,omitempty"`
+	Mood     string   `json:"mood"`
+	Material string   `json:"material"`
+	Motion   string   `json:"motion"`
+	Geometry string   `json:"geometry"`
+	Central  string   `json:"central"`
+	Memory   string   `json:"memory"`
+	Relic    string   `json:"relic"`
+	Rituals  []string `json:"rituals"`
+	Presence []string `json:"presence"`
 	// state → small symbol; absent when the space never declared any.
 	PresenceGlyphs map[string]string `json:"presence_glyphs,omitempty"`
 }
 
 func characterOf(c terminals.Character) characterResp {
 	return characterResp{
+		Icon:      c.Icon,
 		Archetype: c.Archetype, Mood: c.Mood, Material: c.Material,
 		Motion: c.Motion, Geometry: c.Geometry, Central: c.Central,
 		Memory: c.Memory, Relic: c.Relic,
@@ -733,6 +749,14 @@ type spaceResp struct {
 	Pending       int           `json:"pending,omitempty"`
 	Peers         int           `json:"peers"`
 	Character     characterResp `json:"character"`
+	// Last is the inbox line (UI-1): the newest human-visible moment,
+	// summarised — what an ordinary messenger shows under a room's name.
+	// nil when the room has nothing a person would call a moment.
+	Last *lastResp `json:"last,omitempty"`
+	// People is how many distinct principals have a member card here —
+	// what "N people" under a room's name means. Peers, by contrast, is
+	// live connections, a fact about wires rather than about company.
+	People int `json:"people,omitempty"`
 	// PA-0 access surface.
 	Visibility      string `json:"visibility,omitempty"` // "" private | unlisted | public
 	Join            string `json:"join,omitempty"`       // "" | "open"
@@ -780,6 +804,8 @@ func (a *APIServer) handleSpaces(w http.ResponseWriter, r *http.Request) {
 		_ = a.rt.withSpace(s.ID, func(st *spaceState) error {
 			_, c := st.space.Character()
 			resp.Character = characterOf(c)
+			resp.Last = a.lastMomentLocked(st)
+			resp.People = peopleHereLocked(st, a.rt.PrincipalID)
 			pol := st.space.Policy()
 			if pol.IsPublic() {
 				resp.Visibility = string(pol.Visibility)
@@ -811,6 +837,7 @@ func (a *APIServer) handleCreateSpace(w http.ResponseWriter, r *http.Request) {
 	body, err := readBody[struct {
 		Title     string   `json:"title"`
 		Archetype string   `json:"archetype"`
+		Icon      string   `json:"icon"`
 		Mood      string   `json:"mood"`
 		Material  string   `json:"material"`
 		Motion    string   `json:"motion"`
@@ -851,6 +878,12 @@ func (a *APIServer) handleCreateSpace(w http.ResponseWriter, r *http.Request) {
 	set(&c.Geometry, body.Geometry)
 	set(&c.Central, body.Central)
 	set(&c.Memory, body.Memory)
+	// The icon is an index into the shipped set (UI-1): an unknown name
+	// is dropped here rather than carried, so the manifest never points
+	// at a mark no client can draw.
+	if terminals.SpaceIcons[body.Icon] {
+		c.Icon = body.Icon
+	}
 	if len(body.Rituals) > 0 {
 		c.Rituals = body.Rituals
 	}

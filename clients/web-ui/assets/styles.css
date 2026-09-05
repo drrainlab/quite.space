@@ -4258,3 +4258,31 @@ div.reply-to { cursor: default; }
 @media (prefers-reduced-motion: reduce) {
   .pub-card, .obj-card, .pub-card:hover, .obj-card:hover { transform: none; }
 }
+
+/* ---- UI-1: the familiar shell ---- */
+/* The room's mark in the header: the same icon the list shows, one
+   size up, sitting where every messenger puts the avatar. */
+.conv-icon { display: inline-grid; place-items: center; width: 32px; height: 32px;
+  border-radius: 50%; background: var(--surface-raised); margin-right: 8px; flex: 0 0 auto; }
+.conv-icon svg { display: block; }
+.space-av .sp-icon { display: block; }
+/* Picking a mark for a new room: a quiet grid of line icons. */
+.icon-grid { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 4px; }
+.icon-opt { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center;
+  border: 1px solid transparent; background: var(--surface-raised); color: var(--dim); cursor: pointer;
+  padding: 0; min-height: 0; }
+.icon-opt:hover { color: var(--fg); }
+.icon-opt.sel { border-color: var(--acc); color: var(--acc);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--acc) 35%, transparent); }
+/* The library views (files, links): rows, not bubbles. */
+.lib-list { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; }
+.lib-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: var(--radius-md);
+  cursor: pointer; text-decoration: none; color: inherit; }
+.lib-row:hover { background: var(--surface-raised); }
+.lib-ic { width: 36px; height: 36px; border-radius: 9px; display: grid; place-items: center;
+  background: var(--surface-raised); color: var(--dim); flex: 0 0 auto; overflow: hidden; }
+.lib-ic img { width: 100%; height: 100%; object-fit: cover; }
+.lib-main { flex: 1; min-width: 0; }
+.lib-t { display: block; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lib-m { display: block; color: var(--dim); font-size: 12px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lib-empty { color: var(--dim); padding: 28px 16px; text-align: center; }

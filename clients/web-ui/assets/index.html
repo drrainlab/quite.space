@@ -68,6 +68,7 @@
          action from somebody else's context. -->
     <div id="convbar">
       <div class="convbar-id">
+        <span id="convIcon" class="conv-icon" aria-hidden="true"></span>
         <span id="convMode" class="conv-mode"></span>
         <span id="convTitle"></span>
         <span id="convSub" class="conv-sub"></span>
@@ -130,6 +131,10 @@
     <div id="shelf" style="display:none"></div>
     <div id="objects" style="display:none"></div>
     <div id="field" style="display:none"></div>
+    <!-- UI-1: the library views — the same log, read as a shelf of
+         files and a list of links. Nothing new is written for them. -->
+    <div id="files" style="display:none"></div>
+    <div id="links" style="display:none"></div>
     <div id="log"></div>
     <div id="replyBar" style="display:none"></div>
     <!-- Where a question goes belongs beside the box you type it into,
@@ -411,6 +416,9 @@
   <div class="wiz-step" id="wiz2">
     <h3 data-i18n="ui.wiz.step2">2 · how should it feel?</h3>
     <div class="arch-grid" id="archGrid"></div>
+    <!-- UI-1: the room's mark. A curated set — the manifest carries only
+         the NAME; the archetype's own mark is preselected. -->
+    <div class="icon-grid" id="iconGrid" aria-label="Icon"></div>
     <div class="seed" id="moodSeed"></div>
     <div class="row">
       <select id="wMood" style="width:31%" data-on-change="62">
@@ -1531,6 +1539,8 @@
 <script src="chime-dsp.js"></script>
 <script src="chime.js"></script>
 <script src="glyphs.js"></script>
+<script src="icons.js"></script>
+<script src="library.js"></script>
 <script src="modes.js"></script>
 <script src="registry.js"></script>
 <script src="renderers.js"></script>

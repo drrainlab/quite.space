@@ -1926,8 +1926,18 @@ async function refreshSpace() {
   // name: archetype first (the character's own word), then access.
   const sub = document.getElementById('convSub');
   if (sub) {
+    // UI-1: the line under the name says WHO is here, the way a room in
+    // any messenger does; what KIND of place it is moves to the hover.
     const arch = char ? (ARCHETYPES[char.archetype]?.name || char.archetype) : '';
-    sub.textContent = arch;
+    const people = sp ? Math.max(1, Number(sp.people) || 0) : 0;
+    sub.textContent = sp ? t('ui.convbar.people', { count: people }) : '';
+    sub.title = arch;
+  }
+  const iconEl = document.getElementById('convIcon');
+  if (iconEl) {
+    const html = sp && typeof spaceAvatarSVG === 'function' ? spaceAvatarSVG(sp, 28) : '';
+    if (iconEl.innerHTML !== html) iconEl.innerHTML = html;
+    iconEl.style.display = html ? '' : 'none';
   }
   const modeEl = document.getElementById('convMode');
   if (modeEl && typeof navModeGlyph === 'function') {
@@ -3366,6 +3376,7 @@ function openWizard() {
     d.onclick = () => { selectArch(arch); wizStep(2); };
     wg.appendChild(d);
   }
+  renderIconGrid();
   const ag = document.getElementById('archGrid');
   ag.innerHTML = '';
   for (const [k, a] of Object.entries(ARCHETYPES)) {
@@ -3518,6 +3529,30 @@ function paintWizFinal() {
     t(dir ? 'wiz.dir.name_ph' : 'wiz.name_ph');
 }
 
+// UI-1: the room's mark. wizIcon follows the archetype until the person
+// picks one by hand; then it stays theirs across archetype changes.
+let wizIcon = '';
+let wizIconPicked = false;
+function renderIconGrid() {
+  const g = document.getElementById('iconGrid');
+  if (!g || typeof SPACE_ICON_PATHS === 'undefined') return;
+  if (!wizIconPicked) wizIcon = (ARCHETYPE_ICON[wizArch] || 'campfire');
+  g.innerHTML = '';
+  for (const name of Object.keys(SPACE_ICON_PATHS)) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'icon-opt' + (name === wizIcon ? ' sel' : '');
+    b.dataset.icon = name;
+    b.title = name;
+    b.innerHTML = spaceIconSVG(name, 22);
+    b.onclick = () => {
+      wizIcon = name; wizIconPicked = true;
+      g.querySelectorAll('.icon-opt').forEach(x => x.classList.toggle('sel', x === b));
+    };
+    g.appendChild(b);
+  }
+}
+
 async function wizCreate() {
   const title = document.getElementById('wTitle').value.trim();
   // An empty name is allowed: the place will be called after whoever
@@ -3548,7 +3583,7 @@ async function wizCreate() {
   const memory = document.querySelector('.mem-opt.sel')?.dataset.v || 'everything';
   try {
     const r = await api('/api/spaces', { method: 'POST', body: JSON.stringify({
-      title, archetype: wizArch,
+      title, archetype: wizArch, icon: wizIcon || undefined,
       mood: document.getElementById('wMood').value,
       material: document.getElementById('wMaterial').value,
       motion: document.getElementById('wMotion').value,

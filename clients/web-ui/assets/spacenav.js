@@ -26,15 +26,17 @@ let navBuiltFor = null;
 
 // Order per declared centre. The centre's own view leads; the rest
 // follow in the order that mode tends to reach for them.
+// UI-1 added files and links: derived views of the same log, placed
+// where a messenger's hand expects them — right after the conversation.
 const NAV_ORDER = {
-  chat: ['chat', 'posts', 'shelf', 'objects', 'field'],
-  objects: ['objects', 'chat', 'posts', 'shelf', 'field'],
-  field: ['field', 'chat', 'objects', 'posts', 'shelf'],
+  chat: ['chat', 'posts', 'files', 'links', 'shelf', 'objects', 'field'],
+  objects: ['objects', 'chat', 'files', 'links', 'posts', 'shelf', 'field'],
+  field: ['field', 'chat', 'files', 'links', 'objects', 'posts', 'shelf'],
   // A studio's works ARE objects (releases → tracks → sessions), so the
   // objects view is what "audio" centres on.
-  audio: ['objects', 'chat', 'shelf', 'posts', 'field'],
-  telemetry: ['chat', 'objects', 'posts', 'shelf', 'field'],
-  members: ['chat', 'posts', 'shelf', 'objects', 'field'],
+  audio: ['objects', 'chat', 'files', 'links', 'shelf', 'posts', 'field'],
+  telemetry: ['chat', 'objects', 'files', 'links', 'posts', 'shelf', 'field'],
+  members: ['chat', 'posts', 'files', 'links', 'shelf', 'objects', 'field'],
 };
 
 // How many views earn a tab; the rest live behind "···". Four is what
