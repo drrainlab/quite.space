@@ -106,10 +106,16 @@ The exact scope of that claim, including where it does **not** hold, is in
 
 ```
 $ quite log --releases
+  1.0.1-rc.2     delivered means acknowledged
   1.0.1-rc.1     the board found the door by itself
   1.0.0-beta.3   delivered is about machines, read is about you
   1.0.0-beta.2   where you actually went
 ```
+
+**1.0.1-rc.2** is a fix on top: the USB stand acknowledges every frame it
+applied, so an instrument's chain can no longer be holed by a cable pulled
+mid-sentence; the Wi-Fi courier is no longer struck out for not having
+dialed yet; the door keeps a diary — [release notes](docs/releases/1.0.1-rc.2.md).
 
 **1.0.1-rc.1** is the second episode of Quiet Instruments: a sensor on a
 shelf, a laptop in another room, **no cable between them** —
