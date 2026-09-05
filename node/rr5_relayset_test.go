@@ -15,6 +15,14 @@ func TestPolicyRelaySetDrivesResolution(t *testing.T) {
 	if err := r.SetSettings(s); err != nil {
 		t.Fatal(err)
 	}
+	// This test is about WHICH address resolution names, not whether the
+	// pool's breaker has judged it yet. The relay set below points at
+	// TEST-NET-3 — unroutable by definition — and on slow iron the
+	// background sync reaches it before the assertions do, the breaker
+	// marks it offline, and pickHealthy honestly answers "" (the exact
+	// timing pickHealthy's own comment describes). Stop the sync loop so
+	// the breaker never runs, and the resolver is judged on its ladder.
+	r.applyRelaySync("", 0)
 
 	tid, err := r.CreateSpaceWithOptions("сад", CreateOptions{
 		Character: terminals.DefaultCharacter("campfire"),
