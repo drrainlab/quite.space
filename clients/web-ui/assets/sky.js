@@ -9,7 +9,7 @@
 // "Watch how it was drawn" replays the log in order: a canvas with
 // memory is the whole reimagining.
 
-const SKY = (() => {
+const SKYDRAW = (() => {
   let open = null; // { spaceId, skyId, strokes, timer, playing }
   const GRID = 128;
 
@@ -191,5 +191,5 @@ const SKY = (() => {
   return { card, openSky, closeSky, setBright, undo, play, start };
 })();
 
-function renderSky(e) { return SKY.card(e); }
-if (typeof window !== 'undefined') { window.SKY = SKY; window.renderSky = renderSky; }
+function renderSky(e) { return SKYDRAW.card(e); }
+if (typeof window !== 'undefined') { window.SKYDRAW = SKYDRAW; window.renderSky = renderSky; }
