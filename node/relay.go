@@ -10,6 +10,7 @@ import (
 	"log"
 	"net"
 	"sort"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -630,46 +631,70 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 		eps = append(eps, ep)
 	}
 	sort.Strings(eps)
+	// EVERY ENDPOINT AT ONCE (LT-1). The endpoints used to be walked in
+	// order, so one relay slow to dial — throttling, or behind a VPN —
+	// held every other recipient's copy hostage for the length of its
+	// timeout. Each endpoint now gets its own lane in its own goroutine;
+	// the counters merge under one mutex, and the first failure is the
+	// failure — one endpoint down must not silence the others, and the
+	// loop retries the whole space.
+	var pushMu sync.Mutex
+	var pushWG sync.WaitGroup
 	for _, ep := range eps {
 		devs := byEndpoint[ep]
-		if err := withLane(ep, func(client *relay.Client) error {
-			for _, dev := range devs {
-				hint := relay.HintFor(tid, dev, bucket)
-				// One mailbox, several items. A Collect drains them all and
-				// the receiver folds each independently, so the only thing
-				// the split costs is wire ops — and the alternative was a
-				// space that stops delivering the day its log outgrows one
-				// item.
-				for _, b := range bodies {
-					d, err := client.Put(hint, expires, b)
-					if err != nil {
-						return err
+		pushWG.Add(1)
+		go func(ep string, devs []id.DeviceID) {
+			defer pushWG.Done()
+			reached, tentative, d0 := 0, 0, uint64(0)
+			err := withLane(ep, func(client *relay.Client) error {
+				for _, dev := range devs {
+					hint := relay.HintFor(tid, dev, bucket)
+					// One mailbox, several items. A Collect drains them all and
+					// the receiver folds each independently, so the only thing
+					// the split costs is wire ops — and the alternative was a
+					// space that stops delivering the day its log outgrows one
+					// item.
+					for _, b := range bodies {
+						d, err := client.Put(hint, expires, b)
+						if err != nil {
+							return err
+						}
+						d0 = d
 					}
-					deadline = d
-				}
-				// A status, on its own clock. The relay forgets it when it
-				// goes stale, which is the whole of what "no custody" was
-				// protecting.
-				for _, b := range fleetingBodies {
-					if _, err := client.Put(hint, fleetingUntil, b); err != nil {
-						return err
+					// A status, on its own clock. The relay forgets it when it
+					// goes stale, which is the whole of what "no custody" was
+					// protecting.
+					for _, b := range fleetingBodies {
+						if _, err := client.Put(hint, fleetingUntil, b); err != nil {
+							return err
+						}
+					}
+					if guessed[dev] {
+						tentative++
+					} else {
+						reached++
 					}
 				}
-				if guessed[dev] {
-					relayTentative++
-				} else {
-					relayReached++
+				return nil
+			})
+			pushMu.Lock()
+			defer pushMu.Unlock()
+			relayReached += reached
+			relayTentative += tentative
+			if d0 != 0 {
+				deadline = d0
+			}
+			if err != nil {
+				if sendErr == nil {
+					sendErr = err
 				}
+			} else if reached+tentative > 0 {
+				// The timeline (LT-1): a relay accepted these frames, now.
+				r.lat.relayed(eventIDs, ep)
 			}
-			return nil
-		}); err != nil {
-			// One endpoint down must not silence the others: keep going and
-			// report the first failure — the loop retries the whole space.
-			if sendErr == nil {
-				sendErr = err
-			}
-		}
+		}(ep, devs)
 	}
+	pushWG.Wait()
 	if relayReached == 0 && relayTentative == 0 && lanReached == 0 && sendErr != nil {
 		return 0, 0, noRoute, 0, 0, sendErr
 	}

@@ -300,6 +300,8 @@ type Runtime struct {
 	// authored: who has taken them on, and what has been proven. Never
 	// emitted, bundled or relayed.
 	ledger *Ledger
+	// lat is the LT-1 timeline of this device's own frames (latency.go).
+	lat latencyLedger
 	// receiptAudits keeps verified receipts that named a hand-off no longer
 	// current, so a stale acknowledgement is debuggable rather than silent.
 	receiptAudits map[id.EventID][]ReceiptAudit
@@ -1448,6 +1450,9 @@ func (r *Runtime) Say(tid id.TerminalID, text string, opt SayOptions) (id.EventI
 	if err != nil {
 		return id.EventID{}, err
 	}
+	if a.Env != nil {
+		r.lat.minted(a.ID, tid, a.Env.Sequence)
+	}
 	return a.ID, nil
 }
 
@@ -1480,6 +1485,9 @@ func (r *Runtime) MakeCard(tid id.TerminalID, title string, opt CardOptions) (id
 	if err != nil {
 		return id.EventID{}, err
 	}
+	if a.Env != nil {
+		r.lat.minted(a.ID, tid, a.Env.Sequence)
+	}
 	return a.ID, nil
 }
 
@@ -1498,6 +1506,9 @@ func (r *Runtime) EmitBlock(tid id.TerminalID, schema string, payload []byte) (i
 		r.Self.DefaultAuthorship(), uint64(time.Now().Unix()))
 	if err != nil {
 		return id.EventID{}, err
+	}
+	if a.Env != nil {
+		r.lat.minted(a.ID, tid, a.Env.Sequence)
 	}
 	return a.ID, nil
 }

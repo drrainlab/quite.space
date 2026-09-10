@@ -313,6 +313,10 @@ func (r *Runtime) installReceipts(tid id.TerminalID, receipts [][]byte) {
 		if r.ks.Delivered[tid][rc.Receiptor] < pos {
 			r.ks.Delivered[tid][rc.Receiptor] = pos
 			changed = true
+			// The timeline: a device outside this principal holds these.
+			if cert, ok := r.ident.certificateFor(rc.Receiptor); !ok || cert.Principal != r.PrincipalID {
+				r.lat.delivered(tid, pos, rc.Receiptor)
+			}
 		}
 	}
 	if changed {

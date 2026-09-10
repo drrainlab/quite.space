@@ -155,6 +155,16 @@ const OUTBOX = (() => {
           if (typeof refreshSpace === 'function' && item.space === current) {
             stickNext();
             await refreshSpace().catch(() => {});
+            // THE BURST: the node knows within a second whether a relay
+            // took the words and within a few whether a device holds
+            // them, but the regular poll can be ten seconds away when the
+            // window is not focused — and the person who just pressed
+            // Send is looking. Three extra looks, then back to the poll.
+            for (const ms of [1000, 3000, 6000]) {
+              setTimeout(() => {
+                if (item.space === current && typeof refreshSpace === 'function') refreshSpace().catch(() => {});
+              }, ms);
+            }
           }
           continue;
         }

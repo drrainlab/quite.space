@@ -47,6 +47,9 @@ type RelayDiagnostics struct {
 	Ingress []string         `json:"ingress,omitempty"`
 	Peers   []PeerRouteBrief `json:"peers,omitempty"`
 	NoRoute int              `json:"no_route_peers,omitempty"`
+	// Latency (LT-1): the last own frames' timeline — minted → a relay
+	// took it (which) → a foreign device signed for it — in ms.
+	Latency []LatencySample `json:"latency,omitempty"`
 	// LocalPeers are devices authenticated live on a local link right now
 	// (T6-LAN observed routes). Ephemeral by doctrine — this list is the
 	// ONLY place they surface; they are never in Peers, because Peers is
@@ -209,6 +212,7 @@ func (r *Runtime) RelayDiagnosticsSnapshot() RelayDiagnostics {
 	}
 	r.mu.Unlock()
 	sort.Slice(d.Peers, func(i, j int) bool { return d.Peers[i].Device < d.Peers[j].Device })
+	d.Latency = r.lat.snapshot(8)
 	sort.Strings(d.LocalPeers)
 	sort.Slice(d.Fetches, func(i, j int) bool {
 		a, b := d.Fetches[i], d.Fetches[j]

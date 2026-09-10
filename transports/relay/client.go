@@ -319,8 +319,13 @@ func (c *Client) listen(park *Msg, stop <-chan struct{}, notify func(hint []byte
 	// The poll pace is a latency/CPU trade the radio does not see: bytes
 	// already delivered to the socket are read from local buffers. Half a
 	// second of notification latency costs nothing anybody notices.
-	poll := time.NewTicker(500 * time.Millisecond)
-	defer poll.Stop()
+	// The connection wakes us for packets and for its own death, so the
+	// parked socket is SLEPT on, not polled — the doorbell rings the
+	// moment the bytes arrive, and a phone wakes for packets, not timers.
+	// The slow tick is a belt for the braces (a wake cannot be lost: it
+	// coalesces), at one wakeup a minute.
+	safety := time.NewTicker(time.Minute)
+	defer safety.Stop()
 	for {
 		select {
 		case <-stop:
@@ -329,7 +334,8 @@ func (c *Client) listen(park *Msg, stop <-chan struct{}, notify func(hint []byte
 			if err := c.conn.Send((&Msg{Type: MsgPing}).Encode()); err != nil {
 				return err
 			}
-		case <-poll.C:
+		case <-c.conn.Wake():
+		case <-safety.C:
 		}
 		for _, pkt := range c.conn.Poll() {
 			m, err := DecodeMsg(pkt)

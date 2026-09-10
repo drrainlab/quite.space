@@ -49,6 +49,7 @@ const (
 // Send writes a length-prefixed packet; a reader goroutine buffers inbound
 // packets for Poll.
 type Conn struct {
+	wake   chan struct{}
 	c      net.Conn
 	cap    int
 	mu     sync.Mutex
@@ -61,9 +62,23 @@ func newConn(c net.Conn, cap int) *Conn {
 	if cap <= 0 {
 		cap = maxPacket
 	}
-	cc := &Conn{c: c, cap: cap}
+	cc := &Conn{c: c, cap: cap, wake: make(chan struct{}, 1)}
 	go cc.readLoop()
 	return cc
+}
+
+// Wake is signalled (1-deep, coalescing) whenever a packet lands in the
+// inbox or the connection dies — so a listener can SLEEP on the socket
+// instead of polling it. A parked relay connection used to check its
+// inbox every 500 ms; the doorbell now rings the moment the bytes arrive,
+// and a phone in a pocket wakes for packets, not for timers.
+func (c *Conn) Wake() <-chan struct{} { return c.wake }
+
+func (c *Conn) signal() {
+	select {
+	case c.wake <- struct{}{}:
+	default:
+	}
 }
 
 func (c *Conn) readLoop() {
@@ -86,6 +101,7 @@ func (c *Conn) readLoop() {
 		c.mu.Lock()
 		c.inbox = append(c.inbox, pkt)
 		c.mu.Unlock()
+		c.signal()
 	}
 }
 
@@ -97,6 +113,7 @@ func (c *Conn) fail(err error) {
 		c.err = err
 	}
 	c.c.Close()
+	c.signal()
 }
 
 // ErrConnClosed is returned by every operation on a connection that has
