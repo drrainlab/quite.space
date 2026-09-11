@@ -133,11 +133,13 @@ async function refreshPosts() {
       if (typeof ATMO !== 'undefined' && p.atmosphere) {
         ATMO.cardStill(card, p.atmosphere);
         // A door has to open onto something. A KNOWN SCENE has motion to
-        // enter, so it gets the quiet door; SOUND is a consent, so it gets
-        // its own. A sequence has neither a scene nor motion — its pictures
-        // change by reading, not by entering — so it shows a door only when
-        // there is sound to say yes to. Offering "Open quiet" there would be
-        // a door onto nothing, which is the rule the marker already follows.
+        // enter, so it gets the plain door (opening the post starts the
+        // picture anyway; this door just says so); SOUND is a consent, so
+        // it gets its own. A sequence has neither a scene nor motion — its
+        // pictures change by reading, not by entering — so it shows a door
+        // only when there is sound to say yes to. Offering "Open" there
+        // would be a door onto nothing, which is the rule the marker
+        // already follows.
         const known = typeof SCENES !== 'undefined' && p.atmosphere.visual &&
           SCENES.get(String(p.atmosphere.visual.scene || ''));
         const hasSound = !!(p.atmosphere.audio && p.atmosphere.audio.asset) &&
@@ -154,7 +156,7 @@ async function refreshPosts() {
             b.onclick = (e) => { e.stopPropagation(); openPub(p.document_id, mode); };
             doors.appendChild(b);
           };
-          if (known) door('Open quiet', 'Quiet', 'quiet', 'btn-tinted');
+          if (known) door('Open', 'Open', 'quiet', 'btn-tinted');
           if (hasSound) door('Open with sound', 'Sound', 'sound', 'btn-filled');
           card.appendChild(doors);
         }
@@ -420,8 +422,10 @@ function renderArticle(p, mode) {
   if (preserved) {
     ATMO.reattach(box);
   } else if (atmoBar) {
+    // No mode from the feed → ATMO's own default: the picture opens on its
+    // own, sound waits for its door. Passing 'still' here was the old rule.
     ATMO.mount(box, doc.atmosphere, String(openDocID),
-               { bar: atmoBar, enter: mode || 'still' });
+               { bar: atmoBar, enter: mode || undefined });
   }
   startCommentPoll(); // receive others' comments live while this article is open
 }

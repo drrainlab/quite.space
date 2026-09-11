@@ -3,20 +3,28 @@
 //
 // THE PRODUCT RULE THIS FILE EXISTS TO ENFORCE:
 //
-//   A post in the feed stays an ordinary, readable post. The atmosphere
-//   begins only after a deliberate entry.
+//   A post in the feed stays an ordinary, readable post. Opening the post
+//   opens its picture. Sound begins only after a deliberate yes.
 //
 // So the feed gets a MARKER — a few words saying there is another layer here
 // — and never a running scene. Not as a performance concession, though it is
 // also that: a feed of twenty live canvases is a feed nobody can read, and an
 // immersive mode you fall into by scrolling is not a mode anyone chose. The
-// marker announces; entering is an act.
+// marker announces; opening the post is the act.
 //
-// The reading view then offers two doors, because sound and motion are
-// different decisions and bundling them takes one of them away:
+// Inside the post the scene is already moving — within whatever the person
+// set for atmospheres (off, poster, calm, full) and whatever the space and
+// the accessibility settings permit; STAGE decides, not this file. Sound is
+// the one thing that still asks, because sound and motion are different
+// decisions and bundling them takes one of them away:
 //
-//   Open with sound   the scene, and the post's own ambient bed
-//   Open quiet        the scene, in silence
+//   With sound        the post's own ambient bed, on top of the scene
+//   Pause / Leave     the scene frozen on its frame, or the still with the
+//                     door back
+//
+// (The owner changed this from "still and silent until a door is used" on
+// 2026-09-11: a scene nobody opens is a scene nobody sees, and the
+// photosensitivity floor under BRUSH is what makes an unasked picture safe.)
 //
 // Everything below sits on machinery that already exists and is already
 // bounded: SCENES resolves an allowlisted id or nothing (ADR-013 invariant 2),
@@ -487,10 +495,12 @@ const ATMO = (() => {
    * The shell is the article container itself. mount() prepends two layers —
    * the stage (canvas host) and the scrim (readability) — and renders the
    * controller into `opts.bar`, a normal in-flow element the article
-   * provides. Nothing moves and nothing sounds until a door is used, unless
-   * `opts.enter` carries a mode the person already chose in the feed: that
-   * click was the consent, so arriving in the chosen state honours it
-   * rather than asking twice.
+   * provides. The scene starts on its own when there is one and STAGE
+   * allows it; nothing SOUNDS until the sound door is used, unless
+   * `opts.enter` carries 'sound' — a door the person already pressed in the
+   * feed: that click was the consent, so arriving in the chosen state
+   * honours it rather than asking twice. `enter: 'still'` keeps the old
+   * quiet arrival for a caller that wants it.
    *
    * @param {HTMLElement} shell the article container (becomes .atmo-shell)
    * @param {any} atmosphere the recipe as projected by the node
@@ -649,7 +659,11 @@ const ATMO = (() => {
           renderBar('live', r.ok ? notes : ['quiet — ' + r.why]);
         });
         if (hasSound && soundMode() !== 'never') {
-          btn(bedSounding() ? 'Mute' : 'Unmute', 'btn-plain', () => {
+          // Three honest labels: sounding → Mute; loaded but held → Unmute;
+          // never started → the question itself, "With sound" — this is the
+          // one door left, and it must read as a door, not as a toggle that
+          // implies the sound was ever on.
+          btn(bedSounding() ? 'Mute' : (bed ? 'Unmute' : 'With sound'), 'btn-plain', () => {
             if (bedSounding()) { pauseBed(); renderBar('live', notes); return; }
             // The bed is loaded but held: continue it, never rebuild it.
             if (bed) {
@@ -687,12 +701,12 @@ const ATMO = (() => {
         if (hasSound && soundMode() !== 'never') {
           btn('Open with sound', 'btn-filled', () => enter(true));
         }
-        // A quiet door needs a picture to open onto; without a known scene
-        // there is no motion to enter and the door would be a false promise.
-        if (scene) {
-          btn(hasSound && soundMode() !== 'never' ? 'Open quiet' : 'Open',
-              'btn-tinted', () => enter(false));
-        }
+        // The still state now means the picture did not start on its own —
+        // STAGE declined (hidden tab, reduced motion, poster mode, a space
+        // that asked for stillness) or the person left. A plain door back
+        // in; without a known scene there is no motion to enter and the
+        // door would be a false promise.
+        if (scene) btn('Open', 'btn-tinted', () => enter(false));
         addTakeButton();
       }
 
@@ -796,17 +810,17 @@ const ATMO = (() => {
 
     renderBar('still');
 
-    // The mode carried in from the feed. A door click there was the consent;
-    // arriving in the chosen state honours it rather than asking twice.
-    const how = (opts && opts.enter) || 'still';
+    // The mode carried in from the feed. A sound door click there was the
+    // consent; arriving in the chosen state honours it rather than asking
+    // twice. With no mode given, the picture opens on its own — a known
+    // scene enters quiet; a remembered yes (the person's own standing
+    // instruction) enters with sound; a post with no scene stays still.
+    const how = (opts && opts.enter) || (scene ? 'quiet' : 'still');
     if (how === 'sound') enter(true);
-    else if (how === 'quiet') enter(false);
-    // A plain open (still) with a remembered yes: the person's own standing
-    // instruction, recorded at their request, outranks the quiet default.
     else if (!ignoreRemembered && hasSound && soundMode() === 'remember' &&
              localStorage.getItem(CONSENT_KEY)) {
       enter(true);
-    }
+    } else if (how === 'quiet') enter(false);
   }
 
   /**
@@ -2068,8 +2082,8 @@ const ATMO_EDIT = (() => {
       gwrap.appendChild(g);
       box.appendChild(gwrap);
       box.appendChild(el('p', 'hint',
-        'A reader chooses this: the post opens silent, with a door that says ' +
-        'there is sound behind it.'));
+        'A reader chooses this: the post opens with its picture and in ' +
+        'silence, with a button that says there is sound behind it.'));
     } else {
       const pickAudio = el('button', 'btn-filled atmo-edit-sound-add', '♫  Add a sound');
       pickAudio.type = 'button';

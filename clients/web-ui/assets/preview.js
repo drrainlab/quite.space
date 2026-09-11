@@ -120,7 +120,7 @@ const PREV = (() => {
       atmoBar.className = 'atmo-bar';
       box.appendChild(atmoBar);
       ATMO.mount(box, doc.atmosphere, 'prev:' + r.document_id, {
-        bar: atmoBar, enter: 'still',
+        bar: atmoBar,
         ignoreRemembered: true,
         srcFor: (aid) => prevAssetURL(r.preview_id, aid),
         posterInto: (img, aid) => fetchInto(r.preview_id, aid, img),
