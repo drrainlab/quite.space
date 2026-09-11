@@ -90,7 +90,7 @@ function arbiter() {
 
 function stageLifecycle() {
   const { ctx, harness, get } = boot([
-    'modes.js', 'audio.js', 'brush.js', 'scenes.js', 'scenes/field.js', 'stage.js',
+    'modes.js', 'audio.js', 'brush.js', 'scenes.js', 'scenes/field.js', 'scenes/nebula.js', 'stage.js',
   ]);
   const STAGE = get('STAGE'), SCENES = get('SCENES');
   const host = harness.document.createElement('div');
@@ -194,7 +194,7 @@ function stageLifecycle() {
 
 function preserveAcrossRerender() {
   const { harness, get } = boot([
-    'modes.js', 'audio.js', 'brush.js', 'scenes.js', 'scenes/field.js',
+    'modes.js', 'audio.js', 'brush.js', 'scenes.js', 'scenes/field.js', 'scenes/nebula.js',
     'stage.js', 'atmosphere.js',
   ]);
   const STAGE = get('STAGE'), ATMO = get('ATMO');

@@ -1730,6 +1730,9 @@ const ATMO_EDIT = (() => {
     // --- scene ------------------------------------------------------------
     const pick = el('select', 'atmo-edit-scene');
     for (const id of (typeof SCENES !== 'undefined' ? SCENES.list() : [])) {
+      // A lab scene is offered only behind the switch — unless this recipe
+      // already carries it, which must stay editable rather than vanish.
+      if (SCENES.isLab(id) && !SCENES.labOpen() && id !== a.visual.scene) continue;
       const o = el('option', null, SCENES.get(id).label + '  (' + id + ')');
       o.value = id;
       if (id === a.visual.scene) o.selected = true;

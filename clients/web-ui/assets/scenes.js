@@ -45,7 +45,12 @@ const SCENES = (() => {
         throw new Error(`scene ${id} param ${n} default is not 0..1000 permille`);
       }
     }
-    reg.set(id, { id, label: String(def.label || id), params, make: def.make });
+    // `lab` marks a scene the composer offers only behind the person's own
+    // lab switch (localStorage qp.lab = 'on'). It still renders when a recipe
+    // arrives carrying it, and the harnesses still sweep it: the switch gates
+    // AUTHORING, never reading — a spike must not become a scene nobody
+    // else can see by accident.
+    reg.set(id, { id, label: String(def.label || id), params, make: def.make, lab: !!def.lab });
   }
 
   /** @param {string} id */
@@ -53,6 +58,14 @@ const SCENES = (() => {
 
   /** Every known scene id, in a stable order. */
   function list() { return [...reg.keys()].sort(); }
+
+  /** Is this scene behind the lab switch? Unknown ids are not. */
+  function isLab(id) { const d = reg.get(id); return !!(d && d.lab); }
+
+  /** Has the person opened the lab? Device-local, never in a recipe. */
+  function labOpen() {
+    try { return typeof localStorage !== 'undefined' && localStorage.getItem('qp.lab') === 'on'; } catch { return false; }
+  }
 
   /**
    * Instantiate a scene from a recipe.
@@ -87,7 +100,7 @@ const SCENES = (() => {
     }
   }
 
-  return { define, get, list, make };
+  return { define, get, list, make, isLab, labOpen };
 })();
 
 if (typeof window !== 'undefined') window.SCENES = SCENES;

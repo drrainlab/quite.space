@@ -59,6 +59,14 @@
 const BRUSH = (() => {
   /** A full-surface wash may never move the picture more than this at once. */
   const MAX_WASH_ALPHA = 0.12;
+  /** A PLATE is an externally rendered picture (a shader's offscreen canvas)
+      laid over the whole surface. Its colour, for the floor, is its MEAN —
+      sampled through the same 8×8 meter the readback uses — and it passes
+      the same admission as any mark: the frame's luminance may move by at
+      most MAX_LUMA_STEP, so the alpha the plate actually gets is whatever the
+      floor allows, never the alpha it asked for. The ceiling keeps the
+      ground visible under even a fully admitted plate. */
+  const MAX_PLATE_ALPHA = 0.9;
   /** Any single mark. Marks are small; this is a backstop, not the guard. */
   const MAX_INK_ALPHA = 0.6;
   /**
@@ -318,6 +326,33 @@ const BRUSH = (() => {
     }
 
     /** @param {number} i */
+    // sampleMean is the plate's colour for admission: the source drawn into
+    // the 8×8 meter, composited over the ground, averaged. null without a
+    // document (the Node harness) — a plate then meters as nothing.
+    function sampleMean(source) {
+      if (typeof document === 'undefined') return null;
+      try {
+        if (!meter) {
+          const m = document.createElement('canvas');
+          m.width = m.height = METER;
+          meter = m.getContext('2d', { willReadFrequently: true });
+          if (!meter) return null;
+        }
+        meter.clearRect(0, 0, METER, METER);
+        meter.drawImage(source, 0, 0, METER, METER);
+        const d = meter.getImageData(0, 0, METER, METER).data;
+        let r = 0, g = 0, b = 0;
+        for (let i = 0; i < d.length; i += 4) {
+          const al = d[i + 3] / 255;
+          r += d[i] * al + ground[0] * (1 - al);
+          g += d[i + 1] * al + ground[1] * (1 - al);
+          b += d[i + 2] * al + ground[2] * (1 - al);
+        }
+        const n = METER * METER;
+        return [r / n, g / n, b / n];
+      } catch { return null; }
+    }
+
     function colour(i) {
       const k = clamp(Math.floor(num(i, 0)), 0, pal.length - 1);
       return { hex: pal[k], rgb: palRGB[k], luma: palLuma[k] };
@@ -338,6 +373,18 @@ const BRUSH = (() => {
       get colours() { return pal.length; },
       /** Deterministic 0..1, seeded by the recipe. */
       rand: rng(num(o.seed, 1)),
+      plate(source, alpha) {
+        if (!source) return 0;
+        const mean = sampleMean(source);
+        if (!mean) return 0;
+        const w = admit(1, clamp(num(alpha, 0), 0, MAX_PLATE_ALPHA), mean, lumaOf(mean));
+        if (w <= 0 || !ctx) return w;
+        ctx.save();
+        ctx.globalAlpha = w;
+        try { ctx.drawImage(source, 0, 0, W, H); } catch { /* a lost context draws nothing */ }
+        ctx.restore();
+        return w;
+      },
 
       /**
        * How loud the post's OWN ambient bed is right now, 0..1.
@@ -486,7 +533,7 @@ const BRUSH = (() => {
   }
 
   return { make, luminance, rng, limits: {
-    MAX_WASH_ALPHA, MAX_INK_ALPHA, MAX_LUMA_STEP,
+    MAX_WASH_ALPHA, MAX_INK_ALPHA, MAX_LUMA_STEP, MAX_PLATE_ALPHA,
     MAX_FRAME_COVERAGE, MAX_FRAME_OPS, MAX_MARK_SPAN,
   } };
 })();
