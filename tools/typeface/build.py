@@ -13,7 +13,11 @@ from engine import UPM, CAP, XH, ASC, DESC, expand  # noqa: E402
 from glyphs import GLYPHS, SB  # noqa: E402
 
 FAMILY = 'Quiet Signal'
-WEIGHTS = {'Regular': (92, 400), 'Bold': (150, 700)}
+# Stroke per weight, in units of the 1000 em. The first cut was 92/150 and
+# the owner's eye at 13–16 px called the Cyrillic heavy: wide letters with
+# many verticals turn to a blocky texture when a stroke is a tenth of the
+# em. 80 keeps the monoline at UI sizes; 140 keeps the Bold a display face.
+WEIGHTS = {'Regular': (80, 400), 'Bold': (140, 700)}
 
 
 def build(style, stroke, weight_class, outdir):

@@ -63,7 +63,7 @@ def arch_bottom(x0, y0, x1, y1, s, r):
     return P([(x0 + s / 2, y1)] + pts + [(x1 - s / 2, y1)])
 
 
-def c_shape(x0, y0, x1, y1, s, r, top=0.76, bot=0.24, mirror=False):
+def c_shape(x0, y0, x1, y1, s, r, top=0.80, bot=0.20, mirror=False):
     """C: the bowl minus a mouth on the right (or the left when mirrored)."""
     box = rr(x0, y0, x1, y1, s, r)
     h = y1 - y0
@@ -90,7 +90,7 @@ def bowl(x0, y0, x1, y1, s, r):
 def small_top(s):
     """The top of a lowercase half-bowl (a, ъ, ы, ь, я): a fraction of the
     x-height, but never so low that two strokes cannot fit inside it."""
-    return max(0.56 * X, 2 * s + 44)
+    return max(0.60 * X, 2 * s + 44)
 
 
 def dot(x, y, s):
@@ -242,7 +242,7 @@ def g_Z(s):
 def g_a(s):
     W = WL
     box = rr(0, 0, W, X, s, RL)
-    top = sub(box, (W, 0.62 * X), (0, 0.66 * X), forward=False)
+    top = sub(box, (W, 0.64 * X), (W * 0.22, X), forward=False)
     return [stem(W - s / 2, 0, X, s), P(top), bowl(0, 0, W, small_top(s), s, RL * 0.8)], adv(W)
 
 
@@ -262,7 +262,7 @@ def e_parts(W, s, mirror=False):
     # The mouth is measured in STROKES, not in fractions of the x-height: a
     # crossbar and a terminal a fixed distance apart close up at the bold.
     bar = 0.5 * X + s * 0.35
-    end = bar - s - 0.10 * X
+    end = bar - s - 0.17 * X
     box = rr(0, 0, W, X, s, RL * 0.92)
     if not mirror:
         pts = sub(box, (W, bar), (W, end), forward=False)
@@ -410,8 +410,8 @@ def g_three(s):
     m = H / 2
     top = rr(0, m - s / 2, W, H, s, R * 0.9)
     bot = rr(0, 0, W, m + s / 2, s, R * 0.9)
-    a = sub(top, (0, 0.78 * H), (W * 0.36, m), forward=True)
-    b = sub(bot, (W * 0.36, m), (0, 0.20 * H), forward=True)
+    a = sub(top, (W * 0.14, H), (W * 0.36, m), forward=True)
+    b = sub(bot, (W * 0.36, m), (W * 0.14, 0), forward=True)
     return [P(a), P(b)], adv(W)
 
 
@@ -562,15 +562,15 @@ def g_Ge(s):   # Г
 
 
 def g_De(s):   # Д
-    W = WC + 40
-    foot = -140
+    W = WC + 20
+    foot = -110
     return [L((W * 0.30, H - s / 2), (W * 0.80, H - s / 2)), D((W * 0.30 + s * 0.3, H), (W * 0.10, s * 0.8)),
             stem(W * 0.80 - s / 2, 0, H, s), L((0, s / 2), (W, s / 2)),
             stem(s / 2, foot, s, s), stem(W - s / 2, foot, s, s)], adv(W)
 
 
 def g_Zhe(s):  # Ж
-    W = WC + 260
+    W = WC + 180
     c = W / 2
     return [stem(c, 0, H, s),
             D((c - s * 0.5, 0.42 * H), (14, H)), D((c - s * 0.5, 0.52 * H), (14, 0)),
@@ -609,7 +609,7 @@ def g_U_cyr(s):  # У
 
 
 def g_Ef(s):   # Ф
-    W = WC + 260
+    W = WC + 180
     return [stem(W / 2, 0, H, s), bowl(0, 0.16 * H, W, 0.84 * H, s, R)], adv(W)
 
 
@@ -627,12 +627,12 @@ def g_Che(s):  # Ч
 
 
 def g_Sha(s):  # Ш
-    W = WC + 300
+    W = WC + 230
     return [stem(s / 2, 0, H, s), stem(W / 2, 0, H, s), stem(W - s / 2, 0, H, s), L((0, s / 2), (W, s / 2))], adv(W)
 
 
 def g_Shcha(s):  # Щ
-    W = WC + 300
+    W = WC + 230
     return [stem(s / 2, 0, H, s), stem(W / 2, 0, H, s), stem(W - s / 2, 0, H, s), L((0, s / 2), (W + 40, s / 2)),
             stem(W + 40 - s / 2, -140, s, s)], adv(W + 40)
 
@@ -645,7 +645,7 @@ def g_Hard(s):  # Ъ
 
 
 def g_Yeru(s):  # Ы
-    W = WC + 260
+    W = WC + 200
     return [stem(s / 2, 0, H, s), bowl(0, 0, W * 0.62, 0.56 * H, s, R * 0.85), stem(W - s / 2, 0, H, s)], adv(W)
 
 
@@ -656,12 +656,12 @@ def g_Soft(s):  # Ь
 
 def g_E_cyr(s):  # Э
     W = WC
-    return [c_shape(0, 0, W, H, s, R, top=0.76, bot=0.24, mirror=True), L((W * 0.38, H / 2), (W - s / 2, H / 2))], adv(W)
+    return [c_shape(0, 0, W, H, s, R, mirror=True), L((W * 0.42, H / 2), (W - s / 2, H / 2))], adv(W)
 
 
 def g_Yu(s):   # Ю
-    W = WC + 320
-    x = 200
+    W = WC + 250
+    x = 180
     return [stem(s / 2, 0, H, s), L((s / 2, H / 2), (x + s, H / 2)), bowl(x, 0, W, H, s, R)], adv(W)
 
 
@@ -676,7 +676,7 @@ def g_Ya(s):   # Я
 def g_be(s):   # б
     W = WL
     rc = max(120, s / 2 + 14)
-    top = [(W - s / 2, 0.45 * X), (W - s / 2, ASC - rc)] + arc_points(W - s / 2 - rc, ASC - rc, rc, 0, 90, 10) + [(W * 0.05, ASC - s / 2)]
+    top = [(W - s / 2, 0.45 * X), (W - s / 2, ASC - rc)] + arc_points(W - s / 2 - rc, ASC - rc, rc, 0, 90, 10) + [(W * 0.22, ASC - s / 2)]
     return [bowl(0, 0, W, X, s, RL), P(top)], adv(W)
 
 
@@ -692,15 +692,15 @@ def g_ge(s):   # г
 
 
 def g_de(s):   # д
-    W = WL + 20
-    foot = -130
+    W = WL + 10
+    foot = -100
     return [L((W * 0.30, X - s / 2), (W * 0.80, X - s / 2)), D((W * 0.30 + s * 0.3, X), (W * 0.10, s * 0.8)),
             stem(W * 0.80 - s / 2, 0, X, s), L((0, s / 2), (W, s / 2)),
             stem(s / 2, foot, s, s), stem(W - s / 2, foot, s, s)], adv(W)
 
 
 def g_zhe(s):  # ж
-    W = WL + 240
+    W = WL + 160
     c = W / 2
     return [stem(c, 0, X, s),
             D((c - s * 0.5, 0.40 * X), (12, X)), D((c - s * 0.5, 0.52 * X), (12, 0)),
@@ -712,8 +712,8 @@ def g_ze(s):   # з
     m = X / 2
     top = rr(0, m - s / 2, W, X, s, RL * 0.8)
     bot = rr(0, 0, W, m + s / 2, s, RL * 0.8)
-    a = sub(top, (0, 0.78 * X), (W * 0.36, m), forward=True)
-    b = sub(bot, (W * 0.36, m), (0, 0.20 * X), forward=True)
+    a = sub(top, (W * 0.14, X), (W * 0.36, m), forward=True)
+    b = sub(bot, (W * 0.36, m), (W * 0.14, 0), forward=True)
     return [P(a), P(b)], adv(W)
 
 
@@ -758,7 +758,7 @@ def g_te(s):   # т
 
 
 def g_ef(s):   # ф
-    W = WL + 260
+    W = WL + 190
     return [stem(W / 2, DESC, ASC, s), bowl(0, 0, W, X, s, RL)], adv(W)
 
 
@@ -776,12 +776,12 @@ def g_che(s):  # ч
 
 
 def g_sha(s):  # ш
-    W = WL + 280
+    W = WL + 210
     return [stem(s / 2, 0, X, s), stem(W / 2, 0, X, s), stem(W - s / 2, 0, X, s), L((0, s / 2), (W, s / 2))], adv(W)
 
 
 def g_shcha(s):  # щ
-    W = WL + 280
+    W = WL + 210
     return [stem(s / 2, 0, X, s), stem(W / 2, 0, X, s), stem(W - s / 2, 0, X, s), L((0, s / 2), (W + 40, s / 2)),
             stem(W + 40 - s / 2, -130, s, s)], adv(W + 40)
 
@@ -793,7 +793,7 @@ def g_hard(s):  # ъ
 
 
 def g_yeru(s):  # ы
-    W = WL + 240
+    W = WL + 180
     return [stem(s / 2, 0, X, s), bowl(0, 0, W * 0.62, small_top(s), s, RL * 0.8), stem(W - s / 2, 0, X, s)], adv(W)
 
 
@@ -804,12 +804,12 @@ def g_soft(s):  # ь
 
 def g_e_cyr(s):  # э
     W = WL
-    return [c_shape(0, 0, W, X, s, RL, top=0.76, bot=0.24, mirror=True), L((W * 0.36, X / 2), (W - s / 2, X / 2))], adv(W)
+    return [c_shape(0, 0, W, X, s, RL, mirror=True), L((W * 0.42, X / 2), (W - s / 2, X / 2))], adv(W)
 
 
 def g_yu(s):   # ю
-    W = WL + 300
-    x = 180
+    W = WL + 230
+    x = 160
     return [stem(s / 2, 0, X, s), L((s / 2, X / 2), (x + s, X / 2)), bowl(x, 0, W, X, s, RL)], adv(W)
 
 
@@ -864,3 +864,118 @@ for ch, fn in CYR_CAPS.items():
     GLYPHS['uni%04X' % ord(ch)] = (ord(ch), fn)
 for ch, fn in CYR_LOWER.items():
     GLYPHS['uni%04X' % ord(ch)] = (ord(ch), fn)
+
+
+# ------------------------------------------------- more punctuation
+
+def g_periodcentered(s):
+    return [dot(s / 2, 0.36 * H, s)], adv(s)
+
+
+def g_bullet(s):
+    W = s + 60
+    return [bowl(0, 0.36 * H - W / 2, W, 0.36 * H + W / 2, s, W / 2)], adv(W)
+
+
+def g_ellipsis(s):
+    W = s * 3 + 220
+    return [dot(s / 2, s / 2, s), dot(W / 2, s / 2, s), dot(W - s / 2, s / 2, s)], adv(W)
+
+
+def g_quoteleft(s):
+    return [stem(s / 2, H - 200, H, s), D((s, H - 200), (s * 0.3, H - 300), 'h')], adv(s)
+
+
+def g_quoteright(s):
+    return [stem(s / 2, H - 200, H, s), D((s * 0.5, H - 200), (s * 0.1, H - 300), 'h')], adv(s)
+
+
+def g_quotedblleft(s):
+    a, w = g_quoteleft(s)
+    b, _ = g_quoteleft(s)
+    off = s + 60
+    b = [(k, (x0 + off, y0), (x1 + off, y1)) + tuple(rest) for (k, (x0, y0), (x1, y1), *rest) in b]
+    return a + b, adv(s * 2 + 60)
+
+
+def g_quotedblright(s):
+    a, w = g_quoteright(s)
+    b, _ = g_quoteright(s)
+    off = s + 60
+    b = [(k, (x0 + off, y0), (x1 + off, y1)) + tuple(rest) for (k, (x0, y0), (x1, y1), *rest) in b]
+    return a + b, adv(s * 2 + 60)
+
+
+def g_degree(s):
+    W = s * 2 + 60
+    return [bowl(0, H - W, W, H, s, W / 2)], adv(W)
+
+
+def g_percent(s):
+    W = WD + 60
+    b = s * 2 + 80
+    return [bowl(0, H - b, b, H, s, b / 2), bowl(W - b, 0, W, b, s, b / 2), D((W - 10, H), (10, 0))], adv(W)
+
+
+def g_numbersign(s):
+    W = WD - 40
+    return [L((0, 0.62 * H), (W, 0.62 * H)), L((0, 0.28 * H), (W, 0.28 * H)),
+            D((W * 0.36, 0), (W * 0.46, H), 'h'), D((W * 0.64, 0), (W * 0.74, H), 'h')], adv(W)
+
+
+def g_asterisk(s):
+    W = 360
+    c, y = W / 2, H - 170
+    return [stem(c, y - 170, y + 170, s), D((c - 150, y - 90), (c + 150, y + 90), 'v'), D((c - 150, y + 90), (c + 150, y - 90), 'v')], adv(W)
+
+
+def g_bracketleft(s):
+    W = 240
+    return [stem(s / 2, DESC, H + 40, s), L((0, H + 40 - s / 2), (W, H + 40 - s / 2)), L((0, DESC + s / 2), (W, DESC + s / 2))], adv(W)
+
+
+def g_bracketright(s):
+    W = 240
+    return [stem(W - s / 2, DESC, H + 40, s), L((0, H + 40 - s / 2), (W, H + 40 - s / 2)), L((0, DESC + s / 2), (W, DESC + s / 2))], adv(W)
+
+
+def g_less(s):
+    W = 420
+    return [D((W, 0.62 * H), (20, 0.36 * H), 'h'), D((W, 0.10 * H), (20, 0.36 * H), 'h')], adv(W)
+
+
+def g_greater(s):
+    W = 420
+    return [D((0, 0.62 * H), (W - 20, 0.36 * H), 'h'), D((0, 0.10 * H), (W - 20, 0.36 * H), 'h')], adv(W)
+
+
+def g_at(s):
+    W = WC + 80
+    inner = rr(W * 0.30, 0.22 * H, W * 0.74, 0.66 * H, s, R * 0.6)
+    outer = rr(0, 0, W, H, s, R)
+    ring = sub(outer, (W, 0.60 * H), (W, 0.28 * H), forward=False)
+    return [P(inner, closed=True), stem(W * 0.74 - s / 2, 0.22 * H, 0.66 * H, s), P(ring)], adv(W)
+
+
+def g_ampersand(s):
+    W = WC + 20
+    return [bowl(0, 0, W * 0.78, 0.60 * H, s, R * 0.9), bowl(W * 0.08, 0.50 * H, W * 0.66, H, s, R * 0.8),
+            D((W * 0.40, 0.42 * H), (W, 0))], adv(W)
+
+
+def g_asciitilde(s):
+    W = 480
+    y = 0.36 * H
+    pts = arc_points(W * 0.25, y - 20, W * 0.22, 180, 30, 10) + arc_points(W * 0.75, y + 20, W * 0.22, 210, 360, 10)
+    return [P(pts)], adv(W)
+
+
+GLYPHS.update({
+    'periodcentered': (0xB7, g_periodcentered), 'bullet': (0x2022, g_bullet), 'ellipsis': (0x2026, g_ellipsis),
+    'quoteleft': (0x2018, g_quoteleft), 'quoteright': (0x2019, g_quoteright),
+    'quotedblleft': (0x201C, g_quotedblleft), 'quotedblright': (0x201D, g_quotedblright),
+    'degree': (0xB0, g_degree), 'percent': (0x25, g_percent), 'numbersign': (0x23, g_numbersign),
+    'asterisk': (0x2A, g_asterisk), 'bracketleft': (0x5B, g_bracketleft), 'bracketright': (0x5D, g_bracketright),
+    'less': (0x3C, g_less), 'greater': (0x3E, g_greater), 'at': (0x40, g_at), 'ampersand': (0x26, g_ampersand),
+    'asciitilde': (0x7E, g_asciitilde),
+})
