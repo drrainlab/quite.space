@@ -33,8 +33,12 @@
     /* Re-graded 2026-08-28 (owner's number): one neutral grey glass for both
        sides — 74/74/74 at 28%. Lighter than the charcoal pair but far more
        transparent; the blur carries legibility, the side still says "mine". */
-    --bubble-own: rgb(74 74 74 / 28%); --bubble-other: rgb(74 74 74 / 28%);
-    --bubble-own-border: rgba(190,140,220,.07);
+    /* Re-graded 2026-09-11 (owner's screenshot): the glass went. Bubbles
+       are SOLID and dark now — a message sits on its own ground instead of
+       letting the sky through; incoming near-neutral graphite, own with the
+       violet whisper. The blur behind them no longer matters. */
+    --bubble-own: #1c1a24; --bubble-other: #17171d;
+    --bubble-own-border: rgba(190,140,220,.10);
     --composer: rgba(21,18,23,.62); --composer-line: rgba(255,255,255,.055);
     /* geometry + type */
     --radius-sm: 8px; --radius-md: 12px; --radius-lg: 18px;
