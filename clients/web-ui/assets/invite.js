@@ -43,22 +43,11 @@ function hubIntent(intent) {
 function hubCarrier(c) {
   hubCarrierNow = c;
   const ready = document.getElementById('passReady');
-  if (!ready || ready.style.display === 'none') return;
-  let tabs = document.getElementById('hubCarriers');
-  if (!tabs) {
-    tabs = document.createElement('div');
-    tabs.id = 'hubCarriers';
-    tabs.className = 'segmented hub-carriers';
-    for (const k of ['link', 'qr', 'sound']) {
-      const b = document.createElement('button');
-      b.type = 'button';
-      b.dataset.c = k;
-      b.textContent = t('hub.carrier.' + k);
-      b.onclick = () => hubCarrier(k);
-      tabs.appendChild(b);
-    }
-    ready.insertBefore(tabs, ready.firstChild);
-  }
+  const tabs = document.getElementById('hubCarriers');
+  if (!ready || !tabs) return;
+  const minted = ready.style.display !== 'none';
+  tabs.hidden = !minted;
+  if (!minted) return;
   tabs.querySelectorAll('button').forEach(b => b.classList.toggle('sel', b.dataset.c === c));
   const code = ready.querySelector('.pass-code');
   const qr = ready.querySelector('.pass-qr-view');

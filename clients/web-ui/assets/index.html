@@ -680,6 +680,14 @@
     </button>
   </div>
   <div id="hubSpace" hidden>
+    <!-- The carriers of a minted pass, one at a time. Static markup so
+         the injection harness can claim every handler; invite.js only
+         decides which is visible. -->
+    <div class="segmented hub-carriers" id="hubCarriers" hidden>
+      <button type="button" data-c="link" data-on-click="265" data-i18n="hub.carrier.link">Link</button>
+      <button type="button" data-c="qr" data-on-click="266" data-i18n="hub.carrier.qr">QR</button>
+      <button type="button" data-c="sound" data-on-click="267" data-i18n="hub.carrier.sound">Sound</button>
+    </div>
 <div class="pass-card">
     <div class="pass-head">
       <span class="glyph g48" id="passGlyph"></span>
