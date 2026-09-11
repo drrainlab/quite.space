@@ -1437,10 +1437,10 @@
     padding: 8px 12px 0 16px; }
   .convbar-id { display: flex; align-items: center; gap: 8px; min-height: 34px; }
   #convTitle { font-weight: 700; font-size: calc(15px * var(--font-scale)); font-family: var(--font-display); letter-spacing: .01em; }
-  .nav-act .nav-label { font-family: var(--font-display); font-weight: 400; letter-spacing: .03em; }
-  .space .t, .nav-sec-head { font-family: var(--font-display); }
+  /* Only where the type is 15px or larger: a wide display face at 11px
+     section heads and 13px header labels is a texture, not a voice. */
+  .space .t { font-family: var(--font-display); }
   .pane-title { font-family: var(--font-display); font-weight: 700; }
-  .pane-sec > h3 { font-family: var(--font-display); font-weight: 400; letter-spacing: .06em; }
   /* The archetype, said once and quietly: the title is the space's NAME,
      this is what kind of place it is. */
   .conv-sub { color: var(--dim); font-size: 12px; }

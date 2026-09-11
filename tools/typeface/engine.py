@@ -133,7 +133,11 @@ def offset_path(points, w, closed):
         # inner offset folds over itself and comes out wound the SAME way as
         # the outer. Emitting it would punch a sliver hole (the hairline seen
         # in a bold 'a'); a solid blob is the honest rendering of that shape.
-        if _area(inner) * _area(outer) > 0 or abs(_area(inner)) < 400:
+        # Both offsets are walked in the centreline's direction, so a healthy
+        # inner has the SAME sign as the outer; a folded one comes out with
+        # the opposite sign. (The first cut tested this backwards and shipped
+        # every o as a solid dot — the owner saw "disc●ver" in the header.)
+        if _area(inner) * _area(outer) < 0 or abs(_area(inner)) < 400:
             return [_cw(outer)]
         return [_cw(outer), _ccw(inner)]
     return [_cw(left + right[::-1])]
