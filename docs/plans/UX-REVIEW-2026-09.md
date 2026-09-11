@@ -35,7 +35,7 @@ scenarios pass with two people out of three.
 
 ## Waves
 
-**UX-1 — the shell says less, and says it plainly** (web-ui only)
+**UX-1 — the shell says less, and says it plainly** (web-ui only) — ✅ 8b8f23f
 - Compact space header; the logo lives in the list and the front door.
 - Literal buttons: Create a space · Join · Invite · Back up.
 - The list outweighs the header: the four coloured buttons become quiet
@@ -49,16 +49,20 @@ scenarios pass with two people out of three.
   for codes, verification words and telemetry; a reading typeface for
   conversation; contrast checked against real colours.
 
-**UX-2 — navigation by meaning**
+**UX-2 — navigation by meaning** — ✅ 3d2976f
 - Materials = posts · files · links, one view with filters.
 - Shelf and Objects each get their one sentence; a section whose
   sentence does not convince merges into Materials.
 
-**UX-3 — invitations by intent, This device by task**
-- Two entries: *Start a new conversation* / *Invite into this space*;
-  then the carrier: link · QR · sound. The device/person split above.
-- One paste field that recognises the format. Previewing a pass must
-  not spend it — a test pins that promise.
+**UX-3 — invitations by intent, This device by task** — ✅ (this commit)
+- Two entries: *Into this space* / *A new conversation*; then the
+  carrier: link · QR · sound (words for a new conversation). Note: in
+  the web-ui, words and sound both invite a PERSON (quick link / audio
+  pass); pairing your own device lives in the native shells, so the
+  device/person split needs no third intent here.
+- One paste field that recognises the format. Previewing a quick link
+  never spends it — node/quicklink_test.go (a link resolves twice, then
+  admits once; backing out keeps the entrance) pins that promise.
 - Profile & devices overview; verification, backup and technical
   details open from it. Backup shows its state: not yet · created at.
 

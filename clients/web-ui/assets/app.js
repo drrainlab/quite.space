@@ -3239,6 +3239,7 @@ function openPass(s) {
   document.getElementById('passCopyBtn').style.display = 'none';
   document.getElementById('passRevokeBtn').style.display = 'none';
   document.getElementById('passMsg').style.display = 'none';
+  if (typeof hubIntent === 'function') hubIntent('space');
   dlgPass.showModal();
 }
 
@@ -3278,6 +3279,7 @@ async function mintPass() {
       ? `<img alt="pass QR" src="data:image/png;base64,${r.qr_png_base64}">` : '';
     document.getElementById('passLink').textContent = r.link;
     document.getElementById('passReady').style.display = 'block';
+    if (typeof hubCarrier === 'function') hubCarrier('link');
     document.getElementById('passConfig').style.display = 'none';
     document.getElementById('passCreateBtn').style.display = 'none';
     document.getElementById('passCopyBtn').style.display = '';

@@ -16,17 +16,13 @@ async function refreshBackupState() {
   try {
     const s = await api('/api/backup/state');
     if (!s.ever) {
-      el.textContent = 'You have never saved a backup from this device. ' +
-        'If this machine is lost, nothing here can be recovered — there is no ' +
-        'server holding a copy.';
-      el.className = 'hint warn';
+      el.textContent = t('ui.me.backup.none');
+      el.classList.add('warn');
       return;
     }
     const days = s.age_days || 0;
-    el.className = days >= BACKUP_NAG_DAYS ? 'hint warn' : 'hint';
-    el.textContent = days === 0
-      ? 'Last backup: today.'
-      : `Last backup: ${days} ${days === 1 ? 'day' : 'days'} ago.`;
+    el.classList.toggle('warn', days >= BACKUP_NAG_DAYS);
+    el.textContent = t('ui.me.backup.last', { days });
   } catch { el.textContent = ''; }
 }
 

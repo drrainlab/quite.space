@@ -620,13 +620,15 @@
 <dialog id="dlgJoin">
   <div id="joinInput">
     <h3 id="joinTitle">Enter with a link</h3>
-    <div class="segmented" id="joinMode" style="margin-bottom:10px">
+    <p class="hint" data-i18n="ui.join.any.hint">Paste what you were given — a link, a pass, or type the words you heard.</p>
+    <textarea id="joinAny" rows="2" data-i18n-ph="ui.join.any.ph" placeholder="link, pass or words" autocomplete="off" data-on-input="269"></textarea>
+    <div class="segmented" id="joinMode" hidden>
       <button data-m="link" class="sel" data-on-click="93" data-i18n="ui.join.mode.link">With a link</button>
       <button data-m="pass" data-on-click="94" data-i18n="ui.join.mode.pass">With a pass</button>
     </div>
     <div id="joinLinkPane">
       <p class="hint" data-i18n="ui.join.linkHint">Five words someone read out to you. A personal link is spent when opened; a shared one lasts until it expires — shown before you decide.</p>
-      <input id="joinWords" placeholder="quiet://moss.ember.tide.wren.slate" autocomplete="off"
+      <input id="joinWords" placeholder="quiet://moss.ember.tide.wren.slate" autocomplete="off" hidden
              data-on-input="95" data-on-keydown="96">
       <p class="hint" id="joinWordsHint"></p>
       <div id="joinPreview" style="display:none"></div>
@@ -634,8 +636,8 @@
       <button data-on-click="98" data-i18n="ui.join.cancelLink">cancel</button></div>
     </div>
     <div id="joinPassPane" style="display:none">
-    <p class="hint" id="joinPaste" data-i18n="ui.join.paste">Paste the pass link someone shared with you:</p>
-    <textarea id="joinPass" rows="3" placeholder="paste pass link" data-i18n-ph="ui.join.passPh"></textarea>
+    <p class="hint" id="joinPaste" data-i18n="ui.join.paste" hidden>Paste the pass link someone shared with you:</p>
+    <textarea id="joinPass" rows="3" placeholder="paste pass link" data-i18n-ph="ui.join.passPh" hidden></textarea>
     <div class="row"><button data-on-click="99" id="joinEnterBtn" data-i18n="ui.join.requestEntry">Request entry</button>
     <button id="apListenBtn" data-on-click="100">listen for a pass</button>
     <button data-on-click="101" data-i18n="ui.join.cancelPass">cancel</button></div>
@@ -659,8 +661,26 @@
 
 <!-- Space Pass card (§12): the human invitation mechanic. A signed right to
      ask to enter — no keys travel in it. -->
-<dialog id="dlgPass">
-  <div class="pass-card">
+<dialog id="dlgPass" class="hub">
+  <!-- UX-3: ONE door for inviting, two INTENTS behind it. "Into this
+       space" mints a Space Pass (a request to enter, confirmed by this
+       device — ADR-012); "a new conversation" makes a quick link (five
+       words that open a NEW place — QL-0). The carriers — link, QR,
+       sound, words — are how the same thing travels, chosen after the
+       decision, not instead of it. -->
+  <h3 data-i18n="hub.title">Invite</h3>
+  <div class="hub-intents" id="hubIntents">
+    <button type="button" class="hub-intent" id="hubIntentSpace" data-on-click="263">
+      <span class="hub-intent-t" data-i18n="hub.intent.space">Into this space</span>
+      <span class="hub-intent-s" data-i18n="hub.intent.space.sub">they ask to enter; this device lets them in</span>
+    </button>
+    <button type="button" class="hub-intent" id="hubIntentNew" data-on-click="264">
+      <span class="hub-intent-t" data-i18n="hub.intent.new">A new conversation</span>
+      <span class="hub-intent-s" data-i18n="hub.intent.new.sub">five words or a link that open a new place</span>
+    </button>
+  </div>
+  <div id="hubSpace" hidden>
+<div class="pass-card">
     <div class="pass-head">
       <span class="glyph g48" id="passGlyph"></span>
       <div>
@@ -705,6 +725,64 @@
     </div>
     <p class="pass-state warn" id="passMsg" style="display:none"></p>
     <p class="hint" style="margin-top:10px"><a href="#" data-on-click="110" id="passTechInvite">Invite a device directly (technical)</a></p>
+  </div>
+  </div>
+  <div id="hubNew" hidden>
+<div class="ql-block">
+    
+    <p class="hint" data-i18n="ui.me.ql.hint1">Five words someone can read out loud.
+      <b data-i18n="ui.me.ql.hint2">They open a new place</b><span data-i18n="ui.me.ql.hint3"> — never a room you already have; for those,
+      use invite from inside it.</span></p>
+    
+    <div class="segmented" id="qlKind">
+      <button data-v="just-us" class="sel" data-on-click="205" data-i18n="ui.me.ql.justus">Just us</button>
+      <button data-v="a-few" data-on-click="206" data-i18n="ui.me.ql.afew">A few people</button>
+    </div>
+    <p class="hint" id="qlKindNote">One device can enter, then the link closes.</p>
+    <div class="list" id="qlGroupOpts" hidden>
+      <div class="list-row">
+        <span class="lr-label" data-i18n="ui.me.ql.howmany">How many</span>
+        <select id="qlMaxUses">
+          <option value="2" data-i18n="ui.me.ql.dev2">2 devices</option>
+          <option value="3" selected data-i18n="ui.me.ql.dev3">3 devices</option>
+          <option value="5" data-i18n="ui.me.ql.dev5">5 devices</option>
+          <option value="10" data-i18n="ui.me.ql.dev10">10 devices</option>
+        </select>
+      </div>
+      <div class="list-row">
+        <span class="lr-label" data-i18n="ui.me.ql.howlong">How long the words last</span>
+        <select id="qlTtl">
+          <option value="1" data-i18n="ui.me.ql.ttl1">1 hour</option>
+          <option value="24" selected data-i18n="ui.me.ql.ttl24">24 hours</option>
+          <option value="168" data-i18n="ui.me.ql.ttl168">a week</option>
+        </select>
+      </div>
+      <div class="list-row">
+        <span class="lr-label" data-i18n="ui.me.ql.whodecides">Who decides</span>
+        <div class="segmented" id="qlApproval">
+          <button data-v="" class="sel" data-on-click="207" data-i18n="ui.me.ql.open">They walk straight in</button>
+          <button data-v="host" data-on-click="208" data-i18n="ui.me.ql.host">Let them in myself</button>
+        </div>
+      </div>
+    </div>
+    <div class="row ql-make">
+      <input type="text" id="qlTitle" data-i18n-ph="ui.me.ql.ph.name" placeholder="name (optional)">
+      <button data-on-click="209" data-i18n="ui.me.ql.mint" id="qlMintBtn">Make a quick link</button>
+    </div>
+    <div id="qlOut" style="display:none">
+      <p class="ql-phrase" id="qlPhrase"></p>
+      <p class="out" id="qlLink"></p>
+      <div class="row"><button data-on-click="210" data-i18n="ui.me.ql.copy">Copy link</button></div>
+      <p class="hint" id="qlNote"></p>
+      <p class="hint" id="qlExpiry"></p>
+    </div>
+    <div id="qlIssued"></div>
+  </div>
+  
+  
+  </div>
+  <div class="row" style="margin-top:12px">
+    <button data-on-click="109" data-i18n="ui.pass.close">close</button>
   </div>
 </dialog>
 
@@ -1308,93 +1386,54 @@
 </dialog>
 
 <dialog id="dlgMe">
-  <h3 data-i18n="ui.me.title">This device</h3>
+  <h3 data-i18n="ui.me.title">Profile &amp; devices</h3>
   <div id="meGlyph" style="text-align:center;margin:8px 0"></div>
   <p class="out" id="meName" style="text-align:center;color:var(--fg);font-size:16px"></p>
   <p class="hint" id="meDeviceName" style="text-align:center"></p>
-  <p class="hint" data-i18n="ui.me.verify" style="margin-top:12px">Verification code — read it out loud to confirm the right device:</p>
-  <p class="verify-phrase" id="meVerify" style="text-align:center;color:var(--accent)"></p>
-  <!-- A quick link is the only sharing path here that touches a relay, so it
-       says so, right where the choice is made. -->
-  <div class="ql-block">
-    <!-- Two claims, and both are load-bearing: the words are SPOKEN, and
-         they open a NEW place. The second is the one people get wrong, and
-         it is why invite-from-inside is named right here. Everything else
-         this block used to explain — what an unnamed place ends up called —
-         the app shows the moment it happens. -->
-    <p class="hint" data-i18n="ui.me.ql.hint1">Five words someone can read out loud.
-      <b data-i18n="ui.me.ql.hint2">They open a new place</b><span data-i18n="ui.me.ql.hint3"> — never a room you already have; for those,
-      use invite from inside it.</span></p>
-    <!-- Two doors, and the explanation under each says DEVICES, because a
-         verified person is not something this protocol can prove. Promising
-         "one person" would promise a thing no signature backs. -->
-    <div class="segmented" id="qlKind">
-      <button data-v="just-us" class="sel" data-on-click="205" data-i18n="ui.me.ql.justus">Just us</button>
-      <button data-v="a-few" data-on-click="206" data-i18n="ui.me.ql.afew">A few people</button>
+  <!-- UX-3: one overview, and each task opens from it. The old modal
+       held identity, verification, a new conversation, backup, restore
+       and a rename on one screen; the person had to read all of it to
+       find any of it. -->
+  <div class="me-rows">
+    <button type="button" class="me-row" data-on-click="268">
+      <span class="me-row-t" data-i18n="ui.me.newconv">Start a new conversation</span>
+      <span class="me-row-s" data-i18n="ui.me.newconv.sub">five words or a link somebody opens a new place with</span>
+    </button>
+    <button type="button" class="me-row" data-on-click="270">
+      <span class="me-row-t" data-i18n="ui.me.verify.row">Verify this device</span>
+      <span class="me-row-s" data-i18n="ui.me.verify.sub">a four-word code to read out loud</span>
+    </button>
+    <div id="meVerifyBox" hidden>
+      <p class="hint" data-i18n="ui.me.verify">Verification code — read it out loud to confirm the right device:</p>
+      <p class="verify-phrase" id="meVerify" style="text-align:center;color:var(--accent)"></p>
     </div>
-    <p class="hint" id="qlKindNote">One device can enter, then the link closes.</p>
-    <div class="list" id="qlGroupOpts" hidden>
-      <div class="list-row">
-        <span class="lr-label" data-i18n="ui.me.ql.howmany">How many</span>
-        <select id="qlMaxUses">
-          <option value="2" data-i18n="ui.me.ql.dev2">2 devices</option>
-          <option value="3" selected data-i18n="ui.me.ql.dev3">3 devices</option>
-          <option value="5" data-i18n="ui.me.ql.dev5">5 devices</option>
-          <option value="10" data-i18n="ui.me.ql.dev10">10 devices</option>
-        </select>
-      </div>
-      <div class="list-row">
-        <span class="lr-label" data-i18n="ui.me.ql.howlong">How long the words last</span>
-        <select id="qlTtl">
-          <option value="1" data-i18n="ui.me.ql.ttl1">1 hour</option>
-          <option value="24" selected data-i18n="ui.me.ql.ttl24">24 hours</option>
-          <option value="168" data-i18n="ui.me.ql.ttl168">a week</option>
-        </select>
-      </div>
-      <div class="list-row">
-        <span class="lr-label" data-i18n="ui.me.ql.whodecides">Who decides</span>
-        <div class="segmented" id="qlApproval">
-          <button data-v="" class="sel" data-on-click="207" data-i18n="ui.me.ql.open">They walk straight in</button>
-          <button data-v="host" data-on-click="208" data-i18n="ui.me.ql.host">Let them in myself</button>
-        </div>
-      </div>
+    <button type="button" class="me-row" data-on-click="271">
+      <span class="me-row-t" data-i18n="ui.me.backup.row">Backup</span>
+      <span class="me-row-s" id="backupState"></span>
+    </button>
+    <div class="ql-block" id="backupBlock" hidden>
+      <p class="hint" data-i18n="ui.me.backup.what">A backup holds everything: identity, spaces, keys, history.
+        The file gets its own passphrase.</p>
+      <input id="backupPass" data-i18n-ph="ui.me.backup.ph.pass" type="password" placeholder="passphrase for the backup file" autocomplete="new-password">
+      <div class="row"><button data-on-click="211" data-i18n="ui.me.backup.save" id="backupBtn">Save a backup</button></div>
+      <p class="hint" data-i18n="ui.me.backup.restore">Restoring is deliberate and separate: a running node holds
+        its own directory, so it cannot restore into itself.
+        <span class="mono">terminal restore --in FILE --data NEW-DIR</span></p>
     </div>
-    <div class="row ql-make">
-      <input type="text" id="qlTitle" data-i18n-ph="ui.me.ql.ph.name" placeholder="name (optional)">
-      <button data-on-click="209" data-i18n="ui.me.ql.mint" id="qlMintBtn">Make a quick link</button>
+    <button type="button" class="me-row" data-on-click="213">
+      <span class="me-row-t" data-i18n="ui.me.tech">Technical details</span>
+      <span class="me-row-s" data-i18n="ui.me.tech.sub">device id, key, fingerprint</span>
+    </button>
+    <div id="meTech" style="display:none;margin-top:6px">
+      <p class="hint" data-i18n="ui.me.deviceid">device id (share with a space owner to be invited):</p>
+      <p class="out" id="meDevice"></p>
+      <p class="out" id="meXpub"></p>
+      <p class="hint" data-i18n="ui.me.fingerprint">fingerprint: <span id="meFp" class="mono"></span></p>
     </div>
-    <div id="qlOut" style="display:none">
-      <p class="ql-phrase" id="qlPhrase"></p>
-      <p class="out" id="qlLink"></p>
-      <div class="row"><button data-on-click="210" data-i18n="ui.me.ql.copy">Copy link</button></div>
-      <p class="hint" id="qlNote"></p>
-      <p class="hint" id="qlExpiry"></p>
-    </div>
-    <div id="qlIssued"></div>
   </div>
-  <!-- The one thing that cannot be recovered from anywhere else. Nothing in
-       this app can reset it for you, so the honest place for it is here,
-       beside your identity, not buried in a settings tab. -->
-  <div class="ql-block" id="backupBlock">
-    <p class="hint" id="backupState"></p>
-    <p class="hint" data-i18n="ui.me.backup.what">A backup holds everything: identity, spaces, keys, history.
-      The file gets its own passphrase.</p>
-    <input id="backupPass" data-i18n-ph="ui.me.backup.ph.pass" type="password" placeholder="passphrase for the backup file" autocomplete="new-password">
-    <div class="row"><button data-on-click="211" data-i18n="ui.me.backup.save" id="backupBtn">Save a backup</button></div>
-    <p class="hint" data-i18n="ui.me.backup.restore">Restoring is deliberate and separate: a running node holds
-      its own directory, so it cannot restore into itself.
-      <span class="mono">terminal restore --in FILE --data NEW-DIR</span></p>
-  </div>
-  <div class="row" style="margin-top:10px">
+  <div class="row" style="margin-top:12px">
     <button data-on-click="212" data-i18n="ui.me.rename">Change name</button>
-    <button data-on-click="213" data-i18n="ui.me.tech">Technical details</button>
     <button data-on-click="214" data-i18n="ui.me.close">Close</button>
-  </div>
-  <div id="meTech" style="display:none;margin-top:12px">
-    <p class="hint" data-i18n="ui.me.deviceid">device id (share with a space owner to be invited):</p>
-    <p class="out" id="meDevice"></p>
-    <p class="out" id="meXpub"></p>
-    <p class="hint" data-i18n="ui.me.fingerprint">fingerprint: <span id="meFp" class="mono"></span></p>
   </div>
 </dialog>
 
@@ -1571,6 +1610,7 @@
 <script src="icons.js"></script>
 <script src="library.js"></script>
 <script src="sky.js"></script>
+<script src="invite.js"></script>
 <script src="modes.js"></script>
 <script src="registry.js"></script>
 <script src="renderers.js"></script>
