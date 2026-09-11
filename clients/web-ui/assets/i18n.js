@@ -224,6 +224,7 @@ const I18N = {
     'prev.follow_ro': 'Follow read-only',
     'prev.join': 'Join and participate',
     'prev.media_unavailable': 'media is not loaded in a preview \u2014 follow the space to see it',
+    'media.fetching': 'fetching from relay\u2026',
     'prev.load_audio': '\u25b6 Load audio',
     'prev.load_video': '\u25b6 Load video',
     // "Holder" is this protocol's word, not a reader's: somebody looking at a
@@ -1477,6 +1478,7 @@ const I18N = {
     'prev.follow_ro': 'Добавить только для чтения',
     'prev.join': 'Войти и участвовать',
     'prev.media_unavailable': 'в предпросмотре медиа не загружается — добавьте пространство к себе, чтобы увидеть',
+    'media.fetching': 'забираем с реле…',
     'prev.load_audio': '▶ Загрузить аудио',
     'prev.load_video': '▶ Загрузить видео',
     'prev.looking': 'Загружаем медиа — ищем, у кого оно есть…',

@@ -4126,10 +4126,16 @@ const _mediaObserver = ('IntersectionObserver' in window)
 const MEDIA_RETRY_MS = [5000, 15000, 45000, 120000];
 const MEDIA_RETRY_MAX = 12; // ~20 minutes of asking, then the manual link
 
-function observeMedia(el, assetId, onReady, onUnavailable) {
+function observeMedia(el, assetId, onReady, onUnavailable, onProgress) {
   if (!assetId) return;
-  el._autoMedia = { assetId, onReady, onUnavailable, tries: 0, timer: null };
+  el._autoMedia = { assetId, onReady, onUnavailable, onProgress, tries: 0, timer: null };
   armMedia(el);
+}
+
+/** Background layers own their own arrival; everything else gets a stand-in. */
+function mediaWantsStandIn(el) {
+  return !(el.classList.contains('atmo-plate') || el.classList.contains('atmo-poster') ||
+           el.classList.contains('thumb'));
 }
 
 /** Ask when it comes into view — or straight away without an observer. */
@@ -4146,11 +4152,18 @@ function runMedia(el) {
   // itself: on while we are asking, off the moment there is an answer either
   // way. The background layers are left alone — a soft drifting picture IS
   // the atmosphere, and softening it again would say nothing.
-  if (!el.classList.contains('atmo-plate') && !el.classList.contains('atmo-poster')) {
+  const standIn = mediaWantsStandIn(el);
+  if (standIn) {
     el.classList.add('media-arriving');
+    markWaiting(el, 0, 0);
   }
-  autoFetchAsset(m.assetId, m.onReady, m.onUnavailable).then((ok) => {
+  const progress = (have, total) => {
+    if (standIn) markWaiting(el, have, total);
+    if (m.onProgress) m.onProgress(have, total);
+  };
+  autoFetchAsset(m.assetId, m.onReady, m.onUnavailable, progress).then((ok) => {
     el.classList.remove('media-arriving');
+    clearWaiting(el);
     if (ok) { clearUnavailable(el); m.tries = 0; return; }
     retryMedia(el);
   });
@@ -4262,6 +4275,39 @@ function markArriving(el, asset, sheen) {
   if (sheen) el.classList.add('qs-sheen');
 }
 
+// THE STAND-IN. A media element pointed at bytes that are not here yet is,
+// to the browser, a broken picture: an <img> paints its "?" glyph on the
+// 409 and a <video> paints a black box with a dead play button — exactly
+// what a reader saw on a freshly published post, for the whole time the
+// bytes were honestly on their way, with nothing saying so. So while a
+// fetch is in flight the element stays without a source (and hidden, so it
+// takes no room as a black box) and THIS note stands where it will be:
+// "fetching from relay…", with the chunk count and the rail once a round has
+// answered. The note leaves the moment the fetch ends either way — the
+// bytes arrive and the element takes their place, or the unavailable
+// sentence takes the note's.
+function markWaiting(el, have, total) {
+  if (!el) return;
+  let n = el._qsWaiting;
+  if (!n) {
+    n = document.createElement('div');
+    n.className = 'asset-waiting media-waiting';
+    el._qsWaiting = n;
+    if (el.parentNode) el.parentNode.insertBefore(n, el.nextSibling);
+  }
+  n.textContent = '';
+  const known = Number.isFinite(total) && total > 0 && have > 0;
+  n.appendChild(document.createTextNode(
+    known ? `${t('media.fetching')} ${have} / ${total}` : t('media.fetching')));
+  n.appendChild(makeProgress(have, total));
+}
+
+function clearWaiting(el) {
+  if (!el || !el._qsWaiting) return;
+  el._qsWaiting.remove();
+  el._qsWaiting = null;
+}
+
 function markUnavailable(el, reason) {
   if (!el || el._qsUnavailable) return;
   el._qsUnavailable = true;
@@ -4275,6 +4321,18 @@ function markUnavailable(el, reason) {
 
 function autoMediaSrc(el, assetId) {
   const base = assetURL(assetId);
+  if (mediaWantsStandIn(el)) {
+    // No source until the bytes are here: a source that answers 409 is a
+    // broken picture to the browser. The element stays IN FLOW as a thin
+    // invisible strip (never display:none — the on-view observer that
+    // starts the fetch cannot see a box that is not there), and the
+    // stand-in note (runMedia) says what is happening beneath it.
+    el.classList.add('media-pending');
+    observeMedia(el, assetId,
+      () => { el.src = base + '&v=' + Date.now(); el.classList.remove('media-pending'); },
+      (reason) => markUnavailable(el, reason));
+    return;
+  }
   el.src = base;
   observeMedia(el, assetId,
     () => { el.src = base + '&v=' + Date.now(); },

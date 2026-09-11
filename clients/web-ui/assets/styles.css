@@ -653,6 +653,21 @@
   @media (prefers-reduced-motion: reduce) {
     .asset-waiting { animation: none; opacity: .85; }
   }
+  /* The stand-in for bytes on their way (markWaiting): where the picture
+     will be, breathing, with the rail once a round has answered. */
+  .media-waiting {
+    display: flex; align-items: center; gap: 10px;
+    padding: 14px 12px; margin: 6px 0; min-height: 44px;
+    border: 1px dashed var(--line); border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--bg) 92%, transparent);
+  }
+  .media-waiting .prog { flex: 0 0 96px; }
+  /* A media element whose bytes are still on their way: in flow so the
+     on-view observer can start the fetch, but no box — a <video> without a
+     source would otherwise be a black rectangle with a dead play button. */
+  img.media-pending, video.media-pending, audio.media-pending {
+    display: block; width: 100%; height: 2px; min-height: 2px; visibility: hidden;
+  }
   .media-unavailable {
     padding: 10px 12px; margin: 6px 0;
     border: 1px dashed var(--line); border-radius: var(--radius-sm);
