@@ -50,7 +50,7 @@ async function refreshShelf() {
     if (!items.length) {
       const e = document.createElement('div');
       e.className = 'empty-spaces';
-      e.textContent = 'Nothing kept yet — hover a message and press ✦ keep.';
+      e.textContent = t('shelf.empty');
       box.appendChild(e);
       return;
     }

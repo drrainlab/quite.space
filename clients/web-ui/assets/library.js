@@ -100,11 +100,80 @@ function libRow(e, view) {
   return a;
 }
 
-let libSig = { files: '', links: '' };
+// UX-2 — MATERIALS: posts, files and links in one place, filters
+// inside. Posts come from the publications feed (ordered by the space's
+// own clock), files and links from the log (newest first); under "all"
+// they are shown as three groups rather than interleaved — a post's clock
+// and a file's wall time are not the same axis, and pretending they are
+// would order things wrongly with a straight face.
+let libFilter = 'all';
+function libPostRow(p) {
+  const a = document.createElement('div');
+  a.className = 'lib-row';
+  a.setAttribute('role', 'button');
+  a.tabIndex = 0;
+  const meta = [p.kind || '', p.comment_count ? (p.comment_count + ' ✎') : ''].filter(Boolean);
+  a.innerHTML = `<span class="lib-ic">${p.cover ? `<img alt="" src="${esc(p.cover)}">` : (typeof spaceIconSVG === 'function' ? spaceIconSVG('book', 18) : '')}</span>` +
+    `<span class="lib-main"><span class="lib-t">${esc(p.title || '')}</span>` +
+    `<span class="lib-m">${esc([p.summary || '', meta.join(' · ')].filter(Boolean).join(' · '))}</span></span>`;
+  const open = () => { switchView('posts'); openPub(p.document_id); };
+  a.onclick = open;
+  a.onkeydown = (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); open(); } };
+  return a;
+}
+
+async function refreshMaterials(host) {
+  let entries = [], posts = [];
+  try { entries = await fetchEntries(current); } catch (_) {}
+  try { posts = (await api(`/api/spaces/${current}/publications`)).publications || []; } catch (_) {}
+  const files = entries.filter(libIsFile).reverse();
+  const links = entries.filter(libIsLink).reverse();
+  const groups = [['posts', posts, libPostRow], ['files', files, (e) => libRow(e, 'files')], ['links', links, (e) => libRow(e, 'links')]];
+  const sig = current + '|' + libFilter + '|' + groups.map(([k, arr]) => k + arr.length + (arr[0] ? (arr[0].id || arr[0].document_id) : '')).join(',') + '|' + LOCALE;
+  if (sig === libSig.materials) return;
+  libSig.materials = sig;
+  host.innerHTML = '';
+  const chips = document.createElement('div');
+  chips.className = 'lib-chips';
+  for (const k of ['all', 'posts', 'files', 'links']) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'lib-chip' + (k === libFilter ? ' sel' : '');
+    b.textContent = t('library.chip.' + k);
+    b.onclick = () => { libFilter = k; libSig.materials = ''; refreshMaterials(host); };
+    chips.appendChild(b);
+  }
+  host.appendChild(chips);
+  let shown = 0;
+  for (const [k, arr, row] of groups) {
+    if (libFilter !== 'all' && libFilter !== k) continue;
+    if (!arr.length) continue;
+    if (libFilter === 'all') {
+      const g = document.createElement('div');
+      g.className = 'lib-group';
+      g.textContent = t('library.chip.' + k);
+      host.appendChild(g);
+    }
+    const list = document.createElement('div');
+    list.className = 'lib-list';
+    for (const e of arr) list.appendChild(row(e));
+    host.appendChild(list);
+    shown += arr.length;
+  }
+  if (!shown) {
+    const d = document.createElement('div');
+    d.className = 'lib-empty';
+    d.textContent = t('library.empty.materials');
+    host.appendChild(d);
+  }
+}
+
+let libSig = { files: '', links: '', materials: '' };
 async function refreshLibrary(view) {
   if (!current) return;
   const host = document.getElementById(view);
   if (!host) return;
+  if (view === 'materials') return refreshMaterials(host);
   let entries;
   try { entries = await fetchEntries(current); } catch (_) { return; }
   const pick = view === 'files' ? libIsFile : libIsLink;

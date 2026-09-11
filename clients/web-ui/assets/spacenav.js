@@ -28,15 +28,19 @@ let navBuiltFor = null;
 // follow in the order that mode tends to reach for them.
 // UI-1 added files and links: derived views of the same log, placed
 // where a messenger's hand expects them — right after the conversation.
+// UX-2: MATERIALS is where a person goes to find what was published
+// before — posts, files, links — one view, filters inside. The posts
+// FEED still exists as a view (an article opens there); it just is not a
+// tab of its own any more.
 const NAV_ORDER = {
-  chat: ['chat', 'posts', 'files', 'links', 'shelf', 'objects', 'field'],
-  objects: ['objects', 'chat', 'files', 'links', 'posts', 'shelf', 'field'],
-  field: ['field', 'chat', 'files', 'links', 'objects', 'posts', 'shelf'],
+  chat: ['chat', 'materials', 'shelf', 'objects', 'field', 'posts'],
+  objects: ['objects', 'chat', 'materials', 'shelf', 'field', 'posts'],
+  field: ['field', 'chat', 'materials', 'objects', 'shelf', 'posts'],
   // A studio's works ARE objects (releases → tracks → sessions), so the
   // objects view is what "audio" centres on.
-  audio: ['objects', 'chat', 'files', 'links', 'shelf', 'posts', 'field'],
-  telemetry: ['chat', 'objects', 'files', 'links', 'posts', 'shelf', 'field'],
-  members: ['chat', 'posts', 'files', 'links', 'shelf', 'objects', 'field'],
+  audio: ['objects', 'chat', 'materials', 'shelf', 'field', 'posts'],
+  telemetry: ['chat', 'objects', 'materials', 'shelf', 'field', 'posts'],
+  members: ['chat', 'materials', 'shelf', 'objects', 'field', 'posts'],
 };
 
 // How many views earn a tab; the rest live behind "···". Four is what
@@ -50,6 +54,7 @@ const NAV_TABS = 4;
 // arrive on it from elsewhere.
 const NAV_PRIMARY = {
   posts: { label: 'ui.nav.act.post', act: () => openComposer() },
+  materials: { label: 'ui.nav.act.post', act: () => openComposer() },
   objects: { label: 'ui.nav.act.object', act: () => openObjectEditor(null) },
   field: { label: 'ui.nav.act.marker', act: () => fieldArmMarker() },
 };

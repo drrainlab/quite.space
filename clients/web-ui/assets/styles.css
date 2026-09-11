@@ -4333,3 +4333,11 @@ div.reply-to { cursor: default; }
 .pane-sec { margin-top: 14px; }
 .pane-sec > h3 { margin: 0 0 6px; }
 .pane-sec.pane-now { margin-top: 4px; }
+
+/* ---- UX-2: materials filters ---- */
+.lib-chips { display: flex; gap: 6px; padding: 10px 10px 2px; flex-wrap: wrap; }
+.lib-chip { border: 1px solid var(--line); background: transparent; color: var(--dim); border-radius: 999px;
+  padding: 3px 11px; min-height: 0; font-size: 12px; cursor: pointer; }
+.lib-chip:hover { color: var(--fg); }
+.lib-chip.sel { color: var(--acc); border-color: color-mix(in srgb, var(--acc) 45%, transparent); }
+.lib-group { color: var(--dim); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; padding: 12px 10px 2px; }
