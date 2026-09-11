@@ -109,6 +109,7 @@ function loadContext() {
   };
   load(path.join(ASSETS, 'brush.js'));
   load(path.join(ASSETS, 'scenes.js'));
+  load(path.join(ASSETS, 'shader.js'));
 
   const sceneFiles = fs.existsSync(SCENE_DIR)
     ? fs.readdirSync(SCENE_DIR).filter(f => f.endsWith('.js')).sort() : [];

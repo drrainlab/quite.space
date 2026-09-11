@@ -1,9 +1,12 @@
 # AM shader spike — `nebula@1`, a fragment shader behind the floor
 
-Status: spike, merged on `main`, NOT in a release note. Behind the lab
-switch (`localStorage qp.lab = 'on'` in the web-ui) for authoring; renders
-for any reader whose build has it, falls back to the still + fallback text
-where it does not — exactly like every other scene id.
+Status: the spike GRADUATED the same day — see
+[ADR-037](../../adr/ADR-037-a-scene-may-be-a-shader-never-a-program.md).
+Four shader scenes (`nebula@1`, `aurora@1`, `caustics@1`, `silk@1`) are
+the composer's offer; the six flow-field scenes are retired from
+authoring and keep rendering for every post that names them. The lab
+switch that gated the spike is gone with the spike. What follows is the
+spike's own record, kept as written.
 
 ## The question the spike answers
 

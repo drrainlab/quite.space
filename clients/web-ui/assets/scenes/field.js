@@ -300,9 +300,14 @@
     reactive: 0,    // how much the bed's loudness lifts pace and brightness
   };
 
-  /** @param {string} id @param {string} label @param {object} over */
+  /**
+   * Retired from the composer since the shader scenes arrived: every post
+   * that already names one of these keeps its picture, on every device,
+   * and nobody writes a new one. The engine stays for that reason alone.
+   * @param {string} id @param {string} label @param {object} over
+   */
   function preset(id, label, over) {
-    SCENES.define(id, { label, params: Object.assign({}, PARAMS, over), make });
+    SCENES.define(id, { label, params: Object.assign({}, PARAMS, over), make, retired: true });
   }
 
   // Slow luminous motes wandering a soft field. The default, and the one a

@@ -59,7 +59,7 @@ function boot() {
   ctx.assetURL = (assetId) => '/api/spaces/S/assets/' + assetId + '?token=t';
   ctx.observeMedia = () => {};
   ctx.autoMediaSrc = (img, id) => { img.src = ctx.assetURL(id); };
-  for (const f of ['modes.js', 'audio.js', 'brush.js', 'scenes.js', 'scenes/field.js', 'scenes/nebula.js', 'stage.js', 'atmosphere.js']) {
+  for (const f of ['modes.js', 'audio.js', 'brush.js', 'scenes.js', 'scenes/field.js', 'shader.js', 'scenes/nebula.js', 'scenes/aurora.js', 'scenes/caustics.js', 'scenes/silk.js', 'stage.js', 'atmosphere.js']) {
     const p = path.join(ASSETS, f);
     vm.runInContext(fs.readFileSync(p, 'utf8'), ctx, { filename: p });
   }

@@ -1494,8 +1494,15 @@ const ATMO_EDIT = (() => {
   }
 
   /** A fresh recipe: the default scene, a seed, and the space's own colours. */
+  /** The scene a person who has not thought about it should get. */
+  function defaultScene() {
+    if (typeof SCENES === 'undefined') return 'nebula@1';
+    const offered = SCENES.offered();
+    return offered.includes('nebula@1') ? 'nebula@1' : (offered[0] || 'nebula@1');
+  }
+
   function blank() {
-    const id = (typeof SCENES !== 'undefined' && SCENES.list()[0]) || 'drift@1';
+    const id = defaultScene();
     return {
       visual: { scene: id, seed: rollSeed(), params: [], palette: defaultPalette() },
       fallback: { text: '' },
@@ -1633,7 +1640,7 @@ const ATMO_EDIT = (() => {
         a.visual.stages = a.visual.stages || [];
       } else {
         delete a.visual.stages;
-        a.visual.scene = (typeof SCENES !== 'undefined' && SCENES.list()[0]) || 'drift@1';
+        a.visual.scene = defaultScene();
         a.visual.seed = rollSeed();
         a.visual.params = [];
       }
@@ -1730,9 +1737,9 @@ const ATMO_EDIT = (() => {
     // --- scene ------------------------------------------------------------
     const pick = el('select', 'atmo-edit-scene');
     for (const id of (typeof SCENES !== 'undefined' ? SCENES.list() : [])) {
-      // A lab scene is offered only behind the switch — unless this recipe
-      // already carries it, which must stay editable rather than vanish.
-      if (SCENES.isLab(id) && !SCENES.labOpen() && id !== a.visual.scene) continue;
+      // A retired scene is not offered — unless this recipe already carries
+      // it, which must stay editable rather than vanish from its own editor.
+      if (SCENES.isRetired(id) && id !== a.visual.scene) continue;
       const o = el('option', null, SCENES.get(id).label + '  (' + id + ')');
       o.value = id;
       if (id === a.visual.scene) o.selected = true;

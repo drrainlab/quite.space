@@ -99,6 +99,9 @@ const BRUSH = (() => {
   const MAX_MARK_SPAN = 0.6;
   /** The readback used to start each frame from the truth. 64 pixels. */
   const METER = 8;
+  /** The first stage of the readback: 64² is 81 source pixels per sample on a
+   *  720-wide stage and 9 on the 240-wide shader plate — an average, not a pick. */
+  const METER_MID = 64;
   /**
    * Re-measure mid-frame after this many marks.
    *
@@ -248,7 +251,7 @@ const BRUSH = (() => {
     let frameLuma = 0;
     let coverage = 0, ops = 0, frames = 0;
     let pendingRead = false;
-    let meter = null; // 8x8 readback surface, built lazily
+    let meter = null, mid = null; // readback surfaces, built lazily
 
     /** Relative luminance of a mean colour. */
     function lumaOf(c) {
@@ -326,23 +329,38 @@ const BRUSH = (() => {
     }
 
     /** @param {number} i */
-    // sampleMean is the plate's colour for admission: the source drawn into
-    // the 8×8 meter, composited over the ground, averaged. null without a
-    // document (the Node harness) — a plate then meters as nothing.
-    function sampleMean(source) {
-      if (typeof document === 'undefined') return null;
+    // meterMean is the one measurement in this file: a source drawn down to
+    // the 8×8 meter, composited over the ground, averaged — mean sRGB, the
+    // quantity the model tracks. The plate and the per-frame readback both
+    // use it, so a plate is admitted against exactly what the next frame
+    // will measure. Two stages (64×64, then 8×8, both at the canvas's best
+    // smoothing) because a single 90× downscale samples sparsely, and a
+    // sparse sample of fine bright lines is noise, not a mean — measured
+    // as a 13% overshoot of the luminance step on a caustic before this.
+    // null without a document (the Node harness): the model carries on
+    // alone, and a plate then meters as nothing.
+    function meterMean(source) {
+      if (typeof document === 'undefined' || !source) return null;
       try {
         if (!meter) {
           const m = document.createElement('canvas');
           m.width = m.height = METER;
           meter = m.getContext('2d', { willReadFrequently: true });
-          if (!meter) return null;
+          const mm = document.createElement('canvas');
+          mm.width = mm.height = METER_MID;
+          mid = mm.getContext('2d');
+          if (!meter || !mid) { meter = mid = null; return null; }
+          meter.imageSmoothingQuality = 'high';
+          mid.imageSmoothingQuality = 'high';
         }
+        mid.clearRect(0, 0, METER_MID, METER_MID);
+        mid.drawImage(source, 0, 0, METER_MID, METER_MID);
         meter.clearRect(0, 0, METER, METER);
-        meter.drawImage(source, 0, 0, METER, METER);
+        meter.drawImage(mid.canvas, 0, 0, METER, METER);
         const d = meter.getImageData(0, 0, METER, METER).data;
         let r = 0, g = 0, b = 0;
         for (let i = 0; i < d.length; i += 4) {
+          // Unpainted pixels are transparent; the ground shows through them.
           const al = d[i + 3] / 255;
           r += d[i] * al + ground[0] * (1 - al);
           g += d[i + 1] * al + ground[1] * (1 - al);
@@ -371,11 +389,19 @@ const BRUSH = (() => {
       get height() { return H; },
       /** How many colours this recipe offers. */
       get colours() { return pal.length; },
+      /**
+       * The recipe's colours as #rrggbb, index 0 the ground — read-only, a
+       * copy. A shader scene needs the actual values to paint with; the
+       * canvas verbs below still take an index, because a scene that
+       * paints through them cannot invent a colour. The plate law bounds
+       * what a raster may do to the frame's luminance either way.
+       */
+      get palette() { return pal.slice(); },
       /** Deterministic 0..1, seeded by the recipe. */
       rand: rng(num(o.seed, 1)),
       plate(source, alpha) {
         if (!source) return 0;
-        const mean = sampleMean(source);
+        const mean = meterMean(source);
         if (!mean) return 0;
         const w = admit(1, clamp(num(alpha, 0), 0, MAX_PLATE_ALPHA), mean, lumaOf(mean));
         if (w <= 0 || !ctx) return w;
@@ -484,30 +510,12 @@ const BRUSH = (() => {
 
     /** Read back what is really on the canvas, cheaply: 64 pixels. */
     function resync() {
-      if (!ctx || typeof document === 'undefined') return;
-      try {
-        if (!meter) {
-          const m = document.createElement('canvas');
-          m.width = m.height = METER;
-          meter = m.getContext('2d', { willReadFrequently: true });
-          if (!meter) return;
-        }
-        meter.clearRect(0, 0, METER, METER);
-        meter.drawImage(ctx.canvas, 0, 0, METER, METER);
-        const d = meter.getImageData(0, 0, METER, METER).data;
-        let r = 0, g = 0, b = 0;
-        for (let i = 0; i < d.length; i += 4) {
-          // Unpainted pixels are transparent; the ground shows through them.
-          const al = d[i + 3] / 255;
-          r += d[i] * al + ground[0] * (1 - al);
-          g += d[i + 1] * al + ground[1] * (1 - al);
-          b += d[i + 2] * al + ground[2] * (1 - al);
-        }
-        // The same quantity the model tracks — mean sRGB — so a resync is a
-        // correction, never an argument between two different measurements.
-        const n = METER * METER;
-        ch[0] = r / n; ch[1] = g / n; ch[2] = b / n;
-      } catch { /* readback unavailable: the model carries on alone */ }
+      if (!ctx) return;
+      // The same quantity the model tracks — mean sRGB — so a resync is a
+      // correction, never an argument between two different measurements.
+      // Readback unavailable: the model carries on alone.
+      const m = meterMean(ctx.canvas);
+      if (m) { ch[0] = m[0]; ch[1] = m[1]; ch[2] = m[2]; }
     }
 
     return {

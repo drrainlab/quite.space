@@ -45,12 +45,12 @@ const SCENES = (() => {
         throw new Error(`scene ${id} param ${n} default is not 0..1000 permille`);
       }
     }
-    // `lab` marks a scene the composer offers only behind the person's own
-    // lab switch (localStorage qp.lab = 'on'). It still renders when a recipe
-    // arrives carrying it, and the harnesses still sweep it: the switch gates
-    // AUTHORING, never reading — a spike must not become a scene nobody
-    // else can see by accident.
-    reg.set(id, { id, label: String(def.label || id), params, make: def.make, lab: !!def.lab });
+    // `retired` takes a scene out of the composer — nobody can pick it any
+    // more — and out of nothing else: a recipe that already carries it
+    // still renders wherever it is read, and the harnesses still sweep it.
+    // A scene id, once published, is a promise to every post that names
+    // it (ADR-013 invariant 1: the picture may degrade, never on purpose).
+    reg.set(id, { id, label: String(def.label || id), params, make: def.make, retired: !!def.retired });
   }
 
   /** @param {string} id */
@@ -59,12 +59,14 @@ const SCENES = (() => {
   /** Every known scene id, in a stable order. */
   function list() { return [...reg.keys()].sort(); }
 
-  /** Is this scene behind the lab switch? Unknown ids are not. */
-  function isLab(id) { const d = reg.get(id); return !!(d && d.lab); }
+  /** Is this scene retired from authoring? Unknown ids are not. */
+  function isRetired(id) { const d = reg.get(id); return !!(d && d.retired); }
 
-  /** Has the person opened the lab? Device-local, never in a recipe. */
-  function labOpen() {
-    try { return typeof localStorage !== 'undefined' && localStorage.getItem('qp.lab') === 'on'; } catch { return false; }
+  /** The scenes a composer may offer, in a stable order. Never empty while
+   *  any scene is defined: if every scene were retired, all are offered. */
+  function offered() {
+    const live = list().filter(id => !isRetired(id));
+    return live.length ? live : list();
   }
 
   /**
@@ -100,7 +102,7 @@ const SCENES = (() => {
     }
   }
 
-  return { define, get, list, make, isLab, labOpen };
+  return { define, get, list, make, isRetired, offered };
 })();
 
 if (typeof window !== 'undefined') window.SCENES = SCENES;
