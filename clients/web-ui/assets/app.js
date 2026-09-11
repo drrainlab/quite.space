@@ -2236,7 +2236,7 @@ async function refreshSpace() {
     else if (m.presence.current) {
       pres = `<div class="pres current" title="${esc(pword)}" aria-label="${esc(pword)}">● ${esc(pg || pword)}</div>`;
     } else {
-      pres = `<div class="pres stale" title="${esc(pword)}" aria-label="${esc(pword)}">${esc(pg || pword)} · ${esc(relTime(m.presence.age_seconds))}</div>`;
+      pres = `<div class="pres stale" title="${esc(pword)}" aria-label="${esc(pword)}">${esc(pg || pword)} · ${esc(t('presence.stated_ago', { ago: relTime(m.presence.age_seconds) }))}</div>`;
     }
     const glyphType = memberGlyphType(m);
     const name = m.name || m.terminal.slice(0, 10);
@@ -2317,7 +2317,11 @@ async function refreshSpace() {
         `<span class="mname">${esc(name)}</span>` +
         (anySim ? `<span class="badge kind b-deterministic_bot" title="${esc(t('honesty.simulated'))}">${esc(t('honesty.simulated'))}</span>` : '') +
         `</div>` +
-        `<div class="pres ${live ? 'current' : 'stale'}">${live ? '●' : '○'} ${brief.map(esc).join(' · ') || esc(m.kind)}</div>`;
+        // UX-1: a stale reading says it is stale BEFORE it says a number —
+        // a precise 24.1 °C from six days ago looked fresher than it was.
+        `<div class="pres ${live ? 'current' : 'stale'}">${live
+          ? '● ' + (brief.map(esc).join(' · ') || esc(m.kind))
+          : '○ ' + esc(instrStaleWord(obs))}</div>`;
       if (open) {
         for (const ch of decls) {
           const o = obs[ch.channel];
@@ -2433,7 +2437,9 @@ async function refreshSpace() {
   // SR-0: the Radio section and the PTT composer — only where a host
   // bridge exists (the Android app); a plain browser renders neither.
   if (typeof RADIO !== 'undefined') {
+    const before = new Set(mbox.children);
     RADIO.renderSection(mbox, current);
+    for (const n of mbox.children) if (!before.has(n)) n.dataset.paneSec = 'now';
     RADIO.mountFor(current);
   }
 
@@ -2540,6 +2546,7 @@ async function refreshSpace() {
   del.onclick = () => openDeleteSpace();
   danger.appendChild(del);
   mbox.appendChild(danger);
+  reorderPane(mbox);
 }
 
 // The confirmation, and what it has to say.
@@ -4857,7 +4864,17 @@ function renderFile(e) {
 // Whether the card wears a play control is decided HERE, by the reader,
 // from the address; a sender does not get to declare that their link
 // deserves one.
-function renderLink(e) { return LINKS.build(e); }
+function renderLink(e) {
+  const card = LINKS.build(e);
+  // UX-1: a row until opened. Anchors and the play button keep their
+  // own meaning; a click anywhere else on the card toggles the cover.
+  card.classList.add('row');
+  card.addEventListener('click', (ev) => {
+    if (ev.target.closest('a, button')) return;
+    card.classList.toggle('expanded');
+  });
+  return card;
+}
 
 function renderWave(b64, progress) {
   const bytes = atob(b64);
@@ -5914,3 +5931,50 @@ if (typeof qrRefreshBadge === 'function') {
 }
 initDropZone();
 initClipboardPaste();
+
+
+// UX-1 — THE PANEL IN FOUR SECTIONS, in the order a person asks:
+// what is this place doing NOW (instruments, radio, live modes) →
+// who is here → what this place is → what I can change about it.
+// A post-pass over the built panel: the builders above keep their own
+// logic, and the reader gets one stable order. "Now" appears only when
+// there is something live to show.
+function instrStaleWord(obs) {
+  let age = Infinity;
+  for (const o of Object.values(obs || {})) {
+    if (o && typeof o.age_seconds === 'number' && o.age_seconds < age) age = o.age_seconds;
+  }
+  return age === Infinity ? t('instr.never') : t('instr.stale', { ago: relTime(age) });
+}
+
+function reorderPane(mbox) {
+  const kids = [...mbox.children];
+  const sec = { head: [], now: [], people: [], about: [], manage: [], rest: [] };
+  for (const n of kids) {
+    if (n.classList.contains('pane-head')) sec.head.push(n);
+    else if (n.dataset.paneSec === 'now' || n.classList.contains('instr')) sec.now.push(n);
+    else if (n.tagName === 'H3' && n.textContent === t('instr.title')) { /* replaced by the section title */ }
+    else if (n.tagName === 'H3') { /* the members heading — replaced too */ }
+    else if (n.classList.contains('presence-summary') || n.classList.contains('member')) sec.people.push(n);
+    else if (n.classList.contains('pane-persona') || n.id === 'relic' || n.id === 'relicNote') sec.about.push(n);
+    else if (n.classList.contains('space-acts') || n.classList.contains('pane-protocol') || n.classList.contains('space-danger')) sec.manage.push(n);
+    else sec.rest.push(n);
+  }
+  mbox.innerHTML = '';
+  for (const n of sec.head) mbox.appendChild(n);
+  const put = (key, label, nodes) => {
+    if (!nodes.length) return;
+    const box = document.createElement('section');
+    box.className = 'pane-sec pane-' + key;
+    const h = document.createElement('h3');
+    h.textContent = label;
+    box.appendChild(h);
+    for (const n of nodes) box.appendChild(n);
+    mbox.appendChild(box);
+  };
+  put('now', t('pane.now'), sec.now);
+  put('people', t('pane.people'), sec.people);
+  put('about', t('pane.about'), sec.about);
+  for (const n of sec.rest) mbox.appendChild(n);
+  put('manage', t('pane.manage'), sec.manage);
+}

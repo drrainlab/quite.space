@@ -2913,10 +2913,14 @@ button:hover > .act-mark, button:focus-visible > .act-mark { opacity: 1; }
 /* The hues carry meaning, not decoration: making is warm, arriving is green,
    looking outward is cyan, something wanting attention is amber, and you are
    the app's own lilac. */
-.nav-act[data-act="create"]   { --n: 28 78% 64%; }   /* + space  — a warm start */
-.nav-act[data-act="join"]     { --n: 152 46% 56%; }  /* join     — a door in */
-.nav-act[data-act="discover"] { --n: 190 62% 58%; }  /* discover — a sweep out */
-.nav-act[data-act="signals"]  { --n: 42 82% 62%; }   /* signals  — attention */
+/* UX-1: one quiet hue for the four ways in. Four coloured buttons in the
+   header competed with the spaces they lead to; the list is the subject,
+   the header is a door. Signals keeps a warmer note — it is the one
+   button that can carry news. */
+.nav-act[data-act="create"]   { --n: 265 30% 62%; }
+.nav-act[data-act="join"]     { --n: 265 30% 62%; }
+.nav-act[data-act="discover"] { --n: 265 30% 62%; }
+.nav-act[data-act="signals"]  { --n: 42 60% 60%; }
 .nav-act[data-act="me"]       { --n: 265 55% 70%; }  /* me       — the app itself */
 
 /* Light theme: the same hues, darkened and desaturated enough to sit on
@@ -4312,3 +4316,20 @@ div.reply-to { cursor: default; }
 .sky-tools .sky-bright[data-b="1"] { font-size: 8px; }
 .sky-tools button.sel { color: var(--acc); border-color: color-mix(in srgb, var(--acc) 40%, transparent); }
 .sky-tools button:hover { color: var(--fg); }
+
+/* ---- UX-1: compact link cards in conversation ---- */
+/* A link in a conversation is a row — small picture, one-line title,
+   the site — until somebody opens it. A full-bleed cover for every link
+   pushed the conversation off the screen. Click the card to expand. */
+.entry .linkcard.row:not(.expanded) { display: flex; align-items: center; gap: 10px; max-width: 420px; }
+.entry .linkcard.row:not(.expanded) .link-shot { flex: 0 0 72px; width: 72px; height: 72px; border-radius: 10px; overflow: hidden; }
+.entry .linkcard.row:not(.expanded) .link-shot img { width: 72px; height: 72px; object-fit: cover; }
+.entry .linkcard.row:not(.expanded) .link-body { padding: 4px 8px 4px 0; min-width: 0; }
+.entry .linkcard.row:not(.expanded) .link-title { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.entry .linkcard.row:not(.expanded) .link-descr { display: none; }
+.entry .linkcard.row:not(.expanded) .link-play { transform: scale(.6); }
+.entry .linkcard.row { cursor: pointer; }
+/* ---- UX-1: the space panel in four sections ---- */
+.pane-sec { margin-top: 14px; }
+.pane-sec > h3 { margin: 0 0 6px; }
+.pane-sec.pane-now { margin-top: 4px; }
