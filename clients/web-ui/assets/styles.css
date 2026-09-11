@@ -3,7 +3,15 @@
        data-preset = quiet-glass | daylight | minimal-mono | comfort → style pack
      Colours flow through semantic tokens; the preset packs adjust glass blur,
      chroma, radius, shadow and type scale on top of the theme palette. */
-  :root {
+  @font-face {
+  font-family: "Quiet Signal"; font-style: normal; font-weight: 400; font-display: swap;
+  src: url("fonts/QuietSignal-Regular.ttf") format("truetype");
+}
+@font-face {
+  font-family: "Quiet Signal"; font-style: normal; font-weight: 700; font-display: swap;
+  src: url("fonts/QuietSignal-Bold.ttf") format("truetype");
+}
+:root {
     /* canvas + content (dark base) */
     --bg: #0d0a10; --canvas-deep: #09070b;
     --panel: #18131c; --surface-raised: #1f1824; --line: rgba(215,164,239,.14);
@@ -46,6 +54,12 @@
     --tap: 34px;
     --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, Inter, sans-serif;
     --font-mono: "SF Mono", ui-monospace, "JetBrains Mono", Menlo, monospace;
+    /* THE VOICE — Quiet Signal, the project's own wide monoline grotesque
+       (tools/typeface, Latin + Cyrillic, built from skeletons). It speaks
+       where the app NAMES things: the header actions, a space's name, a
+       panel's title. Never the body: a display face at 14px is a poster,
+       not a paragraph, and the reading face stays what it is. */
+    --font-display: "Quiet Signal", var(--font-sans);
     /* THE READING FACE — a post is the one place in this app that is READ
        rather than operated, so it is the one place that gets a serif. That
        is also what makes an article look like an article next to chrome
@@ -1422,7 +1436,11 @@
   #convbar { display: flex; flex-direction: column; gap: 2px;
     padding: 8px 12px 0 16px; }
   .convbar-id { display: flex; align-items: center; gap: 8px; min-height: 34px; }
-  #convTitle { font-weight: 600; font-size: calc(15px * var(--font-scale)); }
+  #convTitle { font-weight: 700; font-size: calc(15px * var(--font-scale)); font-family: var(--font-display); letter-spacing: .01em; }
+  .nav-act .nav-label { font-family: var(--font-display); font-weight: 400; letter-spacing: .03em; }
+  .space .t, .nav-sec-head { font-family: var(--font-display); }
+  .pane-title { font-family: var(--font-display); font-weight: 700; }
+  .pane-sec > h3 { font-family: var(--font-display); font-weight: 400; letter-spacing: .06em; }
   /* The archetype, said once and quietly: the title is the space's NAME,
      this is what kind of place it is. */
   .conv-sub { color: var(--dim); font-size: 12px; }
