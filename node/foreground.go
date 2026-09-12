@@ -50,10 +50,65 @@ func (r *Runtime) syncInterval(base time.Duration) time.Duration {
 	if r.foregrounded() {
 		return base
 	}
-	if r.relayListenHealthy() {
+	// A PUBLISHER OF PUBLIC SPACES IS NOT ONLY LISTENING. Contributions
+	// and media wants for an owned public space arrive through the
+	// ingress shards, which are drained by the cycle and not covered by
+	// the parked doorbell; ten minutes between drains would be ten
+	// minutes for a stranger's comment to appear. Such a node keeps the
+	// plain background minute.
+	if r.relayListenHealthy() && !r.publishesPublic() {
 		return base * listenedMultiplier
 	}
 	return base * backgroundMultiplier
+}
+
+// publishesPublic reports whether this node owns any public space.
+func (r *Runtime) publishesPublic() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for tid, st := range r.spaces {
+		if st == nil {
+			continue
+		}
+		if meta, ok := r.ks.Spaces[tid]; ok && meta.Owned && st.space.Policy().IsPublic() {
+			return true
+		}
+	}
+	return false
+}
+
+// attentionWindow is how long one use of the local API counts as
+// "somebody is looking" for a shell that infers attention that way.
+const attentionWindow = 30 * time.Second
+
+// EnableAttentionFromAPI is for shells with no window of their own — the
+// CLI `terminal ui` with or without a browser, a headless node. The
+// default "always watched" was right for a relay mirror and wrong for a
+// catalog publisher that nobody has looked at for a fortnight: it kept
+// the two-second heartbeat around the clock. With this on, attention is a
+// FACT again — the local API was used within attentionWindow — and the
+// node starts in the background until somebody does.
+func (r *Runtime) EnableAttentionFromAPI() {
+	if r.attentionFromAPI.Swap(true) {
+		return
+	}
+	r.SetForeground(false)
+}
+
+// NoteAttention is called by the API door on every authorised request.
+// No-op unless EnableAttentionFromAPI was asked for.
+func (r *Runtime) NoteAttention() {
+	if !r.attentionFromAPI.Load() {
+		return
+	}
+	r.attMu.Lock()
+	if r.attTimer == nil {
+		r.attTimer = time.AfterFunc(attentionWindow, func() { r.SetForeground(false) })
+	} else {
+		r.attTimer.Reset(attentionWindow)
+	}
+	r.attMu.Unlock()
+	r.SetForeground(true)
 }
 
 // SetForeground is the shell's one honest bit. Idempotent; concurrent-safe.

@@ -475,6 +475,12 @@ func (a *APIServer) auth(next http.HandlerFunc) http.HandlerFunc {
 			httpErr(w, http.StatusUnauthorized, errors.New("missing or wrong token"))
 			return
 		}
+		// A shell with no window of its own learns "somebody is looking"
+		// from this door being used (node/foreground.go). No-op unless
+		// that shell asked for it.
+		if a.rt != nil {
+			a.rt.NoteAttention()
+		}
 		next(w, r)
 	}
 }

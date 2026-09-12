@@ -413,6 +413,10 @@ func (r *Runtime) relaySyncOnce(addr string) {
 		}
 		rs.lastRouteGen = gen
 		rs.mu.Unlock()
+		// The delta book is knowledge about mailboxes at endpoints; a
+		// displaced guess means some of those mailboxes were the wrong
+		// ones. Forget it all — one full re-offer, deduped at the receiver.
+		r.resetOffers()
 	}
 
 	// Why each space handed nothing over this cycle. Rebuilt from scratch

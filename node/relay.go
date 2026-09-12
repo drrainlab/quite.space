@@ -266,8 +266,10 @@ func (r *Runtime) PushToRelay(addr string, tid id.TerminalID) (int, uint64, erro
 // manual push API and the single-relay tests. The background loop uses
 // deliverSpace instead, which routes per recipient.
 func (r *Runtime) pushToRelay(addr string, tid id.TerminalID, policy AssetPolicy) (int, int, uint64, error) {
+	// Manual: hand EVERYTHING to the named relay, no delta — "push current
+	// space" is the explicit whole-log verb.
 	pushed, reached, _, _, deadline, err := r.deliverSpaceRouted(tid, policy,
-		func(id.DeviceID) (string, bool) { return addr, false }, false)
+		func(id.DeviceID) (string, bool) { return addr, false }, false, false)
 	return pushed, reached, deadline, err
 }
 
@@ -300,6 +302,7 @@ func (r *Runtime) pushToRelay(addr string, tid id.TerminalID, policy AssetPolicy
 // must not create PeerRoutes or SelfIngress entries, must not survive the
 // cycle, and is never returned by the general resolver.
 func (r *Runtime) deliverSpace(tid id.TerminalID, policy AssetPolicy, syncingAt string) (pushed, reached, noRoute, tentative int, legacyBasis bool, err error) {
+	nowUnix := time.Now().Unix()
 	route := func(dev id.DeviceID) (string, bool) {
 		if ranked := r.rankedPeerRoutes(dev); len(ranked) > 0 {
 			// A LEGACY ROUTE IS A RECORDED ASSUMPTION, NOT A STATEMENT —
@@ -309,13 +312,31 @@ func (r *Runtime) deliverSpace(tid id.TerminalID, policy AssetPolicy, syncingAt 
 			// there), but delivery on it is a basis the cursor remembers:
 			// the moment anything stated arrives for this device, every
 			// legacy-basis space re-offers from zero.
+			//
+			// AND AN ASSUMPTION HAS A SHELF LIFE. A legacy entry is never
+			// refreshed by anything the peer does (only a statement would,
+			// and a statement deletes it), so one that has sat unconfirmed
+			// for legacyRouteMaxAge is a ghost: the demo catalog carried
+			// thirteen of them and mailed every one of them the whole log
+			// on every push. Past the age it is not a route — the device
+			// falls to the bootstrap guess below, exactly like a device
+			// nothing was ever known about.
 			if ranked[0].Provenance == storage.RouteLegacy {
-				legacyBasis = true
+				if !legacyRouteExpired(ranked[0], nowUnix) {
+					legacyBasis = true
+					return ranked[0].Endpoint, false
+				}
+			} else {
+				return ranked[0].Endpoint, false
 			}
-			return ranked[0].Endpoint, false
 		}
 		r.mu.Lock()
-		known := len(r.ks.PeerRoutes[dev])
+		known := 0
+		for _, rt := range r.ks.PeerRoutes[dev] {
+			if rt.Provenance != storage.RouteLegacy {
+				known++
+			}
+		}
 		r.mu.Unlock()
 		if known > 0 {
 			return "", false // stated routes exist and are all down: HOLD (until T5)
@@ -337,7 +358,7 @@ func (r *Runtime) deliverSpace(tid id.TerminalID, policy AssetPolicy, syncingAt 
 		// The cycle's explicit endpoint: same rules, same honesty.
 		return syncingAt, true
 	}
-	pushed, reached, noRoute, tentative, _, err = r.deliverSpaceRouted(tid, policy, route, true)
+	pushed, reached, noRoute, tentative, _, err = r.deliverSpaceRouted(tid, policy, route, true, true)
 	return pushed, reached, noRoute, tentative, legacyBasis, err
 }
 
@@ -349,7 +370,7 @@ func (r *Runtime) deliverSpace(tid id.TerminalID, policy AssetPolicy, syncingAt 
 // as sent. route answers "which endpoint carries this recipient's copy";
 // "" means no route is known and the recipient is skipped and counted.
 func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
-	route func(id.DeviceID) (string, bool), lanOffload bool) (int, int, int, int, uint64, error) {
+	route func(id.DeviceID) (string, bool), lanOffload, delta bool) (int, int, int, int, uint64, error) {
 	// Computed BEFORE the lock: SelfIngressRoutes takes r.mu itself, and
 	// the first draft of this line sat inside the locked section — a
 	// self-deadlock the two-relay gate caught in seven quiet minutes.
@@ -428,6 +449,19 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 	}
 	var fleeting [][]byte    // frames that carry their own deadline
 	var fleetingUntil uint64 // the earliest of those deadlines
+	// THE DELTA BOOK-KEEPING. `frames` is the whole deliverable log, as it
+	// always was; what changed is that a recipient no longer receives all
+	// of it every push. A BASE frame (custody-bearing) is offered once per
+	// mailbox and then only what came after it — baseBefore[i] is how many
+	// base frames precede frame i, the cursor a mailbox's offer is measured
+	// in. A FLIPPED frame is a no-custody frame that became structure
+	// (something later in its author's chain depends on it): it sits
+	// BELOW cursors that were taken while it was still skippable, so it
+	// rides every push regardless — few, small, and the one thing a cursor
+	// must never hide (see the 2026-08-09 note above).
+	var flipped []bool
+	var baseBefore []int
+	nBase := 0
 	for _, c := range cands {
 		if c.skippable && c.seq >= needed[c.dev] {
 			// Nothing depends on it yet. It still goes — on its own clock.
@@ -441,6 +475,11 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 		}
 		frames = append(frames, c.frame)
 		eventIDs = append(eventIDs, c.id)
+		flipped = append(flipped, c.skippable)
+		baseBefore = append(baseBefore, nBase)
+		if !c.skippable {
+			nBase++
+		}
 	}
 	for dev := range st.space.Members() {
 		devSet[dev] = struct{}{}
@@ -489,7 +528,53 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 			returnRoutes = returnRoutes[:3]
 		}
 	}
-	bodies, oversizeIdx := splitBundles(tid, frames, blobs, wants, wanter, returnRoutes)
+	// THE DELTA (2026-09-12). Every push used to carry the WHOLE log to
+	// every mailbox and lean on EventID dedup at the receiver — honest, and
+	// ruinous: the demo greenhouse (46k events) re-mailed itself to a dozen
+	// mailboxes every cycle, 48 MB a minute into one relay. Bodies are now
+	// built per cursor: a mailbox that already holds the first N base
+	// frames gets the frames after N (plus every flipped one). One group
+	// per distinct cursor, built lazily; in the common case that is one.
+	type offerGroup struct {
+		bodies [][]byte
+		ids    []id.EventID
+	}
+	groups := map[int]offerGroup{}
+	var groupsMu sync.Mutex // endpoints push in parallel (LT-1) and share the cache
+	bodiesFor := func(from int) offerGroup {
+		groupsMu.Lock()
+		defer groupsMu.Unlock()
+		if g, ok := groups[from]; ok {
+			return g
+		}
+		var sel [][]byte
+		var ids []id.EventID
+		for i, f := range frames {
+			if flipped[i] || baseBefore[i] >= from {
+				sel = append(sel, f)
+				ids = append(ids, eventIDs[i])
+			}
+		}
+		var b [][]byte
+		if len(sel) > 0 {
+			b, _ = splitBundles(tid, sel, blobs, wants, wanter, returnRoutes)
+		} else if len(wants) > 0 {
+			// Nothing new to say, something to ask: the want still rides.
+			b = [][]byte{bundle.EncodeWithReturnRoutes(tid, nil, nil, wants, wanter, nil, returnRoutes)}
+		}
+		g := offerGroup{b, ids}
+		groups[from] = g
+		return g
+	}
+	// Oversize is a property of a frame, not of a group: named over the
+	// whole log so noteStranded keeps its meaning.
+	var oversizeIdx []int
+	for i, f := range frames {
+		if len(f) > maxRelayItem-bundleHeadroom {
+			oversizeIdx = append(oversizeIdx, i)
+		}
+	}
+	sentIDs := map[id.EventID]struct{}{}
 	// The fleeting frames get a bundle of their own, so their short deadline
 	// cannot land on anybody's messages.
 	var fleetingBodies [][]byte
@@ -589,11 +674,16 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 	expires := now + uint64(DefaultRelayTTL/time.Second)
 
 	var deadline uint64
+	// The lane is chosen by the size of what MIGHT cross — the whole log,
+	// as before the delta — capped at one item: a full re-offer is the
+	// case the bulk lane exists for, and a small delta on the bulk lane
+	// costs nothing but a connection it would have used anyway.
 	biggest := 0
-	for _, b := range bodies {
-		if len(b) > biggest {
-			biggest = len(b)
-		}
+	for _, f := range frames {
+		biggest += len(f)
+	}
+	if biggest > maxRelayItem {
+		biggest = maxRelayItem
 	}
 	withLane := r.withRelayControl
 	if biggest >= bulkThreshold {
@@ -646,21 +736,31 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 		go func(ep string, devs []id.DeviceID) {
 			defer pushWG.Done()
 			reached, tentative, d0 := 0, 0, uint64(0)
+			var epIDs []id.EventID
 			err := withLane(ep, func(client *relay.Client) error {
 				for _, dev := range devs {
 					hint := relay.HintFor(tid, dev, bucket)
+					from := 0
+					if delta {
+						from = r.offerBase(tid, dev, ep, guessed[dev], nBase)
+					}
+					g := bodiesFor(from)
 					// One mailbox, several items. A Collect drains them all and
 					// the receiver folds each independently, so the only thing
 					// the split costs is wire ops — and the alternative was a
 					// space that stops delivering the day its log outgrows one
 					// item.
-					for _, b := range bodies {
+					for _, b := range g.bodies {
 						d, err := client.Put(hint, expires, b)
 						if err != nil {
 							return err
 						}
 						d0 = d
 					}
+					if delta {
+						r.markOffered(tid, dev, ep, guessed[dev], from, nBase)
+					}
+					epIDs = append(epIDs, g.ids...)
 					// A status, on its own clock. The relay forgets it when it
 					// goes stale, which is the whole of what "no custody" was
 					// protecting.
@@ -690,7 +790,10 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 				}
 			} else if reached+tentative > 0 {
 				// The timeline (LT-1): a relay accepted these frames, now.
-				r.lat.relayed(eventIDs, ep)
+				r.lat.relayed(epIDs, ep)
+				for _, eid := range epIDs {
+					sentIDs[eid] = struct{}{}
+				}
 			}
 		}(ep, devs)
 	}
@@ -709,8 +812,10 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 		// in here — their claim is handed_to_transport, recorded by the
 		// engine's OnSent hook at the moment of the push; pretending a wire
 		// hand-off was a relay acceptance would be a lie in the ledger.
+		// Only what actually crossed this cycle earns the receipt; a frame
+		// a mailbox already held was accepted when it was sent.
 		r.mu.Lock()
-		for _, eid := range eventIDs {
+		for eid := range sentIDs {
 			_ = st.space.Trust.RecordTransportReceipt(eid, tid, claims.DeliveryAcceptedByRelay)
 		}
 		r.mu.Unlock()

@@ -334,6 +334,18 @@ type Runtime struct {
 	// (media on-demand when there is no direct peer). The auto-sync push rides
 	// these to peers as a request; a holder answers into our inbox. r.mu-guarded.
 	relayWants map[id.TerminalID]map[id.Hash]struct{}
+	// offers is the delivery delta book (node/offers.go): per space and
+	// recipient device, how much of the log this node has already handed
+	// to that device's mailbox at which endpoint. In memory only — a
+	// restart re-offers once, and EventID dedup makes that a no-op for
+	// the recipient.
+	offers map[id.TerminalID]map[id.DeviceID]offerMark
+	// attention-from-API (node/foreground.go): set by shells with no
+	// window of their own, so that "somebody is looking" is inferred from
+	// the local API being used rather than assumed forever.
+	attentionFromAPI atomic.Bool
+	attMu            sync.Mutex
+	attTimer         *time.Timer
 
 	// replyBoxes are PH-1 media reply capabilities, one per space, rotated
 	// with the relay bucket. DELIBERATELY NOT PERSISTED: losing one costs a

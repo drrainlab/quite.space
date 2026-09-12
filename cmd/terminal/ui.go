@@ -95,6 +95,11 @@ func runUI(args []string, withUI bool) error {
 	// its arming was an owner action in the UI, and it enters the runtime
 	// beside the flag, not through the tokened HTTP door the flag guards.
 	rt.ArmInstrumentSerialFromSettings()
+	// A CLI node has no window to be behind, so "somebody is looking" is
+	// inferred from the local API being used — a browser on this UI polls
+	// it; a daemon nobody opens does not. Without this a headless catalog
+	// publisher ran the two-second heartbeat around the clock.
+	rt.EnableAttentionFromAPI()
 	defer rt.Close()
 	fmt.Println("node open — principal", rt.Principal.Fingerprint())
 	fmt.Println("data root:", dataDir)
