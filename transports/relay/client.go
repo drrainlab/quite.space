@@ -10,6 +10,7 @@ package relay
 import (
 	"errors"
 	"net/url"
+	"sync"
 	"time"
 
 	"github.com/drrainlab/quiet_places/transports/lan"
@@ -88,7 +89,46 @@ func (e ErrRelay) Throttled() bool { return e.Kind() == RefusalThrottled }
 // Client is one connection to a relay.
 type Client struct {
 	conn *lan.Conn
+	// PingEvery overrides ListenPing for this client's parked session
+	// (zero = ListenPing). A shell that knows it sits behind a carrier NAT
+	// asks for a shorter one; the core does not know networks.
+	PingEvery time.Duration
+	lmu       sync.Mutex
+	lst       ListenStats
 }
+
+// ListenStats is what a parked session can say about itself — the
+// evidence LT-2 asked for, so a listener that died in silence is visible
+// as one whose last pong is old rather than as "healthy".
+type ListenStats struct {
+	ParkedAt time.Time
+	LastPing time.Time
+	LastPong time.Time
+	Pings    int
+	Pongs    int
+	Notifies int
+	Wakes    int
+}
+
+// ListenStats returns a copy of the session's counters (zero value before
+// a park succeeded).
+func (c *Client) ListenStats() ListenStats {
+	c.lmu.Lock()
+	defer c.lmu.Unlock()
+	return c.lst
+}
+
+// ErrListenSilent ends a parked session whose ping got no pong inside
+// PongTimeout: the socket is alive to the kernel and dead to the world —
+// a carrier NAT dropped the mapping — and every notification the relay
+// sends into it is lost. Before this, such a session was "healthy" until
+// the kernel gave up retransmitting, minutes later, while the poll that
+// was meant to be the net waited on the listened cadence.
+var ErrListenSilent = errors.New("relay: listen ping unanswered — the parked socket is dead")
+
+// PongTimeout is how long a ping may go unanswered. A variable so a test
+// can shorten it; on any real path a relay answers in one round trip.
+var PongTimeout = 15 * time.Second
 
 // DialClient connects to a relay with NO identity check — the local-lan
 // trust profile (loopback and LAN, where identity lives in event
@@ -314,8 +354,23 @@ func (c *Client) listen(park *Msg, stop <-chan struct{}, notify func(hint []byte
 	if reply.Type != MsgListenOK {
 		return errors.New("relay: unexpected listen reply")
 	}
-	ping := time.NewTicker(ListenPing)
+	c.lmu.Lock()
+	c.lst = ListenStats{ParkedAt: time.Now()}
+	c.lmu.Unlock()
+	every := c.PingEvery
+	if every <= 0 {
+		every = ListenPing
+	}
+	ping := time.NewTicker(every)
 	defer ping.Stop()
+	// The pong deadline: armed when a ping goes out, disarmed by the pong.
+	// A timer rather than a flag checked on the minute tick, so a dead
+	// session is declared PongTimeout after the ping, not up to a minute
+	// later.
+	pong := time.NewTimer(time.Hour)
+	pong.Stop()
+	defer pong.Stop()
+	awaiting := false
 	// The poll pace is a latency/CPU trade the radio does not see: bytes
 	// already delivered to the socket are read from local buffers. Half a
 	// second of notification latency costs nothing anybody notices.
@@ -334,7 +389,23 @@ func (c *Client) listen(park *Msg, stop <-chan struct{}, notify func(hint []byte
 			if err := c.conn.Send((&Msg{Type: MsgPing}).Encode()); err != nil {
 				return err
 			}
+			c.lmu.Lock()
+			c.lst.LastPing = time.Now()
+			c.lst.Pings++
+			c.lmu.Unlock()
+			// Armed for the FIRST unanswered ping only: re-arming on every
+			// ping would let a fast ping cadence keep pushing the deadline
+			// out ahead of itself, and a dead socket would never be called.
+			if !awaiting {
+				awaiting = true
+				pong.Reset(PongTimeout)
+			}
+		case <-pong.C:
+			return ErrListenSilent
 		case <-c.conn.Wake():
+			c.lmu.Lock()
+			c.lst.Wakes++
+			c.lmu.Unlock()
 		case <-safety.C:
 		}
 		for _, pkt := range c.conn.Poll() {
@@ -345,10 +416,19 @@ func (c *Client) listen(park *Msg, stop <-chan struct{}, notify func(hint []byte
 			switch m.Type {
 			case MsgNotify:
 				if len(m.Hint) == HintLen {
+					c.lmu.Lock()
+					c.lst.Notifies++
+					c.lmu.Unlock()
 					notify(m.Hint)
 				}
 			case MsgPong:
-				// the silence is still working
+				// the silence is still working — and now it is EVIDENCE
+				pong.Stop()
+				awaiting = false
+				c.lmu.Lock()
+				c.lst.LastPong = time.Now()
+				c.lst.Pongs++
+				c.lmu.Unlock()
 			case MsgError:
 				return ErrRelay{Reason: m.Reason,
 					RetryAfter: time.Duration(m.RetryAfterMs) * time.Millisecond}

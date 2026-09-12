@@ -34,6 +34,7 @@ import (
 	"github.com/drrainlab/quiet_places/transports/lan"
 	"github.com/drrainlab/quiet_places/transports/meshtastic"
 	"github.com/drrainlab/quiet_places/transports/radiotransfer"
+	"github.com/drrainlab/quiet_places/transports/relay"
 	"github.com/drrainlab/quiet_places/transports/rnode"
 )
 
@@ -242,6 +243,14 @@ type Runtime struct {
 	listenMu      sync.Mutex
 	listenRetry   map[string]listenRetryState
 	listenEpochCh chan struct{}
+	// listenSessions: the live parked clients by ingress, for the
+	// diagnostics (LT-2): a session's own counters are the only evidence
+	// of whether the doorbell can still ring.
+	listenSessions map[string]*relay.Client
+	// The shell's network hint (LT-2): on a carrier network the parked
+	// session pings sooner, and a change of network re-parks at once.
+	cellular    atomic.Bool
+	lastNetwork string
 	// rideAhead: assets whose BYTES should ride the next background push,
 	// once. Armed at the moment of sending — the one moment the sender is
 	// certainly awake — so a recipient's fetch finds the bytes already in

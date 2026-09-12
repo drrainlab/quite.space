@@ -417,6 +417,20 @@ func SetForeground(fg bool) {
 	}
 }
 
+// SetNetwork is the shell's second honest bit (LT-2): whether the phone
+// is on a carrier network right now, and an opaque id of that network.
+// On cellular the parked relay session pings sooner than carrier NATs
+// forget; when the id changes the core re-parks at once instead of
+// listening on a socket the old network took with it. Safe in any state.
+func SetNetwork(cellular bool, network string) {
+	stateMu.Lock()
+	r := rt
+	stateMu.Unlock()
+	if r != nil {
+		r.SetNetwork(cellular, network)
+	}
+}
+
 // SetPushEndpoint stores the EN-3 doorbell endpoint in settings — an
 // opaque UnifiedPush URL the relays may POST a contentless ping to when
 // mail arrives and no parked connection is left to hear it. Empty turns

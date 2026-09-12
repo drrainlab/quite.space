@@ -1,6 +1,7 @@
 # LT-2 — why a message can take minutes, and where the minutes hide
 
-Status: findings, 2026-09-12. LT-1 measured the fast path on a stand:
+Status: findings 2026-09-12, wave shipped the same night (see "What the
+wave should do" — items 1–5 are in; 6 is open). LT-1 measured the fast path on a stand:
 relay acceptance in 10–21 ms, ✓✓ in 128–144 ms. The owner's report is
 about the field, where "the whole cycle takes an unusually long time".
 This document lists every place a minute can hide, from the code, so the
@@ -98,3 +99,19 @@ rings into a socket nobody is holding.
    after the first offer. To be weighed against relay storage.
 
 Each item is one evening; 1 and 2 together are the bet.
+
+## Shipped (2026-09-12)
+
+- Evidence: `/api/relay/diagnostics` → `listeners[]` (parked_for_s,
+  last_pong_ago_s, pings, pongs, notifies, wakes, ping_every_s); the
+  Doorbell rows in the diagnostics panel, with "no answer — re-parking"
+  when a pong is older than the ping interval.
+- Pong deadline: `relay.PongTimeout` 15 s → `ErrListenSilent` ends the
+  session; the node re-parks in 5–15 s (`noteListenRetrySoon`) and kicks
+  the sync — a session that WAS parked never pays the route ladder.
+- Network hint: `Runtime.SetNetwork(cellular, id)` from the Android
+  shell's default-network callback; cellular pings every 4 min; a new
+  network id bounces every park and kicks.
+- The net: `listenedMultiplier` 300 → 90 (three minutes).
+- Open: item 6 (guess at every official relay) — weigh against relay
+  storage now that the delta book makes copies cheap.

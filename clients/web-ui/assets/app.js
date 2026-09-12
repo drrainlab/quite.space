@@ -579,16 +579,28 @@ async function renderRelayDiagnostics() {
   line(t('relay.diag.load'), d.load_class || '');
   line(t('relay.diag.sync'), d.sync_active ? t('relay.diag.on') : t('relay.diag.off'));
   if (d.last_error) line(t('relay.diag.error'), d.last_error);
+  const host = (ep) => (ep || '').replace(/:\d+$/, '');
   // LT-1: where the seconds go. The last few own messages, as the node
   // measured them — a relay took it after X, a device held it after Y.
   if (Array.isArray(d.latency) && d.latency.length) {
     const fmt = (ms) => ms < 0 ? '—' : (ms < 1000 ? ms + ' ms' : (ms / 1000).toFixed(1) + ' s');
-    const host = (ep) => (ep || '').replace(/:\d+$/, '');
     d.latency.slice(0, 3).forEach((l, i) => {
       line(i === 0 ? t('relay.diag.latency') : '',
         `→ ${t('relay.diag.latency.relay')} ${fmt(l.relayed_ms)}${l.relay ? ' (' + host(l.relay) + ')' : ''} → ✓✓ ${fmt(l.delivered_ms)}`);
     });
   }
+  // LT-2: is the doorbell real? Each parked session, with its own
+  // evidence. A pong older than the ping interval is a dead socket the
+  // phone still believes in — the exact minutes the owner reported.
+  const ago = (s) => s < 60 ? s + ' s' : Math.round(s / 60) + ' min';
+  (d.listeners || []).forEach((l, i) => {
+    const stale = l.last_pong_ago_s >= 0 && l.last_pong_ago_s > l.ping_every_s + 30;
+    line(i === 0 ? t('relay.diag.listeners') : '',
+      `${host(l.addr)} · ${t('relay.diag.listener.value', {
+        parked: ago(l.parked_for_s),
+        pong: l.last_pong_ago_s < 0 ? t('relay.diag.listener.nopong') : ago(l.last_pong_ago_s),
+        pings: l.pings, wakes: l.wakes })}${stale ? ' · ' + t('relay.diag.listener.stale') : ''}`);
+  });
   // Members without a stated route. RT-0 holds their copies rather than
   // guessing an address — the right call — but the count reached only the
   // JSON somebody copies into a bug report, never the screen. The owner

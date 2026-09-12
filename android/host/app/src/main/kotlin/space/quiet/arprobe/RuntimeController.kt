@@ -1,6 +1,9 @@
 package space.quiet.arprobe
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.net.wifi.WifiManager
 import android.util.Log
 import org.json.JSONObject
@@ -205,7 +208,48 @@ class RuntimeController private constructor(appContext: Context) {
         }
     }
 
+    /**
+     * LT-2 — the network, as one honest bit and one id. Every carrier NAT
+     * forgets an idle mapping on its own schedule, and the parked relay
+     * socket then stays "open" on the phone while nothing can reach it;
+     * the core cannot see networks, so the shell tells it: cellular or
+     * not (a shorter keepalive), and WHICH network (a change re-parks
+     * at once instead of trusting a socket the old network took away).
+     */
+    private val connectivity =
+        app.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) = reportNetwork(network, null)
+        override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) =
+            reportNetwork(network, caps)
+        override fun onLost(network: Network) = reportNetwork(null, null)
+    }
+
+    private fun reportNetwork(network: Network?, caps: NetworkCapabilities?) {
+        val c = caps ?: network?.let { n ->
+            try { connectivity?.getNetworkCapabilities(n) } catch (_: Throwable) { null }
+        }
+        val cellular = c?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true
+        val id = network?.toString() ?: ""
+        worker.execute {
+            try {
+                Quietcore.setNetwork(cellular, id)
+            } catch (t: Throwable) {
+                Log.w(TAG, "setNetwork", t)
+            }
+        }
+    }
+
     init {
+        // THE NETWORK, FIRST: the callback fires once with the current
+        // default network, so the core knows cellular-or-not before its
+        // first park. A missing service (a TV box, a test) is not fatal.
+        try {
+            connectivity?.registerDefaultNetworkCallback(networkCallback)
+        } catch (t: Throwable) {
+            Log.w(TAG, "network callback unavailable", t)
+        }
+
         // ARMED AT APPLICATION SCOPE, BEFORE ANY CORE IS OPEN — and that
         // ordering is the invariant, not an optimisation. The binding arms the
         // runtime only after node.Open has returned, so history cannot reach

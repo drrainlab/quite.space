@@ -32,6 +32,7 @@ package relayserver
 import (
 	"crypto/tls"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/drrainlab/quiet_places/transports/lan"
@@ -202,7 +203,14 @@ type Server struct {
 	st      stats
 	census  census
 	started time.Time
+	// silentPongs: a test's carrier NAT — pings arrive, pongs never leave.
+	silentPongs atomic.Bool
 }
+
+// SilentPongsForTest makes this relay swallow pings: the client's socket
+// stays open and nothing ever answers, exactly what a dropped NAT mapping
+// looks like from the phone. Never part of the wire protocol.
+func (s *Server) SilentPongsForTest() { s.silentPongs.Store(true) }
 
 // pushRegs returns the registry, created on first use.
 func (s *Server) pushRegs() *pushRegistry {
@@ -639,6 +647,11 @@ func (s *Server) handle(m *relay.Msg, cs *connState) *relay.Msg {
 			s.st.rateLimited.Add(1)
 			return &relay.Msg{Type: relay.MsgError, Reason: relay.ReasonRateLimited,
 				RetryAfterMs: retryAfter(cs.writeWindow)}
+		}
+		if s.silentPongs.Load() {
+			// The test's dead NAT: answer with something the listener
+			// ignores, so the socket looks alive and the pong never comes.
+			return &relay.Msg{Type: relay.MsgTimeOK}
 		}
 		return &relay.Msg{Type: relay.MsgPong}
 	default:

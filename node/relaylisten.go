@@ -28,6 +28,7 @@ package node
 
 import (
 	"errors"
+	"math/rand/v2"
 	"sort"
 	"strings"
 	"time"
@@ -37,10 +38,24 @@ import (
 
 const (
 	// listenedMultiplier is the background heartbeat with a parked
-	// listener vouching for arrivals: 300 shipped cadences = ten minutes.
-	// Not longer, deliberately — the poll is the safety net for lost
-	// notifications, and a net with ten-minute holes is still a net.
-	listenedMultiplier = 300
+	// listener vouching for arrivals: 90 shipped cadences = three minutes.
+	// It was ten (300): the net under a doorbell that could die in silence
+	// (LT-2 — a carrier NAT drops the mapping, the socket stays "open", the
+	// ping goes into the kernel buffer without error). Three minutes is
+	// still a tenth of the always-on bill by the energy survey's own
+	// arithmetic, and it bounds the worst case at three, not ten, while
+	// the pong deadline (relay.PongTimeout) catches most deaths sooner.
+	listenedMultiplier = 90
+	// listenRetrySoon is the first retry after a session that WAS parked
+	// ended — a relay restart, a dead socket. That is not a flapping route
+	// and must not pay the ladder below: a deploy of three relays used to
+	// cost every phone one to sixteen minutes of deafness per relay.
+	listenRetrySoon       = 5 * time.Second
+	listenRetrySoonJitter = 10 * time.Second
+	// listenPingCellular is the parked keepalive on a carrier network:
+	// their NAT tables are cut at five minutes on the common floor, so the
+	// ping goes at four. Wi-Fi keeps relay.ListenPing (twelve).
+	listenPingCellular = 4 * time.Minute
 	// listenRetryMin/Max bound the reconnect backoff. The floor keeps a
 	// flapping route from turning the listener into a dialer; the ceiling
 	// keeps a long outage from parking the feature forever.
@@ -185,6 +200,22 @@ func (r *Runtime) runListener(addr string, stop, done chan struct{}) {
 		return
 	}
 	defer client.Close()
+	if r.cellular.Load() {
+		client.PingEvery = listenPingCellular
+	}
+	r.listenMu.Lock()
+	if r.listenSessions == nil {
+		r.listenSessions = map[string]*relay.Client{}
+	}
+	r.listenSessions[addr] = client
+	r.listenMu.Unlock()
+	defer func() {
+		r.listenMu.Lock()
+		if r.listenSessions[addr] == client {
+			delete(r.listenSessions, addr)
+		}
+		r.listenMu.Unlock()
+	}()
 	hints := r.listenHints()
 	if len(hints) == 0 {
 		r.noteListenFailure(addr, false)
@@ -241,7 +272,19 @@ func (r *Runtime) runListener(addr string, stop, done chan struct{}) {
 		r.noteListenFailure(addr, true)
 		return
 	}
-	r.noteListenFailure(addr, false)
+	if client.ListenStats().ParkedAt.IsZero() {
+		// Never parked: the park itself was refused or the dial died —
+		// a route problem, which earns the ladder.
+		r.noteListenFailure(addr, false)
+		return
+	}
+	// A session that WAS parked ended: the relay restarted, the socket
+	// died (relay.ErrListenSilent), the network moved. Ask again soon.
+	// The doorbell is the whole latency story, and the kick brings the
+	// poll forward so whatever landed while the park was dead is
+	// collected now rather than at the next cadence.
+	r.noteListenRetrySoon(addr)
+	r.kickRelaySync()
 }
 
 // ---- bookkeeping the manager and the heartbeat read ----
@@ -265,6 +308,76 @@ func (r *Runtime) noteListenSuccess(addr string) {
 	r.listenMu.Lock()
 	defer r.listenMu.Unlock()
 	delete(r.listenRetry, addr)
+}
+
+// noteListenRetrySoon schedules the next park in listenRetrySoon plus
+// jitter and forgets the ladder: a restart is not a flap.
+func (r *Runtime) noteListenRetrySoon(addr string) {
+	r.listenMu.Lock()
+	defer r.listenMu.Unlock()
+	if r.listenRetry == nil {
+		r.listenRetry = map[string]listenRetryState{}
+	}
+	jitter := time.Duration(rand.Int64N(int64(listenRetrySoonJitter)))
+	r.listenRetry[addr] = listenRetryState{at: time.Now().Add(listenRetrySoon + jitter)}
+}
+
+// SetNetwork is the shell's second honest bit (LT-2), beside foreground:
+// whether this device is on a carrier network, and which network it is
+// on. Cellular shortens the parked keepalive to what carrier NATs
+// tolerate; a CHANGE of network ends every parked session at once — the
+// old sockets belong to a path that no longer exists — and kicks the
+// sync so the new park and the catch-up start now. A shell that never
+// calls it keeps the Wi-Fi assumptions.
+func (r *Runtime) SetNetwork(cellular bool, network string) {
+	r.cellular.Store(cellular)
+	r.listenMu.Lock()
+	changed := network != r.lastNetwork
+	r.lastNetwork = network
+	r.listenMu.Unlock()
+	if changed {
+		r.BounceListeners()
+		r.kickRelaySync()
+	}
+}
+
+// ListenerDiag is one parked session as the diagnostics show it.
+type ListenerDiag struct {
+	Addr         string `json:"addr"`
+	ParkedForS   int64  `json:"parked_for_s"`
+	LastPongAgoS int64  `json:"last_pong_ago_s"` // -1 = no pong yet
+	Pings        int    `json:"pings"`
+	Pongs        int    `json:"pongs"`
+	Notifies     int    `json:"notifies"`
+	Wakes        int    `json:"wakes"`
+	PingEveryS   int64  `json:"ping_every_s"`
+}
+
+// listenerDiags snapshots every live parked session.
+func (r *Runtime) listenerDiags() []ListenerDiag {
+	r.listenMu.Lock()
+	defer r.listenMu.Unlock()
+	var out []ListenerDiag
+	now := time.Now()
+	for addr, c := range r.listenSessions {
+		st := c.ListenStats()
+		if st.ParkedAt.IsZero() {
+			continue
+		}
+		d := ListenerDiag{Addr: addr, ParkedForS: int64(now.Sub(st.ParkedAt) / time.Second),
+			LastPongAgoS: -1, Pings: st.Pings, Pongs: st.Pongs, Notifies: st.Notifies, Wakes: st.Wakes}
+		if !st.LastPong.IsZero() {
+			d.LastPongAgoS = int64(now.Sub(st.LastPong) / time.Second)
+		}
+		every := c.PingEvery
+		if every <= 0 {
+			every = relay.ListenPing
+		}
+		d.PingEveryS = int64(every / time.Second)
+		out = append(out, d)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Addr < out[j].Addr })
+	return out
 }
 
 func (r *Runtime) noteListenFailure(addr string, unsupported bool) {
