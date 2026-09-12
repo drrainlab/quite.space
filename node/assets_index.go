@@ -568,6 +568,9 @@ func (r *Runtime) kickRelaySync() {
 	case r.syncKick <- struct{}{}:
 	default:
 	}
+	// Whatever woke the loop may have something to send; the outbox
+	// pushes it at once instead of behind the cycle's reading (LT-3).
+	r.kickOutbox()
 }
 
 // noSourceAfter is how long a fetch may find nothing before the interface

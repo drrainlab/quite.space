@@ -79,7 +79,8 @@ func (r *Runtime) publishesPublic() bool {
 
 // attentionWindow is how long one use of the local API counts as
 // "somebody is looking" for a shell that infers attention that way.
-const attentionWindow = 30 * time.Second
+// A variable so a test can watch the window close.
+var attentionWindow = 30 * time.Second
 
 // EnableAttentionFromAPI is for shells with no window of their own — the
 // CLI `terminal ui` with or without a browser, a headless node. The
@@ -88,11 +89,21 @@ const attentionWindow = 30 * time.Second
 // the two-second heartbeat around the clock. With this on, attention is a
 // FACT again — the local API was used within attentionWindow — and the
 // node starts in the background until somebody does.
+//
+// A shell WITH a window may ask for it too (the desktop does): attention
+// is then the window being the one worked in OR the interface having
+// asked the node something within attentionWindow. The window on a
+// second monitor, read while an editor has the focus, polls every ten
+// seconds and stays live; the window hidden in the tray polls nothing
+// and the node goes to the background a window later. Before this the
+// desktop counted only the focus edge, and a person who clicked into
+// another application put their own node on the background minute.
 func (r *Runtime) EnableAttentionFromAPI() {
 	if r.attentionFromAPI.Swap(true) {
 		return
 	}
-	r.SetForeground(false)
+	r.attnShellAway.Store(true)
+	r.applyAttention()
 }
 
 // NoteAttention is called by the API door on every authorised request.
@@ -103,16 +114,28 @@ func (r *Runtime) NoteAttention() {
 	}
 	r.attMu.Lock()
 	if r.attTimer == nil {
-		r.attTimer = time.AfterFunc(attentionWindow, func() { r.SetForeground(false) })
+		r.attTimer = time.AfterFunc(attentionWindow, func() {
+			r.attnAPI.Store(false)
+			r.applyAttention()
+		})
 	} else {
 		r.attTimer.Reset(attentionWindow)
 	}
 	r.attMu.Unlock()
-	r.SetForeground(true)
+	r.attnAPI.Store(true)
+	r.applyAttention()
 }
 
 // SetForeground is the shell's one honest bit. Idempotent; concurrent-safe.
 func (r *Runtime) SetForeground(fg bool) {
+	r.attnShellAway.Store(!fg)
+	r.applyAttention()
+}
+
+// applyAttention folds the two sources into the one bit the loops read:
+// somebody is looking when the shell says so or the API was just used.
+func (r *Runtime) applyAttention() {
+	fg := !r.attnShellAway.Load() || r.attnAPI.Load()
 	var v int64
 	if !fg {
 		v = 1

@@ -51,3 +51,40 @@ func TestReturningToForegroundKicksTheSync(t *testing.T) {
 	default:
 	}
 }
+
+// LT-3: for a shell that asked for it, attention is the window's focus OR
+// the interface having asked the node something lately — a window read
+// on a second monitor stays live; a window hidden in the tray, polling
+// nothing, goes to the background one window later.
+func TestAttentionIsTheWindowOrTheAPI(t *testing.T) {
+	old := attentionWindow
+	attentionWindow = 60 * time.Millisecond
+	defer func() { attentionWindow = old }()
+
+	r := &Runtime{syncKick: make(chan struct{}, 1)}
+	r.EnableAttentionFromAPI()
+	if r.foregrounded() {
+		t.Fatal("with attention from the API, a node nobody asked starts in the background")
+	}
+	r.NoteAttention()
+	if !r.foregrounded() {
+		t.Fatal("the API was just used — somebody is looking")
+	}
+	r.SetForeground(true) // the window took the focus
+	time.Sleep(3 * attentionWindow)
+	if !r.foregrounded() {
+		t.Fatal("the API window closed but the window still has the focus")
+	}
+	r.SetForeground(false) // clicked into an editor; the page still polls
+	if r.foregrounded() {
+		t.Fatal("no focus and no recent API use is nobody looking")
+	}
+	r.NoteAttention()
+	if !r.foregrounded() {
+		t.Fatal("the unfocused window polled — it is being read")
+	}
+	time.Sleep(3 * attentionWindow)
+	if r.foregrounded() {
+		t.Fatal("the polls stopped and the focus is elsewhere: the background minute")
+	}
+}

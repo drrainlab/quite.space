@@ -168,6 +168,10 @@ func (s *Shell) open(c lockgate.Credentials) error {
 	// (QI-M4): the desktop is exactly the host it exists for. Explicitly
 	// here, never inside node.Open — headless tools must not grab plugs.
 	rt.ArmInstrumentSerialFromSettings()
+	// Attention is the window's focus OR the interface asking (LT-3):
+	// the focus edge alone put the node on the background minute the
+	// moment the person clicked into another application.
+	rt.EnableAttentionFromAPI()
 
 	s.swap(api.Handler())
 	return nil

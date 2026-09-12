@@ -124,3 +124,41 @@ Each item is one evening; 1 and 2 together are the bet.
   one history each; a device with no sign of life keeps the single cheap
   guess, so ghosts never triple the relays' storage. Neither is a lookup
   — there is none, by design — they remove the need for one.
+
+## LT-3 — the sender's turn (2026-09-12, evening)
+
+Item 5 above called the sender's turn "not a suspect". Half right: the
+relay accepts a put in 10–21 ms. What the code showed, read again with
+the owner's "why does a NEW message take so long to be SENT":
+
+- **The word waited behind the reading.** One serial cycle; the kick from
+  Say is buffered one deep and served when the cycle in flight ends — and
+  a cycle on a node that follows public spaces ends after every
+  projection was fetched (megabytes, tens of seconds on cellular).
+- **A failed push retried on the next tick.** `nextRetry` (seconds) never
+  re-armed the loop's timer: two seconds with somebody looking, a minute
+  or three without.
+- **A dead pooled socket cost ten seconds.** `Put` waited a flat 10 s for
+  its PutOK before the connection was declared dead; the desktop has no
+  network-change hint (only the sleep gap), so every Wi‑Fi change paid it.
+- **The desktop counted only the focus edge.** Clicking into another
+  application put the node on the background minute; the CLI `terminal
+  ui`, which counts API use as attention, never did — which is why "from
+  the browser everything is fast".
+
+Shipped:
+
+- The outbox (`node/outbox.go`): one goroutine that only pushes; every
+  kick runs a push pass at once, a transport failure retries on its own
+  ladder (5 s doubling to 60 s), a hold does not spin. The cycle and the
+  outbox share `pushSpaces` under one mutex.
+- A failed background cycle re-arms in 15 s, doubling, never past the
+  cadence (`syncWaitAfter`); the foreground tick was already shorter.
+- `putTimeout`: 4 s plus 8 s per MiB of body — a one-line message waits
+  four seconds for a dead socket, a full item keeps its ten.
+- Attention = window focus OR API use within 30 s, for shells that ask;
+  the desktop asks now (`EnableAttentionFromAPI` in cmd/desktop/shell.go).
+
+Still open: a network-change hint for the desktop (SCNetworkReachability
+or a route-table watch → `SetNetwork`), and conditional fetch by item
+hash on the relay, which shortens the cycle itself for readers.

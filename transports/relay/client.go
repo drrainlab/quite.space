@@ -222,10 +222,21 @@ func (c *Client) roundTrip(m *Msg, timeout time.Duration) (*Msg, error) {
 	return nil, errors.New("relay: timed out waiting for reply")
 }
 
+// putTimeout is how long a write waits for its PutOK. A flat ten seconds
+// was the price of a pooled socket that died in silence: the write went
+// into the kernel buffer and the wait ran its full length before the
+// connection was declared dead (LT-3). The round trip measures 10–20 ms
+// on the stand; four seconds is generous for it and the body's own
+// transfer is paid for by size, so a full 768 KB item on a slow uplink
+// keeps the ten seconds it had.
+func putTimeout(n int) time.Duration {
+	return 4*time.Second + time.Duration(n)*8*time.Second/(1<<20)
+}
+
 // Put stores one opaque item; returns the relay's accepted deadline. This
 // is a transport receipt: it proves accepted_by_relay, never delivery.
 func (c *Client) Put(hint []byte, expiresAt uint64, body []byte) (uint64, error) {
-	reply, err := c.roundTrip(&Msg{Type: MsgPut, Hint: hint, Expires: expiresAt, Body: body}, 10*time.Second)
+	reply, err := c.roundTrip(&Msg{Type: MsgPut, Hint: hint, Expires: expiresAt, Body: body}, putTimeout(len(body)))
 	if err != nil {
 		return 0, err
 	}
@@ -282,7 +293,7 @@ func (c *Client) Fetch(hints [][]byte) ([][]byte, error) {
 // projection mailbox). Same receipt semantics as Put: accepted, not
 // delivered.
 func (c *Client) Replace(hint []byte, expiresAt uint64, body []byte) (uint64, error) {
-	reply, err := c.roundTrip(&Msg{Type: MsgReplace, Hint: hint, Expires: expiresAt, Body: body}, 10*time.Second)
+	reply, err := c.roundTrip(&Msg{Type: MsgReplace, Hint: hint, Expires: expiresAt, Body: body}, putTimeout(len(body)))
 	if err != nil {
 		return 0, err
 	}

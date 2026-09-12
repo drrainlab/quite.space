@@ -66,6 +66,13 @@ type relaySyncState struct {
 	// stays local, no error is reported, and the next cycle repeats it
 	// forever. Rewritten each cycle, so it always describes NOW.
 	held map[id.TerminalID]heldReason
+	// pushMu serialises the push phase between the cycle and the outbox
+	// (LT-3): both hand frames to mailboxes, and the later one must see
+	// the cursor the earlier one advanced.
+	pushMu sync.Mutex
+	// beforeCycle is a test seam: run at the top of every cycle, so a test
+	// can hold the cycle busy and watch what does NOT wait for it.
+	beforeCycle func()
 }
 
 // heldReason is one space's answer to "why has this not left yet".
@@ -197,6 +204,11 @@ func (r *Runtime) applyRelaySync(addr string, interval time.Duration) {
 		}()
 	}
 
+	// THE OUTBOX (LT-3): a word said leaves NOW, on its own lane, not when
+	// the cycle in flight finishes reading eleven public spaces.
+	r.wg.Add(1)
+	go r.runOutbox(addr, stop)
+
 	r.wg.Add(1)
 	go func() {
 		defer r.wg.Done()
@@ -234,7 +246,7 @@ func (r *Runtime) applyRelaySync(addr string, interval time.Duration) {
 				return
 			case <-r.syncKick:
 				r.relaySyncOnce(addr)
-				t.Reset(r.syncInterval(interval))
+				t.Reset(r.nextSyncWait(interval))
 			case <-t.C:
 				// THE FIRST TICK AFTER A SLEEP IS NOT AN ORDINARY TICK, and
 				// this loop is where it is cheapest to notice: it runs on a
@@ -250,7 +262,7 @@ func (r *Runtime) applyRelaySync(addr string, interval time.Duration) {
 				}
 				last = now
 				r.relaySyncOnce(addr)
-				t.Reset(r.syncInterval(interval))
+				t.Reset(r.nextSyncWait(interval))
 			}
 		}
 	}()
@@ -298,26 +310,28 @@ func (r *Runtime) onWake() {
 }
 
 // relaySyncOnce pushes changed spaces and pulls once.
-func (r *Runtime) relaySyncOnce(addr string) {
-	rs := r.relaySync
-	if rs == nil {
-		return
-	}
-	// Snapshot spaces and their current log lengths under the lock.
+// syncSpace is one space as a sync pass sees it: its log length at the
+// snapshot and the roles that decide which relay actions apply.
+type syncSpace struct {
+	tid     id.TerminalID
+	n       int
+	pub     bool // owned public space → projection publisher
+	reader  bool // reader replica → projection consumer
+	contrib bool // joined community member / curator → ingress uplink
+	mirror  bool // volunteers to keep the space reachable (PH-3)
+	seed    bool // answers wants from blobs already held (PH-3, opt-in)
+	// Per-purpose relay addresses (RR-4), resolved after the snapshot.
+	readAddr  string
+	writeAddr string
+}
+
+// snapshotSyncSpaces lists every space a relay pass may act on, with its
+// current log length. Local-only spaces are dropped HERE rather than at
+// each call site — this is the one list every relay action is driven
+// from (AI-0), the outbox included.
+func (r *Runtime) snapshotSyncSpaces() []syncSpace {
 	r.mu.Lock()
-	type spaceLen struct {
-		tid     id.TerminalID
-		n       int
-		pub     bool // owned public space → projection publisher
-		reader  bool // reader replica → projection consumer
-		contrib bool // joined community member / curator → ingress uplink
-		mirror  bool // volunteers to keep the space reachable (PH-3)
-		seed    bool // answers wants from blobs already held (PH-3, opt-in)
-		// Per-purpose relay addresses (RR-4), resolved after the snapshot.
-		readAddr  string
-		writeAddr string
-	}
-	spaces := make([]spaceLen, 0, len(r.spaces))
+	spaces := make([]syncSpace, 0, len(r.spaces))
 	for tid, st := range r.spaces {
 		meta := r.ks.Spaces[tid]
 		// Local-only: no push, no projection, no ingress, no mirroring.
@@ -327,7 +341,7 @@ func (r *Runtime) relaySyncOnce(addr string) {
 			continue
 		}
 		pol := st.space.Policy()
-		spaces = append(spaces, spaceLen{
+		spaces = append(spaces, syncSpace{
 			tid: tid, n: st.space.Log.Len(),
 			pub:    meta.Owned && pol.IsPublic(),
 			reader: meta.Role == storage.RoleReader,
@@ -353,6 +367,105 @@ func (r *Runtime) relaySyncOnce(addr string) {
 			sp.writeAddr = r.ResolvePublicWriteRelay(sp.tid)
 		}
 	}
+	return spaces
+}
+
+// pushSpaces hands every space's new frames to its members' mailboxes and
+// says, per space, why it held anything back. One caller at a time: the
+// cycle and the outbox both push, and a push that started later must see
+// the cursor the earlier one advanced, not race it to the same mailbox.
+func (r *Runtime) pushSpaces(addr string, spaces []syncSpace) (pushed int, lastErr string, held map[id.TerminalID]heldReason) {
+	rs := r.relaySync
+	rs.pushMu.Lock()
+	defer rs.pushMu.Unlock()
+	// Why each space handed nothing over this pass. Rebuilt from scratch
+	// every pass so a space that recovers stops reporting instantly.
+	held = map[id.TerminalID]heldReason{}
+	for _, sp := range spaces {
+		rs.mu.Lock()
+		prev := rs.lastLen[sp.tid]
+		rs.mu.Unlock()
+		// Push when the log grew OR we have an outstanding media request to
+		// carry (relayWants): a fetch with no new messages must still get its
+		// "wants" out to a holder.
+		r.mu.Lock()
+		wanting := len(r.relayWants[sp.tid]) > 0
+		r.mu.Unlock()
+		if sp.n <= prev && !wanting {
+			continue // nothing new to push and nothing to ask for
+		}
+		// Background push is LIGHT: frames + manifests only. Media bytes
+		// stay content-addressed and travel on demand, not every cycle.
+		//
+		// ROUTED PER RECIPIENT (RT-0): each member's copy goes to that
+		// member's own route, not to this node's relay. `addr` plays no
+		// part here any more — it survives below only for the public
+		// personal-fallback paths.
+		n, reached, noRoute, tentative, legacyBasis, err := r.deliverSpace(sp.tid, AssetsManifests, addr)
+		if err != nil {
+			lastErr = err.Error()
+			continue
+		}
+		if reached == 0 && noRoute == 0 && tentative == 0 {
+			// Nobody addressable yet (fresh joiner before its first pull, or a
+			// solo space): leave lastLen untouched so we retry once we learn a
+			// peer device, instead of marking these frames as handed off.
+			held[sp.tid] = heldReason{heldNoRecipient, sp.n - prev}
+			continue
+		}
+		if noRoute > 0 {
+			// Some members have no known route: their copies were NOT sent
+			// anywhere, and this is said rather than papered over. lastLen
+			// stays put so the space re-offers — cheap, because the whole
+			// log rides every push and dedup makes re-delivery idempotent —
+			// and a route learned later is picked up by the next cycle.
+			held[sp.tid] = heldReason{heldNoRoute, noRoute}
+			if reached > 0 {
+				pushed += n
+			}
+			continue
+		}
+		if tentative > 0 {
+			// TRANSPORT ACCEPTANCE ≠ DELIVERY. Copies went out on the
+			// bootstrap guess; the relay took the bytes and that proves
+			// nothing about the recipient. Held, cursor unmoved — the
+			// Phase-0 table's every starving asset came through here with
+			// the old code counting it delivered.
+			held[sp.tid] = heldReason{heldTentative, tentative}
+			if reached > 0 {
+				pushed += n
+			}
+			continue
+		}
+		pushed += n
+		rs.mu.Lock()
+		rs.lastLen[sp.tid] = sp.n
+		if legacyBasis {
+			// The cursor advanced on a RECORDED assumption (a legacy-
+			// provenance route: open-time backfill or pre-honesty
+			// history). Remembered — the moment stated knowledge arrives
+			// for anyone, these spaces re-offer from zero.
+			rs.legacyBasis[sp.tid] = true
+		} else {
+			delete(rs.legacyBasis, sp.tid)
+		}
+		rs.mu.Unlock()
+	}
+	return pushed, lastErr, held
+}
+
+func (r *Runtime) relaySyncOnce(addr string) {
+	rs := r.relaySync
+	if rs == nil {
+		return
+	}
+	rs.mu.Lock()
+	hook := rs.beforeCycle
+	rs.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
+	spaces := r.snapshotSyncSpaces()
 	// The open space is always hot: the person is looking at it.
 	vst := r.attn()
 	vst.mu.Lock()
@@ -434,79 +547,12 @@ func (r *Runtime) relaySyncOnce(addr string) {
 		r.resetOffers()
 	}
 
-	// Why each space handed nothing over this cycle. Rebuilt from scratch
-	// every pass so a space that recovers stops reporting instantly.
-	held := map[id.TerminalID]heldReason{}
-	pushed := 0
-	for _, sp := range spaces {
-		rs.mu.Lock()
-		prev := rs.lastLen[sp.tid]
-		rs.mu.Unlock()
-		// Push when the log grew OR we have an outstanding media request to
-		// carry (relayWants): a fetch with no new messages must still get its
-		// "wants" out to a holder.
-		r.mu.Lock()
-		wanting := len(r.relayWants[sp.tid]) > 0
-		r.mu.Unlock()
-		if sp.n <= prev && !wanting {
-			continue // nothing new to push and nothing to ask for
-		}
-		// Background push is LIGHT: frames + manifests only. Media bytes
-		// stay content-addressed and travel on demand, not every cycle.
-		//
-		// ROUTED PER RECIPIENT (RT-0): each member's copy goes to that
-		// member's own route, not to this node's relay. `addr` plays no
-		// part here any more — it survives below only for the public
-		// personal-fallback paths.
-		n, reached, noRoute, tentative, legacyBasis, err := r.deliverSpace(sp.tid, AssetsManifests, addr)
-		if err != nil {
-			lastErr = err.Error()
-			continue
-		}
-		if reached == 0 && noRoute == 0 && tentative == 0 {
-			// Nobody addressable yet (fresh joiner before its first pull, or a
-			// solo space): leave lastLen untouched so we retry once we learn a
-			// peer device, instead of marking these frames as handed off.
-			held[sp.tid] = heldReason{heldNoRecipient, sp.n - prev}
-			continue
-		}
-		if noRoute > 0 {
-			// Some members have no known route: their copies were NOT sent
-			// anywhere, and this is said rather than papered over. lastLen
-			// stays put so the space re-offers — cheap, because the whole
-			// log rides every push and dedup makes re-delivery idempotent —
-			// and a route learned later is picked up by the next cycle.
-			held[sp.tid] = heldReason{heldNoRoute, noRoute}
-			if reached > 0 {
-				pushed += n
-			}
-			continue
-		}
-		if tentative > 0 {
-			// TRANSPORT ACCEPTANCE ≠ DELIVERY. Copies went out on the
-			// bootstrap guess; the relay took the bytes and that proves
-			// nothing about the recipient. Held, cursor unmoved — the
-			// Phase-0 table's every starving asset came through here with
-			// the old code counting it delivered.
-			held[sp.tid] = heldReason{heldTentative, tentative}
-			if reached > 0 {
-				pushed += n
-			}
-			continue
-		}
-		pushed += n
-		rs.mu.Lock()
-		rs.lastLen[sp.tid] = sp.n
-		if legacyBasis {
-			// The cursor advanced on a RECORDED assumption (a legacy-
-			// provenance route: open-time backfill or pre-honesty
-			// history). Remembered — the moment stated knowledge arrives
-			// for anyone, these spaces re-offer from zero.
-			rs.legacyBasis[sp.tid] = true
-		} else {
-			delete(rs.legacyBasis, sp.tid)
-		}
-		rs.mu.Unlock()
+	// THE PUSH IS ITS OWN PHASE, shared with the outbox (LT-3): a word said
+	// while this cycle is busy reading leaves on the outbox's lane, and
+	// the cycle's own push then finds its cursor already advanced.
+	pushed, pushErr, held := r.pushSpaces(addr, spaces)
+	if pushErr != "" {
+		lastErr = pushErr
 	}
 
 	// PA-0.4B — public projections. Publishers Replace their outbox when
@@ -993,4 +1039,35 @@ func (rs *relaySyncState) lastRouteGenLocked() uint64 {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
 	return rs.lastRouteGen
+}
+
+// backgroundRetryMin is the first wait after a failed background cycle.
+// The cycle's own nextRetry (seconds) assumed a loop awake every tick,
+// which is true in the foreground and false by a factor of ninety in
+// the background: a failed pull waited for the next tick — a minute, or
+// three under a parked listener. The wait after a failure now doubles
+// from here and never exceeds the cadence the attention state earns.
+const backgroundRetryMin = 15 * time.Second
+
+// syncWaitAfter is what the loop sleeps after a pass: the attention
+// state's cadence, or — after a failure, with nobody looking — the
+// failure ladder, whichever comes first. In the foreground the cadence
+// (two seconds) is already shorter than any retry, so nothing changes.
+func syncWaitAfter(every time.Duration, failStreak int, foreground bool) time.Duration {
+	if failStreak == 0 || foreground {
+		return every
+	}
+	w := backgroundRetryMin << min(failStreak-1, 8)
+	if w > every {
+		w = every
+	}
+	return w
+}
+
+func (r *Runtime) nextSyncWait(base time.Duration) time.Duration {
+	rs := r.relaySync
+	rs.mu.Lock()
+	streak := rs.failStreak
+	rs.mu.Unlock()
+	return syncWaitAfter(r.syncInterval(base), streak, r.foregrounded())
 }

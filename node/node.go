@@ -233,6 +233,9 @@ type Runtime struct {
 	// measured cost of politely waiting was the first third of every
 	// "фото ооочень медленно стартовало".
 	syncKick chan struct{}
+	// outboxKick wakes the outbox (node/outbox.go): a push pass now, on
+	// its own lane, whatever the cycle is busy with.
+	outboxKick chan struct{}
 	// backgrounded is 1 while no person is looking (node/foreground.go).
 	// An atomic rather than a field under r.mu: read on every loop tick,
 	// including ticks that deliberately avoid the runtime lock.
@@ -356,8 +359,13 @@ type Runtime struct {
 	// window of their own, so that "somebody is looking" is inferred from
 	// the local API being used rather than assumed forever.
 	attentionFromAPI atomic.Bool
-	attMu            sync.Mutex
-	attTimer         *time.Timer
+	// The two sources of attention (node/foreground.go): the shell's
+	// word (true = away; zero value is "looking", the default a shell
+	// that never speaks keeps) and the API having been used lately.
+	attnShellAway atomic.Bool
+	attnAPI       atomic.Bool
+	attMu         sync.Mutex
+	attTimer      *time.Timer
 
 	// replyBoxes are PH-1 media reply capabilities, one per space, rotated
 	// with the relay bucket. DELIBERATELY NOT PERSISTED: losing one costs a
@@ -498,6 +506,7 @@ func Open(dataDir string, passphrase []byte, displayName string) (rt *Runtime, e
 		assetIdx:     newAssetIndex(), passes: newPassRegistry(),
 		joins: map[string]*joinAttempt{}, stop: make(chan struct{}),
 		syncKick:            make(chan struct{}, 1),
+		outboxKick:          make(chan struct{}, 1),
 		startupReconsidered: make(chan struct{}),
 		relayWants:          map[id.TerminalID]map[id.Hash]struct{}{},
 		// Radios ask for retransmission unless told otherwise. See
@@ -1486,6 +1495,10 @@ func (r *Runtime) Say(tid id.TerminalID, text string, opt SayOptions) (id.EventI
 	if a.Env != nil {
 		r.lat.minted(a.ID, tid, a.Env.Sequence)
 	}
+	// The word is durable; it leaves now (LT-3). The API door kicks too,
+	// for media and for the loop — this is the outbox's own cue, so a
+	// word said from any shell goes out on the sender's lane.
+	r.kickOutbox()
 	return a.ID, nil
 }
 
@@ -1521,6 +1534,10 @@ func (r *Runtime) MakeCard(tid id.TerminalID, title string, opt CardOptions) (id
 	if a.Env != nil {
 		r.lat.minted(a.ID, tid, a.Env.Sequence)
 	}
+	// The word is durable; it leaves now (LT-3). The API door kicks too,
+	// for media and for the loop — this is the outbox's own cue, so a
+	// word said from any shell goes out on the sender's lane.
+	r.kickOutbox()
 	return a.ID, nil
 }
 
@@ -1543,6 +1560,10 @@ func (r *Runtime) EmitBlock(tid id.TerminalID, schema string, payload []byte) (i
 	if a.Env != nil {
 		r.lat.minted(a.ID, tid, a.Env.Sequence)
 	}
+	// The word is durable; it leaves now (LT-3). The API door kicks too,
+	// for media and for the loop — this is the outbox's own cue, so a
+	// word said from any shell goes out on the sender's lane.
+	r.kickOutbox()
 	return a.ID, nil
 }
 
