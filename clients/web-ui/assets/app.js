@@ -3768,6 +3768,12 @@ function renderEntry(log, e, fresh, grouped) {
   if (entryReleasing(e, heldSpaceIds.has(current))) {
     d.classList.add('media-releasing');
   }
+  // FETCH (Media Presence: Arrival): while this entry's media is being
+  // asked for, the message resonates faintly — the bubble, not the
+  // picture, so the person who tapped sees the whole message answer. Off
+  // the moment the fetch ends either way; the row is rebuilt on every
+  // state change, so nothing has to be remembered here.
+  if (e.asset && e.asset.state === 'fetching') d.classList.add('media-fetching');
 
   // Author head (shown once per group, hidden for grouped follow-ons via CSS).
   const who = document.createElement('div');
@@ -4016,7 +4022,7 @@ function replyExcerpt(src) {
   }
   // Words: the body minus anything that is about the body rather than in it.
   const clone = body.cloneNode(true);
-  clone.querySelectorAll('.asset-note, .asset-retry, button, progress, .progress').forEach(n => n.remove());
+  clone.querySelectorAll('.asset-note, .orb, button, progress, .progress').forEach(n => n.remove());
   return (clone.textContent || '').trim().replace(/\s+/g, ' ');
 }
 
@@ -4032,19 +4038,110 @@ function waitingForText(e, live) {
     : 'nobody answered — tap to look again';
 }
 
-function retryLink(assetId) {
-  const b = document.createElement('button');
-  b.className = 'asset-retry';
-  b.textContent = 'try again';
-  b.onclick = async (ev) => {
-    ev.stopPropagation();
-    b.textContent = 'asking…';
-    try {
-      await api(`/api/spaces/${current}/assets/${assetId}/fetch`, { method: 'POST' });
-    } catch (_) { /* the note already says what is true */ }
+// ONE TAP ON THE THING ITSELF. The way to load a photo used to be a text
+// link under it — "⬇ fetch original · 1.2 MB · not local yet" — which on a
+// phone is eleven-point type between two pictures, and which nobody
+// expects: in every messenger a person has used, the picture IS the
+// control. So the picture, the waveform, the poster and the file card
+// take the tap, and the same surface answers with the ARRIVAL ORB
+// (makeOrb) — a small glowing ring where the play button would be, that
+// turns while the relay is asked, breathes while a sender is looked for,
+// fills as the bytes come, and leaves when they are here. The message
+// itself resonates faintly meanwhile (.media-fetching on the entry). No
+// spinner and no separate status line: the orb IS the status, and the
+// numbers stay under the card as the detail.
+//
+// A tap is also an INTENT, and it is kept: a photo tapped before it was
+// here opens the moment it is; a sound tapped plays; a video plays. The
+// row is rebuilt from server state as the fetch moves, so the intent must
+// not live on the DOM node — it lives here, keyed by asset, and the
+// renderer that finally paints the complete asset consumes it.
+const mediaIntents = new Map(); // asset id → 'open' | 'play'
+
+function askForMedia(assetId, intent) {
+  if (!assetId) return;
+  if (intent) mediaIntents.set(assetId, intent);
+  const sp = current;
+  autoFetchAsset(assetId, null, null, null).then((ok) => {
+    if (!ok || current !== sp) mediaIntents.delete(assetId);
     refreshSpace();
+  });
+  // The first answer from /fetch flips the row into `fetching`; ask the
+  // feed to repaint as soon as that has had a moment to happen, so the
+  // orb appears under the finger rather than on the next poll.
+  setTimeout(refreshSpace, 250);
+}
+
+/** The intent a tap left for this asset, consumed once. */
+function takeIntent(assetId) {
+  const i = mediaIntents.get(assetId);
+  if (i) mediaIntents.delete(assetId);
+  return i || '';
+}
+
+// THE ARRIVAL ORB. One ring, four honest states, no timers — pure CSS so
+// the feed can rebuild it on every poll. What it says is exactly what the
+// node admits about the asset, in the same terms as the note below the
+// card:
+//
+//   idle      not here, nobody asked yet — a still ring with an arrow:
+//             "tap to load". Also the state after a fetch gave up
+//             (the arrow becomes the way back).
+//   seeking   asked, nothing back yet — the arc travels around the ring
+//             and the glow breathes: the relay is being reached.
+//   waiting   asked, `no_source` — still, breathing slowly and dimmer:
+//             nobody who holds it is answering right now.
+//   arriving  bytes coming — the arc is the fraction that has landed,
+//             and only grows.
+//
+// Returns null for a complete asset: a thing that is here wears nothing.
+function orbState(a) {
+  if (!a || a.state === 'complete') return '';
+  if (a.state !== 'fetching') return 'idle';
+  if (a.reason === 'no_source') return 'waiting';
+  const got = (a.total || 0) - (a.missing || 0);
+  return got > 0 && a.total > 0 ? 'arriving' : 'seeking';
+}
+
+function makeOrb(a, e) {
+  const st = orbState(a);
+  if (!st) return null;
+  const orb = document.createElement('span');
+  orb.className = 'orb ' + st;
+  orb.setAttribute('aria-hidden', 'true'); // the note beside it says it in words
+  if (st === 'arriving') {
+    orb.style.setProperty('--p', Math.min(1, ((a.total - (a.missing || 0)) / a.total)).toFixed(3));
+  }
+  orb.innerHTML = '<svg viewBox="0 0 36 36"><circle class="track" cx="18" cy="18" r="15"/>' +
+    '<circle class="arc" cx="18" cy="18" r="15" pathLength="100"/></svg>';
+  const glyph = document.createElement('i');
+  glyph.textContent = st === 'idle' ? (a.state === 'failed' ? '↻' : '↓') : '';
+  orb.appendChild(glyph);
+  orb.title = orbTitle(a, e);
+  return orb;
+}
+
+function orbTitle(a, e) {
+  const st = orbState(a);
+  if (st === 'idle') return a.state === 'failed' ? 'tap to look again' : 'tap to load';
+  if (st === 'waiting') return waitingForText(e, true);
+  if (st === 'arriving') return `arriving… ${a.total - (a.missing || 0)}/${a.total}`;
+  return 'asking the relay…';
+}
+
+/** The media surface, with the orb over it, and the tap that asks. */
+function mediaFrame(inner, e, onHere, intent) {
+  const f = document.createElement('div');
+  f.className = 'media-frame';
+  f.appendChild(inner);
+  const a = e.asset;
+  const orb = makeOrb(a, e);
+  if (orb) f.appendChild(orb);
+  f.onclick = () => {
+    if (a && a.state === 'complete') { if (onHere) onHere(); return; }
+    if (a && a.id) askForMedia(a.id, intent);
   };
-  return b;
+  return f;
 }
 
 function assetNote(e) {
@@ -4085,8 +4182,9 @@ function assetNote(e) {
       n.className = 'asset-note asset-waiting';
       n.textContent = `reaching the sender… ${fmtBytes(a.size || 0)}`;
     } else {
+      // The fraction is drawn by the orb on the card; the number is the
+      // detail under it.
       n.textContent = `fetching… ${got}/${a.total}`;
-      n.appendChild(makeProgress(got, a.total));
     }
   } else if (a.state === 'failed' && a.reason === 'integrity_error') {
     // The one terminal failure here, and it must not be dressed up as a
@@ -4100,14 +4198,16 @@ function assetNote(e) {
     // no_peers is about US — no relay, no link — so it is never somebody
     // else's phone being asleep and must not be described as one.
     n.textContent = a.reason === 'no_source' ? waitingForText(e, false) : UNAVAILABLE_TEXT;
-    n.appendChild(retryLink(a.id));
+    // The way back is the media itself (and this line, for a big target);
+    // no button — a button beside a picture teaches people to press it
+    // instead of the picture.
+    n.onclick = () => askForMedia(a.id);
   } else {
-    n.textContent = `⬇ fetch original · ${fmtBytes(a.size)} · not local yet`;
-    n.onclick = async () => {
-      n.textContent = 'requesting…';
-      await api(`/api/spaces/${current}/assets/${a.id}/fetch`, { method: 'POST' });
-      refreshSpace();
-    };
+    // DISCOVERED: the size, and the fact. The tap that loads it is the
+    // media above, not this line — which still answers a tap, quietly.
+    n.className = 'asset-note asset-idle';
+    n.textContent = `${fmtBytes(a.size)} · not here yet`;
+    n.onclick = () => askForMedia(a.id);
   }
   return n;
 }
@@ -4311,7 +4411,10 @@ function markWaiting(el, have, total) {
   const known = Number.isFinite(total) && total > 0 && have > 0;
   n.appendChild(document.createTextNode(
     known ? `${t('media.fetching')} ${have} / ${total}` : t('media.fetching')));
-  n.appendChild(makeProgress(have, total));
+  // The same orb the feed wears: turning while the relay is asked, filling
+  // as the parts land. Zero of N is "asked", not "0 %".
+  const orb = makeOrb({ state: 'fetching', total: known ? total : 0, missing: known ? total - have : 0 }, null);
+  if (orb) n.insertBefore(orb, n.firstChild);
 }
 
 function clearWaiting(el) {
@@ -4474,7 +4577,10 @@ function renderVideo(e) {
     holder.appendChild(img);
     const play = document.createElement('div');
     play.className = 'video-play';
-    play.textContent = '▶';
+    // While the bytes are asked for, the play control is the orb: same
+    // place, same size, and it says how far along the asking is.
+    const orb = e.asset && e.asset.state === 'fetching' ? makeOrb(e.asset, e) : null;
+    if (orb) play.appendChild(orb); else play.textContent = '▶';
     holder.appendChild(play);
     if (e.duration_ms) {
       const d = document.createElement('span');
@@ -4482,15 +4588,7 @@ function renderVideo(e) {
       d.textContent = fmtDur(e.duration_ms);
       holder.appendChild(d);
     }
-    holder.onclick = () => {
-      if (!complete) {
-        // Tapped play before the bytes are local: kick the relay fetch (media
-        // on-demand) and show it's working — the card mounts the player once
-        // the original lands.
-        if (e.asset && e.asset.id) autoFetchAsset(e.asset.id, () => refreshSpace());
-        play.textContent = '⏳';
-        return;
-      }
+    const mount = () => {
       const v = document.createElement('video');
       v.controls = true; v.autoplay = true; v.playsInline = true;
       v.src = src;
@@ -4498,7 +4596,24 @@ function renderVideo(e) {
       v.className = 'video-player';
       holder.replaceWith(v);
     };
+    holder.onclick = () => {
+      if (!complete) {
+        // Tapped play before the bytes are local: ask, and show the asking
+        // under the finger at once — the seeking orb replaces the glyph
+        // until the next poll paints the real state. The tap was a wish to
+        // WATCH, so the player mounts by itself when the original lands.
+        if (e.asset && e.asset.id) {
+          askForMedia(e.asset.id, 'play');
+          play.textContent = '';
+          const o = makeOrb({ state: 'fetching', total: 0, missing: 0 }, e);
+          if (o) play.appendChild(o);
+        }
+        return;
+      }
+      mount();
+    };
     wrap.appendChild(holder);
+    if (complete && takeIntent(e.asset.id) === 'play') setTimeout(mount, 0);
   } else if (complete) {
     const v = document.createElement('video');
     v.controls = true; v.playsInline = true; v.src = src;
@@ -4731,9 +4846,10 @@ function renderVisual(e) {
     // class arrives and leaves on its own — nothing to remember, nothing to
     // clean up.
     markArriving(img, e.asset);
-    img.onclick = () => { if (e.asset?.state === 'complete')
-      openViewer(e.asset, 'visual', e.alt || e.caption || 'photo'); };
-    wrap.appendChild(img);
+    const open = () => openViewer(e.asset, 'visual', e.alt || e.caption || 'photo');
+    wrap.appendChild(mediaFrame(img, e, open, 'open'));
+    // A tap before the bytes were here was a wish to SEE it: honour it now.
+    if (e.asset?.state === 'complete' && takeIntent(e.asset.id) === 'open') setTimeout(open, 0);
   } else {
     wrap.appendChild(textNode('txt', '🖼 ' + e.alt));
   }
@@ -4751,10 +4867,16 @@ function renderVoiceAudio(e) {
   wrap.appendChild(head);
   if (e.transcript) wrap.appendChild(textNode('meta', '“' + e.transcript + '”'));
   if (e.asset?.state === 'complete') {
-    wrap.appendChild(makeAudioPlayer(
+    const player = makeAudioPlayer(
       `/api/spaces/${current}/assets/${e.asset.id}?token=${token}`,
-      e.waveform_b64, e.duration_ms));
+      e.waveform_b64, e.duration_ms);
+    wrap.appendChild(player);
+    // Tapped before it was here: the wish was to HEAR it.
+    if (takeIntent(e.asset.id) === 'play') {
+      setTimeout(() => player.querySelector('.aplay')?.click(), 0);
+    }
   } else {
+    let surface;
     if (e.waveform_b64) {
       // The waveform is a sound's thumbnail — the same materialisation, on
       // the preview this block happens to carry: bars solidify with the
@@ -4762,17 +4884,18 @@ function renderVoiceAudio(e) {
       const a = e.asset || {};
       const prog = a.state === 'fetching' && a.total > 0
         ? (a.total - (a.missing || 0)) / a.total : 0;
-      const wave = renderWave(e.waveform_b64, prog);
-      markArriving(wave, e.asset);
-      wrap.appendChild(wave);
+      surface = renderWave(e.waveform_b64, prog);
+      markArriving(surface, e.asset);
     } else {
       // Nothing to soften: a bare row gets the drift instead, so a sound with
       // no waveform still reads as on its way rather than as absent.
-      const holder = document.createElement('div');
-      holder.className = 'aplayer-blank';
-      markArriving(holder, e.asset, true);
-      wrap.appendChild(holder);
+      surface = document.createElement('div');
+      surface.className = 'aplayer-blank';
+      markArriving(surface, e.asset, true);
     }
+    const frame = mediaFrame(surface, e, null, 'play');
+    frame.classList.add('media-frame-row');
+    wrap.appendChild(frame);
     wrap.appendChild(assetNote(e));
   }
   return wrap;
@@ -4927,6 +5050,15 @@ function renderFile(e) {
   card.className = 'filecard';
   card.appendChild(textNode('txt', '📄 ' + e.filename));
   card.appendChild(assetNote(e));
+  const a = e.asset;
+  const orb = makeOrb(a, e);
+  if (orb) card.appendChild(orb);
+  // The card is the control: tap to load; once here, tap to open.
+  card.onclick = () => {
+    if (!a || !a.id) return;
+    if (a.state === 'complete') window.open(`/api/spaces/${current}/assets/${a.id}?token=${token}`, '_blank');
+    else askForMedia(a.id);
+  };
   wrap.appendChild(card);
   return wrap;
 }

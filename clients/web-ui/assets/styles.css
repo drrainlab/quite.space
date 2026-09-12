@@ -675,7 +675,7 @@
     border: 1px dashed var(--line); border-radius: var(--radius-sm);
     background: color-mix(in srgb, var(--bg) 92%, transparent);
   }
-  .media-waiting .prog { flex: 0 0 96px; }
+  .media-waiting .orb { position: static; flex: none; transform: none; }
   /* A media element whose bytes are still on their way: in flow so the
      on-view observer can start the fetch, but no box — a <video> without a
      source would otherwise be a black rectangle with a dead play button. */
@@ -687,13 +687,9 @@
     border: 1px dashed var(--line); border-radius: var(--radius-sm);
     background: color-mix(in srgb, var(--bg) 92%, transparent);
   }
-  .asset-retry {
-    margin-left: 8px; padding: 1px 8px; font-size: 11px;
-    font-family: var(--font-mono); cursor: pointer;
-    color: var(--acc); background: none;
-    border: 1px solid var(--line); border-radius: var(--radius-sm);
-  }
-  .asset-retry:hover { border-color: var(--acc); }
+  /* Not here yet, nobody asked: the size and the fact, in the dim voice.
+     The tap that loads it is the media above; this line answers one too. */
+  .asset-idle { cursor: pointer; }
   /* A catalog card's status. Deliberately quiet: it reports what this node
      happens to know, which is usually "nothing yet". */
   /* Somebody is at the door. Quiet, not alarming — a person waiting is
@@ -1592,6 +1588,114 @@
      the shape is known from the signed preview, the substance is still
      travelling. Layout never moves; only presence fills in. */
   .wave i.ghost { opacity: .22; }
+
+  /* THE ARRIVAL ORB — the status IS on the thing.
+     ------------------------------------------------------------------
+     Loading used to be a text link under the picture. Now the picture,
+     the waveform, the poster and the file card take the tap, and a small
+     ring where a play button would sit says what the node admits about
+     the bytes (makeOrb): idle = tap to load; seeking = the relay is being
+     asked (the arc travels); waiting = asked, nobody answering (still,
+     dimmer, a slow breath); arriving = the arc is the fraction that has
+     landed. Pure CSS — the feed rebuilds the ring on every poll — and
+     within the photosensitivity floor: nothing flashes, the glow moves
+     slowly in a narrow band, and the only fast motion is a 2.4 s turn. */
+  .media-frame { position: relative; display: inline-block; max-width: 100%;
+    cursor: pointer; vertical-align: top; }
+  .media-frame-row { display: block; }
+  .media-frame img.thumb { margin-top: 4px; }
+  .orb { position: absolute; left: 50%; top: 50%; width: 34px; height: 34px;
+    margin: -17px 0 0 -17px; border-radius: 50%; pointer-events: none;
+    display: grid; place-items: center;
+    background: rgba(10, 8, 16, .38);
+    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+    box-shadow: 0 0 0 1px rgba(255,255,255,.08),
+                0 0 14px -2px color-mix(in srgb, var(--accent) 45%, transparent);
+    transition: opacity .3s ease; }
+  .media-frame-row .orb { top: 50%; }
+  .orb svg { position: absolute; inset: 3px; width: 28px; height: 28px;
+    transform: rotate(-90deg); overflow: visible; }
+  .orb circle { fill: none; stroke-width: 2.2; stroke-linecap: round; }
+  .orb .track { stroke: rgba(255,255,255,.22); }
+  .orb .arc { stroke: color-mix(in srgb, var(--accent) 88%, #fff);
+    stroke-dasharray: 0 100;
+    filter: drop-shadow(0 0 3px color-mix(in srgb, var(--accent) 70%, transparent));
+    /* Arrivals are chunky — a relay round is a step — and the ease makes
+       the step read as filling rather than as a redraw. */
+    transition: stroke-dasharray .45s ease; }
+  .orb i { position: relative; font-style: normal; font-size: 13px; line-height: 1;
+    color: #fff; text-shadow: 0 1px 4px rgba(0,0,0,.5); }
+  /* idle: a still ring and an arrow — the affordance, quietly. */
+  .orb.idle .track { stroke: rgba(255,255,255,.34); }
+  .orb.idle { box-shadow: 0 0 0 1px rgba(255,255,255,.08); }
+  .media-frame:hover .orb.idle, .filecard:hover .orb.idle {
+    box-shadow: 0 0 0 1px rgba(255,255,255,.12),
+                0 0 14px -2px color-mix(in srgb, var(--accent) 55%, transparent); }
+  /* seeking: the relay is being reached — a short arc travelling, and the
+     glow breathing. Nothing is claimed about how much is coming. */
+  .orb.seeking .arc { stroke-dasharray: 26 100; }
+  .orb.seeking svg { animation: orb-turn 2.4s linear infinite; }
+  .orb.seeking, .orb.arriving { animation: orb-glow 3.2s ease-in-out infinite; }
+  /* waiting: asked, nobody who has it is answering — still, dimmer, slow. */
+  .orb.waiting .arc { stroke-dasharray: 8 100; opacity: .7; }
+  .orb.waiting { animation: orb-breathe 4.6s ease-in-out infinite; }
+  /* arriving: the arc is the fraction that has landed, and only grows. */
+  .orb.arriving .arc { stroke-dasharray: calc(var(--p, 0) * 100) 100; }
+  @keyframes orb-turn { from { transform: rotate(-90deg); } to { transform: rotate(270deg); } }
+  @keyframes orb-glow {
+    0%, 100% { box-shadow: 0 0 0 1px rgba(255,255,255,.08),
+      0 0 12px -2px color-mix(in srgb, var(--accent) 40%, transparent); }
+    50% { box-shadow: 0 0 0 1px rgba(255,255,255,.10),
+      0 0 22px -2px color-mix(in srgb, var(--accent) 72%, transparent); } }
+  @keyframes orb-breathe { 0%, 100% { opacity: .55; } 50% { opacity: .95; } }
+  /* Over a waveform or a bare row the ring sits on the message's own
+     surface, not on a picture: a lighter disc, so it does not read as a
+     hole in the bubble. */
+  .media-frame-row .orb, .filecard .orb, .media-waiting .orb {
+    background: color-mix(in srgb, var(--accent) 16%, var(--panel));
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent),
+                0 0 14px -2px color-mix(in srgb, var(--accent) 35%, transparent); }
+  .media-frame-row .orb .track, .filecard .orb .track, .media-waiting .orb .track {
+    stroke: color-mix(in srgb, var(--fg) 22%, transparent); }
+  .media-frame-row .orb i, .filecard .orb i, .media-waiting .orb i {
+    color: var(--accent); text-shadow: none; }
+  .media-frame-row .orb .arc, .filecard .orb .arc, .media-waiting .orb .arc {
+    stroke: var(--accent); }
+  /* The card is a small grid: name and note in the first column, the orb
+     beside them — in flow, not floated over the name, because a long file
+     name is one unbreakable word and an absolutely placed ring sat on its
+     last letters in a narrow column (measured). No orb, no column. */
+  .entry .filecard { display: inline-grid; grid-template-columns: minmax(0, 1fr) auto;
+    column-gap: 10px; align-items: center; cursor: pointer; }
+  .entry .filecard .txt, .entry .filecard .asset-note { grid-column: 1; min-width: 0;
+    overflow-wrap: anywhere; }
+  .entry .filecard .orb { grid-column: 2; grid-row: 1 / span 2; position: static;
+    margin: 0; }
+  .video-play .orb { position: static; margin: 0; }
+  /* FETCH RESONANCE (Media Presence: Arrival) — the message answers the
+     tap. While its media is being asked for, the bubble carries a faint
+     accent halo that breathes with the orb: the whole message is alive,
+     not just the ring. A halo, not an outline — a 1px breathing edge read
+     as an alert once already (see RELEASE below). Small amplitude, 3.2 s,
+     no luminance flip; still the moment the fetch ends either way. */
+  .entry.media-fetching .bubble { animation: media-fetch-resonance 3.2s ease-in-out infinite; }
+  @keyframes media-fetch-resonance {
+    0%, 100% { box-shadow: inset 0 1px 0 rgba(255,255,255,.055),
+      0 0 0 1px color-mix(in srgb, var(--accent) 14%, transparent),
+      0 0 18px -6px color-mix(in srgb, var(--accent) 18%, transparent); }
+    50% { box-shadow: inset 0 1px 0 rgba(255,255,255,.055),
+      0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent),
+      0 0 28px -6px color-mix(in srgb, var(--accent) 46%, transparent); } }
+  @media (prefers-reduced-motion: reduce) {
+    .orb.seeking svg { animation: none; }
+    .orb.seeking .arc { stroke-dasharray: 100 100; opacity: .35; }
+    .orb.seeking, .orb.arriving, .orb.waiting { animation: none; }
+    .orb .arc { transition: none; }
+    .entry.media-fetching .bubble { animation: none;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.055),
+        0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent),
+        0 0 22px -6px color-mix(in srgb, var(--accent) 30%, transparent); }
+  }
 
   /* RELEASE (Media Presence): my media while the transport still holds
      frames for its space. The object is fully visible — it exists, it was

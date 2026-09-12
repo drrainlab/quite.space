@@ -21,11 +21,24 @@ own surface, never a separate spinner.
 
 | Contract state       | Signal                                        | Surface |
 |----------------------|-----------------------------------------------|---------|
-| DISCOVERED           | ref known, not fetching                       | soft preview, "fetch original" |
-| WAITING FOR A PATH   | `fetching`, zero bytes (`got == 0`)           | "reaching the sender…", quiet breathe |
-| STILL ASKING         | `fetching`, `reason: no_source` (20s silence) | waiting text, no bar (nothing progresses) |
-| ARRIVING             | `fetching`, `got > 0`                         | surface resolves with the bytes |
-| HERE                 | `complete`                                    | full stillness |
+| DISCOVERED           | ref known, not fetching                       | preview + still orb with an arrow: the media is the control, one tap asks |
+| WAITING FOR A PATH   | `fetching`, zero bytes (`got == 0`)           | orb turning ("asking the relay"), message resonates; "reaching the sender…" under the card |
+| STILL ASKING         | `fetching`, `reason: no_source` (20s silence) | orb still and dimmer, slow breath; waiting text, no fraction (nothing progresses) |
+| ARRIVING             | `fetching`, `got > 0`                         | orb arc = fraction landed; surface resolves with the bytes |
+| HERE                 | `complete`                                    | orb gone, full stillness; a tap made before arrival is honoured (photo opens, sound/video plays) |
+| GAVE UP              | `failed` (`no_source` / `no_peers`)           | still orb with ↻; the quiet sentence; a tap asks again |
+
+**The orb** (`makeOrb`, 1.0.13): one ring where a play control would sit,
+on the picture, the poster, the waveform, the file card and the reader's
+stand-in. Pure CSS, rebuilt on every poll; the glow moves slowly in a
+narrow band and the only fast motion is a 2.4 s turn while seeking.
+There is no text link to load anything any more — "⬇ fetch original"
+was eleven-point type between two pictures, and nobody expects it: in
+every messenger the picture IS the control. While a fetch runs the
+message bubble carries a faint accent halo that breathes with the orb
+(`.media-fetching`) — the whole message answers the tap, not just the
+ring. A verdict never outlives the bytes: a holder answering after the
+loop gave up clears `failed` and re-arms the fetch (`lateAnswer`, node).
 
 - **Photo / video poster**: blur is what remains of the distance —
   `blur(7px × (1 − got/total))`. Half the bytes, half the softness.
@@ -37,8 +50,8 @@ own surface, never a separate spinner.
   preview, the substance is still travelling. Layout never moves.
 - **Grouped media**: every tile carries its own asset state and arrives
   independently inside an unchanging layout.
-- **Numbers** (`fetching… 4/160` + rail) stay in the asset note under
-  the card — the detail, not the show.
+- **Numbers** (`fetching… 4/160`) stay in the asset note under the
+  card — the detail, not the show. The fraction is drawn by the orb.
 - **Failure is quiet**: WAITING FOR A PATH ↔ ARRIVING oscillation, not
   a red verdict. The two terminal states that exist are terminal for
   real: `integrity_error` (bytes are not the file they claim) and

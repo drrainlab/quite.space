@@ -89,6 +89,9 @@ type assetIndex struct {
 	// manifestOwner: manifest wire id → asset key (to reindex chunks the
 	// moment a fetched manifest lands).
 	manifestOwner map[id.Hash]AssetKey
+	// chunkOwner: chunk wire id → the asset it belongs to, so a chunk that
+	// lands names the fetch it answers (see lateAnswer).
+	chunkOwner map[id.Hash]AssetKey
 	// refOrder preserves first-seen order per space (deterministic bundle
 	// export: assets in event order).
 	refOrder map[id.TerminalID][]AssetKey
@@ -109,6 +112,7 @@ func newAssetIndex() *assetIndex {
 		wireSpaces:    map[id.Hash]map[id.TerminalID]struct{}{},
 		refs:          map[AssetKey]*schemas.AssetRef{},
 		manifestOwner: map[id.Hash]AssetKey{},
+		chunkOwner:    map[id.Hash]AssetKey{},
 		refOrder:      map[id.TerminalID][]AssetKey{},
 		fetching:      map[AssetKey]bool{},
 		failed:        map[AssetKey]FetchReason{},
@@ -144,6 +148,7 @@ func (r *Runtime) indexRef(space id.TerminalID, ref *schemas.AssetRef) {
 	r.assetIdx.refs[key] = ref
 	for _, h := range ref.WireIDs() {
 		r.assetIdx.allow(h, space)
+		r.assetIdx.chunkOwner[h] = key
 	}
 	if ref.ManifestWireID != nil {
 		r.assetIdx.manifestOwner[*ref.ManifestWireID] = key
@@ -160,8 +165,10 @@ func (r *Runtime) indexManifestChunks(space id.TerminalID, ref *schemas.AssetRef
 	if err != nil {
 		return // corrupt or unsupported manifest: chunks stay unindexed
 	}
+	key := AssetKey{Space: space, Asset: ref.PublicIDHex()}
 	for _, c := range man.Chunks {
 		r.assetIdx.allow(c, space)
+		r.assetIdx.chunkOwner[c] = key
 	}
 }
 
@@ -190,7 +197,7 @@ func (r *Runtime) onBlobStored(h id.Hash) {
 		if ref, ok := r.assetIdx.refs[key]; ok {
 			r.indexManifestChunks(key.Space, ref)
 		}
-		r.clearFetchSilence(key)
+		r.lateAnswer(key)
 	}
 	// Any chunk arriving is proof someone is answering: a fetch that had
 	// been reported sourceless is simply in progress again.
@@ -203,6 +210,44 @@ func (r *Runtime) onBlobStored(h id.Hash) {
 			r.clearFetchSilence(key)
 		}
 	}
+	// The chunk names its asset: an answer to THAT fetch, late or not.
+	if key, ok := r.assetIdx.chunkOwner[h]; ok {
+		r.lateAnswer(key)
+	}
+}
+
+// lateAnswer: a byte of this asset just landed. Whatever the fetch had
+// concluded about its holders is now out of date — somebody IS answering.
+//
+// The provisional silence clears (as it always did). A VERDICT clears too,
+// when it was about the network rather than the bytes: a loop that gave up
+// on `no_source` or `timeout` two minutes ago and then sees a chunk arrive
+// was wrong about the holder, not about the file. Measured on a stand: the
+// sender's phone answered a want 2 min 20 s after it was put (background
+// cadence + a relay round), the reader's loop had already stopped, and the
+// projection went on saying "did not answer" while 78, then 137 of 166
+// chunks landed. A verdict that contradicts the bytes on disk is not
+// honesty — it is a stale sentence.
+//
+// And the fetch re-arms, because the pump only stores what the holder
+// chooses to push: the loop is what asks for the rest. Off this goroutine
+// (RequestAsset takes r.mu, which the pump may hold here); a node closing
+// mid-way makes the request a no-op.
+func (r *Runtime) lateAnswer(key AssetKey) {
+	r.clearFetchSilence(key)
+	reason, ended := r.assetIdx.failed[key]
+	if !ended || (reason != ReasonNoSource && reason != ReasonTimeout) {
+		return
+	}
+	delete(r.assetIdx.failed, key)
+	if r.assetIdx.fetching[key] {
+		return
+	}
+	r.wg.Add(1)
+	go func() {
+		defer r.wg.Done()
+		_ = r.RequestAsset(key.Space, key.Asset)
+	}()
 }
 
 // IngestAsset encrypts and stores content for a space, returning the ref

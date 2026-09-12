@@ -60,7 +60,7 @@ const ctx = {
   window: { open: () => {} },
 };
 vm.createContext(ctx);
-vm.runInContext(extract('retryLink'), ctx);
+vm.runInContext(extract('askForMedia'), ctx);
 vm.runInContext(extract('waitingForText'), ctx);
 vm.runInContext(extract('assetNote'), ctx);
 
