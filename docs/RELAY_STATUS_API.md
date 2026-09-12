@@ -1,6 +1,10 @@
 # Relay Status API — specification
 
-Status: **draft spec, not yet implemented.** This document is the contract
+Status: **implemented (2026-09-12)** — `terminal-relay --status-listen ADDR
+[--status-name N --status-label L]`, handler in
+`transports/relayserver/status.go`, shape pinned by `status_test.go`.
+One block was added to the spec below on the day it shipped: `listeners`,
+the census the owner asked for. This document is the contract
 for a small read-only HTTP endpoint on `terminal-relay`, intended for the
 quite.space website (and any operator dashboard) to show per-relay status,
 load and traffic. It is written against the relay as it exists today
@@ -49,6 +53,12 @@ the transport.
 
   "connections": 12,
 
+  "listeners": {
+    "parked":           9,
+    "distinct_6h":      11,
+    "distinct_24h_max": 14
+  },
+
   "store": {
     "items":     340,
     "kib":       1206,
@@ -81,6 +91,18 @@ Field semantics:
   (`>0.7` busy, `>0.9` overloaded). One source of truth: the status handler
   calls the same functions the probe handler calls.
 - `connections` — `Server.Conns()`, current open TLS connections.
+- `listeners` — the census, the one number nothing else can give an
+  operator: `parked` is how many connections hold at least one parked
+  hint right now (EN-2); `distinct_6h` is how many distinct hint SETS
+  have parked since the current six-hour bucket began — a device, give or
+  take one whose set changed mid-bucket, because a device parks once per
+  bucket and its hints rotate with it; `distinct_24h_max` is the largest
+  `distinct_6h` of the last four buckets. The set behind `distinct_6h` is
+  salted hashes of sorted hint sets; the salt is random, in memory only,
+  and discarded with the set at rotation — the relay keeps nothing a hint
+  could later be matched against, and two relays cannot compare notes.
+  What this is NOT: people. One person with a phone and a laptop is two
+  parks; one device on two relays is counted by both.
 - `store.items` / `store.kib` — `Pending()` / `PendingBytes()` (rounded, see
   privacy). `fill` — `FillRatio()`, rounded to 2 decimals.
 - `traffic.*_total` — **monotonic counters since process start** (these are

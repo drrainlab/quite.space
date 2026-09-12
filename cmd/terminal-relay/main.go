@@ -17,6 +17,7 @@ package main
 
 import (
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
@@ -29,6 +30,7 @@ import (
 func main() {
 	addr := ":7411"
 	dataDir := ""
+	statusListen, statusName, statusLabel := "", "", ""
 	limits := relayserver.DefaultLimits()
 	var perHintBytes, totalBytes int64
 	intArg := func(args []string, i *int) int64 {
@@ -54,6 +56,21 @@ func main() {
 				dataDir = args[i+1]
 				i++
 			}
+		case "--status-listen":
+			if i+1 < len(args) {
+				statusListen = args[i+1]
+				i++
+			}
+		case "--status-name":
+			if i+1 < len(args) {
+				statusName = args[i+1]
+				i++
+			}
+		case "--status-label":
+			if i+1 < len(args) {
+				statusLabel = args[i+1]
+				i++
+			}
 		// Operator limits (RR-7): abuse rails, not throughput promises.
 		case "--max-conns":
 			limits.MaxConns = int(intArg(args, &i))
@@ -77,6 +94,8 @@ func main() {
 			fmt.Println("  --max-conns N   concurrent connection cap (default 4096)")
 			fmt.Println("  --max-item-kib N | --per-hint-mib N | --total-gib N")
 			fmt.Println("  --collect-rate N | --write-rate N | --fetch-rate N   (per conn per minute)")
+			fmt.Println("  --status-listen ADDR   plain-HTTP GET /status and /healthz (docs/RELAY_STATUS_API.md);")
+			fmt.Println("                         off unless given. --status-name / --status-label decorate it.")
 			return
 		}
 	}
@@ -116,14 +135,30 @@ func main() {
 		limits.PerHint, limits.MaxItemBytes/1024, limits.MaxTTL)
 	fmt.Println("this relay stores rotating hints and ciphertext; it has no way to read either")
 
+	if statusListen != "" {
+		// The Relay Status API: a second, plain-HTTP listener the operator
+		// can firewall or proxy on its own. Aggregates only, one snapshot
+		// a minute — the privacy rules live with the handler.
+		hs := &http.Server{Addr: statusListen, Handler: srv.StatusHandler(statusName, statusLabel, time.Minute),
+			ReadHeaderTimeout: 5 * time.Second}
+		go func() {
+			if err := hs.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				fmt.Fprintln(os.Stderr, "status listener:", err)
+			}
+		}()
+		fmt.Printf("status: http://%s/status (aggregates only, 60 s snapshot)\n", statusListen)
+	}
 	go func() {
 		t := time.NewTicker(5 * time.Minute)
 		defer t.Stop()
 		for range t.C {
-			// The structured metrics line (RR-7) — one greppable record a
-			// minute-scale scrape or a human tail can both read.
-			fmt.Printf("metrics items=%d bytes=%d conns=%d\n",
-				srv.Pending(), srv.PendingBytes(), srv.Conns())
+			// The structured metrics line (RR-7), now with the census the
+			// owner asked for: parked listeners and distinct parks this
+			// bucket. The same numbers /status serves — a grep-able record
+			// for the hours when nobody is polling.
+			st := srv.StatusSnapshot(statusName, statusLabel)
+			fmt.Printf("metrics items=%d bytes=%d conns=%d parked=%d distinct6h=%d\n",
+				srv.Pending(), srv.PendingBytes(), srv.Conns(), st.Listeners.Parked, st.Listeners.Distinct6h)
 		}
 	}()
 	sig := make(chan os.Signal, 1)

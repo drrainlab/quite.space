@@ -195,6 +195,13 @@ type Server struct {
 	// push is the EN-3 doorbell-beyond-the-socket registry; see push.go.
 	pushOnce sync.Once
 	pushV    *pushRegistry
+
+	// The status surface (status.go): counters, the listener census and
+	// the moment this process started. None of it changes what the relay
+	// stores or answers on the wire.
+	st      stats
+	census  census
+	started time.Time
 }
 
 // pushRegs returns the registry, created on first use.
@@ -215,9 +222,10 @@ func StartServer(addr string, limits ServerLimits) (*Server, int, error) {
 // cert == nil keeps the ephemeral default.
 func StartServerWithIdentity(addr string, limits ServerLimits, cert *tls.Certificate) (*Server, int, error) {
 	s := &Server{
-		store:  NewStore(limits.PerHint, limits.MaxItemBytes),
-		limits: limits,
-		stop:   make(chan struct{}),
+		started: time.Now(),
+		store:   NewStore(limits.PerHint, limits.MaxItemBytes),
+		limits:  limits,
+		stop:    make(chan struct{}),
 	}
 	// The relay carries whole bundles (frames + manifests) up to its item
 	// cap, well past the 1 MiB LAN sync framing — open a large-packet node.
@@ -421,6 +429,7 @@ func (s *Server) handle(m *relay.Msg, cs *connState) *relay.Msg {
 			return &relay.Msg{Type: relay.MsgError, Reason: "malformed put"}
 		}
 		if !spend(&cs.writes, &cs.writeWindow, s.limits.writeRatePerMin()) {
+			s.st.rateLimited.Add(1)
 			return &relay.Msg{Type: relay.MsgError, Reason: relay.ReasonRateLimited,
 				RetryAfterMs: retryAfter(cs.writeWindow)}
 		}
@@ -437,6 +446,8 @@ func (s *Server) handle(m *relay.Msg, cs *connState) *relay.Msg {
 		if !ok {
 			return &relay.Msg{Type: relay.MsgError, Reason: relay.ReasonQuotaExceeded}
 		}
+		s.st.puts.Add(1)
+		s.st.bytesStored.Add(uint64(len(m.Body)))
 		if s.notifyListeners(string(m.Hint)) == 0 {
 			// Nobody parked is here to hear it — ring the out-of-band
 			// doorbell, if one is registered for this hint (EN-3).
@@ -451,6 +462,7 @@ func (s *Server) handle(m *relay.Msg, cs *connState) *relay.Msg {
 		// rejected drain must never look the same to an old client. Metered
 		// (RR-3): a dead verb must not be the cheapest thing to spin.
 		if !spend(&cs.collects, &cs.collectWindow, s.limits.collectRatePerMin()) {
+			s.st.rateLimited.Add(1)
 			return &relay.Msg{Type: relay.MsgError, Reason: relay.ReasonRateLimited,
 				RetryAfterMs: retryAfter(cs.collectWindow)}
 		}
@@ -460,6 +472,7 @@ func (s *Server) handle(m *relay.Msg, cs *connState) *relay.Msg {
 		// has had since PA-0: rate, hint count, reply bytes. Without the byte
 		// budget one collect could be asked to move the entire store.
 		if !spend(&cs.collects, &cs.collectWindow, s.limits.collectRatePerMin()) {
+			s.st.rateLimited.Add(1)
 			return &relay.Msg{Type: relay.MsgError, Reason: relay.ReasonRateLimited,
 				RetryAfterMs: retryAfter(cs.collectWindow)}
 		}
@@ -475,12 +488,14 @@ func (s *Server) handle(m *relay.Msg, cs *connState) *relay.Msg {
 			got := s.store.CollectBudget(string(relay.CollectHint(c)), now, budget)
 			for _, it := range got {
 				budget -= len(it)
+				s.st.bytesServed.Add(uint64(len(it)))
 			}
 			items = append(items, got...)
 			if budget <= 0 {
 				break
 			}
 		}
+		s.st.collects.Add(1)
 		if items == nil {
 			items = [][]byte{}
 		}
@@ -490,6 +505,7 @@ func (s *Server) handle(m *relay.Msg, cs *connState) *relay.Msg {
 		// participant asking THIS relay gets the same one. Metered (RR-3):
 		// an unmetered echo is a free amplification target.
 		if !spend(&cs.collects, &cs.collectWindow, s.limits.collectRatePerMin()) {
+			s.st.rateLimited.Add(1)
 			return &relay.Msg{Type: relay.MsgError, Reason: relay.ReasonRateLimited,
 				RetryAfterMs: retryAfter(cs.collectWindow)}
 		}
@@ -499,9 +515,11 @@ func (s *Server) handle(m *relay.Msg, cs *connState) *relay.Msg {
 		// wall clock, nonce echoed. No durable state; metered like a collect
 		// so a probe storm pays the same rail as any other read.
 		if !spend(&cs.collects, &cs.collectWindow, s.limits.collectRatePerMin()) {
+			s.st.rateLimited.Add(1)
 			return &relay.Msg{Type: relay.MsgError, Reason: relay.ReasonRateLimited,
 				RetryAfterMs: retryAfter(cs.collectWindow)}
 		}
+		s.st.probes.Add(1)
 		return &relay.Msg{
 			Type: relay.MsgProbeOK, Nonce: m.Nonce,
 			ProtoMin: relay.RelayProtocolMin, ProtoMax: relay.RelayProtocolVersion,
@@ -513,6 +531,7 @@ func (s *Server) handle(m *relay.Msg, cs *connState) *relay.Msg {
 			return &relay.Msg{Type: relay.MsgError, Reason: "malformed replace"}
 		}
 		if !spend(&cs.writes, &cs.writeWindow, s.limits.writeRatePerMin()) {
+			s.st.rateLimited.Add(1)
 			return &relay.Msg{Type: relay.MsgError, Reason: relay.ReasonRateLimited,
 				RetryAfterMs: retryAfter(cs.writeWindow)}
 		}
@@ -528,6 +547,8 @@ func (s *Server) handle(m *relay.Msg, cs *connState) *relay.Msg {
 		}) {
 			return &relay.Msg{Type: relay.MsgError, Reason: relay.ReasonQuotaExceeded}
 		}
+		s.st.replaces.Add(1)
+		s.st.bytesStored.Add(uint64(len(m.Body)))
 		return &relay.Msg{Type: relay.MsgPutOK, Expires: expires}
 	case relay.MsgFetch:
 		// Non-destructive read for public mailboxes: rate-limited per
@@ -538,6 +559,7 @@ func (s *Server) handle(m *relay.Msg, cs *connState) *relay.Msg {
 			return &relay.Msg{Type: relay.MsgError, Reason: relay.ReasonTooManyHints}
 		}
 		if !spend(&cs.fetches, &cs.fetchWindow, s.limits.fetchRatePerMin()) {
+			s.st.rateLimited.Add(1)
 			return &relay.Msg{Type: relay.MsgError, Reason: relay.ReasonRateLimited,
 				RetryAfterMs: retryAfter(cs.fetchWindow)}
 		}
@@ -547,12 +569,14 @@ func (s *Server) handle(m *relay.Msg, cs *connState) *relay.Msg {
 			got := s.store.Fetch(string(h), now, budget)
 			for _, it := range got {
 				budget -= len(it)
+				s.st.bytesServed.Add(uint64(len(it)))
 			}
 			items = append(items, got...)
 			if budget <= 0 {
 				break
 			}
 		}
+		s.st.fetches.Add(1)
 		if items == nil {
 			items = [][]byte{}
 		}
@@ -564,6 +588,7 @@ func (s *Server) handle(m *relay.Msg, cs *connState) *relay.Msg {
 		// Metered like a collect — parking is cheap for the relay but not
 		// free, and an unmetered verb is an amplification invitation.
 		if !spend(&cs.collects, &cs.collectWindow, s.limits.collectRatePerMin()) {
+			s.st.rateLimited.Add(1)
 			return &relay.Msg{Type: relay.MsgError, Reason: relay.ReasonRateLimited,
 				RetryAfterMs: retryAfter(cs.collectWindow)}
 		}
@@ -576,6 +601,7 @@ func (s *Server) handle(m *relay.Msg, cs *connState) *relay.Msg {
 			}
 		}
 		s.repark(cs, m.Hints)
+		s.census.note(m.Hints, int64(now))
 		// EN-3: an endpoint riding the park registers the out-of-band
 		// doorbell for the same hints; an EMPTY one removes whatever this
 		// connection last registered — the off switch, named by the only
@@ -610,6 +636,7 @@ func (s *Server) handle(m *relay.Msg, cs *connState) *relay.Msg {
 		// flood is bounded by the read loop, not answered for free
 		// forever (writes budget, the roomiest one).
 		if !spend(&cs.writes, &cs.writeWindow, s.limits.writeRatePerMin()) {
+			s.st.rateLimited.Add(1)
 			return &relay.Msg{Type: relay.MsgError, Reason: relay.ReasonRateLimited,
 				RetryAfterMs: retryAfter(cs.writeWindow)}
 		}
