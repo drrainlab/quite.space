@@ -114,25 +114,36 @@ func TestALiveDeviceWithNoRouteIsGuessedAtEveryOfficialRelay(t *testing.T) {
 	alice.guessRelaysOverride = []string{addrA, addrB}
 	alice.mu.Unlock()
 	alice.resetOffers()
+	// The count is taken BEFORE the word: Say cues the outbox (LT-3), and
+	// the copy may already be on relay B by the time the cycle runs.
+	before := srvB.StatusSnapshot("", "").Traffic.PutsTotal
 	if _, err := alice.Say(tid, "где ты", SayOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	before := srvB.StatusSnapshot("", "").Traffic.PutsTotal
 	alice.relaySyncOnce(addrA)
-	if after := srvB.StatusSnapshot("", "").Traffic.PutsTotal; after == before {
-		t.Fatal("no copy was guessed onto relay B, where bob may be listening")
+	deadline := time.Now().Add(10 * time.Second)
+	for srvB.StatusSnapshot("", "").Traffic.PutsTotal == before {
+		if time.Now().After(deadline) {
+			t.Fatal("no copy was guessed onto relay B, where bob may be listening")
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 	// And alice's screen says so: the relays took it. A guess is not
 	// delivery — the cursor stays, the space stays held — but "still owed
 	// to a relay" would be false, and was what the owner watched for weeks.
-	if got := deliveryOf(t, alice, tid, "где ты"); got != "relayed" {
-		t.Fatalf("a word accepted by every official relay on a guess shows %q, want relayed", got)
+	deadline = time.Now().Add(5 * time.Second)
+	for deliveryOf(t, alice, tid, "где ты") != "relayed" {
+		if time.Now().After(deadline) {
+			t.Fatalf("a word accepted by every official relay on a guess shows %q, want relayed",
+				deliveryOf(t, alice, tid, "где ты"))
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 	// Bob, silently reading on B, gets it without ever having spoken again.
 	nodes := map[string]*Runtime{"alice": alice, "bob": bob}
 	addrs := map[string]string{"alice": addrA, "bob": addrB}
 	setPersonalRelay(t, bob, addrB)
-	deadline := time.Now().Add(30 * time.Second)
+	deadline = time.Now().Add(30 * time.Second)
 	for countMsg(t, bob, tid, "где ты") < 1 {
 		convergeTick(nodes, addrs)
 		if time.Now().After(deadline) {
