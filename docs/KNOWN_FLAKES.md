@@ -169,3 +169,18 @@ write from a goroutine nobody can join.
 **Verified:** the forced interleaving above no longer reorders the
 writes with the lane in place; `-race -count=10` on the test and one
 `-race` pass of `./node` green locally.
+
+## TestTheTombstoneAnswersAPoll (transports/radiotransfer) — seen once, 2026-09-13
+
+**Seen:** the `ci` run for tag v1.0.15 (commit 3968afd) failed in this
+test after 0.02 s; the `ci` run for the same commit on `main` passed,
+and `./transports/...` passed locally the same evening. The tag was
+re-pushed on the same commit and went green.
+
+**Shape:** a delayed air pair (200 ms) with every COMMIT dropped and a
+two-frame window; the assertion that fails at 0.02 s is one of the
+early ones — the session did not confirm, or confirmed without a POLL.
+A CI runner under load is the likely difference. Not investigated yet;
+the test is pure in-process timing and should be made deterministic
+(a stepped clock, or an air that delivers on demand) rather than given
+a longer wait.
