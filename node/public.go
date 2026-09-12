@@ -1006,9 +1006,35 @@ func (r *Runtime) publishPublicProjection(addr string, tid id.TerminalID) error 
 // publishPublicProjectionForce reports whether the relay was actually
 // touched (so the caller can reset its heartbeat timer).
 func (r *Runtime) publishPublicProjectionForce(addr string, tid id.TerminalID, force bool) (bool, error) {
+	// ONE PUBLISH AT A TIME PER SPACE, from build to relay write.
+	//
+	// The relay's Replace is atomic (I5) and content-blind: the mailbox
+	// holds exactly the last item written, and the relay reads nothing
+	// inside it. So the ORDER in which projections land is the only thing
+	// keeping the outbox current. Three callers publish concurrently — the sync loop, the
+	// per-post nudge in PublishDocument, and explicit calls — and before
+	// this lane each held r.mu only to BUILD, then wrote to the relay
+	// unlocked. A nudge that built seq N with one card, lost the scheduler
+	// while a later build wrote seq N+1 with two, and then wrote its own
+	// stale bytes left the relay serving seq N until the next heartbeat
+	// (publicHeartbeat, five minutes): every stranger inspecting the space
+	// saw the old listing meanwhile. CI's -race job hit exactly that window
+	// in the directory-inspect test (docs/KNOWN_FLAKES.md, 2026-09-12).
+	//
+	// Holding the lane across the network call is deliberate: the write is
+	// bounded by the relay client's timeout, and a publisher queued behind
+	// it then builds from a NEWER log, which is the freshness the outbox
+	// promises. The lane is per space, so one slow relay never stalls
+	// another space's publish.
+	st, release, err := r.publishLaneFor(tid)
+	if err != nil {
+		return false, err
+	}
+	defer release()
 	r.mu.Lock()
-	st, ok := r.spaces[tid]
-	if !ok {
+	if r.spaces[tid] != st {
+		// Dropped between taking the lane and taking r.mu — the same
+		// answer the lookup used to give, one step later.
 		r.mu.Unlock()
 		return false, errors.New("node: unknown space")
 	}
@@ -1073,6 +1099,31 @@ func (r *Runtime) publishPublicProjectionForce(addr string, tid id.TerminalID, f
 		return perr
 	})
 	return err == nil, err
+}
+
+// publishLaneFor takes a space's publish lane and returns the state it
+// belongs to. The lane lives on the spaceState, so it is looked up under
+// r.mu and locked OUTSIDE it (lock order: lane, then r.mu — the reverse
+// would deadlock a build against a waiter). If the space was replaced
+// while we waited — left and re-opened — the lane we hold belongs to a
+// dead state, so look again rather than publish under the wrong lock.
+func (r *Runtime) publishLaneFor(tid id.TerminalID) (*spaceState, func(), error) {
+	for {
+		r.mu.Lock()
+		st, ok := r.spaces[tid]
+		r.mu.Unlock()
+		if !ok {
+			return nil, nil, errors.New("node: unknown space")
+		}
+		st.publishLane.Lock()
+		r.mu.Lock()
+		cur := r.spaces[tid]
+		r.mu.Unlock()
+		if cur == st {
+			return st, st.publishLane.Unlock, nil
+		}
+		st.publishLane.Unlock()
+	}
 }
 
 // ingressHintLocked picks this device's ingress address for a bucket. The

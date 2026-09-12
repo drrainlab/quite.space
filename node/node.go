@@ -424,6 +424,15 @@ type spaceState struct {
 	projWire     []byte
 	projSeq      uint64
 	ingressHints [][]byte
+
+	// publishLane serialises this space's public-projection publishes
+	// from BUILD to RELAY WRITE (publishPublicProjectionForce). r.mu only
+	// covers the build; the relay's Replace is a blind swap; and three
+	// callers publish concurrently. Without the lane an older build can
+	// land after a newer one and the outbox serves stale bytes until the
+	// next heartbeat. Taken with r.mu released, then r.mu inside — never
+	// the other way round.
+	publishLane sync.Mutex
 }
 
 // Open unlocks the data root and reconstructs the node: identity from the

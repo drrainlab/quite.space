@@ -101,3 +101,71 @@ occurrence should be harvested from the FULL job log immediately
 (annotations will truncate it again). A data race in the keystore maps
 is at worst a concurrent-map panic — rare, but real when confirmed, and
 this entry exists so that day starts from the stack above.
+
+---
+
+## `node.TestInspectingADirectoryListsItsCardsAndPersistsNothing` — stale projection at the relay, under `-race` — UNDERSTOOD AND FIXED
+
+**Seen:** 2026-09-12, CI `race` job on 3e4d115 (a commit touching only
+`tools/typeface`, web-ui fonts/CSS and docs; `node/` unchanged since
+v1.0.9, whose race job was green). The non-race `test` job passed on the
+same commit. The package took 867 s under `-race` on the runner — the
+whole suite runs packages in parallel on a shared 4-vCPU box, so a
+goroutine there can lose the scheduler for tens of milliseconds at a
+time. Locally `-race -count=3` passes in ~7 s, and 20 runs with
+`-cpu=1` never reproduced it.
+
+**Output, verbatim (what the annotation kept):**
+
+```
+--- FAIL: TestInspectingADirectoryListsItsCardsAndPersistsNothing (1.11s)
+```
+
+The assertion line was not captured. From the mechanism below it can
+only have been the listing check — `the listing is wrong: 1 cards,
+total 1, truncated false` — since every other assertion in the test is
+about state the failing path never touches.
+
+**What the test guards.** Bob inspects a directory that alice published
+with two space-cards, and his node keeps nothing. The listing must carry
+both cards.
+
+**Cause — found by forcing the interleaving, not by re-running.** There
+is no fixed deadline, single poll or heartbeat cadence in the test; the
+publishes are synchronous and the read is synchronous. The timing lived
+in the PUBLISHER. `PublishDocument` in an owned public space fires a
+background republish of the projection (the per-post nudge, RR-4), and
+`publishPublicProjectionForce` held `r.mu` only to BUILD the projection,
+then wrote it to the relay unlocked. The relay's `Replace` is atomic (I5)
+and content-blind — last write wins, whatever its seq. So in the fixture:
+
+1. `addCard` #1 emits and spawns nudge N1.
+2. N1 wins `r.mu`, builds seq 1 with ONE card, releases the lock — and
+   is starved before it reaches the relay.
+3. `addCard` #2, then the fixture's explicit publish, builds seq 2 with
+   two cards and writes it.
+4. N1 wakes and writes its seq-1 bytes over seq 2. The relay now serves
+   one card, and nothing republishes for `publicHeartbeat` (5 min).
+5. Bob reads seq 1.
+
+Reproduced deterministically by inserting a 150 ms sleep between N1's
+build and its relay write (plus 20 ms after the first card so N1 builds
+before the second): the log then shows `REPLACE seq=2` followed by
+`REPLACE seq=1`, and only a second nudge's later rewrite of seq 2 saved
+the read. On the runner that second rewrite lost too.
+
+This was not a test artefact. A person adding two cards in quick
+succession on a slow device left strangers looking at the old listing
+for up to five minutes.
+
+**Fix (same day):** a per-space `publishLane` mutex on `spaceState`,
+held by `publishPublicProjectionForce` from build to relay write, so
+projections land in the order they were built and a queued publisher
+builds from the newer log. The fixture in `cat0b_inspect_test.go` says
+why its explicit publishes are now reliable. No wait was added to the
+test: nothing in it polls, and a wait could not have bounded a stale
+write from a goroutine nobody can join.
+
+**Verified:** the forced interleaving above no longer reorders the
+writes with the lane in place; `-race -count=10` on the test and one
+`-race` pass of `./node` green locally.

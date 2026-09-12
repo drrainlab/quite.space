@@ -58,6 +58,15 @@ func directoryFixture(t *testing.T) (alice, bob *Runtime, root id.TerminalID, ro
 	addCard(t, alice, root, "Music", card(music))
 	addCard(t, alice, root, "Experimental music", card(ordinary))
 
+	// Every PublishDocument above also fired its own background republish
+	// (the per-post nudge). These explicit publishes are reliable only
+	// because publishPublicProjectionForce serialises build-to-write per
+	// space: a nudge that built root with ONE card cannot land at the relay
+	// after this two-card build, and any nudge that builds later builds the
+	// same content. Before that lane existed, CI's -race job saw exactly
+	// that stale overwrite (docs/KNOWN_FLAKES.md, 2026-09-12) — and no wait
+	// in this fixture could have fixed it, since nothing republishes for
+	// five minutes and the stale writer is a goroutine nobody can join.
 	for _, tid := range []id.TerminalID{root, music, ordinary} {
 		if err := alice.publishPublicProjection(alice.GetSettings().Relay, tid); err != nil {
 			t.Fatal(err)
