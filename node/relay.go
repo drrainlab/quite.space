@@ -461,8 +461,14 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 	// lastAuthored: when each device last wrote here (advisory clock,
 	// ADR-004) — the sign of life the guess below is allowed to use.
 	lastAuthored := map[id.DeviceID]uint64{}
+	// ownSeq: this device's own chain positions, for the relay-acceptance
+	// watermark below (LT-3).
+	ownSeq := map[id.EventID]uint64{}
 	if err := st.space.Log.Replay(func(a eventlog.Applied) error {
 		devSet[a.Env.Device] = struct{}{} // author is a member, custody aside
+		if a.Env.Device == r.Device.ID {
+			ownSeq[a.ID] = a.Env.Sequence
+		}
 		if a.Env.CreatedAt > lastAuthored[a.Env.Device] {
 			lastAuthored[a.Env.Device] = a.Env.CreatedAt
 		}
@@ -867,7 +873,7 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 	// that from a peer being offline. Named, not counted — see noteStranded.
 	r.noteStranded(tid, frames, eventIDs, oversizeIdx)
 
-	if relayReached > 0 {
+	if relayReached > 0 || relayTentative > 0 {
 		// Record the honest receipt level for every pushed event: the relay
 		// accepted them; nobody received anything yet. LAN hand-offs are NOT
 		// in here — their claim is handed_to_transport, recorded by the
@@ -875,9 +881,34 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 		// hand-off was a relay acceptance would be a lie in the ledger.
 		// Only what actually crossed this cycle earns the receipt; a frame
 		// a mailbox already held was accepted when it was sent.
+		//
+		// A COPY ON A GUESS WAS STILL ACCEPTED BY A RELAY. The guess is
+		// counted apart above and the cursor stays put — that is about
+		// re-offering, and stays. But the receipt says what happened on
+		// the wire, and on a guess the wire event is the same: an official
+		// relay took the bytes (every official relay, for a live device).
+		// Withholding it left the owner's screen on the dot — "still owed
+		// to a relay" — for weeks, for every peer whose only route was a
+		// recorded assumption that had just aged out, while the peer was
+		// reading the message from that very relay.
 		r.mu.Lock()
+		top := uint64(0)
 		for eid := range sentIDs {
 			_ = st.space.Trust.RecordTransportReceipt(eid, tid, claims.DeliveryAcceptedByRelay)
+			if seq := ownSeq[eid]; seq > top {
+				top = seq
+			}
+		}
+		// The watermark outlives the process: what a relay took stays
+		// taken across a restart (kernel/storage: Relayed).
+		if top > 0 && r.ks.Relayed[tid] < top {
+			if r.ks.Relayed == nil {
+				r.ks.Relayed = map[id.TerminalID]uint64{}
+			}
+			r.ks.Relayed[tid] = top
+			if err := r.saveKeystore(); err != nil {
+				log.Printf("node: relayed watermark not persisted: %v", err)
+			}
 		}
 		r.mu.Unlock()
 	}

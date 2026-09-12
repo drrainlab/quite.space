@@ -162,3 +162,17 @@ Shipped:
 Still open: a network-change hint for the desktop (SCNetworkReachability
 or a route-table watch → `SetNetwork`), and conditional fetch by item
 hash on the relay, which shortens the cycle itself for readers.
+
+### LT-3, second look (the same evening)
+
+With the outbox live the owner's Mac still showed new words "sending —
+still owed to a relay" for minutes. Read from the Mac's own ledger and
+the catalog node's diagnostics on the same machine: all three relays
+reachable, most peer routes `(legacy)`, spaces held "delivered on a
+guess". The 30-day legacy expiry from 1.0.12 had just crossed the beta's
+first routes, so peers who had not spoken since became guesses — and a
+copy sent on a guess earned no `accepted_by_relay` receipt, so the dot
+stayed. Two fixes in 1.0.15: the receipt is recorded for a guessed copy
+too (the wire event is the same), and the acceptance high-water per
+space is persisted in the keystore (`Relayed`, key 27), so a restart no
+longer drops the history back to the dot.

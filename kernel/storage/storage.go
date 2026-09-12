@@ -182,6 +182,14 @@ type Keystore struct {
 	// bytes. Max-merged on receipt; clamped to the real chain length at
 	// install (a peer cannot "confirm" frames that do not exist).
 	Delivered map[id.TerminalID]map[id.DeviceID]uint64
+	// Relayed is the relay-acceptance high-water per space (LT-3): the
+	// highest position of THIS device's own chain that a relay has taken
+	// into a recipient's mailbox. Trust's receipt records are in memory,
+	// so before this every restart dropped the whole history back to
+	// "still owed to a relay" — pessimistic, and read by the owner as a
+	// node that could not send. Own frames are pushed in chain order, so
+	// one position per space is the whole truth.
+	Relayed map[id.TerminalID]uint64
 	// Settings is an opaque local-settings blob owned by the node layer
 	// (UI prefs + LLM config, including the API key). Encrypted at rest with
 	// the rest of the keystore; never leaves the device except to the
@@ -407,6 +415,7 @@ const (
 	ksKeyRefusals  = 24 // ADR-027 people this person declined to hear from
 	ksKeySweeps    = 25 // SP-3.2 recording sessions (identity + saga state)
 	ksKeyDelivered = 26 // DR-1 delivery-receipt high-water per space per device
+	ksKeyRelayed   = 27 // LT-3 relay-acceptance high-water per space
 )
 
 // ksMapArity is how many top-level pairs encode() writes, and it MUST equal
@@ -414,7 +423,7 @@ const (
 // which is a poor place for a number that bricks every keystore when it is
 // wrong: too few and the trailing pair goes unread, so Done() fails and
 // nobody can open their data again. Named here, next to the keys it counts.
-const ksMapArity = 26
+const ksMapArity = 27
 
 func (k *Keystore) encode() []byte {
 	buf := codec.AppendMap(nil, ksMapArity)
@@ -556,7 +565,23 @@ func (k *Keystore) encode() []byte {
 			buf = codec.AppendUint(buf, devs[dev])
 		}
 	}
+	buf = codec.AppendUint(buf, ksKeyRelayed)
+	buf = codec.AppendArray(buf, len(k.Relayed))
+	for _, tid := range sortedTerminalKeysRelayed(k.Relayed) {
+		buf = codec.AppendArray(buf, 2)
+		buf = codec.AppendBytes(buf, tid[:])
+		buf = codec.AppendUint(buf, k.Relayed[tid])
+	}
 	return buf
+}
+
+func sortedTerminalKeysRelayed(m map[id.TerminalID]uint64) []id.TerminalID {
+	out := make([]id.TerminalID, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Slice(out, func(i, j int) bool { return string(out[i][:]) < string(out[j][:]) })
+	return out
 }
 
 func sortedTerminalKeysDelivered(m map[id.TerminalID]map[id.DeviceID]uint64) []id.TerminalID {
@@ -904,6 +929,41 @@ func decodeKeystore(data []byte) (*Keystore, error) {
 					}
 				}
 				k.Delivered[tid] = devs
+				for j := 2; j < pairN; j++ {
+					if er = d.SkipItem(); er != nil {
+						return nil, er
+					}
+				}
+			}
+		case ksKeyRelayed:
+			var cnt int
+			cnt, er = d.ReadArray()
+			if er != nil {
+				return nil, er
+			}
+			k.Relayed = map[id.TerminalID]uint64{}
+			for range cnt {
+				var pairN int
+				if pairN, er = d.ReadArray(); er != nil || pairN < 2 {
+					if er == nil {
+						er = errors.New("storage: malformed relayed table")
+					}
+					return nil, er
+				}
+				var raw []byte
+				if raw, er = d.ReadBytes(); er != nil || len(raw) != id.Size {
+					if er == nil {
+						er = errors.New("storage: malformed relayed table")
+					}
+					return nil, er
+				}
+				var tid id.TerminalID
+				copy(tid[:], raw)
+				var pos uint64
+				if pos, er = d.ReadUint(); er != nil {
+					return nil, er
+				}
+				k.Relayed[tid] = pos
 				for j := 2; j < pairN; j++ {
 					if er = d.SkipItem(); er != nil {
 						return nil, er

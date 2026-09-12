@@ -90,3 +90,59 @@ func TestAFailedBackgroundCycleDoesNotWaitForTheNextTick(t *testing.T) {
 		t.Fatalf("a foreground failure must keep the two-second tick, got %s", got)
 	}
 }
+
+// A relay's acceptance is a fact about the wire, and facts survive the
+// process: before the watermark every restart put the whole history back
+// on the dot, which the owner read as a node that could not send.
+func TestWhatARelayTookStaysTakenAcrossARestart(t *testing.T) {
+	srv, addr := startRelay(t)
+	defer srv.Close()
+	dir := t.TempDir()
+	alice := openRuntime(t, dir, "alice")
+	setPersonalRelay(t, alice, addr)
+	bob := openRuntime(t, t.TempDir(), "bob")
+	defer bob.Close()
+	setPersonalRelay(t, bob, addr)
+	tid, err := alice.CreateSpace("рестарт")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pass, err := alice.MintPass(tid, 2, 24, addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := bob.JoinByPass(pass.Link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitJoin(t, bob, req, JoinReady)
+	nodes := map[string]*Runtime{"alice": alice, "bob": bob}
+	addrs := map[string]string{"alice": addr, "bob": addr}
+	deadline := time.Now().Add(30 * time.Second)
+	if _, err := bob.Say(tid, "я тут", SayOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	for countMsg(t, alice, tid, "я тут") < 1 {
+		convergeTick(nodes, addrs)
+		if time.Now().After(deadline) {
+			t.Fatal("the pair never converged")
+		}
+	}
+	// Bob stops reading: no delivery receipt can come home, so the only
+	// rung alice can stand on is the relay's own acceptance.
+	bob.applyRelaySync("", 0)
+
+	if _, err := alice.Say(tid, "переживёт рестарт", SayOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	alice.relaySyncOnce(addr)
+	if got := deliveryOf(t, alice, tid, "переживёт рестарт"); got != "relayed" {
+		t.Fatalf("before the restart the word shows %q, want relayed", got)
+	}
+	alice.Close()
+	alice = openRuntime(t, dir, "alice")
+	defer alice.Close()
+	if got := deliveryOf(t, alice, tid, "переживёт рестарт"); got != "relayed" {
+		t.Fatalf("after the restart the word shows %q — the relay's acceptance was forgotten", got)
+	}
+}

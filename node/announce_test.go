@@ -122,6 +122,12 @@ func TestALiveDeviceWithNoRouteIsGuessedAtEveryOfficialRelay(t *testing.T) {
 	if after := srvB.StatusSnapshot("", "").Traffic.PutsTotal; after == before {
 		t.Fatal("no copy was guessed onto relay B, where bob may be listening")
 	}
+	// And alice's screen says so: the relays took it. A guess is not
+	// delivery — the cursor stays, the space stays held — but "still owed
+	// to a relay" would be false, and was what the owner watched for weeks.
+	if got := deliveryOf(t, alice, tid, "где ты"); got != "relayed" {
+		t.Fatalf("a word accepted by every official relay on a guess shows %q, want relayed", got)
+	}
 	// Bob, silently reading on B, gets it without ever having spoken again.
 	nodes := map[string]*Runtime{"alice": alice, "bob": bob}
 	addrs := map[string]string{"alice": addrA, "bob": addrB}

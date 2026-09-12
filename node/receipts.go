@@ -353,6 +353,12 @@ func (r *Runtime) deliveryStatusLocked(tid id.TerminalID, eid id.EventID, seq ui
 			return "relayed"
 		}
 	}
+	// The persisted watermark (LT-3): own frames are pushed in chain
+	// order, so everything up to the highest position a relay took has
+	// been taken — and stays taken across a restart.
+	if seq > 0 && r.ks.Relayed[tid] >= seq {
+		return "relayed"
+	}
 	return "sent"
 }
 
