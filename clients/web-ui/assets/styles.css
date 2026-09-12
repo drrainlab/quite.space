@@ -95,19 +95,40 @@
   }
 
   /* ---- Light theme palette ---- */
+  /* Re-graded 2026-09-12 (owner's screenshot: "вон как выглядит"). The
+     first light palette was the dark one turned inside out — a near-white
+     lilac ground, white panels on it, bubbles as a 14% tint of accent —
+     and it read as WASHED: no surface stood apart from any other, the
+     stamps sank, the brand mark vanished. Paper and ink instead: the
+     ground takes a little more body so the white surfaces lift off it;
+     incoming bubbles are white with an edge and a shadow (a light theme
+     has no backdrop glow to carry a shape, the edge does that work); own
+     bubbles are a SOLID pale violet, not a tint; text and accents sit a
+     step darker so the dim voice is still readable on white (dim 5.9:1,
+     accent 6.4:1). The blue-on-white lockup gets a darkening filter in
+     this theme — one asset, two grounds. */
   :root[data-theme="light"] {
-    --bg: #f3f1f7; --canvas-deep: #e9e6f0;
-    --panel: #ffffff; --surface-raised: #f7f5fb; --line: rgba(60,40,80,.13);
-    --fg: #1b1622; --dim: #6a6577; --muted: #9a94a6;
-    --accent: #8a4fc0; --acc: #8a4fc0; --accent-soft: #a77cd0; --on-accent: #ffffff;
-    --signal: #3f8f76; --warn: #b06f1c; --critical: #c0555b;
-    --human: #8a4fc0; --ai: #7a5fd0; --bot: #3f74b0; --sensor: #b06f1c;
-    --glow: rgba(138,79,192,.05);
-    --glass: rgba(255,255,255,.72); --glass-border: rgba(60,40,80,.12);
-    --bubble-own: rgba(138,79,192,.14); --bubble-other: #ffffff;
-    --composer: rgba(255,255,255,.66); --composer-line: rgba(60,40,80,.10);
-    --shadow: 0 1px 3px rgba(40,24,60,.10), 0 6px 20px rgba(40,24,60,.06);
+    --bg: #e9e5ef; --canvas-deep: #ded8e7;
+    --panel: #fbfafd; --surface-raised: #f0ebf6; --line: rgba(52,32,74,.17);
+    --fg: #17121d; --dim: #5b5568; --muted: #7c768a;
+    --accent: #7b3fb5; --acc: #7b3fb5; --accent-soft: #9c6bd0; --on-accent: #ffffff;
+    --signal: #2f7f66; --warn: #a3651a; --critical: #b84a51;
+    --human: #7b3fb5; --ai: #6d52c6; --bot: #34689f; --sensor: #a3651a;
+    --glow: rgba(123,63,181,.08);
+    --glass: rgba(255,255,255,.80); --glass-border: rgba(52,32,74,.14);
+    --bubble-own: #e6dbf4; --bubble-own-border: rgba(123,63,181,.30);
+    --bubble-other: #ffffff;
+    --composer: rgba(255,255,255,.84); --composer-line: rgba(52,32,74,.14);
+    --shadow: 0 1px 2px rgba(40,24,60,.10), 0 6px 18px -8px rgba(40,24,60,.18);
   }
+  :root[data-theme="light"] .bubble {
+    border: 1px solid rgba(52,32,74,.12);
+    box-shadow: 0 1px 2px rgba(40,24,60,.08), 0 4px 14px -8px rgba(40,24,60,.16);
+  }
+  :root[data-theme="light"] .msg.own .bubble { border-color: var(--bubble-own-border); }
+  /* Dark ink at 45% on white is a whisper nobody can read. */
+  :root[data-theme="light"] .entry .bubble .stamp { opacity: .62; }
+  :root[data-theme="light"] .brand-lockup { filter: brightness(.5) saturate(1.7) contrast(1.2); }
 
   /* ---- Preset packs (adjust the theme, not replace it) ---- */
   /* Daylight: no blur, soft shadows, warmer — best paired with light theme. */
@@ -3383,6 +3404,23 @@ button:hover > .act-mark, button:focus-visible > .act-mark { opacity: 1; }
 @media (max-width: 600px) {
   .atmo-card-doors .door-long { display: none; }
   .atmo-card-doors .door-short { display: inline; }
+}
+
+/* THE SKY IS A DARK ROOM IN EVERY THEME. An atmosphere is painted from the
+   post's own palette onto a dark ground — the floor, the meter and the ink
+   halo (paintInk) are all built on that — and a light theme cannot
+   re-light somebody else's sky. So the article under a sky keeps the dark
+   reading tokens whatever the shell around it wears: light ink over the
+   scene, the way a photograph does not turn negative when the room's
+   lights come on. Seen in the light theme before this rule: dark text on
+   a maroon sky, unreadable from the first line. */
+:root[data-theme="light"] .atmo-shell,
+:root[data-theme="light"] .pub-card-atmo-on {
+  --bg: #0d0a10; --panel: #18131c; --surface-raised: #1f1824; --line: rgba(215,164,239,.14);
+  --fg: #ddd8df; --dim: #879993; --muted: #66736f;
+  --accent: #d39ae7; --acc: #d39ae7; --accent-soft: #ae7cc2; --on-accent: #17111d;
+  --glass: rgba(32,24,38,.66); --glass-border: rgba(215,164,239,.20);
+  color: var(--fg);
 }
 
 /* Reduced transparency: the scrim goes opaque, and the post reads as an
