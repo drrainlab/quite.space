@@ -185,6 +185,50 @@ func driveAir(ctx context.Context, s *Session, air *delayedFeedbackAir) {
 	}()
 }
 
+// driveAirAtTurnaround runs a receiver's read loop the way a half-duplex
+// radio actually answers: SACKs go out only when the sender has yielded the
+// air — after an EOB-marked DATA frame or a POLL — never on a cadence of the
+// loop's own.
+//
+// driveAir pumps after every frame and every 20 ms of quiet, and that cadence
+// is a RACE against the receiver's SACK delay. A non-EOB fragment arms its
+// SACK for jitter(SACKDelay) — anywhere in [0, 5 ms) here, drawn from a
+// transfer id that is random per run — while the sender spaces frames by a
+// 1 ms FrameGap. The two are only ever apart by scheduling: a preemption of
+// the read loop between Deliver and PumpSACKs longer than that jitter, and
+// the receiver reports the window HALF FILLED before the EOB fragment is
+// accepted. The protocol survives that (the coalesce window exists for it),
+// but a test asserting a particular shape of confirmation does not. Seen
+// exactly once, on a loaded CI runner, in TestTheTombstoneAnswersAPoll; forced
+// deterministically by stalling driveAir 6 ms between Deliver and the pump.
+//
+// Here the state the SACK describes is fixed by the frame ORDER alone: the
+// air is FIFO and loses nothing on this path, so when the EOB fragment has
+// been delivered every fragment before it has too, whatever the scheduler
+// did in between. The time a receiver had to wait before turnaround was
+// never the thing under test.
+func driveAirAtTurnaround(ctx context.Context, s *Session, air *delayedFeedbackAir) {
+	go func() {
+		for {
+			_, raw, err := air.Receive(ctx)
+			if ctx.Err() != nil {
+				return
+			}
+			if err != nil {
+				continue
+			}
+			_, _ = s.Deliver(ctx, RadioAddress("peer"), raw)
+			f, err := Decode(raw, air.key)
+			if err != nil {
+				continue
+			}
+			if f.Kind == KindPoll || (f.Kind == KindData && f.EOB) {
+				s.PumpSACKs(ctx)
+			}
+		}
+	}()
+}
+
 // budgetLimits are shrunk so the tests run in milliseconds, with the repair
 // budget stated explicitly rather than derived — a test that depends on a
 // derivation is testing the derivation.

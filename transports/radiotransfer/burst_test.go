@@ -49,7 +49,15 @@ func TestTheTombstoneAnswersAPoll(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	driveAir(ctx, receiver, rAir)
+	// The receiver answers at TURNAROUND only. With the cadence-driven loop
+	// the second window's SACK could go out between fragment 2 and the EOB
+	// fragment 3 — a scheduling stall longer than the SACK jitter is all it
+	// takes — and a half-window report makes the sender resend one frame
+	// and confirm off the tombstone's complete-SACK with no POLL at all,
+	// which is the 0.02 s failure docs/KNOWN_FLAKES.md records. The shape
+	// this test needs, "every fragment held, the confirmation lost", is
+	// fixed by frame order once the answer waits for the EOB.
+	driveAirAtTurnaround(ctx, receiver, rAir)
 	driveAir(ctx, sender, sAir)
 
 	if err := sender.Send(ctx, RadioAddress("peer"),

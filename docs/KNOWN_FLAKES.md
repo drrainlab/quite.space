@@ -180,7 +180,62 @@ re-pushed on the same commit and went green.
 **Shape:** a delayed air pair (200 ms) with every COMMIT dropped and a
 two-frame window; the assertion that fails at 0.02 s is one of the
 early ones — the session did not confirm, or confirmed without a POLL.
-A CI runner under load is the likely difference. Not investigated yet;
-the test is pure in-process timing and should be made deterministic
-(a stepped clock, or an air that delivers on demand) rather than given
-a longer wait.
+
+**What the test guards.** A transfer whose every COMMIT is lost and
+whose final SACK died with the completed inbound confirms by ASKING:
+one POLL, answered from the tombstone, zero repaired DATA frames.
+
+**Cause — found by forcing the interleaving, not by re-running.** The
+0.02 s is the tell: the sender's AckTimeout here is 80 ms plus jitter,
+so a run that ended in 20 ms never waited for silence at all, and the
+ladder the test exists for never ran. The timing lived on the RECEIVER
+side of the harness, between two timers that are only ever apart by
+scheduling:
+
+- a non-EOB DATA frame arms the receiver's SACK for `jitter(SACKDelay)`
+  — anywhere in [0, 5 ms), drawn from the transfer id, which is random
+  per run;
+- the sender spaces fragments by a 1 ms FrameGap;
+- `driveAir` calls `PumpSACKs` after EVERY delivered frame.
+
+So in window two: fragment 2 arrives and arms the SACK; the read loop is
+preempted between `Deliver` and `PumpSACKs` for longer than that run's
+jitter; the pump fires and reports the window HALF FILLED; fragment 3
+(EOB) then completes the message, and the COMMIT is dropped as the test
+intends. The sender now holds a current SACK with one hole — an ANSWER,
+not silence — so it never polls: it resends fragment 3, the tombstone
+meets the duplicate with a complete-SACK, and the transfer confirms with
+`PollsSent == 0`. Reproduced every time by stalling `driveAir` 6 ms
+between `Deliver` and the pump. On a loaded runner under `-race` a
+sub-millisecond stall is enough whenever the drawn jitter is smaller.
+
+The protocol is not at fault: a SACK before the burst ends is a legal
+event and the coalesce window exists for it. The test's SHAPE was
+racing the harness's cadence.
+
+**Fix (2026-09-13):** the receiver in this test is driven by
+`driveAirAtTurnaround` (budget_test.go): SACKs are pumped only after an
+EOB-marked DATA frame or a POLL — when the sender has yielded the air,
+which is what a half-duplex radio does anyway — never on the loop's own
+cadence. The state a SACK describes is then fixed by frame ORDER: the
+air is FIFO and loses nothing on that path, so by the time the EOB
+fragment is delivered every fragment before it is too, whatever the
+scheduler did. No wait was lengthened. No clock was injected into the
+session — session.go says why there deliberately is none (a fake `Now`
+feeding a real context deadline), and the receiver's own API already
+takes `now` as a parameter, so the harness is where the cadence belongs.
+`driveAir` keeps its cadence for the tests that need a SACK to fire on
+its timer (a lost EOB, the budget tests).
+
+**Verified:** the forced 6 ms stall passes with the new drive;
+`go test ./transports/radiotransfer/ -race -count=20` green locally
+(137 s).
+
+**Residual, stated honestly:** the sender's ladder still waits real
+milliseconds (AckTimeout 80 ms + jitter, coalesce 5 ms). A runner stall
+of that order between the sender's last frame and the SACK it is owed
+would make it resend the window, and the `RepairDataFrames <= 1`
+assertion would catch that. That exposure is two orders larger than the
+one that bit, it is shared by every test in the package, and removing it
+means the injectable clock session.go refuses. If it is ever seen, the
+answer is still not a longer wait.
