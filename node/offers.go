@@ -99,6 +99,59 @@ func (r *Runtime) markOffered(tid id.TerminalID, dev id.DeviceID, ep string, gue
 	r.offers[tid][dev] = offerMark{endpoint: ep, guess: guess, base: nBase, at: at}
 }
 
+// aliveWindow is how recently a device must have written for the guess
+// to be worth every official relay: a device silent for longer gets the
+// single cheap guess.
+const aliveWindow = 30 * 24 * time.Hour
+
+// guessRelays is where a live device with no stated route is guessed:
+// this node's own relay, the cycle's explicit endpoint, and every
+// official relay in the registry — deduplicated, at most a handful.
+// Tests override the set; the registry names production machines.
+func (r *Runtime) guessRelays(syncingAt string) []string {
+	if r.guessRelaysOverride != nil {
+		return append([]string(nil), r.guessRelaysOverride...)
+	}
+	seen := map[string]bool{}
+	var out []string
+	add := func(ep string) {
+		if ep != "" && !seen[ep] {
+			seen[ep] = true
+			out = append(out, ep)
+		}
+	}
+	add(r.ResolvePersonalRelay())
+	add(syncingAt)
+	for _, d := range BuiltinRelayRegistry().Relays {
+		add(d.Endpoint)
+	}
+	return out
+}
+
+// announceRoutes is "I moved": one frameless bundle carrying this device's
+// current ingress into every peer's mailbox in every space it shares —
+// so a relay change is known to the people it talks to within a cycle of
+// happening, not when this device next has something to say. Routes went
+// stale exactly that way in the beta: automatic selection moved a phone,
+// the phone only read, and its peers kept writing to the old relay until
+// T5. Runs off the caller's goroutine; a failure is a missed courtesy,
+// the next content push repeats the statement anyway.
+func (r *Runtime) announceRoutes() {
+	r.mu.Lock()
+	var tids []id.TerminalID
+	for tid := range r.spaces {
+		tids = append(tids, tid)
+	}
+	r.mu.Unlock()
+	addr := r.ResolvePersonalRelay()
+	for _, tid := range tids {
+		if !r.TransportAllowed(TransportRelay, tid) {
+			continue
+		}
+		_, _, _, _, _, _ = r.deliverSpaceAnnouncing(tid, AssetsManifests, addr, true)
+	}
+}
+
 // resetOffers forgets every mark: the next push re-offers everything,
 // which EventID dedup makes a no-op wherever the copy was already right.
 func (r *Runtime) resetOffers() {

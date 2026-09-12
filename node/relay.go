@@ -269,7 +269,7 @@ func (r *Runtime) pushToRelay(addr string, tid id.TerminalID, policy AssetPolicy
 	// Manual: hand EVERYTHING to the named relay, no delta — "push current
 	// space" is the explicit whole-log verb.
 	pushed, reached, _, _, deadline, err := r.deliverSpaceRouted(tid, policy,
-		func(id.DeviceID) (string, bool) { return addr, false }, false, false)
+		func(id.DeviceID, bool) ([]string, bool) { return []string{addr}, false }, false, false, false)
 	return pushed, reached, deadline, err
 }
 
@@ -302,8 +302,16 @@ func (r *Runtime) pushToRelay(addr string, tid id.TerminalID, policy AssetPolicy
 // must not create PeerRoutes or SelfIngress entries, must not survive the
 // cycle, and is never returned by the general resolver.
 func (r *Runtime) deliverSpace(tid id.TerminalID, policy AssetPolicy, syncingAt string) (pushed, reached, noRoute, tentative int, legacyBasis bool, err error) {
+	return r.deliverSpaceAnnouncing(tid, policy, syncingAt, false)
+}
+
+// deliverSpaceAnnouncing is deliverSpace with the "I moved" statement:
+// when announce is set, a recipient with nothing new to receive still
+// gets a frameless bundle carrying this device's current ingress (see
+// announceRoutes).
+func (r *Runtime) deliverSpaceAnnouncing(tid id.TerminalID, policy AssetPolicy, syncingAt string, announce bool) (pushed, reached, noRoute, tentative int, legacyBasis bool, err error) {
 	nowUnix := time.Now().Unix()
-	route := func(dev id.DeviceID) (string, bool) {
+	route := func(dev id.DeviceID, alive bool) ([]string, bool) {
 		if ranked := r.rankedPeerRoutes(dev); len(ranked) > 0 {
 			// A LEGACY ROUTE IS A RECORDED ASSUMPTION, NOT A STATEMENT —
 			// the open-time backfill for pre-RT0 directories, or history
@@ -324,10 +332,10 @@ func (r *Runtime) deliverSpace(tid id.TerminalID, policy AssetPolicy, syncingAt 
 			if ranked[0].Provenance == storage.RouteLegacy {
 				if !legacyRouteExpired(ranked[0], nowUnix) {
 					legacyBasis = true
-					return ranked[0].Endpoint, false
+					return []string{ranked[0].Endpoint}, false
 				}
 			} else {
-				return ranked[0].Endpoint, false
+				return []string{ranked[0].Endpoint}, false
 			}
 		}
 		r.mu.Lock()
@@ -339,7 +347,7 @@ func (r *Runtime) deliverSpace(tid id.TerminalID, policy AssetPolicy, syncingAt 
 		}
 		r.mu.Unlock()
 		if known > 0 {
-			return "", false // stated routes exist and are all down: HOLD (until T5)
+			return nil, false // stated routes exist and are all down: HOLD (until T5)
 		}
 		// NOTHING KNOWN AT ALL: THE BOOTSTRAP GUESS — used, NEVER RECORDED,
 		// NEVER FINAL. The copy is still put at this node's own relay: in a
@@ -352,13 +360,29 @@ func (r *Runtime) deliverSpace(tid id.TerminalID, policy AssetPolicy, syncingAt 
 		// mailbox nobody drains were a delivery. Transport acceptance at
 		// SOME endpoint is not delivery to the intended recipient — the
 		// caller holds the space and re-offers until a stated route exists.
+		//
+		// AND A LIVE DEVICE IS GUESSED AT EVERY OFFICIAL RELAY (LT-2 §6,
+		// narrow). A device that has written recently is parked on SOME
+		// official relay right now, and the relay it picked is the one
+		// thing this node cannot know; the delta book makes the extra
+		// copies cost one history each and then only the new frames. A
+		// device with no sign of life in aliveWindow — a phone retired
+		// months ago — gets the single cheap guess it always got: tripling
+		// the relays' storage for ghosts would be the demo catalog's
+		// thirteen dead phones all over again.
+		if alive {
+			return r.guessRelays(syncingAt), true
+		}
 		if ep := r.ResolvePersonalRelay(); ep != "" {
-			return ep, true
+			return []string{ep}, true
 		}
 		// The cycle's explicit endpoint: same rules, same honesty.
-		return syncingAt, true
+		if syncingAt != "" {
+			return []string{syncingAt}, true
+		}
+		return nil, true
 	}
-	pushed, reached, noRoute, tentative, _, err = r.deliverSpaceRouted(tid, policy, route, true, true)
+	pushed, reached, noRoute, tentative, _, err = r.deliverSpaceRouted(tid, policy, route, true, true, announce)
 	return pushed, reached, noRoute, tentative, legacyBasis, err
 }
 
@@ -370,7 +394,7 @@ func (r *Runtime) deliverSpace(tid id.TerminalID, policy AssetPolicy, syncingAt 
 // as sent. route answers "which endpoint carries this recipient's copy";
 // "" means no route is known and the recipient is skipped and counted.
 func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
-	route func(id.DeviceID) (string, bool), lanOffload, delta bool) (int, int, int, int, uint64, error) {
+	route func(dev id.DeviceID, alive bool) ([]string, bool), lanOffload, delta, announce bool) (int, int, int, int, uint64, error) {
 	// Computed BEFORE the lock: SelfIngressRoutes takes r.mu itself, and
 	// the first draft of this line sat inside the locked section — a
 	// self-deadlock the two-relay gate caught in seven quiet minutes.
@@ -434,8 +458,14 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 	}
 	var cands []candidate
 	needed := map[id.DeviceID]uint64{} // highest seq that must be reachable
+	// lastAuthored: when each device last wrote here (advisory clock,
+	// ADR-004) — the sign of life the guess below is allowed to use.
+	lastAuthored := map[id.DeviceID]uint64{}
 	if err := st.space.Log.Replay(func(a eventlog.Applied) error {
 		devSet[a.Env.Device] = struct{}{} // author is a member, custody aside
+		if a.Env.CreatedAt > lastAuthored[a.Env.Device] {
+			lastAuthored[a.Env.Device] = a.Env.CreatedAt
+		}
 		skip := a.Env.Expired(now) || a.Env.ForwardingScope() == signal.NoCustody
 		if !skip && a.Env.Sequence > needed[a.Env.Device] {
 			needed[a.Env.Device] = a.Env.Sequence
@@ -558,9 +588,23 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 		var b [][]byte
 		if len(sel) > 0 {
 			b, _ = splitBundles(tid, sel, blobs, wants, wanter, returnRoutes)
-		} else if len(wants) > 0 {
-			// Nothing new to say, something to ask: the want still rides.
-			b = [][]byte{bundle.EncodeWithReturnRoutes(tid, nil, nil, wants, wanter, nil, returnRoutes)}
+		} else if len(wants) > 0 || (announce && len(ownIngress) > 0) {
+			// Nothing new to say, something to ask — or something to
+			// STATE: "I moved" is a frameless bundle whose only cargo is
+			// this device's current ingress, recorded at the receiver
+			// exactly like the statement that rides every content push.
+			w := wanter
+			if w == nil {
+				w = self[:]
+			}
+			rr := returnRoutes
+			if rr == nil {
+				rr = ownIngress
+				if len(rr) > 3 {
+					rr = rr[:3]
+				}
+			}
+			b = [][]byte{bundle.EncodeWithReturnRoutes(tid, nil, nil, wants, w, nil, rr)}
 		}
 		g := offerGroup{b, ids}
 		groups[from] = g
@@ -701,19 +745,29 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 	// A copy sent on a bootstrap guess is counted apart from a routed one:
 	// the caller must know how much of this delivery is real.
 	guessed := map[id.DeviceID]bool{}
+	aliveSince := uint64(0)
+	if now > uint64(aliveWindow/time.Second) {
+		aliveSince = now - uint64(aliveWindow/time.Second)
+	}
 	for _, dev := range recipients {
-		ep, guess := route(dev)
-		if ep == "" {
+		eps, guess := route(dev, lastAuthored[dev] >= aliveSince && lastAuthored[dev] > 0)
+		if len(eps) == 0 {
 			noRoute++
 			continue
 		}
 		if guess {
 			guessed[dev] = true
 		}
-		byEndpoint[ep] = append(byEndpoint[ep], dev)
+		// A device may be addressed at several endpoints (a live device
+		// guessed at every official relay): one mailbox per relay, the
+		// delta book keyed per (device, endpoint), and the device counted
+		// ONCE below whichever of them accepts.
+		for _, ep := range eps {
+			byEndpoint[ep] = append(byEndpoint[ep], dev)
+		}
 	}
 
-	relayReached, relayTentative := 0, 0
+	acceptedDevs := map[id.DeviceID]struct{}{}
 	var sendErr error
 	// Deterministic endpoint order, so failures are stable to read.
 	eps := make([]string, 0, len(byEndpoint))
@@ -735,8 +789,9 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 		pushWG.Add(1)
 		go func(ep string, devs []id.DeviceID) {
 			defer pushWG.Done()
-			reached, tentative, d0 := 0, 0, uint64(0)
+			d0 := uint64(0)
 			var epIDs []id.EventID
+			var accepted []id.DeviceID
 			err := withLane(ep, func(client *relay.Client) error {
 				for _, dev := range devs {
 					hint := relay.HintFor(tid, dev, bucket)
@@ -761,6 +816,7 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 						r.markOffered(tid, dev, ep, guessed[dev], from, nBase)
 					}
 					epIDs = append(epIDs, g.ids...)
+					accepted = append(accepted, dev)
 					// A status, on its own clock. The relay forgets it when it
 					// goes stale, which is the whole of what "no custody" was
 					// protecting.
@@ -769,18 +825,14 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 							return err
 						}
 					}
-					if guessed[dev] {
-						tentative++
-					} else {
-						reached++
-					}
 				}
 				return nil
 			})
 			pushMu.Lock()
 			defer pushMu.Unlock()
-			relayReached += reached
-			relayTentative += tentative
+			for _, dev := range accepted {
+				acceptedDevs[dev] = struct{}{}
+			}
 			if d0 != 0 {
 				deadline = d0
 			}
@@ -788,7 +840,7 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 				if sendErr == nil {
 					sendErr = err
 				}
-			} else if reached+tentative > 0 {
+			} else if len(accepted) > 0 {
 				// The timeline (LT-1): a relay accepted these frames, now.
 				r.lat.relayed(epIDs, ep)
 				for _, eid := range epIDs {
@@ -798,6 +850,15 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 		}(ep, devs)
 	}
 	pushWG.Wait()
+	// Each device counted once, whichever of its endpoints accepted.
+	relayReached, relayTentative := 0, 0
+	for dev := range acceptedDevs {
+		if guessed[dev] {
+			relayTentative++
+		} else {
+			relayReached++
+		}
+	}
 	if relayReached == 0 && relayTentative == 0 && lanReached == 0 && sendErr != nil {
 		return 0, 0, noRoute, 0, 0, sendErr
 	}

@@ -161,7 +161,8 @@ func (r *Runtime) applyRelaySync(addr string, interval time.Duration) {
 		close(rs.stop)
 		rs.stop = nil
 	}
-	if rs.addr != addr {
+	moved := rs.addr != addr
+	if moved {
 		// A DIFFERENT relay knows nothing we pushed to the old one. Reset
 		// the push progress so everything re-publishes there (RR-6): a
 		// relay ACK is "accepted by transient memory", never durability —
@@ -181,6 +182,20 @@ func (r *Runtime) applyRelaySync(addr string, interval time.Duration) {
 	stop := make(chan struct{})
 	rs.stop = stop
 	rs.mu.Unlock()
+
+	if moved {
+		// "I MOVED" (LT-2): tell every peer where this device now listens,
+		// before the first cycle on the new relay — the statement is one
+		// frameless bundle per peer, and the peers' next copy for us lands
+		// on the right machine instead of the old one. Also the first arm
+		// after open: a device that changed networks while its app was
+		// closed moved just the same.
+		r.wg.Add(1)
+		go func() {
+			defer r.wg.Done()
+			r.announceRoutes()
+		}()
+	}
 
 	r.wg.Add(1)
 	go func() {

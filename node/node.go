@@ -349,6 +349,9 @@ type Runtime struct {
 	// restart re-offers once, and EventID dedup makes that a no-op for
 	// the recipient.
 	offers map[id.TerminalID]map[id.DeviceID]offerMark
+	// guessRelaysOverride replaces the official registry in the guess
+	// (node/offers.go guessRelays) — tests only.
+	guessRelaysOverride []string
 	// attention-from-API (node/foreground.go): set by shells with no
 	// window of their own, so that "somebody is looking" is inferred from
 	// the local API being used rather than assumed forever.

@@ -113,5 +113,14 @@ Each item is one evening; 1 and 2 together are the bet.
   shell's default-network callback; cellular pings every 4 min; a new
   network id bounces every park and kicks.
 - The net: `listenedMultiplier` 300 → 90 (three minutes).
-- Open: item 6 (guess at every official relay) — weigh against relay
-  storage now that the delta book makes copies cheap.
+- §6, narrowed, plus its neighbour (same night, after the owner asked
+  whether a route can be found at once): "I moved" — on every relay
+  change (and the first arm after open) the node puts one frameless
+  bundle carrying its current ingress into every peer's mailbox in every
+  shared space (`announceRoutes`), so peers learn the new relay within a
+  cycle instead of when this device next speaks. And a device with NO
+  stated route that has written within 30 days is guessed at every
+  official relay (`guessRelays`), the delta book keeping the copies to
+  one history each; a device with no sign of life keeps the single cheap
+  guess, so ghosts never triple the relays' storage. Neither is a lookup
+  — there is none, by design — they remove the need for one.
