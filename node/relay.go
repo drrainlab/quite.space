@@ -68,7 +68,7 @@ const bundleHeadroom = 8 << 10
 // verifier would accept. The indices rather than a count, because the caller
 // owes the owner the frame's NAME — a count says "something is stuck", an id
 // says what.
-func splitBundles(tid id.TerminalID, frames, blobs, wants [][]byte, wanter []byte, returnRoutes []string) ([][]byte, []int) {
+func splitBundles(tid id.TerminalID, frames, blobs, wants [][]byte, wanter, replyBox []byte, returnRoutes []string) ([][]byte, []int) {
 	limit := maxRelayItem - bundleHeadroom
 	var out [][]byte
 	var batch [][]byte
@@ -80,7 +80,7 @@ func splitBundles(tid id.TerminalID, frames, blobs, wants [][]byte, wanter []byt
 			return
 		}
 		if isFirst {
-			out = append(out, bundle.EncodeWithReturnRoutes(tid, batch, nil, wants, wanter, nil, returnRoutes))
+			out = append(out, bundle.EncodeWithReturnRoutes(tid, batch, nil, wants, wanter, replyBox, returnRoutes))
 		} else {
 			out = append(out, bundle.Encode(tid, batch))
 		}
@@ -537,6 +537,21 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 	// blob hashes we are missing, wanter = our device so a holder knows which
 	// inbox to answer into. Empty when nothing is pending (a plain bundle).
 	wants := r.relayWantsLocked(tid)
+	// MEDIA COMES BACK TO ITS OWN BOX (2026-09-13). A private space's
+	// answers used to land in the same mailbox as its frames — one quota
+	// for both — so a photo's chunks filled the box and the next MESSAGE
+	// to that device was refused with "quota exceeded", and the header
+	// said "relay · issue" about a relay that was fine. The public path
+	// has had a per-space reply box since PH-1; the private one now
+	// carries the same. Only the box's HINT travels; the capability that
+	// drains it never leaves this process, and the pull already collects
+	// every space's box.
+	var replyBox []byte
+	if len(wants) > 0 {
+		if c := r.replyBoxCapLocked(tid, relay.Bucket(uint64(time.Now().Unix()))); c != nil {
+			replyBox = relay.CollectHint(c)
+		}
+	}
 	var wanter []byte
 	if len(wants) > 0 {
 		wanter = self[:]
@@ -593,7 +608,7 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 		}
 		var b [][]byte
 		if len(sel) > 0 {
-			b, _ = splitBundles(tid, sel, blobs, wants, wanter, returnRoutes)
+			b, _ = splitBundles(tid, sel, blobs, wants, wanter, replyBox, returnRoutes)
 		} else if len(wants) > 0 || (announce && len(ownIngress) > 0) {
 			// Nothing new to say, something to ask — or something to
 			// STATE: "I moved" is a frameless bundle whose only cargo is
@@ -610,7 +625,7 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 					rr = rr[:3]
 				}
 			}
-			b = [][]byte{bundle.EncodeWithReturnRoutes(tid, nil, nil, wants, w, nil, rr)}
+			b = [][]byte{bundle.EncodeWithReturnRoutes(tid, nil, nil, wants, w, replyBox, rr)}
 		}
 		g := offerGroup{b, ids}
 		groups[from] = g
@@ -629,7 +644,7 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 	// cannot land on anybody's messages.
 	var fleetingBodies [][]byte
 	if len(fleeting) > 0 {
-		fleetingBodies, _ = splitBundles(tid, fleeting, nil, nil, nil, nil)
+		fleetingBodies, _ = splitBundles(tid, fleeting, nil, nil, nil, nil, nil)
 	}
 	// Per-recipient dead-drop: hand a copy to every OTHER member's own relay
 	// inbox. The shared per-terminal mailbox is single-reader (destructive
@@ -1113,7 +1128,21 @@ func (r *Runtime) clearWantHolds(dev id.DeviceID) {
 	r.wantHolds = kept
 }
 
-func (r *Runtime) answerWantsRouted(tid id.TerminalID, wanter []byte, wants [][]byte) {
+// hasPeerRoute reports whether a stated or recorded route exists for the
+// device a want names.
+func (r *Runtime) hasPeerRoute(wanter []byte) bool {
+	if len(wanter) != len(id.DeviceID{}) {
+		return false
+	}
+	var dev id.DeviceID
+	copy(dev[:], wanter)
+	return len(r.PeerRoutesFor(dev)) > 0
+}
+
+// answerWantsRouted answers at the wanter's own relay. replyBox, when it
+// rides the want, is the mailbox hint the answer goes into; nil means the
+// wanter's device mailbox for the space.
+func (r *Runtime) answerWantsRouted(tid id.TerminalID, wanter []byte, wants [][]byte, replyBox []byte) {
 	if len(wanter) != len(id.DeviceID{}) {
 		return
 	}
@@ -1140,7 +1169,7 @@ func (r *Runtime) answerWantsRouted(tid id.TerminalID, wanter []byte, wants [][]
 		// only when a stated route carries an answer for real.
 		if own := r.ResolvePersonalRelay(); own != "" {
 			_ = r.withRelayBulk(own, func(client *relay.Client) error {
-				_, err := r.answerWants(client, tid, wanter, wants, nil, false)
+				_, err := r.answerWants(client, tid, wanter, wants, replyBox, false)
 				return err
 			})
 		}
@@ -1154,7 +1183,7 @@ func (r *Runtime) answerWantsRouted(tid id.TerminalID, wanter []byte, wants [][]
 	var sent int
 	var sendErr error
 	err := r.withRelayBulk(eps[0], func(client *relay.Client) error {
-		sent, sendErr = r.answerWants(client, tid, wanter, wants, nil, false)
+		sent, sendErr = r.answerWants(client, tid, wanter, wants, replyBox, false)
 		return sendErr
 	})
 	if err == nil && sendErr == nil {
@@ -1252,6 +1281,7 @@ func (r *Runtime) answerWants(client *relay.Client, tid id.TerminalID, wanter []
 		_, err := client.Put(hint, expires, body)
 		if err == nil {
 			r.noteAnswered(hint, batchHashes, time.Now())
+			r.noteServing()
 		}
 		batch, batchHashes, batchBytes = nil, nil, 0
 		if err != nil && refusal == nil {
@@ -1498,10 +1528,15 @@ func (r *Runtime) applyHeldRelayItem(client *relay.Client, heldItem storage.Held
 		// production poison cleanup. Content stays space-encrypted either
 		// way; a forged claim's ceiling is answer diversion, bounded by
 		// the cert gate, the endpoint cap, and the per-device book cap.
-		if len(parts.ReplyBox) > 0 {
+		// A reply box rides the want: the answer goes INTO the box, and
+		// the box is collected where the wanter reads — at the wanter's
+		// own relay when a route is stated (a private member since
+		// 1.0.17), on this very connection when none is (the box was
+		// minted for this relay, as the public path has always done).
+		if len(parts.ReplyBox) > 0 && !r.hasPeerRoute(parts.Wanter) {
 			_, _ = r.answerWants(client, terminal, parts.Wanter, parts.Wants, parts.ReplyBox, false)
 		} else {
-			r.answerWantsRouted(terminal, parts.Wanter, parts.Wants)
+			r.answerWantsRouted(terminal, parts.Wanter, parts.Wants, parts.ReplyBox)
 		}
 	}
 	r.mu.Lock()

@@ -88,3 +88,27 @@ func TestAttentionIsTheWindowOrTheAPI(t *testing.T) {
 		t.Fatal("the polls stopped and the focus is elsewhere: the background minute")
 	}
 }
+
+// A media answer keeps the node awake for the next ask: the background
+// heartbeat shortens to servingCadence for servingWindow, and only then.
+func TestAnsweringKeepsTheNodeAwakeForTheNextAsk(t *testing.T) {
+	r := &Runtime{syncKick: make(chan struct{}, 1)}
+	base := 2 * time.Second
+	r.SetForeground(false)
+	if got := r.syncInterval(base); got != base*backgroundMultiplier {
+		t.Fatalf("background interval %v before any answer", got)
+	}
+	r.noteServing()
+	if got := r.syncInterval(base); got != servingCadence {
+		t.Fatalf("with an answer in flight the interval is %v, want %v", got, servingCadence)
+	}
+	r.SetForeground(true)
+	if got := r.syncInterval(base); got != base {
+		t.Fatalf("foreground is never slowed by serving: %v", got)
+	}
+	r.SetForeground(false)
+	r.servingUntil.Store(time.Now().Add(-time.Second).UnixNano())
+	if got := r.syncInterval(base); got != base*backgroundMultiplier {
+		t.Fatalf("after the window the background minute is back, got %v", got)
+	}
+}

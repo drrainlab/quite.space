@@ -249,14 +249,14 @@ func TestSplitBundlesNamesTheFramesItCannotCarry(t *testing.T) {
 	tid[0] = 7
 	small := []byte("small enough")
 	big := bytes.Repeat([]byte("b"), maxRelayItem)
-	out, oversize := splitBundles(tid, [][]byte{small, big, small}, nil, nil, nil, nil)
+	out, oversize := splitBundles(tid, [][]byte{small, big, small}, nil, nil, nil, nil, nil)
 	if len(oversize) != 1 || oversize[0] != 1 {
 		t.Fatalf("oversize indices = %v, want [1]", oversize)
 	}
 	if len(out) != 1 {
 		t.Fatalf("the two small frames should share one body, got %d bodies", len(out))
 	}
-	if _, none := splitBundles(tid, [][]byte{small}, nil, nil, nil, nil); len(none) != 0 {
+	if _, none := splitBundles(tid, [][]byte{small}, nil, nil, nil, nil, nil); len(none) != 0 {
 		t.Fatalf("nothing oversized, yet %v reported", none)
 	}
 }

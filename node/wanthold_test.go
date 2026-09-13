@@ -27,7 +27,7 @@ func TestAnUnroutableWantIsHeldOutLoud(t *testing.T) {
 	}
 
 	stranger := id.DeviceID{0xAB, 0xCD}
-	rt.answerWantsRouted(tid, stranger[:], [][]byte{make([]byte, 32), make([]byte, 32)})
+	rt.answerWantsRouted(tid, stranger[:], [][]byte{make([]byte, 32), make([]byte, 32)}, nil)
 
 	holds := rt.WantHolds()
 	if len(holds) != 1 {
@@ -47,7 +47,7 @@ func TestAnUnroutableWantIsHeldOutLoud(t *testing.T) {
 	// The same starving fetch knocks every cycle; the record must not
 	// scroll into sixty-four copies of one fact.
 	for i := 0; i < 10; i++ {
-		rt.answerWantsRouted(tid, stranger[:], [][]byte{make([]byte, 32)})
+		rt.answerWantsRouted(tid, stranger[:], [][]byte{make([]byte, 32)}, nil)
 	}
 	if holds = rt.WantHolds(); len(holds) != 1 {
 		t.Fatalf("repeated knocks multiplied the record: %d entries", len(holds))
@@ -72,7 +72,7 @@ func TestAHoldClearsWhenTheAnswerRoutes(t *testing.T) {
 	}
 
 	wanter := id.DeviceID{0x11, 0x22}
-	rt.answerWantsRouted(tid, wanter[:], [][]byte{make([]byte, 32)})
+	rt.answerWantsRouted(tid, wanter[:], [][]byte{make([]byte, 32)}, nil)
 	if len(rt.WantHolds()) != 1 {
 		t.Fatal("no hold recorded while unroutable")
 	}
@@ -85,7 +85,7 @@ func TestAHoldClearsWhenTheAnswerRoutes(t *testing.T) {
 	// The next want is answerable — the hold must clear, even though the
 	// wanted blobs are unknown here (routing happened; the skip-per-hash
 	// inside answerWants is a different, terminal story).
-	rt.answerWantsRouted(tid, wanter[:], [][]byte{make([]byte, 32)})
+	rt.answerWantsRouted(tid, wanter[:], [][]byte{make([]byte, 32)}, nil)
 	deadline := time.Now().Add(5 * time.Second)
 	for len(rt.WantHolds()) != 0 {
 		if time.Now().After(deadline) {

@@ -50,6 +50,19 @@ func (r *Runtime) syncInterval(base time.Duration) time.Duration {
 	if r.foregrounded() {
 		return base
 	}
+	// A TRANSFER IN FLIGHT IS ATTENTION OF ITS OWN. A holder that just
+	// answered a want knows the next ask is coming — a photo is several
+	// rounds of ask, answer, collect — and a phone in a pocket should not
+	// price each round at the background minute (three, under a parked
+	// doorbell, when the doorbell is what the OS froze). While an answer
+	// went out within servingWindow the cadence is servingCadence: radio
+	// spent only while somebody's picture is actually crossing.
+	if until := r.servingUntil.Load(); until > 0 && time.Now().UnixNano() < until {
+		if servingCadence > base {
+			return servingCadence
+		}
+		return base
+	}
 	// A PUBLISHER OF PUBLIC SPACES IS NOT ONLY LISTENING. Contributions
 	// and media wants for an owned public space arrive through the
 	// ingress shards, which are drained by the cycle and not covered by
@@ -156,3 +169,16 @@ func (r *Runtime) applyAttention() {
 // KickRelaySync is the exported face of the sync kick, for shells whose
 // doorbell rang: the ping carried nothing, the drain fetches everything.
 func (r *Runtime) KickRelaySync() { r.kickRelaySync() }
+
+// servingCadence is the heartbeat while this node is answering somebody's
+// media; servingWindow is how long one answer keeps it, refreshed by the
+// next. Two minutes covers the requester's own background collect.
+const (
+	servingCadence = 10 * time.Second
+	servingWindow  = 2 * time.Minute
+)
+
+// noteServing is called when an answer actually left for a relay.
+func (r *Runtime) noteServing() {
+	r.servingUntil.Store(time.Now().Add(servingWindow).UnixNano())
+}

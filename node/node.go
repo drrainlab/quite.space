@@ -368,8 +368,12 @@ type Runtime struct {
 	// that never speaks keeps) and the API having been used lately.
 	attnShellAway atomic.Bool
 	attnAPI       atomic.Bool
-	attMu         sync.Mutex
-	attTimer      *time.Timer
+	// servingUntil (unix nanos): while set and in the future, a media
+	// answer went out recently and the background heartbeat is shortened
+	// for the next ask (node/foreground.go).
+	servingUntil atomic.Int64
+	attMu        sync.Mutex
+	attTimer     *time.Timer
 
 	// replyBoxes are PH-1 media reply capabilities, one per space, rotated
 	// with the relay bucket. DELIBERATELY NOT PERSISTED: losing one costs a

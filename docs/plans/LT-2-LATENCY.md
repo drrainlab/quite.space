@@ -187,3 +187,19 @@ was cut short and the requester drained duplicates. The answer book in
 blob hash) answers a chunk once per window. The holder's answer still
 rides its own cycle; moving it to the outbox lane is the next step if
 photos remain slow on a backgrounded phone.
+
+### Serving window (1.0.17)
+
+The owner asked for "hyper-acceleration" of a locked phone answering
+wants and chose the cheapest of three: `noteServing` after a successful
+answer put sets `servingUntil`; `syncInterval` returns `servingCadence`
+(10 s) while it is in the future (`servingWindow` 2 min). Declined for
+now: the battery-optimization exemption dialog and push wake (FCM /
+UnifiedPush).
+Same evening, the owner's second dump: "relay · issue" flickering with
+no `want_holds` left — the frames push to a device whose mailbox was
+still full of the earlier duplicate chunks was refused ("quota
+exceeded"), one quota for media and messages. Private wants now carry a
+per-space reply box (`replyBoxCapLocked` in `deliverSpaceRouted`), the
+public path's PH-1 mechanism; holders on any 1.0.x answer into a box
+when one rides the want, and the pull collects every space's box.
