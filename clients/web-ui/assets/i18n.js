@@ -2488,7 +2488,12 @@ function t(key, vars) {
   let entry = cat[key];
   if (entry === undefined) entry = I18N.en[key];
   if (entry === undefined) { console.warn('i18n: missing key', key); return key; }
-  return typeof entry === 'function' ? entry(vars || {}) : entry;
+  if (typeof entry === 'function') return entry(vars || {});
+  // A string entry may carry {name} slots; without vars it is returned as
+  // written. The Doorbell rows shipped with the slots visible because the
+  // entries were strings and only functions ever saw their vars.
+  if (vars) return entry.replace(/\{(\w+)\}/g, (m, k) => (k in vars ? String(vars[k]) : m));
+  return entry;
 }
 
 // Relative time via Intl — never hand-rolled "N minutes ago" strings.

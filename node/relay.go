@@ -1230,7 +1230,7 @@ func (r *Runtime) answerWants(client *relay.Client, tid id.TerminalID, wanter []
 		}
 		var h id.Hash
 		copy(h[:], hb)
-		inScope[h] = r.assetIdx.allowed(h, tid)
+		inScope[h] = r.assetIdx.allowed(h, tid) && !r.answeredRecentlyLocked(hint, h, time.Now())
 	}
 	r.mu.Unlock()
 
@@ -1241,6 +1241,7 @@ func (r *Runtime) answerWants(client *relay.Client, tid id.TerminalID, wanter []
 	// chunks total, batched into items each under maxRelayItem; the requester
 	// collects them all and re-asks for whatever did not fit.
 	var batch [][]byte
+	var batchHashes []id.Hash
 	batchBytes, totalSent := 0, 0
 	var refusal error
 	flush := func() bool {
@@ -1249,7 +1250,10 @@ func (r *Runtime) answerWants(client *relay.Client, tid id.TerminalID, wanter []
 		}
 		body := bundle.EncodeWithBlobs(tid, nil, batch)
 		_, err := client.Put(hint, expires, body)
-		batch, batchBytes = nil, 0
+		if err == nil {
+			r.noteAnswered(hint, batchHashes, time.Now())
+		}
+		batch, batchHashes, batchBytes = nil, nil, 0
 		if err != nil && refusal == nil {
 			refusal = err
 		}
@@ -1285,11 +1289,65 @@ func (r *Runtime) answerWants(client *relay.Client, tid id.TerminalID, wanter []
 			}
 		}
 		batch = append(batch, data)
+		batchHashes = append(batchHashes, h)
 		batchBytes += len(data)
 		totalSent += len(data)
 	}
 	flush()
 	return totalSent, refusal
+}
+
+// THE ANSWER BOOK. A want re-rides every cycle while the fetch lives —
+// two seconds apart with somebody looking — and a holder used to answer
+// every copy it collected with the full DefaultBundleBudget into the same
+// mailbox. Measured on the owner's Mac: two devices asking for 58 and 29
+// chunks, the mailbox at its 64-item / 32 MiB quota within a cycle,
+// every answer "cut short: quota exceeded", and the requester draining
+// eight megabytes of mostly duplicate chunks per cycle. "Photos barely
+// send."
+//
+// A blob put into a mailbox is not put there again for answerRepeatAfter:
+// long enough for a phone in the background to collect it, short enough
+// that a lost answer (mailbox aged out, a crash between collect and
+// commit) is repaired by the next re-ask after the window. Keyed by the
+// mailbox hint, so a second device asking gets its own copy, and a new
+// bucket (six hours) starts a fresh page.
+const answerRepeatAfter = 3 * time.Minute
+
+func (r *Runtime) answeredRecentlyLocked(hint []byte, h id.Hash, now time.Time) bool {
+	at, ok := r.answered[string(hint)][h]
+	return ok && now.Sub(at) < answerRepeatAfter
+}
+
+func (r *Runtime) noteAnswered(hint []byte, hashes []id.Hash, now time.Time) {
+	if len(hashes) == 0 {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.answered == nil {
+		r.answered = map[string]map[id.Hash]time.Time{}
+	}
+	// Pages of past buckets and stale entries go when the book is touched:
+	// nothing here is worth keeping past the window it exists for.
+	for k, page := range r.answered {
+		for h, at := range page {
+			if now.Sub(at) >= answerRepeatAfter {
+				delete(page, h)
+			}
+		}
+		if len(page) == 0 {
+			delete(r.answered, k)
+		}
+	}
+	page := r.answered[string(hint)]
+	if page == nil {
+		page = map[id.Hash]time.Time{}
+		r.answered[string(hint)] = page
+	}
+	for _, h := range hashes {
+		page[h] = now
+	}
 }
 
 // PullFromRelay collects bundles for every known space (current and

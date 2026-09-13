@@ -176,3 +176,14 @@ stayed. Two fixes in 1.0.15: the receipt is recorded for a guessed copy
 too (the wire event is the same), and the acceptance high-water per
 space is persisted in the keystore (`Relayed`, key 27), so a restart no
 longer drops the history back to the dot.
+
+### Media (1.0.16)
+
+"Photos barely send" was the mailbox quota: wants re-ride every cycle
+(two seconds in the foreground), the holder answered every copy with up
+to 8 MiB into one mailbox (64 items / 32 MiB on the relay), the answer
+was cut short and the requester drained duplicates. The answer book in
+`answerWants` (`answerRepeatAfter` 3 min, keyed by mailbox hint and
+blob hash) answers a chunk once per window. The holder's answer still
+rides its own cycle; moving it to the outbox lane is the next step if
+photos remain slow on a backgrounded phone.

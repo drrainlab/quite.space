@@ -111,6 +111,10 @@ type Runtime struct {
 	ingressRefusals []IngressRefusal
 	// wantHolds: media answers this node could not route yet (relay.go).
 	wantHolds []WantHold
+	// answered: the answer book (relay.go) — which blob went into which
+	// mailbox when, so a want that re-rides every cycle is not answered
+	// with the same megabytes every cycle.
+	answered map[string]map[id.Hash]time.Time
 	// routeKnowledgeGen ticks when a stated route displaces a legacy
 	// guess (routes.go); the sync loop re-offers legacy-basis deliveries.
 	routeKnowledgeGen uint64
