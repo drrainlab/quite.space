@@ -131,11 +131,13 @@ func TestALiveDeviceWithNoRouteIsGuessedAtEveryOfficialRelay(t *testing.T) {
 	// And alice's screen says so: the relays took it. A guess is not
 	// delivery — the cursor stays, the space stays held — but "still owed
 	// to a relay" would be false, and was what the owner watched for weeks.
+	// "relayed" — or already "delivered": bob's own loop reads relay A and
+	// his receipt can be home before this poll runs (it was, on CI). What
+	// must not remain is the dot.
 	deadline = time.Now().Add(5 * time.Second)
-	for deliveryOf(t, alice, tid, "где ты") != "relayed" {
+	for got := deliveryOf(t, alice, tid, "где ты"); got == "sent"; got = deliveryOf(t, alice, tid, "где ты") {
 		if time.Now().After(deadline) {
-			t.Fatalf("a word accepted by every official relay on a guess shows %q, want relayed",
-				deliveryOf(t, alice, tid, "где ты"))
+			t.Fatalf("a word accepted by every official relay on a guess still shows %q", got)
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
