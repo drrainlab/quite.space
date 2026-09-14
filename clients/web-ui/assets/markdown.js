@@ -159,6 +159,18 @@ const MD = (() => {
   /** Is this line a fence? */
   const isFence = (l) => /^\s*```/.test(l);
 
+  /** A table row: a line that begins with a pipe (leading spaces allowed). */
+  const isTableRow = (l) => /^\s*\|/.test(l);
+  /** The separator under a header: pipes, dashes and colons, nothing else. */
+  const isTableSep = (l) => /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/.test(l) && l.includes('|');
+  /** Cells of a row, outer pipes dropped, `\|` kept as a literal pipe. */
+  function tableCells(l) {
+    let s = l.trim();
+    if (s.startsWith('|')) s = s.slice(1);
+    if (s.endsWith('|') && !s.endsWith('\\|')) s = s.slice(0, -1);
+    return s.split(/(?<!\\)\|/).map((c) => c.replace(/\\\|/g, '|').trim());
+  }
+
   /**
    * Render markdown source into a fragment.
    *
@@ -239,6 +251,53 @@ const MD = (() => {
         // quotes, not a wrapper around them.
         q.appendChild(render(body.join('\n')));
         frag.appendChild(q);
+        continue;
+      }
+
+      // | a | b |  over  |---|:--:|  — a table, the GFM way. Pasted notes
+      // carry them constantly (an assistant's output, a README), and
+      // without this rule every pipe wrapped into the paragraph as text:
+      // the owner's screenshot of a comparison table, reflowed into a
+      // bubble, was unreadable pipes and dashes. Cells are inline markup;
+      // a row with fewer cells than the header is padded, a row with
+      // more is cut — never a parse error, the source is always shown.
+      if (isTableRow(line) && i + 1 < lines.length && isTableSep(lines[i + 1])) {
+        flush();
+        const head = tableCells(line);
+        const aligns = tableCells(lines[i + 1]).map((c) =>
+          /^:-+:$/.test(c) ? 'center' : /^-+:$/.test(c) ? 'right' : '');
+        const table = el('table');
+        const thead = el('thead');
+        const hr = el('tr');
+        head.forEach((c, k) => {
+          const th = el('th');
+          if (aligns[k]) th.style.textAlign = aligns[k];
+          th.append(...inline(c));
+          hr.appendChild(th);
+        });
+        thead.appendChild(hr);
+        table.appendChild(thead);
+        const tbody = el('tbody');
+        i += 2;
+        while (i < lines.length && isTableRow(lines[i])) {
+          const cells = tableCells(lines[i]);
+          const tr = el('tr');
+          for (let k = 0; k < head.length; k++) {
+            const td = el('td');
+            if (aligns[k]) td.style.textAlign = aligns[k];
+            td.append(...inline(cells[k] == null ? '' : cells[k]));
+            tr.appendChild(td);
+          }
+          tbody.appendChild(tr);
+          i++;
+        }
+        table.appendChild(tbody);
+        // The wrapper scrolls sideways so a wide table never widens the
+        // bubble or the column it sits in.
+        const wrap = el('div');
+        wrap.className = 'md-table';
+        wrap.appendChild(table);
+        frag.appendChild(wrap);
         continue;
       }
 

@@ -197,6 +197,26 @@ function mentionsRenderChips() {
 // mentionNode renders a text body with the addressed names highlighted. The
 // node tells us WHO was mentioned (signed field); we only decorate the names
 // where they appear. Text is inserted as text nodes — never innerHTML.
+// A LONG MESSAGE KEEPS A PREVIEW IN THE BUBBLE and opens in full elsewhere
+// (reader.js). The rendered nodes are moved into a clamped wrapper — the
+// same nodes, so links, mentions and tables inside the preview still work —
+// and one control follows. Short messages are returned exactly as before.
+function longMessage(el, e) {
+  if (typeof READER === 'undefined' || !READER.isLong || !READER.isLong(e.text)) return el;
+  const clamp = document.createElement('div');
+  clamp.className = 'txt-clamp';
+  while (el.firstChild) clamp.appendChild(el.firstChild);
+  el.classList.add('txt-long');
+  el.appendChild(clamp);
+  const more = document.createElement('button');
+  more.type = 'button';
+  more.className = 'txt-more';
+  more.textContent = t('entry.read_full');
+  more.addEventListener('click', (ev) => { ev.stopPropagation(); READER.open(e); });
+  el.appendChild(more);
+  return el;
+}
+
 function mentionText(e) {
   const el = document.createElement('div');
   el.className = 'txt' + (e.mentions_me ? ' addressed' : '');
@@ -226,7 +246,7 @@ function mentionText(e) {
   if (!names.length) {
     if (typeof MD !== 'undefined' && MD.into) MD.into(el, e.text);
     else plain(e.text);
-    return el;
+    return longMessage(el, e);
   }
   // Longest first so "@ann" inside "@anna" cannot win.
   const sorted = [...names].sort((a, b) => b.length - a.length);
@@ -245,5 +265,5 @@ function mentionText(e) {
     el.appendChild(tag);
     rest = rest.slice(best + bestName.length + 1);
   }
-  return el;
+  return longMessage(el, e);
 }

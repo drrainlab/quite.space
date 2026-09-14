@@ -31,6 +31,7 @@ const I18N = {
 
     // Why something of yours has not gone out yet. Never "failed": it is
     // waiting for a path wide enough, and it will go when one appears.
+    'entry.read_full': 'read in full',
     'entry.waiting.wider_path': ({ size, fits }) =>
       `Waiting for a wider path — ${size}, and the radio carries ${fits}. ` +
       `It goes as soon as the internet or the local network is back. Nothing is lost.`,
@@ -1572,6 +1573,7 @@ const I18N = {
     'conn.details': 'подробности соединения',
     'conn.mesh_node': ({ node }) => `mesh · узел ${node}`,
     'conn.radio_carrier': ({ carrier }) => `радио · ${carrier}`,
+    'entry.read_full': 'читать целиком',
     'entry.waiting.wider_path': ({ size, fits }) =>
       `Ждём путь пошире — ${size}, а радио несёт ${fits}. ` +
       `Уйдёт, как только вернётся интернет или локальная сеть. Ничего не потеряно.`,

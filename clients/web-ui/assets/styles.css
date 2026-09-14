@@ -2241,6 +2241,59 @@
     border-radius: 8px;
   }
   .md pre code { background: none; padding: 0; }
+  /* A table, in a post or in a bubble. The wrapper scrolls sideways so a
+     wide one never widens its column; inside a bubble the pre-wrap of the
+     text must not apply, or every cell keeps the author's padding. */
+  .md .md-table, .txt .md-table {
+    overflow-x: auto; margin: .8em 0; white-space: normal; max-width: 100%;
+  }
+  .md table, .txt table {
+    border-collapse: collapse; font-size: .94em; line-height: 1.4; min-width: 60%;
+  }
+  .md th, .md td, .txt th, .txt td {
+    border: 1px solid var(--line); padding: .35em .65em; text-align: left;
+    vertical-align: top;
+  }
+  .md th, .txt th {
+    font-weight: 600;
+    background: color-mix(in srgb, var(--fg, #fff) 6%, transparent);
+  }
+  /* A LONG MESSAGE IS A PREVIEW IN THE BUBBLE (reader.js): the top of the
+     rendered text, fading out, and one control to read it in full. */
+  .txt-long .txt-clamp {
+    max-height: 13em; overflow: hidden;
+    -webkit-mask-image: linear-gradient(#000 72%, transparent);
+    mask-image: linear-gradient(#000 72%, transparent);
+  }
+  .txt-more {
+    display: inline-block; margin-top: .45em; padding: 0; border: 0;
+    background: none; font: inherit; font-size: .86em; color: var(--acc);
+    cursor: pointer; text-decoration: underline; text-underline-offset: 2px;
+  }
+  .txt-more:hover { text-decoration-color: var(--acc); }
+  /* THE READER: the message as a page, with the article's typography. */
+  dialog.reader {
+    width: min(780px, 94vw); max-width: none; max-height: 88vh;
+    padding: 0; overflow: hidden; display: flex; flex-direction: column;
+  }
+  dialog.reader:not([open]) { display: none; }
+  .reader-head {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; padding: 12px 18px; border-bottom: 1px solid var(--line);
+    font-size: 12.5px; color: var(--dim);
+  }
+  .reader-close {
+    border: 1px solid var(--line); background: none; color: var(--fg);
+    font: inherit; font-size: 12.5px; padding: 4px 10px; border-radius: 999px;
+    cursor: pointer;
+  }
+  .reader-body {
+    overflow: auto; padding: 18px 22px 24px;
+    font-family: var(--font-read, inherit);
+    font-size: calc(16px * var(--font-scale, 1)); line-height: 1.65;
+    text-wrap: pretty; white-space: normal;
+  }
+  .reader-body:lang(ru) { font-family: var(--font-read-ru, inherit); }
   .md a { color: var(--accent); text-underline-offset: 2px; }
   /* An image written into text renders as its words and its address — see
      markdown.js. It is dimmed so it reads as a note, not as a picture that
