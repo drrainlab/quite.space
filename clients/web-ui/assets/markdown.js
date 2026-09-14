@@ -49,6 +49,13 @@ const MD = (() => {
   /** Trailing punctuation belongs to the sentence, not to the address. */
   const TAIL = /[.,;:!?»)\]}'"]+$/;
   const IMG = /!\[([^\]\n]*)\]\(([^)\s]+)\)/;
+  /**
+   * Inline formulas: `$x$` and `\(x\)`. The dollar form follows the GFM
+   * rule so prices stay prices: the opening `$` is not followed by a space,
+   * the closing one is not preceded by a space and not followed by a
+   * digit — "$5 and $10" is not a formula, "$E=mc^2$" is.
+   */
+  const MATH = /\$(?!\s)([^$\n]+?)(?<!\s)\$(?!\d)|\\\(([^\n]+?)\\\)/;
 
   function el(tag, text) {
     const n = document.createElement(tag);
@@ -90,6 +97,7 @@ const MD = (() => {
       best = { index: m.index, len: m[0].length, node: make(m) };
     };
     take(CODE, (m) => el('code', m[1]));
+    take(MATH, (m) => mathNode(m[1] ?? m[2], false));
     // An image is recognised only to be REFUSED as one: it renders as its
     // words plus the address, so the author's meaning survives and nothing
     // is fetched from a stranger's host when a reader opens the post.
@@ -154,6 +162,24 @@ const MD = (() => {
       parent.appendChild(linkTo(m[0]));
       rest = rest.slice(m.index + m[0].length);
     }
+  }
+
+  /**
+   * A formula as a node: MathML when formula.js can read it, else the
+   * source in a code span — the author's characters, never dropped.
+   */
+  function mathNode(src, display) {
+    const m = typeof FORMULA !== 'undefined' && FORMULA.render ? FORMULA.render(src, display) : null;
+    if (m) {
+      if (!display) return m;
+      const wrap = el('div');
+      wrap.className = 'md-math';
+      wrap.appendChild(m);
+      return wrap;
+    }
+    const code = el('code', display ? '$$ ' + String(src).trim() + ' $$' : '$' + src + '$');
+    code.className = 'md-math-src';
+    return code;
   }
 
   /** Is this line a fence? */
@@ -223,6 +249,33 @@ const MD = (() => {
         pre.appendChild(el('code', body.join('\n')));
         frag.appendChild(pre);
         continue;
+      }
+
+      // $$ ... $$ or \[ ... \] — a displayed formula, on one line or
+      // across several, closed by the matching marker.
+      const dm = /^\s*(\$\$|\\\[)(.*)$/.exec(line);
+      if (dm) {
+        const closeMark = dm[1] === '$$' ? '$$' : '\\]';
+        let body = dm[2];
+        let closed = false;
+        let j = i;
+        const endAt = body.indexOf(closeMark);
+        if (endAt >= 0) { body = body.slice(0, endAt); closed = true; j++; }
+        else {
+          j++;
+          while (j < lines.length) {
+            const k = lines[j].indexOf(closeMark);
+            if (k >= 0) { body += '\n' + lines[j].slice(0, k); closed = true; j++; break; }
+            body += '\n' + lines[j]; j++;
+          }
+        }
+        if (closed) {
+          flush();
+          frag.appendChild(mathNode(body, true));
+          i = j;
+          continue;
+        }
+        // Never closed: an ordinary line that happens to start with $$.
       }
 
       const h = /^(#{1,6})\s+(.*)$/.exec(line);

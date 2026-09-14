@@ -2258,6 +2258,17 @@
     font-weight: 600;
     background: color-mix(in srgb, var(--fg, #fff) 6%, transparent);
   }
+  /* Formulas (formula.js): MathML in the browser's own math face. A
+     displayed one sits on its own line, centred, and scrolls sideways
+     rather than widening the column; the source of one that could not be
+     read is shown as code, dimmed, so nothing the author typed is lost. */
+  .md math, .txt math { font-size: 1.06em; }
+  .md .md-math, .txt .md-math {
+    overflow-x: auto; margin: .8em 0; text-align: center; white-space: normal;
+  }
+  .md .md-math math, .txt .md-math math { font-size: 1.18em; }
+  .md-math-src { color: var(--dim); }
+  .md-math-unknown { color: var(--dim); font-style: normal; }
   /* A LONG MESSAGE IS A PREVIEW IN THE BUBBLE (reader.js): the top of the
      rendered text, fading out, and one control to read it in full. */
   .txt-long .txt-clamp {
