@@ -203,6 +203,11 @@ func (r *Runtime) runListener(addr string, stop, done chan struct{}) {
 	if r.cellular.Load() {
 		client.PingEvery = listenPingCellular
 	}
+	// A park that the relay just took is proof it is reachable: the pool's
+	// breaker for this address, if it was counting a network blip against
+	// the relay, lets go — and the loops try now rather than after their
+	// own ladders (relaypool.go: reachable).
+	client.OnParked = func() { r.relayReachable(addr) }
 	r.listenMu.Lock()
 	if r.listenSessions == nil {
 		r.listenSessions = map[string]*relay.Client{}
@@ -448,4 +453,14 @@ func nextBucketRotation() time.Time {
 	now := time.Now().Unix()
 	next := (now/bucketLen + 1) * bucketLen
 	return time.Unix(next+30, 0)
+}
+
+// relayReachable is the listener's word that addr answered a park just
+// now. Read WITHOUT pool(), which would create one: a node that never
+// pushed has no breaker to reset.
+func (r *Runtime) relayReachable(addr string) {
+	if p := r.relayPoolV.Load(); p != nil {
+		p.reachable(addr)
+	}
+	r.kickRelaySync()
 }

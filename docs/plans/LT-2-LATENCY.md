@@ -203,3 +203,13 @@ exceeded"), one quota for media and messages. Private wants now carry a
 per-space reply box (`replyBoxCapLocked` in `deliverSpaceRouted`), the
 public path's PH-1 mechanism; holders on any 1.0.x answer into a box
 when one rides the want, and the pull collects every space's box.
+
+### The breaker and the park (1.0.19)
+
+The owner's Mac after a network blip: `last_error: relay is cooling down
+after failures`, `relayed_ms: 158793`, three listener parks all a few
+minutes old. The pool charged dead-socket timeouts to the relay and held
+it for the ladder while the listener had already re-parked there.
+`relay.Client.OnParked` → `Runtime.relayReachable(addr)` →
+`relayPool.reachable(addr)` (ladder reset, lanes dropped, untrusted
+kept) + a kick. The error now carries the address.

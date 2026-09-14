@@ -64,10 +64,22 @@ func TestAnAnsweredPingKeepsTheParkAndCountsIt(t *testing.T) {
 	}
 	defer c.Close()
 	c.PingEvery = 50 * time.Millisecond
+	parked := make(chan struct{}, 1)
+	c.OnParked = func() {
+		select {
+		case parked <- struct{}{}:
+		default:
+		}
+	}
 	hint := make([]byte, relay.HintLen)
 	stop := make(chan struct{})
 	done := make(chan error, 1)
 	go func() { done <- c.Listen([][]byte{hint}, stop, func([]byte) {}) }()
+	select {
+	case <-parked:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the park was acknowledged but OnParked never fired")
+	}
 	time.Sleep(400 * time.Millisecond)
 	select {
 	case err := <-done:

@@ -20,6 +20,7 @@ package node
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"math/rand"
 	"net"
@@ -189,7 +190,9 @@ func (p *relayPool) acquire(pe *relayPeer, lane *relayLane) (*relay.Client, func
 	}
 	if time.Now().Before(pe.backoffUntil) {
 		pe.mu.Unlock()
-		return nil, nil, errRelayCoolingDown
+		// Named, because "relay" on the owner's screen sent them to check
+		// a healthy primary while a peer's relay was the one cooling.
+		return nil, nil, fmt.Errorf("%w — %s", errRelayCoolingDown, pe.addr)
 	}
 	pe.mu.Unlock()
 
@@ -326,6 +329,47 @@ func (p *relayPool) closeAll() {
 			}
 			lane.mu.Unlock()
 		}
+	}
+}
+
+// reachable is the breaker told the truth by somebody who just proved it:
+// a Listen park to this address was acknowledged a moment ago, over a
+// fresh TLS handshake. Whatever failures the pool counted before were a
+// dead socket after a network blip — the desktop has no network-change
+// hint and the sleep detector sees only sleep — and every one of them
+// was charged to the relay. Measured on the owner's Mac: a message took
+// 2.6 minutes to reach a relay whose park had been up for most of them.
+//
+// The ladder resets and the lanes are dropped (the sockets that failed
+// are the ones from before the blip); untrusted stays, as in wake.
+func (p *relayPool) reachable(addr string) {
+	p.mu.Lock()
+	pe, ok := p.peers[addr]
+	p.mu.Unlock()
+	if !ok {
+		return
+	}
+	pe.mu.Lock()
+	if pe.untrusted {
+		pe.mu.Unlock()
+		return
+	}
+	cooling := time.Now().Before(pe.backoffUntil) || pe.failures > 0
+	pe.failures, pe.attempt = 0, 0
+	pe.backoffUntil = time.Time{}
+	pe.localOutage = false
+	pe.successStreak = 0
+	pe.mu.Unlock()
+	if !cooling {
+		return
+	}
+	for _, lane := range []*relayLane{&pe.control, &pe.bulk} {
+		lane.mu.Lock()
+		if lane.client != nil {
+			lane.client.Close()
+			lane.client = nil
+		}
+		lane.mu.Unlock()
 	}
 }
 

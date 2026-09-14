@@ -93,8 +93,11 @@ type Client struct {
 	// (zero = ListenPing). A shell that knows it sits behind a carrier NAT
 	// asks for a shorter one; the core does not know networks.
 	PingEvery time.Duration
-	lmu       sync.Mutex
-	lst       ListenStats
+	// OnParked, when set, is called once the relay has acknowledged a
+	// Listen park — on the listening goroutine, before the first ping.
+	OnParked func()
+	lmu      sync.Mutex
+	lst      ListenStats
 }
 
 // ListenStats is what a parked session can say about itself — the
@@ -368,6 +371,11 @@ func (c *Client) listen(park *Msg, stop <-chan struct{}, notify func(hint []byte
 	c.lmu.Lock()
 	c.lst = ListenStats{ParkedAt: time.Now()}
 	c.lmu.Unlock()
+	// The relay took the park: a fresh handshake just proved it reachable,
+	// and whoever holds a breaker for this address wants to know.
+	if c.OnParked != nil {
+		c.OnParked()
+	}
 	every := c.PingEvery
 	if every <= 0 {
 		every = ListenPing
