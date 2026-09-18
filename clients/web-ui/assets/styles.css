@@ -4507,9 +4507,21 @@ header { padding: 8px 16px; gap: 10px; }
 /* The mark alone (the owner, 2026-09-18). The wordmark said the app's name
    to somebody already inside the app; the orbit is enough, and it needs no
    theme filter — it is a picture, not light type on a dark ground. */
-/* The PNG carries a quarter of empty margin on every side, so the box is
-   drawn large and pulled back in: the orbit itself lands at about 30px. */
-header .brand-mark { width: 56px; height: 56px; margin: -14px -12px; display: block; }
+/* MEASURED, NOT EYEBALLED. The PNG is 256² and the drawing occupies
+   x 67–185, y 63–178 of it (alpha bbox, read off a canvas) — a quarter of
+   empty margin, and not even centred: the art sits 7.5px high. So the box
+   in the header is the ART's box (29×28) and the image is placed inside it
+   by those numbers, which puts the orbit's own centre on the header's
+   centre line with everything else. Scale = 28 / 115. */
+/* Optical, not box, spacing: the burger's glyph is 14px in a 40px target,
+   so its box carries 13px of air the mark's box does not. Pulled in, the
+   INK is evenly spaced: burger · mark · relay · create, 16–17px apart. */
+header #tglNav { margin-right: -7px; }
+header b.brand { position: relative; display: block; flex: none; width: 29px; height: 28px; }
+header .brand-mark {
+  position: absolute; max-width: none; margin: 0;
+  width: 62.33px; height: 62.33px; left: -16.31px; top: -15.34px;
+}
 header .icon-btn { font-size: 16px; }
 .nav-row { gap: 2px; }
 .nav-act {
