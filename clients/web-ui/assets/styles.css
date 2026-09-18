@@ -1130,7 +1130,6 @@
 
   .media-run { display: flex; flex-wrap: wrap; gap: 4px;
     align-self: flex-start; align-items: flex-end; max-width: 78%; }
-  .media-run.own { align-self: flex-end; justify-content: flex-end; }
   .media-run .msg { max-width: none; margin: 0; }
   .media-run .bubble { padding: 4px; }
   .media-run img.thumb { max-width: 148px; max-height: 148px;
@@ -1140,12 +1139,10 @@
      incomplete asset's note (arriving/missing) stays: that is honesty, not
      chrome, and hiding it would show a thumbnail pretending to be whole. */
   .media-run .msg .asset-note[data-state="complete"] { display: none; }
-  .msg.own { align-self: flex-end; align-items: flex-end; }
   .msg.grouped { margin-top: 2px; }
   .msg:not(.grouped) { margin-top: 16px; }
   .msg .who { display: flex; align-items: center; gap: 6px; margin: 0 4px 4px;
     color: var(--dim); font-size: 12px; }
-  .msg.own .who { flex-direction: row-reverse; }
   .msg.grouped .who { display: none; }
   .bubble {
     /* THE BUBBLE MAY BE NARROWER THAN ITS WIDEST LINE. It is a flex item
@@ -4639,14 +4636,11 @@ body.protocol .msg > * { grid-column: 1; }
 .media-run { margin-left: calc(var(--av-msg) + 10px); }
 .media-run .msg { display: block; max-width: none; }
 .media-run .msg > .msg-av { display: none; }
-/* OWN MESSAGES ON THE RIGHT — the last thing left of the old layout, kept
-   apart so the next commit can remove exactly this. */
-.msg.own { grid-template-columns: minmax(0, 1fr); }
-.msg.own > * { grid-column: 1; justify-self: end; }
-.msg.own > .msg-av { display: none; }
-.msg.own .mk { left: auto; right: calc(100% + 6px); }
-.msg.own { max-width: min(760px, calc(100% - 176px)); }
-.media-run.own { margin-left: 0; }
+/* ONE COLUMN. Our own words sit in the same column as everyone else's,
+   with our own face: the zig-zag is what made a conversation look like two
+   lists. "Mine" is still said twice — by the name, and by the bubble's
+   tint. (The owner's call, 2026-09-18; this is its own commit so that it
+   can be taken back alone.) */
 @media (prefers-reduced-motion: reduce) { .msg .mk { transition: none; } }
 /* ---- UI-2 phone exceptions ------------------------------------------ */
 @media (max-width: 600px) {
@@ -4654,8 +4648,8 @@ body.protocol .msg > * { grid-column: 1; }
   header .nav-act[data-act="me"] { width: 40px; height: 40px; padding: 0; }
   /* A phone has no lane to spare: the row takes the width, and the toolbar
      arrives over the bubble's top edge on the tap that asked for it. */
-  .msg, .msg.own { max-width: 96%; }
-  .msg .mk, .msg.own .mk { top: -16px; left: 8px; right: auto; }
+  .msg { max-width: 96%; }
+  .msg .mk { top: -16px; left: 8px; }
   .msg.acting .mk { display: inline-flex; }
   #navExtras .nav-act { min-height: 44px; padding: 0 14px; }
 }
