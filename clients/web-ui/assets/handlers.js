@@ -188,7 +188,7 @@ const UI_HANDLERS = [
   /* 140 click    */ (event, el) => { setAtmosphere('poster'); },
   /* 141 click    */ (event, el) => { setAtmosphere('off'); },
   /* 142 click    */ (event, el) => { setAtmosphereSound('ask'); },
-  /* 143 click    */ (event, el) => { setAtmosphereSound('remember'); },
+  /* 143 retired  */ null, // "Remember" went with the question it remembered the answer to
   /* 144 click    */ (event, el) => { setAtmosphereSound('never'); },
   /* 145 click    */ (event, el) => { setProtocolView(false); },
   /* 146 click    */ (event, el) => { setProtocolView(true); },

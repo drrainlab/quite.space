@@ -140,26 +140,10 @@ async function refreshPosts() {
         // only when there is sound to say yes to. Offering "Open" there
         // would be a door onto nothing, which is the rule the marker
         // already follows.
-        const known = typeof SCENES !== 'undefined' && p.atmosphere.visual &&
-          SCENES.get(String(p.atmosphere.visual.scene || ''));
-        const hasSound = !!(p.atmosphere.audio && p.atmosphere.audio.asset) &&
-          ATMO.soundMode() !== 'never';
-        if (known || hasSound) {
-          const doors = document.createElement('div');
-          doors.className = 'atmo-card-doors';
-          const door = (long, short, mode, cls) => {
-            const b = document.createElement('button');
-            b.className = cls;
-            b.innerHTML = `<span class="door-long"></span><span class="door-short"></span>`;
-            b.firstChild.textContent = long;
-            b.lastChild.textContent = short;
-            b.onclick = (e) => { e.stopPropagation(); openPub(p.document_id, mode); };
-            doors.appendChild(b);
-          };
-          if (known) door('Open', 'Open', 'quiet', 'btn-tinted');
-          if (hasSound) door('Open with sound', 'Sound', 'sound', 'btn-filled');
-          card.appendChild(doors);
-        }
+        // NO DOORS ON THE CARD (2026-09-18). "Open" and "Open with sound"
+        // were two buttons asking a question the card's own click already
+        // answers: the post opens with its atmosphere and its sound, and the
+        // bar beside it mutes, pauses or leaves.
       }
       // PA-1 space-cards: categories render as chips on the card.
       // Filter the legacy internal markers out of rendered topics: they

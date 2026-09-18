@@ -3394,12 +3394,6 @@ button:hover > .act-mark, button:focus-visible > .act-mark { opacity: 1; }
   position: absolute; inset: 0; z-index: 0;
   opacity: .45; pointer-events: none;
 }
-.atmo-card-doors { display: flex; gap: 8px; margin-top: 8px; }
-.atmo-card-doors .door-short { display: none; }
-@media (max-width: 600px) {
-  .atmo-card-doors .door-long { display: none; }
-  .atmo-card-doors .door-short { display: inline; }
-}
 
 /* THE SKY IS A DARK ROOM IN EVERY THEME. An atmosphere is painted from the
    post's own palette onto a dark ground — the floor, the meter and the ink
@@ -4510,7 +4504,12 @@ div.reply-to { cursor: default; }
 
 /* ---- header: a door, not a dashboard -------------------------------- */
 header { padding: 8px 16px; gap: 10px; }
-.brand-lockup { height: 24px; }
+/* The mark alone (the owner, 2026-09-18). The wordmark said the app's name
+   to somebody already inside the app; the orbit is enough, and it needs no
+   theme filter — it is a picture, not light type on a dark ground. */
+/* The PNG carries a quarter of empty margin on every side, so the box is
+   drawn large and pulled back in: the orbit itself lands at about 30px. */
+header .brand-mark { width: 56px; height: 56px; margin: -14px -12px; display: block; }
 header .icon-btn { font-size: 16px; }
 .nav-row { gap: 2px; }
 .nav-act {
@@ -4793,7 +4792,6 @@ body.pane-open #content::after {
 .conv-icon, #convSub { cursor: pointer; }
 #convSub:hover { color: var(--fg); }
 .conv-more { display: none; }
-.conv-more .act-glyph { width: 15px; text-align: center; flex: none; }
 #convMoreBtn { font-size: 18px; }
 @media (min-width: 601px) {
   #convbar { flex-direction: row; align-items: center; flex-wrap: nowrap;
@@ -4983,6 +4981,20 @@ dialog .me-row::after {
   dialog { background: var(--panel); backdrop-filter: none; -webkit-backdrop-filter: none; }
   dialog::backdrop { backdrop-filter: none; -webkit-backdrop-filter: none; }
 }
+/* ---- a room's tint: a hue, graded by the theme ------------------------
+   app.js (applyTheme) gives #content `oklch(var(--acc-l) var(--acc-c) H)`.
+   These two numbers are the whole palette: one lightness and one chroma
+   for every archetype, so none of them shouts and all of them read. */
+:root { --acc-l: .80; --acc-c: .085; }
+:root[data-theme="light"] { --acc-l: .46; --acc-c: .115; }
+/* A tinted act has to be findable on paper as well as at night. */
+.btn-tinted {
+  background: color-mix(in srgb, var(--acc) 15%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--acc) 30%, transparent);
+  color: var(--acc); font-weight: 500;
+}
+.btn-tinted:hover { background: color-mix(in srgb, var(--acc) 22%, transparent); }
+.conv-more .act-mark { flex: none; }
 /* ---- UI-2 phone exceptions ------------------------------------------ */
 @media (max-width: 600px) {
   header .nav-act { padding: 0 11px; justify-content: center; min-height: 44px; }

@@ -84,13 +84,13 @@ async function loadSpaceAppearance(sid) {
 // ---- archetypes, palettes, moods ----
 
 const ARCHETYPES = {
-  campfire:   { name: 'Campfire',   desc: 'friends, quiet presence, talk',           acc: '#e8a862', bg: '#14100b', human: '#e8a862' },
-  forest:     { name: 'Forest',     desc: 'an organic space grown from shared life', acc: '#64d8a4', bg: '#0c1210', human: '#64d8a4' },
-  studio:     { name: 'Studio',     desc: 'music, listening sessions, demos, notes', acc: '#c88ce0', bg: '#100c14', human: '#c88ce0' },
-  workshop:   { name: 'Workshop',   desc: 'projects, tasks, devices, telemetry',     acc: '#7ab4e0', bg: '#0c1014', human: '#7ab4e0' },
-  orbit:      { name: 'Orbit',      desc: 'a minimal scene for distributed teams',   acc: '#9cc2e8', bg: '#0a0d12', human: '#9cc2e8' },
-  home:       { name: 'Home',       desc: 'close people, photos, family memory',     acc: '#e0b49c', bg: '#12100d', human: '#e0b49c' },
-  radio_room: { name: 'Radio Room', desc: 'mesh, LoRa, BBS and node status',         acc: '#6ce07a', bg: '#0a0f0a', human: '#6ce07a' },
+  campfire:   { name: 'Campfire',   desc: 'friends, quiet presence, talk',           h: 48, acc: '#e8a862', bg: '#14100b', human: '#e8a862' },
+  forest:     { name: 'Forest',     desc: 'an organic space grown from shared life', h: 168, acc: '#64d8a4', bg: '#0c1210', human: '#64d8a4' },
+  studio:     { name: 'Studio',     desc: 'music, listening sessions, demos, notes', h: 318, acc: '#c88ce0', bg: '#100c14', human: '#c88ce0' },
+  workshop:   { name: 'Workshop',   desc: 'projects, tasks, devices, telemetry',     h: 250, acc: '#7ab4e0', bg: '#0c1014', human: '#7ab4e0' },
+  orbit:      { name: 'Orbit',      desc: 'a minimal scene for distributed teams',   h: 212, acc: '#9cc2e8', bg: '#0a0d12', human: '#9cc2e8' },
+  home:       { name: 'Home',       desc: 'close people, photos, family memory',     h: 18, acc: '#e0b49c', bg: '#12100d', human: '#e0b49c' },
+  radio_room: { name: 'Radio Room', desc: 'mesh, LoRa, BBS and node status',         h: 128, acc: '#6ce07a', bg: '#0a0f0a', human: '#6ce07a' },
 };
 const MOOD_LIGHT = { dawn: 1.5, day: 1.9, dusk: 1.0, night: 0.62 };
 const RITUALS = [
@@ -117,12 +117,25 @@ function shade(hex, f) {
 // tints bubbles/persona for that space without overriding the shell theme +
 // preset, which own the global palette (PUI-1). Full per-space canvas theming
 // flows through the signed SC appearance (loadSpaceAppearance → #content).
+//
+// THE TINT IS A HUE; THE THEME DECIDES HOW LIGHT AND HOW LOUD. Each archetype
+// used to be one hex, chosen against a dark ground — so Campfire's pale
+// orange was the accent on white paper too, and "invite" was a ghost (the
+// owner's screenshot). In OKLCH the archetype owns only the hue angle (`h`),
+// and lightness and chroma are theme tokens (--acc-l, --acc-c in styles.css):
+// every archetype is equally bright and equally saturated TO THE EYE, which a
+// table of hand-picked hexes never was (the green read twice as loud as the
+// blue), and every one of them clears 4.5:1 on its ground in both themes.
+// The hex stays as the answer for an engine without oklch().
+const OKLCH_OK = typeof CSS !== 'undefined' && CSS.supports &&
+  CSS.supports('color', 'oklch(0.5 0.1 100)');
 function applyTheme(char) {
   const a = ARCHETYPES[char?.archetype] || ARCHETYPES.forest;
   const el = document.getElementById('content');
   if (!el) return;
-  el.style.setProperty('--acc', a.acc);
-  el.style.setProperty('--human', a.human);
+  const tint = OKLCH_OK ? `oklch(var(--acc-l) var(--acc-c) ${a.h})` : a.acc;
+  el.style.setProperty('--acc', tint);
+  el.style.setProperty('--human', tint);
 }
 
 // ---- relic: the growing shared object ----
@@ -1972,6 +1985,9 @@ function convMoreClose() {
   const b = document.getElementById('convMoreBtn');
   if (m) m.classList.remove('open');
   if (b) b.setAttribute('aria-expanded', 'false');
+  // Back where the markup put it: on a phone this container dissolves into
+  // the bar, so its children have to be IN the bar when the width changes.
+  if (m && b && m.parentElement !== b.parentElement) b.after(m);
   document.removeEventListener('keydown', convMoreEsc);
 }
 function convMoreEsc(e) { if (e.key === 'Escape') convMoreClose(); }
@@ -1984,6 +2000,13 @@ function convMoreToggle(ev, btn) {
   const r = btn.getBoundingClientRect();
   m.style.top = Math.round(r.bottom + 6) + 'px';
   m.style.right = Math.max(8, Math.round(window.innerWidth - r.right)) + 'px';
+  // OUT OF THE BAR WHILE OPEN. position:fixed escapes the bar's clipping but
+  // not its stacking context, and the conversation is painted after the
+  // bar: a bubble slid over the open menu (the owner's screenshot). On the
+  // body it is above everything; it keeps the room's tint by carrying it.
+  const room = document.getElementById('content');
+  if (room) m.style.setProperty('--acc', room.style.getPropertyValue('--acc'));
+  document.body.appendChild(m);
   m.classList.add('open');
   btn.setAttribute('aria-expanded', 'true');
   ev.stopPropagation();

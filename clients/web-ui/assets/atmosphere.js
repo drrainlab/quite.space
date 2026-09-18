@@ -41,10 +41,21 @@ const ATMO = (() => {
   /** Set when the person has said yes once and asked us to remember. */
   const CONSENT_KEY = 'qp.atmosphere.consent';
 
-  /** @returns {'ask'|'never'|'remember'} */
+  /**
+   * TWO ANSWERS NOW: the sound plays, or it never does.
+   *
+   * It was three — ask, remember, never — and "ask" put two doors on every
+   * card ("Open" / "Open with sound") and a third in the article. The owner,
+   * 2026-09-18: open WITH the atmosphere and its sound when a post has them,
+   * and mute there if need be. A post's sound is part of the post, the way
+   * its pictures are; the control that matters is the one beside it while
+   * it plays (Mute, Pause, Leave), not a question before the door.
+   * A stored 'ask' or 'remember' both mean "plays". The value is still
+   * called 'ask' so every comparison with 'never' elsewhere stays true.
+   * @returns {'ask'|'never'}
+   */
   function soundMode() {
-    const v = localStorage.getItem(SOUND_KEY);
-    return v === 'never' || v === 'remember' ? v : 'ask';
+    return localStorage.getItem(SOUND_KEY) === 'never' ? 'never' : 'ask';
   }
 
   /** @param {'ask'|'never'|'remember'} m */
@@ -698,15 +709,15 @@ const ATMO = (() => {
           renderBar('still');
         });
       } else {
-        if (hasSound && soundMode() !== 'never') {
-          btn('Open with sound', 'btn-filled', () => enter(true));
-        }
-        // The still state now means the picture did not start on its own —
-        // STAGE declined (hidden tab, reduced motion, poster mode, a space
-        // that asked for stillness) or the person left. A plain door back
-        // in; without a known scene there is no motion to enter and the
-        // door would be a false promise.
-        if (scene) btn('Open', 'btn-tinted', () => enter(false));
+        // ONE DOOR BACK IN. The still state means the post did not start on
+        // its own — STAGE declined (hidden tab, reduced motion, poster mode,
+        // a space that asked for stillness), the browser wanted a gesture
+        // for the sound, or the person left. The door does what opening the
+        // post does: the scene, and the sound when there is one and it is
+        // wanted. With neither a known scene nor sound there is nothing to
+        // enter and a door would be a false promise.
+        const soundOk = hasSound && soundMode() !== 'never' && !ignoreRemembered;
+        if (scene || soundOk) btn('Open', 'btn-tinted', () => enter(soundOk));
         addTakeButton();
       }
 
@@ -815,12 +826,18 @@ const ATMO = (() => {
     // twice. With no mode given, the picture opens on its own — a known
     // scene enters quiet; a remembered yes (the person's own standing
     // instruction) enters with sound; a post with no scene stays still.
-    const how = (opts && opts.enter) || (scene ? 'quiet' : 'still');
+    // With no mode given the post opens as itself: its sound when it has one
+    // and the person has not said "never", otherwise the scene alone. The
+    // click that opened the post is the gesture the browser wants for audio;
+    // where there was none (a deep link) startBed says so in the bar and the
+    // "With sound" door is right there. A transient preview still never
+    // starts sound on its own (ignoreRemembered): that would be an audio
+    // fetch from a space the person has not even kept.
+    const how = (opts && opts.enter) || (scene || hasSound ? 'auto' : 'still');
+    const soundOk = hasSound && soundMode() !== 'never' && !ignoreRemembered;
     if (how === 'sound') enter(true);
-    else if (!ignoreRemembered && hasSound && soundMode() === 'remember' &&
-             localStorage.getItem(CONSENT_KEY)) {
-      enter(true);
-    } else if (how === 'quiet') enter(false);
+    else if (how === 'auto') { if (soundOk) enter(true); else if (scene) enter(false); }
+    else if (how === 'quiet') enter(false);
   }
 
   /**
