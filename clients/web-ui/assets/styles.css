@@ -4642,15 +4642,68 @@ body.protocol .msg > * { grid-column: 1; }
    tint. (The owner's call, 2026-09-18; this is its own commit so that it
    can be taken back alone.) */
 @media (prefers-reduced-motion: reduce) { .msg .mk { transition: none; } }
+/* ---- the composer: one rounded bar -----------------------------------
+   "+", the words, presence, the microphone, send. It was a full-width
+   band with a hairline over it, a paperclip and a microphone behind
+   vertical rules, a select-shaped presence control and the word "send".
+   Same controls, same handlers; the phone keeps its two-storey layout and
+   borrows only the skin. */
+#composer {
+  border-top: 0; background: var(--surface-raised);
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+  border-radius: var(--bar-radius);
+}
+#composer:focus-within { box-shadow: 0 0 0 1px color-mix(in srgb, var(--acc) 32%, transparent); }
+#composer .ic {
+  border: 0; border-radius: 50%; padding: 0; color: var(--dim);
+  width: 36px; height: 36px; min-height: 36px; flex: none;
+}
+#composer .ic:hover, #composer .ic:focus-visible {
+  color: var(--fg); background: color-mix(in srgb, var(--fg) 8%, transparent); }
+#composer .picker-btn { border-left: 0; border-radius: 999px; height: 36px; padding: 0 10px; }
+#composer button[type="submit"] {
+  font-size: 0; flex: none; width: 36px; height: 36px; min-height: 36px; padding: 0;
+  border-radius: 50%; background: var(--acc); color: var(--on-accent);
+}
+#composer button[type="submit"]::before { content: "\2192"; font-size: 17px; line-height: 1; }
+#composer button[type="submit"]:hover { filter: brightness(1.08); }
+@media (min-width: 601px) {
+  #composer { margin: 0 16px 14px; padding: 5px 6px; gap: 2px; align-items: flex-end; }
+  #composer #attachWrap { order: 0; }
+  #composer #text { order: 1; padding: 8px 10px; }
+  #composer .picker { order: 2; }
+  #composer #voiceBtn { order: 3; }
+  #composer button[type="submit"] { order: 4; margin-left: 4px; }
+  /* Presence at rest is a small ring: the offer, without the word. Once it
+     is set the control says what it did — the word and its minutes return
+     (.picker.live, above in this file). */
+  #composer .picker:not(.live) #presenceLabel,
+  #composer .picker:not(.live) .picker-chev { display: none; }
+  #composer .picker:not(.live) .picker-btn { width: 36px; padding: 0; justify-content: center; }
+  #composer .picker:not(.live) .picker-btn::before {
+    content: ""; width: 9px; height: 9px; border-radius: 50%;
+    border: 1.5px solid currentColor; opacity: .8;
+  }
+  /* What stacks above the bar is attached to it, not to the window. */
+  #replyBar, #aiBar, #linkStage:not(:empty), #outboxStrip:not(:empty),
+  #sendNote:not(:empty), #recBar, #readerBar {
+    margin: 0 16px 6px; border-top: 0; border-radius: 12px;
+  }
+  #recBar, #readerBar { margin-bottom: 14px; }
+}
 /* ---- UI-2 phone exceptions ------------------------------------------ */
 @media (max-width: 600px) {
   header .nav-act { padding: 0 11px; justify-content: center; min-height: 44px; }
-  header .nav-act[data-act="me"] { width: 40px; height: 40px; padding: 0; }
+  header .nav-act[data-act="me"] { width: 40px; height: 40px; padding: 0; border-radius: 50%; }
   /* A phone has no lane to spare: the row takes the width, and the toolbar
      arrives over the bubble's top edge on the tap that asked for it. */
   .msg { max-width: 96%; }
   .msg .mk { top: -16px; left: 8px; }
   .msg.acting .mk { display: inline-flex; }
+  #composer { border-radius: 0; }
+  #composer button[type="submit"] { width: auto; min-width: 44px; min-height: 44px; height: auto; border-radius: 12px; }
+  #composer button[type="submit"]::before { content: "\27A4"; }
+  #composer .ic { width: 44px; height: 44px; }
   #navExtras .nav-act { min-height: 44px; padding: 0 14px; }
 }
 /* ==== end UI-2 ==== */
