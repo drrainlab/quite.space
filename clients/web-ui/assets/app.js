@@ -2121,7 +2121,7 @@ async function refreshSpace() {
     } else {
       const fresh = renderResonanceRow(e.resonance, e.id);
       const old = node.querySelector('.res-row');
-      if (old) old.replaceWith(fresh); else node.querySelector('.bubble')?.appendChild(fresh);
+      if (old) old.replaceWith(fresh); else node.querySelector('.bubble')?.after(fresh);
       if (typeof RESFX !== 'undefined') {
         RESFX.onAggregateChange(node, e.resonance,
           computeResDeltas(feedResCounts.get(e.id), e.resonance));
@@ -3791,21 +3791,47 @@ function renderEntry(log, e, fresh, grouped) {
   // state change, so nothing has to be remembered here.
   if (e.asset && e.asset.state === 'fetching') d.classList.add('media-fetching');
 
+  // THE ROW (UI-2): a face in a gutter, then name and time on one line,
+  // then what was said. Every author gets the face, this device included —
+  // a conversation read top to bottom in one column needs to say who is
+  // speaking the same way every time. A grouped follow-on keeps the gutter
+  // and drops the face. Protocol view keeps its bare rows.
+  if (!PROTOCOL && !grouped) {
+    const av = document.createElement('span');
+    av.className = 'msg-av glyph';
+    av.setAttribute('aria-hidden', 'true');
+    av.innerHTML = glyphSVG(e.author, e.produced_by === 'human' ? 'human' : 'device', 32);
+    d.appendChild(av);
+  }
+  // Media that stands on its own — no answer quoted above it, nothing a
+  // gateway has to say about it — is drawn without a bubble (styles: .k-*).
+  if (!e.reply_to && !e.external && !e.shared &&
+      (e.kind === 'visual' || e.kind === 'video')) {
+    d.classList.add('k-' + e.kind);
+  }
   // Author head (shown once per group, hidden for grouped follow-ons via CSS).
   const who = document.createElement('div');
   who.className = 'who';
-  if (!PROTOCOL && !own) {
-    const g = document.createElement('span');
-    g.className = 'glyph g18';
-    g.innerHTML = glyphSVG(e.author, e.produced_by === 'human' ? 'human' : 'device', 18);
-    who.appendChild(g);
-  }
   const b = badge(e.produced_by);
   if (b) who.appendChild(b);
+  // .who-name is a CONTRACT: a reply reads the name it answers from here.
   const meta = document.createElement('span');
+  meta.className = 'who-name';
   meta.textContent = (own ? t('conv.you') : authorLabel(e)) +
     (e.revised ? ' · ' + t('conv.edited') : '') + (PROTOCOL ? ' · ' + e.kind : '');
   who.appendChild(meta);
+  // Somebody else's time rides the head line. OURS STAYS IN THE BUBBLE: that
+  // stamp is where the delivery mark lives, and it has to be there on a
+  // grouped row too, where there is no head line at all.
+  const headTime = !own && !grouped && !!e.created_at;
+  if (headTime) {
+    const at = new Date(e.created_at * 1000);
+    const tm = document.createElement('time');
+    tm.className = 'who-time';
+    tm.textContent = at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    tm.title = at.toLocaleString();
+    who.appendChild(tm);
+  }
   d.appendChild(who);
 
   const bubble = document.createElement('div');
@@ -3814,7 +3840,7 @@ function renderEntry(log, e, fresh, grouped) {
   // Absolute HH:MM rather than "20h ago": this feed repaints only when
   // content changes, and a relative stamp that never re-renders is a
   // stopped clock wearing a live face. The full date rides the hover.
-  if (e.created_at) {
+  if (e.created_at && !headTime) {
     const stamp = document.createElement('span');
     stamp.className = 'stamp';
     const d = new Date(e.created_at * 1000);
@@ -3879,7 +3905,7 @@ function renderEntry(log, e, fresh, grouped) {
     const who = document.createElement('span');
     who.className = 'reply-who';
     who.textContent = '↵ ' +
-      (src ? (src.querySelector('.who span:last-child')?.textContent || '').split(' · ')[0]
+      (src ? (src.querySelector('.who .who-name')?.textContent || '').split(' · ')[0]
            : t('conv.replyGone'));
     q.title = t('conv.replyTo');
     q.appendChild(who);
@@ -3906,55 +3932,59 @@ function renderEntry(log, e, fresh, grouped) {
   const bodyEl = renderBody(e);
   bodyEl.classList.add('body');
   bubble.appendChild(bodyEl);
-  bubble.appendChild(renderResonanceRow(e.resonance, e.id));
   d.appendChild(bubble);
+  // What people left on it sits UNDER the bubble, not inside: an empty row
+  // inside every bubble was thirty pixels of nothing per message.
+  d.appendChild(renderResonanceRow(e.resonance, e.id));
   d.dataset.eid = e.id;
 
+  // THE ACTIONS ARE A TOOLBAR THAT TAKES NO ROOM. It floats over the
+  // bubble's top edge, arrives on hover, focus or a tap (.acting), and is
+  // marks rather than words — five links under every message was the
+  // loudest thing in the conversation. Each mark carries its sentence as
+  // a title and an aria-label.
   const acts = document.createElement('span');
   acts.className = 'mk';
+  const act = (cls, mark, label, fn) => {
+    const el = document.createElement('button');
+    el.type = 'button';
+    el.className = 'mk-act' + (cls ? ' ' + cls : '');
+    el.textContent = mark;
+    el.title = label;
+    el.setAttribute('aria-label', label);
+    el.onclick = (ev) => { ev.stopPropagation(); fn(el); };
+    acts.appendChild(el);
+    return el;
+  };
+  if (typeof openResPicker === 'function' && currentSpace()?.can_write !== false) {
+    act('react-act', '✧', t('res.resonate'),
+      (el) => openResPicker(e.id, el, e.resonance));
+  }
   // Reply: a real structural edge on the signed message, and it addresses
   // the author so the answer actually reaches them.
-  if (!own) {
-    const rp = document.createElement('span');
-    rp.className = 'reply-act';
-    rp.textContent = '↩ ' + t('conv.reply');
-    rp.title = t('conv.reply_hint');
-    rp.onclick = () => startReply(e);
-    acts.appendChild(rp);
-  }
+  if (!own) act('reply-act', '↩', t('conv.reply') + ' — ' + t('conv.reply_hint'), () => startReply(e));
   // Forward. Hidden where the node would refuse anyway, so the affordance
   // never promises something the gates will take back: a space that keeps
   // its past to itself, and kinds this build cannot quote yet.
   const sp = currentSpace();
   const SHAREABLE_KINDS = ['text', 'link'];
   if (sp && sp.character?.memory !== 'private_history' && SHAREABLE_KINDS.includes(e.kind)) {
-    const fw = document.createElement('span');
-    fw.textContent = '→ ' + t('conv.forward');
-    fw.onclick = () => forwardEntry(e);
-    acts.appendChild(fw);
+    act('forward-act', '→', t('conv.forward'), () => forwardEntry(e));
   }
   // Keep in space (LR-1): kept state comes from the API, never guessed.
   // "QuietRank should have caught this" — the recall side of feedback.
   // Without it the layer could only ever learn to go quiet.
   if (!own && typeof qrNotice === 'function') {
-    const nt = document.createElement('span');
-    nt.className = 'notice-act';
-    nt.textContent = '◎ should have noticed';
-    nt.title = 'teach QuietRank that messages like this matter to you';
-    nt.onclick = async () => {
+    act('notice-act', '◎', t('conv.notice') + ' — ' + t('conv.notice_hint'), async (el) => {
       await qrNotice(e.id);
-      nt.textContent = '◎ noted';
-    };
-    acts.appendChild(nt);
+      el.classList.add('done');
+      el.title = t('conv.noticed');
+    });
   }
-  const kp = document.createElement('span');
-  kp.className = 'keep-act' + (e.kept ? ' kept' : '');
-  kp.textContent = e.kept ? `✦ kept${e.keep_count > 1 ? ' · ' + e.keep_count : ''}`
-    : (e.keep_count > 0 ? `✦ keep · ${e.keep_count}` : '✦ keep');
-  kp.title = e.kept ? 'un-keep (remove from the Shelf)' : 'keep in space (Shelf)';
-  kp.onclick = () => keepToggle(e);
-  acts.appendChild(kp);
-  d.appendChild(acts);
+  act('keep-act' + (e.kept ? ' kept' : ''),
+    '✦' + (e.keep_count > 1 || (e.keep_count > 0 && !e.kept) ? '\u00a0' + e.keep_count : ''),
+    e.kept ? t('conv.unkeep') : t('conv.keep'), () => keepToggle(e));
+  bubble.appendChild(acts);
   // WHY THIS HAS NOT GONE, when it has not.
   //
   // The radio declines to carry an event that would cost it minutes of air,

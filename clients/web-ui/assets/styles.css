@@ -1186,16 +1186,9 @@
   }
   .msg.own .bubble { background: var(--bubble-own);
     border: 1px solid var(--bubble-own-border, transparent); }
-  .msg:not(.grouped) .bubble { border-top-left-radius: var(--radius-sm); }
-  .msg.own:not(.grouped) .bubble { border-top-left-radius: var(--radius-lg);
-    border-top-right-radius: var(--radius-sm); }
   .bubble .txt { white-space: pre-wrap; }
   .bubble time { display: block; text-align: right; color: var(--muted);
     font-size: 10px; margin-top: 2px; }
-  .msg .mk { color: var(--muted); font-size: 10.5px; cursor: pointer; opacity: 0;
-    transition: opacity .15s; margin: 7px 4px 0; font-family: var(--font-mono);
-    letter-spacing: .2px; }
-  .msg:hover .mk { opacity: 1; }
   .sysrow { align-self: center; color: var(--muted); font-size: 12px;
     background: var(--panel); border-radius: 999px; padding: 3px 12px; margin: 8px 0; }
 
@@ -2571,9 +2564,6 @@
   .shelf-unkeep { margin-left: auto; font-size: 11px; color: var(--muted); }
   .shelf-unkeep:hover { color: var(--warn, #d66); }
   /* feed keep affordance */
-  .msg .mk { display: inline-flex; gap: 12px; }
-  .keep-act.kept { color: var(--acc); }
-  .msg .mk:has(.kept) { opacity: 1; }
 
   /* Release space template card (LR-4) */
   .release-tpl { border: 1px solid color-mix(in srgb, var(--acc) 45%, transparent);
@@ -4561,10 +4551,112 @@ header .conn-chip:hover { background: color-mix(in srgb, var(--fg) 7%, transpare
 @media (prefers-reduced-motion: reduce) {
   .nav-act { transition: none; }
 }
+/* ---- the message row: a face, a name and a time, then what was said --- */
+.msg {
+  display: grid; grid-template-columns: var(--av-msg) minmax(0, 1fr);
+  column-gap: 10px; align-items: start; position: relative;
+  /* The lane on the right is the toolbar's: a row never grows into it, so
+     the actions always have somewhere to arrive. */
+  max-width: min(760px, calc(100% - 176px));
+}
+.msg > * { grid-column: 2; justify-self: start; max-width: 100%; }
+.msg > .msg-av {
+  grid-column: 1; grid-row: 1 / span 4; margin-top: 1px;
+  width: var(--av-msg); height: var(--av-msg); border-radius: 50%;
+  overflow: hidden; background: var(--surface-raised);
+}
+.msg > .msg-av svg { width: 100%; height: 100%; display: block; }
+body.protocol .msg { grid-template-columns: minmax(0, 1fr); }
+body.protocol .msg > * { grid-column: 1; }
+.msg:not(.grouped) { margin-top: 18px; }
+.msg .who { margin: 0 0 3px; gap: 8px; align-items: baseline;
+  font-size: var(--text-meta); color: var(--dim); }
+.msg .who .who-name { color: var(--fg); font-weight: 600;
+  font-size: calc(13px * var(--font-scale)); }
+.msg .who .who-time { color: var(--muted); font-size: var(--text-cap);
+  font-family: var(--font-mono); }
+/* CONVERSATION IS READ, SO IT IS SET TO BE READ. It was 12.5px mono — the
+   voice of a terminal, on every line anybody said. Mono stays where it
+   means something: code, stamps, byte counts. The blur went with the
+   glass on 2026-09-11 and had been filtering a solid colour ever since. */
+.bubble {
+  font-family: var(--font-sans); font-size: var(--text-body);
+  line-height: 1.5; letter-spacing: 0;
+  border-radius: var(--bubble-radius); padding: 9px 13px;
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+}
+.bubble code, .bubble pre, .bubble .stamp, .bubble .asset-note { font-family: var(--font-mono); }
+/* Our own stamp carries the delivery mark, and "21:18 ✓✓" is wider than the
+   room the bare time was given. */
+.msg.own .bubble.stamped { padding-right: 66px; }
+/* Reactions live under the bubble, and an empty row is no row. */
+.msg .res-row { margin-top: 5px; min-height: 0; }
+.msg .res-row:not(:has(.res-chip)) { display: none; }
+/* The actions: a toolbar beside the bubble that reserves no height. */
+.msg .mk {
+  position: absolute; top: 3px; left: calc(100% + 6px); z-index: 3;
+  display: inline-flex; align-items: center; gap: 1px; margin: 0; padding: 2px;
+  line-height: 1; white-space: nowrap;
+  border-radius: 999px; background: var(--panel);
+  box-shadow: 0 0 0 1px var(--line), 0 8px 20px -10px rgba(0, 0, 0, .55);
+  opacity: 0; pointer-events: none; transition: opacity .12s ease;
+}
+.msg:hover .mk, .msg:focus-within .mk, .msg.acting .mk { opacity: 1; pointer-events: auto; }
+.mk-act {
+  border: 0; background: transparent; color: var(--dim); cursor: pointer;
+  min-width: 28px; height: 26px; padding: 0 7px; border-radius: 999px;
+  font-size: 13px; line-height: 1; font-family: var(--font-mono);
+}
+.mk-act:hover, .mk-act:focus-visible {
+  color: var(--fg); background: color-mix(in srgb, var(--fg) 9%, transparent); }
+.mk-act.kept, .mk-act.done { color: var(--acc); }
+/* Kept is a fact about the message, so it shows at rest — as one small
+   star on the bubble's corner rather than as an open toolbar. */
+.msg:has(.mk-act.kept) .bubble::before {
+  content: '✦'; position: absolute; top: -7px; right: -5px;
+  font-size: 11px; line-height: 1; color: var(--acc);
+}
+/* MEDIA STANDS ON ITS OWN. A picture in a bubble is a picture in a frame
+   in a frame. The .bubble element stays — the fetch halo, the flash and
+   the signal target all paint on it — it just stops being a surface. */
+.msg.k-visual .bubble, .msg.k-video .bubble { padding: 0; }
+.msg.k-visual:not(.media-fetching):not(.flash):not(.sig-target) .bubble,
+.msg.k-video:not(.media-fetching):not(.flash):not(.sig-target) .bubble {
+  background: none; border: 0; box-shadow: none;
+}
+.msg.k-visual.media-fetching .bubble, .msg.k-video.media-fetching .bubble { padding: 4px; }
+.msg.k-visual .body, .msg.k-video .body {
+  display: flex; flex-direction: column; align-items: flex-start; }
+.msg.k-visual .body > .txt, .msg.k-video .body > .txt {
+  order: 2; margin-top: 5px; font-size: var(--text-meta); color: var(--dim); }
+.msg.k-visual .body > .asset-note, .msg.k-video .body > .asset-note { order: 3; }
+.msg.k-visual .media-frame img.thumb, .msg.k-video .video-holder { margin-top: 0; }
+.msg.k-visual .thumb, .msg.k-video .video-holder img { border-radius: 12px; }
+.msg.k-visual .bubble .stamp, .msg.k-video .bubble .stamp {
+  top: 8px; bottom: auto; right: 8px; padding: 1px 7px; border-radius: 999px;
+  background: rgba(0, 0, 0, .5); color: #fff; opacity: .92; }
+.msg.k-visual .bubble.stamped, .msg.k-video .bubble.stamped { padding-right: 0; }
+.media-run { margin-left: calc(var(--av-msg) + 10px); }
+.media-run .msg { display: block; max-width: none; }
+.media-run .msg > .msg-av { display: none; }
+/* OWN MESSAGES ON THE RIGHT — the last thing left of the old layout, kept
+   apart so the next commit can remove exactly this. */
+.msg.own { grid-template-columns: minmax(0, 1fr); }
+.msg.own > * { grid-column: 1; justify-self: end; }
+.msg.own > .msg-av { display: none; }
+.msg.own .mk { left: auto; right: calc(100% + 6px); }
+.msg.own { max-width: min(760px, calc(100% - 176px)); }
+.media-run.own { margin-left: 0; }
+@media (prefers-reduced-motion: reduce) { .msg .mk { transition: none; } }
 /* ---- UI-2 phone exceptions ------------------------------------------ */
 @media (max-width: 600px) {
   header .nav-act { padding: 0 11px; justify-content: center; min-height: 44px; }
   header .nav-act[data-act="me"] { width: 40px; height: 40px; padding: 0; }
+  /* A phone has no lane to spare: the row takes the width, and the toolbar
+     arrives over the bubble's top edge on the tap that asked for it. */
+  .msg, .msg.own { max-width: 96%; }
+  .msg .mk, .msg.own .mk { top: -16px; left: 8px; right: auto; }
+  .msg.acting .mk { display: inline-flex; }
   #navExtras .nav-act { min-height: 44px; padding: 0 14px; }
 }
 /* ==== end UI-2 ==== */
