@@ -359,6 +359,13 @@ type Runtime struct {
 	// guessRelaysOverride replaces the official registry in the guess
 	// (node/offers.go guessRelays) — tests only.
 	guessRelaysOverride []string
+	// projectionMaxAgeOverride replaces the public projection's age window.
+	// Production never sets it. A test that publishes a FIXTURE with real
+	// dates in it must: the window is thirty days, and a fixture written on
+	// 2026-08-17 aged out of its own projection on 2026-09-16 — the
+	// pre-certificate compatibility test went red on a day nobody touched
+	// Go code, and took the 1.0.20 release build with it.
+	projectionMaxAgeOverride *time.Duration
 	// attention-from-API (node/foreground.go): set by shells with no
 	// window of their own, so that "somebody is looking" is inferred from
 	// the local API being used rather than assumed forever.

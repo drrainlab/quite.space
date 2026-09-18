@@ -116,6 +116,14 @@ func TestPreCertificatePublicSpaceCanBeOpenedByAFreshNode(t *testing.T) {
 	dir, tid := premdDataDir(t)
 	alice := openRuntime(t, dir, "curator") // the upgraded publisher
 	defer alice.Close()
+	// THE FIXTURE HAS REAL DATES IN IT (written 2026-08-17), and a public
+	// projection ages ordinary messages out after thirty days — correctly.
+	// This test is about CERTIFICATES, not about the window: whether a
+	// fresh node may admit pre-certificate history at all. So the window is
+	// lifted here, or the test expires with its fixture (it did, on
+	// 2026-09-16, and failed a release build two days later).
+	noWindow := time.Duration(0)
+	alice.projectionMaxAgeOverride = &noWindow
 	if err := alice.SetSettings(Settings{Relay: addr}); err != nil {
 		t.Fatal(err)
 	}

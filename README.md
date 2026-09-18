@@ -11,7 +11,14 @@
 
 [**Download**](#-download) · [What it does](#-what-it-does) ·
 [What's new](#-whats-new) · [From source](#-running-it-from-source) ·
-[Docs](#-documents) · [Status](#-status)
+[Docs](#-documents) · [Status](#-status) · [quite.space](https://quite.space)
+
+<br>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screens/conversation-dark.webp">
+  <img src="docs/screens/conversation-light.webp" alt="A conversation in Quite Space: one column of messages with faces, names and times; the room's views as pills; one rounded composer." width="920">
+</picture>
 
 </div>
 
@@ -79,8 +86,17 @@ shasum -a 256 -c SHA256SUMS
   the link. One entity behind a two-person line, a group and a project room.
 - 🗝 **Invitations** that are five spoken words or a link, with an optional
   approval step. No account, no phone number, no directory of people.
-- 📜 **Posts** — long-form documents with media, and an optional generative
-  **atmosphere** that plays behind the article.
+- 💬 **Conversation that reads like one** — one column, a face and a name on
+  every message, reactions with meanings rather than a sticker drawer,
+  replies that say what they answer, and a delivery mark that means a
+  machine signed for the bytes, never that somebody looked.
+- 🖼 **Media that says where it is.** A photo shows up at once as its signed
+  preview; tap it and a small ring turns while the relay is asked, fills as
+  the bytes land, and leaves when they are here. No spinner that lies.
+- 📜 **Posts** — long-form documents with media, tables and formulas, and an
+  optional generative **atmosphere**: a fragment shader and a sound bed
+  behind the article, metered frame by frame so it may drift and glow but
+  cannot flash. A post opens as itself; Mute, Pause and Leave sit beside it.
 - 🔭 **Discover** — catalogues are ordinary public spaces, so anybody can run
   one. Looking inside a space never subscribes you to it.
 - 🧭 **A field that never lies** — places, markers, check-ins, and positions
@@ -96,6 +112,24 @@ shasum -a 256 -c SHA256SUMS
 - 🤖 **A local AI terminal** that never leaves the device, when you configure
   a provider for it.
 
+<table>
+<tr>
+<td width="50%"><img src="docs/screens/posts-dark.webp" alt="Posts as cards, one of them with a generative atmosphere behind it"><br><sub><b>Posts.</b> Long-form documents; a card may carry its own sky.</sub></td>
+<td width="50%"><img src="docs/screens/article-atmosphere.webp" alt="An article open with a moving caustics atmosphere behind the text"><br><sub><b>An article under an atmosphere</b> — a shader behind the words, metered so it can drift and glow but never flash.</sub></td>
+</tr>
+<tr>
+<td><img src="docs/screens/field-dark.webp" alt="The field: a route, markers and a check-in, each a signed claim"><br><sub><b>The field.</b> A route and markers as signed claims; a position that is not fresh says so.</sub></td>
+<td><img src="docs/screens/sheet-light.webp" alt="The profile sheet in the light theme"><br><sub><b>Light theme, and a sheet.</b> Cool paper, near-black ink, choices as one grouped list.</sub></td>
+</tr>
+</table>
+
+<p align="center"><img src="docs/screens/phone-dark.webp" alt="The same interface on a phone" width="300"></p>
+
+The same interface runs in the desktop app, on Android and in a browser tab:
+it is one embedded web client, served by your own node on 127.0.0.1.
+(Screenshots are taken from a scripted two-node stand —
+[`scripts/screens/`](scripts/screens/) — so they can be retaken, not redrawn.)
+
 Encryption is end-to-end per space, with epoch keys rotated on membership
 change. Relays are blind and hold nothing: no accounts, no retention beyond a
 short TTL, and — for private spaces — no ability to read what passes through.
@@ -106,42 +140,51 @@ The exact scope of that claim, including where it does **not** hold, is in
 
 ```
 $ quite log --releases
-  1.0.1-rc.2     delivered means acknowledged
-  1.0.1-rc.1     the board found the door by itself
-  1.0.0-beta.3   delivered is about machines, read is about you
-  1.0.0-beta.2   where you actually went
+  1.0.20   the light shell
+  1.0.19   a relay that just answered is not "cooling down"
+  1.0.18   tables, formulas, and a long message that opens as a page
+  1.0.14   the word leaves at once
+  1.0.13   the picture is the control
+  1.0.11   the doorbell is real, and the log rides once
+  1.0.10   Quiet Signal, a voice of its own
+  1.0.7    four skies
 ```
 
-**1.0.1-rc.2** is a fix on top: the USB stand acknowledges every frame it
-applied, so an instrument's chain can no longer be holed by a cable pulled
-mid-sentence; the Wi-Fi courier is no longer struck out for not having
-dialed yet; the door keeps a diary — [release notes](docs/releases/1.0.1-rc.2.md).
+**1.0.20 — the light shell.** The interface was counted before it was
+touched: about twenty-five controls on screen before the first message.
+Nothing lost a capability; the release decides what may be *visible at
+rest*. One column of messages with a face, a name and a time; actions as a
+small toolbar that arrives on hover or tap; the room's bar as one row with
+every view a pill; the space's panel as a slide-over instead of a column;
+one rounded composer; a neutral, "night sky" palette in both themes, with a
+space's own tint as a hue graded by the theme (OKLCH), so every kind of
+space is equally bright to the eye — [release notes](docs/releases/1.0.20.md),
+and the reasoning in [UI-2](docs/plans/UI-2-LIGHT-SHELL.md).
 
-**1.0.1-rc.1** is the second episode of Quiet Instruments: a sensor on a
-shelf, a laptop in another room, **no cable between them** —
-[release notes](docs/releases/1.0.1-rc.1.md).
+Since the 1.0 line opened:
 
-- 📡 **Wi-Fi courier.** A provisioned board joins your network, hears the
-  node announce itself, recognises its own space from the hint, dials over
-  TLS and knocks with a signature bound to the node's certificate. Readings
-  ride up that connection; key rotations and the clock ride down. USB
-  becomes the rescue road — unplug it and the readings keep arriving.
-- 🔌 **Plug in, click.** The USB stand lives in the app: open a space, plug a
-  board in, *Connect USB instrument*. The choice survives restarts.
-- ✦ **Something new, said quietly.** A space with moments you have not seen
-  earns one small breathing star. Opening it quiets the star. No badges.
-- 🧊 **Relief.** The verbs that carry intent tilt toward you and breathe;
-  kept things, posts and objects wear a spine and lean toward the cursor.
-- 👻 **A ghost can be ended.** An instrument is a member while it speaks
-  under the current epoch — cards appear with the first reading and leave
-  with the key, on every replica at once.
-- 🕳 **Held, not lost.** The panel says when moments arrived ahead of what
-  came before them and wait for it — the line that found this release's
-  deepest bug.
+- 🚪 **Delivery got honest and fast.** A parked "doorbell" that expects an
+  answer, a node that tells its peers "I moved" the moment it changes
+  relays, a word that leaves at once instead of on the next tick, and a
+  delivery book that sends only what a mailbox does not already hold — one
+  relay went from 1270 puts and 48 MB a minute to 62 and 1.7
+  ([1.0.11](docs/releases/1.0.11.md), [1.0.14](docs/releases/1.0.14.md)).
+- 📊 **Relays say how they are.** A public status endpoint with an
+  approximate census computed from salted rotating hashes — never from
+  anything a relay could read — shown live at
+  [quite.space/relays](https://quite.space/relays/)
+  ([the API](docs/RELAY_STATUS_API.md)).
+- 🌌 **Atmospheres are shaders now** — nebula, aurora, caustics, silk — under
+  one brightness floor ([1.0.7](docs/releases/1.0.7.md)).
+- 🔤 **Quiet Signal**, the project's own Latin + Cyrillic display face, built
+  from skeletons in [`tools/typeface`](tools/typeface) ([1.0.10](docs/releases/1.0.10.md)).
+- 📻 **Instruments without a cable** — a provisioned ESP32 finds the node on
+  Wi-Fi, knocks with a signature bound to the node's certificate, and its
+  readings arrive with a freshness you can read before the number
+  ([1.0.1-rc.1](docs/releases/1.0.1-rc.1.md)).
 
-What the first board taught us is in the notes, so nobody rediscovers it:
-a board that never restored its identity, and a stand that claimed
-delivery to a cable nobody was reading. Both fixed, both pinned.
+Every release has its own note in [docs/releases/](docs/releases/README.md),
+written for the person who just downloaded it.
 
 ## 🖥 Running it from source
 
@@ -171,12 +214,14 @@ go run ./cmd/terminal-relay --listen :7411
 | [docs/guide/](docs/guide/README.md) | the user guide: spaces, invitations, conversation, posts, atmosphere, signals, the Navigator, networking, self-hosting. Russian; an English version follows. |
 | [docs/radio/en/](docs/radio/en/README.md) | talking over LoRa: which carrier is proven, flashing an RNode board, attaching one, and the radio tools. [По-русски](docs/radio/README.md). |
 | [docs/instruments/](docs/instruments/ESP32.md) | an ESP32 as a citizen: the C core, enrollment, the dev stand. |
-| [adr/](adr/README.md) | 34 architecture decision records. The reasoning is there rather than in commit messages. |
+| [adr/](adr/README.md) | 37 architecture decision records. The reasoning is there rather than in commit messages. |
+| [docs/RELAY_STATUS_API.md](docs/RELAY_STATUS_API.md) | what a relay publishes about itself, and how the census stays blind. |
+| [docs/ux/](docs/ux/MEDIA_PRESENCE.md) · [docs/plans/UI-2](docs/plans/UI-2-LIGHT-SHELL.md) | the interface contracts: how media arrives, and why the shell looks the way it does. |
 | [VISION_AND_ROADMAP.md](VISION_AND_ROADMAP.md) | the original concept and the first engineering plan, kept as written — with [ENGINEERING_PLAN_M0_M1.md](ENGINEERING_PLAN_M0_M1.md). |
 
 ## 🧾 Status
 
-**1.0.0-beta.** The number is a promise about formats, not about polish:
+**1.0.x, public beta.** The number is a promise about formats, not about polish:
 every log, backup, pass, bundle and device certificate written by this
 build opens in every later 1.x. [ADR-033](adr/ADR-033-what-1-0-promises.md)
 says exactly what is frozen — and, just as deliberately, what is not (the

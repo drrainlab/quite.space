@@ -1048,6 +1048,9 @@ func (r *Runtime) publishPublicProjectionForce(addr string, tid id.TerminalID, f
 		seq = 1
 	}
 	lim := terminals.DefaultProjectionLimits()
+	if r.projectionMaxAgeOverride != nil {
+		lim.MaxAge = *r.projectionMaxAgeOverride // tests holding a dated fixture
+	}
 	lim.Exclude = r.assetIncompleteExclude(tid) // custody gate (0.4D)
 	// PH-2: advertise where contributions and media wants should go. Two
 	// buckets so a reader holding a slightly stale projection still lands in
