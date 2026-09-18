@@ -3088,34 +3088,9 @@ body.unfocused .sky { animation-play-state: paused; }
    it. The hue is a per-button custom property so everything downstream
    (mark, rail, hover glow, focus ring) stays in one family automatically. */
 .nav-row { display: flex; gap: 6px; flex-wrap: wrap; }
-/* The header is tighter than a sidebar: the actions give back a little
-   height and a little air without losing the target size. */
-header .nav-act { padding: 5px 11px 5px 10px; min-height: 30px; }
-
-/* THE FOUR WAYS IN, AND "ME": ONE PILL, ONE COLOUR, ONE MARK.
-   They used to carry a grain gradient and a lit rail down the left edge —
-   three visual devices for a button that has one job. Simplified to a
-   rounded pill with a flat dark fill: the mark and the colour still say
-   which action it is, and the row stops competing with the conversation
-   underneath it. */
-.nav-act {
-  --n: 265 45% 66%;                       /* fallback hue: the app's lilac */
-  position: relative;
-  display: inline-flex; align-items: center; gap: 7px;
-  padding: 0 13px;
-  border-radius: 999px;
-  color: hsl(var(--n));
-  border: 1px solid hsl(var(--n) / .30);
-  background: hsl(var(--n) / .09);
-  transition: border-color .18s ease, background .18s ease, color .18s ease;
-}
-.nav-act:hover, .nav-act:focus-visible {
-  color: hsl(var(--n) / 1);
-  border-color: hsl(var(--n) / .58);
-  background: hsl(var(--n) / .16);
-}
-.nav-act:active { transform: translateY(1px); }
-
+/* The four ways in and "me" are drawn in the UI-2 block at the end of this
+   file: flat text, one tinted pill, one round avatar. What stays here is the
+   mark itself, which the space's own actions share. */
 .nav-mark {
   width: 15px; height: 15px; flex: none;
   fill: none; stroke: currentColor; stroke-width: 1.4;
@@ -3135,46 +3110,6 @@ header .nav-act { padding: 5px 11px 5px 10px; min-height: 30px; }
 }
 #newPostBtn, #shareLinkBtn { display: inline-flex; align-items: center; gap: 7px; }
 button:hover > .act-mark, button:focus-visible > .act-mark { opacity: 1; }
-
-/* The hues carry meaning, not decoration: making is warm, arriving is green,
-   looking outward is cyan, something wanting attention is amber, and you are
-   the app's own lilac. */
-/* UX-1: one quiet hue for the four ways in. Four coloured buttons in the
-   header competed with the spaces they lead to; the list is the subject,
-   the header is a door. Signals keeps a warmer note — it is the one
-   button that can carry news. */
-.nav-act[data-act="create"]   { --n: 265 30% 62%; }
-.nav-act[data-act="join"]     { --n: 265 30% 62%; }
-.nav-act[data-act="discover"] { --n: 265 30% 62%; }
-.nav-act[data-act="signals"]  { --n: 42 60% 60%; }
-.nav-act[data-act="me"]       { --n: 265 55% 70%; }  /* me       — the app itself */
-
-/* Light theme: the same hues, darkened and desaturated enough to sit on
-   paper rather than glow off it. */
-:root[data-theme="light"] .nav-act {
-  --n: 265 40% 42%;
-  background:
-    repeating-linear-gradient(180deg, hsl(var(--n) / .05) 0 1px, transparent 1px 3px),
-    linear-gradient(180deg, hsl(var(--n) / .07), hsl(var(--n) / .02));
-}
-:root[data-theme="light"] .nav-act[data-act="create"]   { --n: 24 72% 40%; }
-:root[data-theme="light"] .nav-act[data-act="join"]     { --n: 156 52% 28%; }
-:root[data-theme="light"] .nav-act[data-act="discover"] { --n: 194 64% 31%; }
-:root[data-theme="light"] .nav-act[data-act="signals"]  { --n: 34 74% 34%; }
-:root[data-theme="light"] .nav-act[data-act="me"]       { --n: 265 46% 42%; }
-
-/* The minimal-mono preset asked for less, so the grain, the rail and the hue
-   go — but the mark stays. A drawn symbol is information, not decoration. */
-:root[data-preset="minimal-mono"] .nav-act {
-  --n: 0 0% 55%;
-  background: var(--panel); box-shadow: none;
-}
-:root[data-preset="minimal-mono"] .nav-act::before { display: none; }
-:root[data-preset="minimal-mono"] .nav-act { color: var(--acc); }
-@media (prefers-reduced-motion: reduce) {
-  .nav-act, .nav-act::before, .nav-mark { transition: none; }
-  .nav-act:active { transform: none; }
-}
 
 /* ---- quick links (SP-1) ---- */
 .ql-block { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
@@ -4382,57 +4317,6 @@ div.reply-to { cursor: default; }
   border: 1px solid var(--line); border-radius: var(--radius-sm);
   padding: 4px 8px; font: inherit; }
 
-/* ===================================================================
-   Relief (UI-R1): the key verbs stand off the glass.
-   A few buttons carry the app's intent — make a space, enter one,
-   discover, signals; invite; the view's primary act. They get a faint
-   keycap tilt toward the viewer (rotateX on a bottom origin), a thrown
-   shadow behind, an extruded lower edge, and a slow breathing halo so
-   the eye finds them without being shouted at. Everything is CSS; the
-   markup is untouched, and motion respects the reader's preference.
-   =================================================================== */
-:root { --relief-tilt: 7deg; --relief-lift: 2px; }
-.nav-act, #inviteBtn, #viewPrimary, .btn-filled {
-  transform-style: preserve-3d;
-  transform-origin: 50% 100%;
-  transform: perspective(520px) rotateX(var(--relief-tilt));
-  box-shadow:
-    0 var(--relief-lift) 0 0 hsl(var(--n, 265 45% 66%) / .34),     /* the extruded edge */
-    0 10px 18px -10px rgba(0, 0, 0, .75),                          /* thrown back */
-    inset 0 1px 0 rgba(255, 255, 255, .07);                         /* a lit top rim */
-  transition: transform .18s ease, box-shadow .18s ease,
-    border-color .18s ease, background .18s ease, color .18s ease;
-  animation: relief-breathe 4.2s ease-in-out infinite;
-}
-#inviteBtn, #viewPrimary, .btn-filled { --n: 265 45% 66%; }
-.nav-act:hover, .nav-act:focus-visible,
-#inviteBtn:hover, #viewPrimary:hover, .btn-filled:hover {
-  transform: perspective(520px) rotateX(calc(var(--relief-tilt) * .45)) translateY(-1px);
-  box-shadow:
-    0 calc(var(--relief-lift) + 1px) 0 0 hsl(var(--n, 265 45% 66%) / .48),
-    0 14px 22px -10px rgba(0, 0, 0, .8),
-    0 0 0 1px hsl(var(--n, 265 45% 66%) / .22),
-    0 0 18px -2px hsl(var(--n, 265 45% 66%) / .35),
-    inset 0 1px 0 rgba(255, 255, 255, .10);
-  animation-play-state: paused;
-}
-.nav-act:active, #inviteBtn:active, #viewPrimary:active, .btn-filled:active {
-  transform: perspective(520px) rotateX(calc(var(--relief-tilt) * .3)) translateY(var(--relief-lift));
-  box-shadow: 0 0 0 0 transparent, 0 4px 10px -8px rgba(0, 0, 0, .8);
-}
-/* the halo breathes — a slow tide, never a blink */
-@keyframes relief-breathe {
-  0%, 100% { filter: drop-shadow(0 0 0 hsl(var(--n, 265 45% 66%) / 0)); }
-  50%      { filter: drop-shadow(0 0 6px hsl(var(--n, 265 45% 66%) / .28)); }
-}
-[data-theme="light"] .nav-act, [data-theme="light"] #inviteBtn,
-[data-theme="light"] #viewPrimary, [data-theme="light"] .btn-filled {
-  box-shadow:
-    0 var(--relief-lift) 0 0 hsl(var(--n, 265 45% 56%) / .28),
-    0 10px 16px -10px rgba(40, 20, 60, .35),
-    inset 0 1px 0 rgba(255, 255, 255, .6);
-}
-
 /* --- the shelf gains a spine and a lean ---------------------------- */
 .shelf-grid { perspective: 900px; }
 .shelf-card {
@@ -4473,7 +4357,7 @@ div.reply-to { cursor: default; }
   50%      { opacity: 1;   transform: scale(1.15); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .nav-act, #inviteBtn, #viewPrimary, .btn-filled, .space-new { animation: none; }
+  .space-new { animation: none; }
   .shelf-card, .shelf-card:hover { transform: none; }
 }
 
@@ -4602,3 +4486,85 @@ div.reply-to { cursor: default; }
 .me-row-s { color: var(--dim); font-size: 12px; }
 #joinAny { width: 100%; box-sizing: border-box; }
 .me-row-s.warn { color: var(--warn); }
+
+/* =====================================================================
+   ==== UI-2: THE LIGHT SHELL ====
+   The owner, looking at the app beside a plain messenger mockup: "our
+   interface looks very complicated". Counted: about twenty-five controls
+   on screen before the first message, a right pane open by default, four
+   header buttons with a tilt, an extruded edge, a breathing halo and a hue
+   each, conversation set in 12.5px mono, and every bubble reserving room
+   for reactions nobody had left. Nothing here removes a capability; it
+   decides what is allowed to be VISIBLE AT REST.
+
+   One accent, and it means "the thing you came to do": the create pill,
+   send, the active tab, your own reaction, a live presence, a fresh star.
+   No borders on the shell. Themes and presets tune the tokens below and
+   never these selectors. Phone exceptions are gathered once, at the end
+   of the block. docs/plans/UI-2-LIGHT-SHELL.md holds the decisions.
+   ===================================================================== */
+:root {
+  --av-row: 40px; --av-head: 36px; --av-msg: 32px;
+  --gap-1: 4px; --gap-2: 8px; --gap-3: 12px; --gap-4: 16px; --gap-6: 24px;
+  --text-body: calc(14.5px * var(--font-scale));
+  --text-meta: calc(12px * var(--font-scale));
+  --text-cap: calc(11px * var(--font-scale));
+  --bubble-radius: 16px; --bar-radius: 22px;
+}
+
+/* ---- header: a door, not a dashboard -------------------------------- */
+header { padding: 8px 16px; gap: 10px; }
+.brand-lockup { height: 24px; }
+header .icon-btn { font-size: 16px; }
+.nav-row { gap: 2px; }
+.nav-act {
+  position: relative;
+  display: inline-flex; align-items: center; gap: 7px;
+  min-height: 32px; padding: 0 12px;
+  border: 0; border-radius: 999px; background: transparent;
+  color: var(--dim);
+  transition: color .15s ease, background .15s ease;
+}
+.nav-act:hover, .nav-act:focus-visible {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--fg) 7%, transparent);
+}
+/* The one pill: making a place is the thing this row exists for. Tinted,
+   not filled — a saturated slab in the header would out-shout the room. */
+.nav-act[data-act="create"] {
+  color: var(--fg); padding: 0 14px;
+  background: color-mix(in srgb, var(--acc) 22%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--acc) 38%, transparent);
+}
+.nav-act[data-act="create"] .nav-mark { color: var(--acc); opacity: 1; }
+.nav-act[data-act="create"]:hover, .nav-act[data-act="create"]:focus-visible {
+  background: color-mix(in srgb, var(--acc) 32%, transparent);
+}
+/* "me" is a face, not a word: one round avatar (app.js fills .me-av with
+   this device's own glyph; the drawn mark stands in until it has). */
+.nav-act[data-act="me"] {
+  width: 34px; height: 34px; min-height: 34px; padding: 0;
+  justify-content: center; overflow: hidden;
+  background: var(--surface-raised);
+}
+.nav-act[data-act="me"] .nav-label { display: none; }
+.nav-act[data-act="me"] .me-av { display: inline-flex; line-height: 0; }
+.nav-act[data-act="me"] .me-av:not(:empty) + .nav-mark,
+.nav-act[data-act="me"]:has(.me-av:not(:empty)) .nav-mark { display: none; }
+#fp:empty, header #mesh:empty { display: none; }
+/* THE CONNECTION SPEAKS WHEN IT HAS SOMETHING TO SAY. Carried and healthy is
+   a mark and a breathing light; the words come back by themselves the moment
+   the state is anything else (ADR-023: quieter, never silent). */
+header .conn-chip { border-color: transparent; background: transparent; padding: 2px 6px; }
+header .conn-chip.up:not(.relay):not(.syncing) #connText { display: none; }
+header .conn-chip:hover { background: color-mix(in srgb, var(--fg) 7%, transparent); }
+@media (prefers-reduced-motion: reduce) {
+  .nav-act { transition: none; }
+}
+/* ---- UI-2 phone exceptions ------------------------------------------ */
+@media (max-width: 600px) {
+  header .nav-act { padding: 0 11px; justify-content: center; min-height: 44px; }
+  header .nav-act[data-act="me"] { width: 40px; height: 40px; padding: 0; }
+  #navExtras .nav-act { min-height: 44px; padding: 0 14px; }
+}
+/* ==== end UI-2 ==== */

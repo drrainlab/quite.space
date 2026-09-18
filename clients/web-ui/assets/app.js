@@ -1195,6 +1195,15 @@ async function refresh() {
       else conn.style.removeProperty('--sync-pulse');
     }
     document.getElementById('fp').textContent = PROTOCOL ? status.fingerprint : '';
+    // "me" in the header is this device's own face. Painted once per id:
+    // the poll runs every couple of seconds and an SVG rebuilt each time is
+    // a flicker for nothing.
+    const meAv = document.getElementById('meAv');
+    const meId = status.principal_id || status.device_id || '';
+    if (meAv && meId && meAv.dataset.id !== meId && typeof glyphSVG === 'function') {
+      meAv.dataset.id = meId;
+      meAv.innerHTML = glyphSVG(meId, 'human', 30);
+    }
 
     // A node number is Meshtastic's own vocabulary, and an RNode has none —
     // so it is shown only where it exists, and presence is answered by the
@@ -1832,9 +1841,16 @@ function placeNavExtras() {
     // Back to the header, in the order the markup declares — the anchor is
     // the settings button's old neighbour, so the row rebuilds itself
     // rather than being reassembled from a remembered list.
-    const anchor = header.querySelector('.nav-act[data-act="me"]');
+    // EACH GOES BACK WHERE THE MARKUP PUT IT. Both used to be re-inserted
+    // before "me", which is where neither of them lives: after one trip
+    // across the breakpoint the four ways in sat on the right of the
+    // header, past the gear. The row belongs before the spacer, the radio
+    // line before the gear.
+    const home = { '.nav-row': '.hspace', '#mesh': '#settingsBtn' };
     for (const sel of movable) {
       const el = extras.querySelector(sel);
+      const anchor = header.querySelector(home[sel]) ||
+        header.querySelector('.nav-act[data-act="me"]');
       if (el) header.insertBefore(el, anchor);
     }
   }
