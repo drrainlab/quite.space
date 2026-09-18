@@ -140,7 +140,7 @@ The exact scope of that claim, including where it does **not** hold, is in
 
 ```
 $ quite log --releases
-  1.0.20   the light shell
+  1.0.21   the light shell
   1.0.19   a relay that just answered is not "cooling down"
   1.0.18   tables, formulas, and a long message that opens as a page
   1.0.14   the word leaves at once
@@ -150,7 +150,7 @@ $ quite log --releases
   1.0.7    four skies
 ```
 
-**1.0.20 — the light shell.** The interface was counted before it was
+**1.0.21 — the light shell.** The interface was counted before it was
 touched: about twenty-five controls on screen before the first message.
 Nothing lost a capability; the release decides what may be *visible at
 rest*. One column of messages with a face, a name and a time; actions as a
@@ -158,7 +158,7 @@ small toolbar that arrives on hover or tap; the room's bar as one row with
 every view a pill; the space's panel as a slide-over instead of a column;
 one rounded composer; a neutral, "night sky" palette in both themes, with a
 space's own tint as a hue graded by the theme (OKLCH), so every kind of
-space is equally bright to the eye — [release notes](docs/releases/1.0.20.md),
+space is equally bright to the eye — [release notes](docs/releases/1.0.21.md),
 and the reasoning in [UI-2](docs/plans/UI-2-LIGHT-SHELL.md).
 
 Since the 1.0 line opened:
