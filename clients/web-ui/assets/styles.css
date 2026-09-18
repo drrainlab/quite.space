@@ -1446,7 +1446,6 @@
   #convTitle { font-weight: 700; font-size: calc(15px * var(--font-scale)); font-family: var(--font-display); letter-spacing: .01em; }
   /* Only where the type is 15px or larger: a wide display face at 11px
      section heads and 13px header labels is a texture, not a voice. */
-  .space .t { font-family: var(--font-display); }
   .pane-title { font-family: var(--font-display); font-weight: 700; }
   /* The archetype, said once and quietly: the title is the space's NAME,
      this is what kind of place it is. */
@@ -4691,6 +4690,70 @@ body.protocol .msg > * { grid-column: 1; }
   }
   #recBar, #readerBar { margin-bottom: 14px; }
 }
+/* ---- the sidebar: your places, and nothing that is not there ----------
+   Pinned, Groups, People and Directories used to stand as four headings
+   over four paragraphs explaining what would appear under them one day. An
+   empty section is now absent until it has something in it, or until a
+   search needs to show where the thing is NOT. Pins, groups and their
+   order are the person's own arrangement and are untouched; pinning and
+   grouping live in each row's menu, where they always were. */
+#nav:not(.nav-q) > .nav-sec.nav-empty:not([data-sec="spaces"]):not([data-sec="ai"]) { display: none; }
+.nav-sec-head { text-transform: uppercase; letter-spacing: .07em; font-size: var(--text-cap);
+  padding: 10px 8px 4px; min-height: 0; }
+.nav-sec-head .nav-caret { opacity: 0; transition: opacity .12s ease, transform .12s ease; }
+.nav-sec-head:hover .nav-caret, .nav-collapsed > .nav-sec-head .nav-caret { opacity: .8; }
+.nav-count { color: var(--muted); }
+.nav-sec-add { border: 0; background: transparent; color: var(--dim); border-radius: 50%;
+  width: 24px; height: 24px; padding: 0; font-size: 16px; }
+.nav-sec-add:hover { color: var(--fg); background: color-mix(in srgb, var(--fg) 8%, transparent); }
+.nav-search { border: 0; border-radius: 999px; background: var(--surface-raised); }
+.nav-search:hover { border: 0; }
+.nav-search:focus, .nav-search:focus-visible { background: var(--surface-raised);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--acc) 40%, transparent); }
+/* A place's name is read, not announced: the display face stays with the
+   room's own title and leaves the list. */
+.space .t { font-family: var(--font-sans); font-weight: 600; letter-spacing: 0; }
+.space.active { box-shadow: none; background: color-mix(in srgb, var(--fg) 8%, transparent); }
+.nav-grip { opacity: 0; transition: opacity .12s ease; }
+.space:hover .nav-grip, .space:focus-within .nav-grip { opacity: 1; }
+@media (hover: none) { .nav-grip { opacity: 1; } }
+/* ---- the space panel: a moment, not a column -------------------------
+   The phone's slide-over and scrim, at every width. #members leaves the
+   grid (absolute), so main keeps two tracks and the conversation gets the
+   width back. Reading mode still zeroes both sides. */
+main {
+  position: relative;
+  grid-template-columns:
+    var(--col-nav, calc(var(--w-nav) + 2 * var(--pad-panel)))
+    minmax(0, 1fr);
+}
+#members {
+  position: absolute; top: 0; bottom: 0; right: 0; z-index: 30;
+  width: min(360px, 86vw);
+  background: color-mix(in srgb, var(--bg) 84%, transparent);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.2);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.2);
+  border: 0; box-shadow: -24px 0 48px -28px rgba(0, 0, 0, .7);
+  transition: transform .22s ease;
+}
+#members > * { min-width: 0; }
+body.fold-info #members, body.reading #members { transform: translateX(100%); }
+body.pane-open #content { position: relative; }
+body.pane-open #content::after {
+  content: ""; position: absolute; inset: 0; z-index: 25;
+  background: color-mix(in srgb, var(--canvas-deep) 55%, transparent);
+}
+@media (prefers-reduced-transparency: reduce) {
+  #members { background: var(--bg); backdrop-filter: none; -webkit-backdrop-filter: none; }
+}
+@media (prefers-reduced-motion: reduce) { #members { transition: none; } }
+.now-chip {
+  border: 0; background: color-mix(in srgb, var(--signal) 14%, transparent);
+  color: var(--signal); border-radius: 999px; min-height: 0; padding: 2px 10px;
+  font-size: var(--text-cap); font-family: var(--font-mono); white-space: nowrap;
+  max-width: 28ch; overflow: hidden; text-overflow: ellipsis;
+}
+.now-chip.stale { color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent); }
 /* ---- UI-2 phone exceptions ------------------------------------------ */
 @media (max-width: 600px) {
   header .nav-act { padding: 0 11px; justify-content: center; min-height: 44px; }

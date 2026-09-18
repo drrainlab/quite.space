@@ -319,6 +319,7 @@ const UI_HANDLERS = [
   /* 271 click    */ (event, el) => { meToggle('backupBlock'); },
   /* 272 click    */ (event, el) => { fieldPlaceMarker(); },
   /* 273 click    */ (event, el) => { document.getElementById('dlgMarker').close(); },
+  /* 274 click    */ (event, el) => { toggleMembers(); },
 ];
 
 /** Attach every handler declared in the markup.

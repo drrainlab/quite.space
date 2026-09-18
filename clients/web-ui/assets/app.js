@@ -1742,6 +1742,13 @@ let compactPane = null;   // 'nav' | 'info' | null — null is the conversation
 
 function isPanelFolded(which) {
   if (compactScreen()) return compactPane !== which;
+  // THE SPACE PANEL IS A MOMENT AT EVERY WIDTH (UI-2). It used to be a
+  // third column, open by default: a relic, a presence summary, member
+  // cards, instruments and a danger zone standing beside every
+  // conversation. It slides over the room when asked for and is gone the
+  // next time the app opens — the phone's model, which was the right one.
+  // The old stored preference (qp.fold.info) is left alone and ignored.
+  if (which === 'info') return compactPane !== 'info';
   const saved = localStorage.getItem(PANEL_KEYS[which]);
   if (saved === '1') return true;
   if (saved === '0') return false;
@@ -1765,6 +1772,13 @@ function setPanel(which, folded) {
     applyPanels();
     return;
   }
+  if (which === 'info') {
+    // No history entry on a desktop: Back belongs to the browser there,
+    // and Escape closes the pane instead (see the keydown listener below).
+    compactPane = folded ? null : 'info';
+    applyPanels();
+    return;
+  }
   localStorage.setItem(PANEL_KEYS[which], folded ? '1' : '0');
   applyPanels();
 }
@@ -1783,7 +1797,8 @@ function applyPanels() {
   // The way out that is always in reach: anywhere on the conversation behind
   // an open pane. A phone panel with no dismissable surround is a trap, and
   // this one covered its own toggle.
-  document.body.classList.toggle('pane-open', compactScreen() && !!compactPane);
+  document.body.classList.toggle('pane-open',
+    (compactScreen() && !!compactPane) || compactPane === 'info');
 }
 
 /**
@@ -1905,6 +1920,11 @@ if (typeof window !== 'undefined') {
   // The scrim is drawn by #content itself, so the tap arrives here. Capture,
   // because the conversation underneath must not also act on it: the first
   // tap dismisses, the second one does whatever it was for.
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || compactScreen() || compactPane !== 'info') return;
+    if (document.querySelector('dialog[open]')) return;   // the dialog's Escape, not ours
+    setPanel('info', true);
+  });
   document.addEventListener('DOMContentLoaded', () => {
     const content = document.getElementById('content');
     if (!content) return;
@@ -2517,7 +2537,7 @@ async function refreshSpace() {
   // closes it and so does the back gesture, but neither is visible, and a pane that covers the control which
   // opened it has to say how to leave. The space's name doubles as the answer
   // to "what am I looking at" — the conversation behind is now mostly hidden.
-  if (window.matchMedia('(max-width: 600px)').matches) {
+  {
     const head = document.createElement('div');
     head.className = 'pane-head';
     const title = document.createElement('span');
@@ -6222,6 +6242,19 @@ function reorderPane(mbox) {
     for (const n of nodes) box.appendChild(n);
     mbox.appendChild(box);
   };
+  // WHAT IS LIVE HERE STAYS READABLE WITH THE PANEL SHUT. The instruments
+  // used to be on screen by default; now they are one click away, so the
+  // room's bar carries their own freshness line — the same words the card
+  // says, stale said before any number (UX-REVIEW-2026-09, scenario 3).
+  const chip = document.getElementById('nowChip');
+  if (chip) {
+    const pres = sec.now.map(n => n.querySelector && n.querySelector('.pres')).filter(Boolean);
+    chip.hidden = !pres.length;
+    if (pres.length) {
+      chip.textContent = pres[0].textContent + (pres.length > 1 ? ' +' + (pres.length - 1) : '');
+      chip.classList.toggle('stale', pres.some(p => p.classList.contains('stale')));
+    }
+  }
   put('now', t('pane.now'), sec.now);
   put('people', t('pane.people'), sec.people);
   put('about', t('pane.about'), sec.about);

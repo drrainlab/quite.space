@@ -713,6 +713,17 @@ const NAV = (() => {
         add.onclick = (e) => { e.stopPropagation(); newGroup(''); };
         head.appendChild(add);
       }
+      // The list of places carries the way to make one (UI-2): the header's
+      // "create" is the same act, and this is where the eye already is.
+      if (id === 'spaces' && !v.select && typeof openWizard === 'function') {
+        const add = document.createElement('button');
+        add.className = 'nav-sec-add';
+        add.textContent = '+';
+        add.title = t('ui.header.create.title');
+        add.setAttribute('aria-label', t('ui.header.create.title'));
+        add.onclick = (e) => { e.stopPropagation(); openWizard(); };
+        head.appendChild(add);
+      }
       const body = document.createElement('div');
       body.className = 'nav-sec-body';
       sec.append(head, body);
@@ -804,6 +815,11 @@ const NAV = (() => {
   function paintView(v) {
     if (!v.root) return;
     const q = v.query;
+    // While a query is typed every section shows, empty ones dimmed — a
+    // person must be able to see WHERE their thing is not. At rest an
+    // empty section has nothing to say and stays out of the way (styles:
+    // UI-2, .nav-q).
+    v.root.classList.toggle('nav-q', !!q);
     // The AI is not a person and not an ordinary room, so it gets its own
     // line rather than hiding among the spaces.
     // In SELECTION mode the list is destinations, and a destination this
