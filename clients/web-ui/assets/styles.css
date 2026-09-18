@@ -13,18 +13,18 @@
 }
 :root {
     /* canvas + content (dark base) */
-    --bg: #0d0a10; --canvas-deep: #09070b;
-    --panel: #18131c; --surface-raised: #1f1824; --line: rgba(215,164,239,.14);
+    --bg: #0a0b0e; --canvas-deep: #07080a;
+    --panel: #14161a; --surface-raised: #1b1e24; --line: rgba(190,204,228,.13);
     /* text */
-    --fg: #ddd8df; --dim: #879993; --muted: #66736f;
+    --fg: #dde0e6; --dim: #8b93a0; --muted: #626a77;
     /* accents (space theming overrides --acc/--human at runtime) */
-    --accent: #d39ae7; --acc: #d39ae7; --accent-soft: #ae7cc2;
-    --on-accent: #17111d;
+    --accent: #a9bbe6; --acc: #a9bbe6; --accent-soft: #8496bf;
+    --on-accent: #0e1118;
     --signal: #91b9aa; --warn: #d0a36f; --critical: #d47e82;
-    --human: #d39ae7; --ai: #b48ce0; --bot: #7ab4e0; --sensor: #d0a36f;
-    --glow: rgba(211,154,231,.06);
+    --human: #a9bbe6; --ai: #9aa5e0; --bot: #7ab4e0; --sensor: #d0a36f;
+    --glow: rgba(150,175,225,.05);
     /* glass */
-    --glass: rgba(32,24,38,.66); --glass-border: rgba(215,164,239,.20);
+    --glass: rgba(20,22,27,.68); --glass-border: rgba(190,204,228,.16);
     --glass-blur: 24px; --shadow: none;
     /* bubbles */
     /* Barely-there glass (2026-08-07, dark-first): a bubble is a breath of
@@ -45,9 +45,15 @@
        are SOLID and dark now — a message sits on its own ground instead of
        letting the sky through; incoming near-neutral graphite, own with the
        violet whisper. The blur behind them no longer matters. */
-    --bubble-own: #1c1a24; --bubble-other: #17171d;
-    --bubble-own-border: rgba(190,140,220,.10);
-    --composer: rgba(21,18,23,.62); --composer-line: rgba(255,255,255,.055);
+    /* Re-graded 2026-09-18 (owner: "remove the pinkish tints, in both
+       themes — make it cosmically neutral"). Violet leaves the SURFACES and
+       the accent: the ground is the blue-black of a night sky rather than
+       aubergine, greys are cool and hueless, and the accent is starlight —
+       a pale steel blue. Colour that MEANS something keeps its hue (signal
+       green, warn amber, critical red, a space's own signed tint). */
+    --bubble-own: #1a1e27; --bubble-other: #15171c;
+    --bubble-own-border: rgba(169,187,230,.12);
+    --composer: rgba(18,20,24,.62); --composer-line: rgba(255,255,255,.055);
     /* geometry + type */
     --radius-sm: 8px; --radius-md: 12px; --radius-lg: 18px;
     --font-scale: 1;
@@ -108,22 +114,26 @@
      accent 6.4:1). The blue-on-white lockup gets a darkening filter in
      this theme — one asset, two grounds. */
   :root[data-theme="light"] {
-    --bg: #e9e5ef; --canvas-deep: #ded8e7;
-    --panel: #fbfafd; --surface-raised: #f0ebf6; --line: rgba(52,32,74,.17);
-    --fg: #17121d; --dim: #5b5568; --muted: #7c768a;
-    --accent: #7b3fb5; --acc: #7b3fb5; --accent-soft: #9c6bd0; --on-accent: #ffffff;
+    /* 2026-09-18: the lilac went the same day it left the dark theme. Paper
+       is a cool, hueless grey; ink is near-black; the accent is a deep steel
+       blue (6.9:1 on white); our own bubble is a pale blue-grey. */
+    --bg: #e7e9ed; --canvas-deep: #dcdfe5;
+    --panel: #fcfcfd; --surface-raised: #eef0f3; --line: rgba(28,38,58,.15);
+    --fg: #14161a; --dim: #555c67; --muted: #7b828d;
+    --accent: #3a5790; --acc: #3a5790; --accent-soft: #6580b4; --on-accent: #ffffff;
     --signal: #2f7f66; --warn: #a3651a; --critical: #b84a51;
-    --human: #7b3fb5; --ai: #6d52c6; --bot: #34689f; --sensor: #a3651a;
-    --glow: rgba(123,63,181,.08);
-    --glass: rgba(255,255,255,.80); --glass-border: rgba(52,32,74,.14);
-    --bubble-own: #e6dbf4; --bubble-own-border: rgba(123,63,181,.30);
+    --human: #3a5790; --ai: #4f5fae; --bot: #34689f; --sensor: #a3651a;
+    --glow: rgba(58,87,144,.06);
+    --glass: rgba(255,255,255,.82); --glass-border: rgba(28,38,58,.13);
+    --bubble-own: #e2e8f3; --bubble-own-border: rgba(58,87,144,.28);
     --bubble-other: #ffffff;
-    --composer: rgba(255,255,255,.84); --composer-line: rgba(52,32,74,.14);
-    --shadow: 0 1px 2px rgba(40,24,60,.10), 0 6px 18px -8px rgba(40,24,60,.18);
+    --composer: rgba(255,255,255,.86); --composer-line: rgba(28,38,58,.13);
+    --shadow: 0 1px 2px rgba(20,28,44,.10), 0 6px 18px -8px rgba(20,28,44,.18);
   }
+
   :root[data-theme="light"] .bubble {
-    border: 1px solid rgba(52,32,74,.12);
-    box-shadow: 0 1px 2px rgba(40,24,60,.08), 0 4px 14px -8px rgba(40,24,60,.16);
+    border: 1px solid rgba(28,38,58,.12);
+    box-shadow: 0 1px 2px rgba(20,28,44,.08), 0 4px 14px -8px rgba(20,28,44,.16);
   }
   :root[data-theme="light"] .msg.own .bubble { border-color: var(--bubble-own-border); }
   /* Dark ink at 45% on white is a whisper nobody can read. */
@@ -3401,10 +3411,10 @@ button:hover > .act-mark, button:focus-visible > .act-mark { opacity: 1; }
    a maroon sky, unreadable from the first line. */
 :root[data-theme="light"] .atmo-shell,
 :root[data-theme="light"] .pub-card-atmo-on {
-  --bg: #0d0a10; --panel: #18131c; --surface-raised: #1f1824; --line: rgba(215,164,239,.14);
-  --fg: #ddd8df; --dim: #879993; --muted: #66736f;
-  --accent: #d39ae7; --acc: #d39ae7; --accent-soft: #ae7cc2; --on-accent: #17111d;
-  --glass: rgba(32,24,38,.66); --glass-border: rgba(215,164,239,.20);
+  --bg: #0a0b0e; --panel: #14161a; --surface-raised: #1b1e24; --line: rgba(190,204,228,.13);
+  --fg: #dde0e6; --dim: #8b93a0; --muted: #626a77;
+  --accent: #a9bbe6; --acc: #a9bbe6; --accent-soft: #8496bf; --on-accent: #0e1118;
+  --glass: rgba(20,22,27,.68); --glass-border: rgba(190,204,228,.16);
   color: var(--fg);
 }
 
@@ -4595,9 +4605,18 @@ body.protocol .msg > * { grid-column: 1; }
   line-height: 1; white-space: nowrap;
   border-radius: 999px; background: var(--panel);
   box-shadow: 0 0 0 1px var(--line), 0 8px 20px -10px rgba(0, 0, 0, .55);
-  opacity: 0; pointer-events: none; transition: opacity .12s ease;
+  /* IT HAS TO SURVIVE THE TRIP TO IT. The toolbar sits six pixels off the
+     bubble, and those six pixels belonged to nobody: the pointer left the
+     message on its way to the actions and they vanished under it (the
+     owner, on a long message). ::before is a bridge across the gap — part
+     of the toolbar, so crossing it is still hovering the message — and the
+     leaving is delayed a beat, so a diagonal path does not drop it either. */
+  opacity: 0; visibility: hidden;
+  transition: opacity .12s ease .28s, visibility 0s linear .4s;
 }
-.msg:hover .mk, .msg:focus-within .mk, .msg.acting .mk { opacity: 1; pointer-events: auto; }
+.msg .mk::before { content: ""; position: absolute; top: -6px; bottom: -6px; left: -12px; width: 14px; }
+.msg:hover .mk, .msg:focus-within .mk, .msg.acting .mk {
+  opacity: 1; visibility: visible; transition-delay: 0s; }
 .mk-act {
   border: 0; background: transparent; color: var(--dim); cursor: pointer;
   min-width: 28px; height: 26px; padding: 0 7px; border-radius: 999px;
@@ -4804,6 +4823,20 @@ body.pane-open #content::after {
   }
   .conv-more > button:hover, .conv-more > button:focus-visible {
     background: color-mix(in srgb, var(--fg) 8%, transparent); color: var(--fg); }
+}
+/* ---- the views: pills, all of them -----------------------------------
+   An underlined word is a 2015 tab. A view is a soft pill; the one you are
+   in is filled; nothing glows. Every view has a pill on a wide screen. */
+.space-nav { gap: 2px; }
+.space-tab {
+  border: 0; border-radius: 999px; padding: 5px 12px; min-height: 30px;
+  color: var(--dim); font-size: calc(13px * var(--font-scale)); white-space: nowrap;
+  transition: color .12s ease, background .12s ease;
+}
+.space-tab:hover { color: var(--fg); background: color-mix(in srgb, var(--fg) 6%, transparent); }
+.space-tab.sel {
+  color: var(--fg); font-weight: 600; text-shadow: none; border-bottom-color: transparent;
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
 }
 /* ---- UI-2 phone exceptions ------------------------------------------ */
 @media (max-width: 600px) {

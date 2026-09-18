@@ -46,7 +46,14 @@ const NAV_ORDER = {
 // How many views earn a tab; the rest live behind "···". Four is what
 // fits a phone without wrapping, and the fifth is nearly always the one
 // this space does not use.
-const NAV_TABS = 3; // UI-2: the strip shares one row with the room's name
+// UI-2, the owner looking at the strip: "show them all if possible". On a
+// wide screen it is possible — the strip shares one row with the room's
+// name and scrolls sideways if a long title crowds it — so every view is a
+// tab and there is no overflow to open. A phone keeps four and the "···".
+const NAV_TABS_PHONE = 4;
+function navTabCount() {
+  return (typeof compactScreen === 'function' && compactScreen()) ? NAV_TABS_PHONE : 99;
+}
 
 // The one creation act that belongs to each view. Chat has none — its
 // composer is already at the bottom of the screen, and a second "write"
@@ -82,8 +89,8 @@ function applySpaceNav(char) {
   const sw = document.getElementById('viewSwitch');
   if (!sw) return 'chat';
   const order = NAV_ORDER[navCentre(char)];
-  const shown = order.slice(0, NAV_TABS);
-  const hidden = order.slice(NAV_TABS);
+  const shown = order.slice(0, navTabCount());
+  const hidden = order.slice(navTabCount());
 
   sw.innerHTML = '';
   for (const v of shown) sw.appendChild(navTab(v));
