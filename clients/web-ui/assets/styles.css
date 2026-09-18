@@ -4513,6 +4513,26 @@ header { padding: 8px 16px; gap: 10px; }
    in the header is the ART's box (29×28) and the image is placed inside it
    by those numbers, which puts the orbit's own centre on the header's
    centre line with everything else. Scale = 28 / 115. */
+/* A LITTLE WEATHER BEHIND THE MARK. The owner: "a bright, fashionable spot
+   behind the logo, along the header — more interesting, younger". Three
+   soft lights in the orbit's own colours — cyan, violet, a breath of green —
+   pooled where the mark sits and fading out before the actions end. Plain
+   radial gradients: no blur filter, no animation, nothing for the
+   compositor to keep awake (the connection light is the one thing in this
+   header allowed to move). It sits under the header's children and above
+   its glass; on paper it is turned down rather than recoloured. */
+header { position: relative; isolation: isolate; }
+header::before {
+  content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  background:
+    radial-gradient(170px 80px at 76px 50%, oklch(.82 .16 205 / .70), transparent 70%),
+    radial-gradient(300px 110px at 190px -20%, oklch(.66 .24 300 / .62), transparent 70%),
+    radial-gradient(280px 90px at 0px 130%, oklch(.80 .17 165 / .34), transparent 70%),
+    radial-gradient(420px 80px at 420px 140%, oklch(.70 .20 275 / .34), transparent 72%);
+}
+:root[data-theme="light"] header::before { opacity: .75; }
+:root[data-preset="minimal-mono"] header::before { display: none; }
+@media (prefers-reduced-transparency: reduce) { header::before { opacity: .5; } }
 /* Optical, not box, spacing: the burger's glyph is 14px in a 40px target,
    so its box carries 13px of air the mark's box does not. Pulled in, the
    INK is evenly spaced: burger · mark · relay · create, 16–17px apart. */
