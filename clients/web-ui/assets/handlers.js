@@ -317,8 +317,8 @@ const UI_HANDLERS = [
   /* 269 input    */ (event, el) => { joinAnyInput(); },
   /* 270 click    */ (event, el) => { meToggle('meVerifyBox'); },
   /* 271 click    */ (event, el) => { meToggle('backupBlock'); },
-  /* 254 click    */ (event, el) => { fieldPlaceMarker(); },
-  /* 255 click    */ (event, el) => { document.getElementById('dlgMarker').close(); },
+  /* 272 click    */ (event, el) => { fieldPlaceMarker(); },
+  /* 273 click    */ (event, el) => { document.getElementById('dlgMarker').close(); },
 ];
 
 /** Attach every handler declared in the markup.
