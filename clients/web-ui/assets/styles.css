@@ -4521,16 +4521,49 @@ header { padding: 8px 16px; gap: 10px; }
    compositor to keep awake (the connection light is the one thing in this
    header allowed to move). It sits under the header's children and above
    its glass; on paper it is turned down rather than recoloured. */
+/* THE SEAM WAS THE HEADER ITSELF. Nothing ever scrolls under it — main is
+   its own box below — so its glass was filtering nothing and only drew a
+   level edge where the fill stopped. Without a fill there is no edge: the
+   row of actions stands on the same ground as the room, and the nebula is
+   the only thing that says "top". */
+header.glass { background: transparent; backdrop-filter: none; -webkit-backdrop-filter: none;
+  box-shadow: none; border: 0; }
 header { position: relative; isolation: isolate; }
+/* A NEBULA ARRIVING FROM ABOVE, not a stripe. The first version filled the
+   header's own box, so the light was cut off dead level with its bottom
+   edge (the owner saw the seam at once). Now every light is centred ABOVE
+   the window, so what shows is the underside of something larger drifting
+   in; the layer is taller than the header and a mask lets it thin out to
+   nothing well below the edge — it falls behind the room's surfaces the
+   way weather falls behind a roofline, and there is no line to see. */
 header::before {
-  content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  content: ""; position: absolute; inset: 0 0 auto 0; height: 190px; z-index: -1;
+  pointer-events: none;
   background:
-    radial-gradient(170px 80px at 76px 50%, oklch(.82 .16 205 / .70), transparent 70%),
-    radial-gradient(300px 110px at 190px -20%, oklch(.66 .24 300 / .62), transparent 70%),
-    radial-gradient(280px 90px at 0px 130%, oklch(.80 .17 165 / .34), transparent 70%),
-    radial-gradient(420px 80px at 420px 140%, oklch(.70 .20 275 / .34), transparent 72%);
+    radial-gradient(230px 130px at 76px -14px, oklch(.84 .15 205 / .32), transparent 70%),
+    radial-gradient(380px 170px at 240px -46px, oklch(.66 .24 300 / .26), transparent 70%),
+    radial-gradient(320px 150px at -30px -26px, oklch(.80 .17 165 / .15), transparent 70%),
+    radial-gradient(560px 160px at 560px -70px, oklch(.68 .20 275 / .18), transparent 72%),
+    radial-gradient(520px 130px at 980px -80px, oklch(.72 .16 235 / .10), transparent 72%);
+  -webkit-mask-image: linear-gradient(to bottom, #000 0, rgba(0,0,0,.8) 26%, rgba(0,0,0,.34) 52%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0, rgba(0,0,0,.8) 26%, rgba(0,0,0,.34) 52%, transparent 100%);
 }
-:root[data-theme="light"] header::before { opacity: .75; }
+/* A LITTLE LIFE WHEN EVERYBODY IS SILENT (the owner: "barely asking for
+   attention"). The nebula breathes and drifts a few pixels over forty
+   seconds — transform and opacity only, so it is the compositor's work and
+   never a repaint, sampled in steps at five frames a second like the
+   connection light, and at rest whenever nobody is here to see it. */
+header::before {
+  transform-origin: 20% 0; will-change: transform, opacity;
+  animation: nebula-drift 40s steps(200, end) infinite alternate;
+}
+@keyframes nebula-drift {
+  from { transform: translate3d(-10px, -3px, 0) scale(1); opacity: .78; }
+  to   { transform: translate3d(14px, 2px, 0) scale(1.06); opacity: 1; }
+}
+body.hidden-tab header::before, body.unfocused header::before { animation-play-state: paused; }
+@media (prefers-reduced-motion: reduce) { header::before { animation: none; } }
+:root[data-theme="light"] header::before { filter: opacity(.7); }
 :root[data-preset="minimal-mono"] header::before { display: none; }
 @media (prefers-reduced-transparency: reduce) { header::before { opacity: .5; } }
 /* Optical, not box, spacing: the burger's glyph is 14px in a 40px target,
