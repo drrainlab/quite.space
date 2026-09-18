@@ -1195,6 +1195,15 @@ async function refresh() {
       else conn.style.removeProperty('--sync-pulse');
     }
     document.getElementById('fp').textContent = PROTOCOL ? status.fingerprint : '';
+    // The plate under the list: a terminal says which terminal it is. Two
+    // groups of the fingerprint — enough to tell two devices on a desk
+    // apart, and the rest is one tap away behind the avatar.
+    const foot = document.getElementById('navFoot');
+    if (foot) {
+      const fp = String(status.fingerprint || '').split(/\s+/).slice(0, 2).join(' ');
+      const plate = 'quite terminal' + (fp ? ' · ' + fp : '');
+      if (foot.textContent !== plate) foot.textContent = plate;
+    }
     // "me" in the header is this device's own face. Painted once per id:
     // the poll runs every couple of seconds and an SVG rebuilt each time is
     // a flicker for nothing.

@@ -4838,6 +4838,151 @@ body.pane-open #content::after {
   color: var(--fg); font-weight: 600; text-shadow: none; border-bottom-color: transparent;
   background: color-mix(in srgb, var(--fg) 10%, transparent);
 }
+/* =====================================================================
+   ---- UI-2 · CHARACTER: an instrument, not a web page -------------------
+   The owner, with the light shell in hand: "can we pile on more style and
+   modernity? — with a hint that one day there is our own mobile terminal
+   with a slide-out keyboard." The shell was clean and anonymous. What
+   gives it a voice without giving back the clutter:
+
+   · READOUTS ARE MONO. Anything the machine reports — a time, a count, a
+     section label, the plate under the list — is set in the mono face,
+     small, tracked. Anything a person wrote is set to be read. Two voices,
+     and you can tell which is speaking.
+   · KEYCAPS. Where a key does the thing, the key is drawn: "/" in the
+     search field, "↵" beside send once there are words. Only where there
+     is a real keyboard and a real pointer.
+   · SURFACES HAVE A TOP EDGE. One hairline of light along the top of a
+     raised thing, one soft shadow under it. No borders.
+   · DIALOGS ARE SHEETS. A larger radius, a blurred room behind, filled
+     fields, soft buttons, and choices as one grouped list with chevrons
+     instead of a stack of outlined boxes.
+   ===================================================================== */
+:root { --edge-light: inset 0 1px 0 rgba(255, 255, 255, .055); --sheet-radius: 24px; }
+:root[data-theme="light"] { --edge-light: inset 0 1px 0 rgba(255, 255, 255, .9); }
+
+/* -- the readout voice -- */
+.nav-sec-head, .nav-count, .space .when, .owner-tag, #convSub, .who-time, .day-sep,
+.now-chip, .vis-badge, .nav-foot {
+  font-family: var(--font-mono); letter-spacing: .04em; font-feature-settings: "zero" 1;
+}
+.nav-sec-head { letter-spacing: .12em; }
+#convSub { font-size: var(--text-cap); color: var(--muted); text-transform: lowercase; }
+.day-sep { font-size: var(--text-cap); text-transform: lowercase; color: var(--muted); }
+.nav-foot {
+  margin-top: auto; padding: 10px 8px 2px; font-size: 10px; text-transform: uppercase;
+  letter-spacing: .16em; color: var(--muted); opacity: .7; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; user-select: none;
+}
+.nav-foot:empty { display: none; }
+#nav { flex: 0 0 auto; }
+
+/* -- keycaps -- */
+.kc, .nav-search-wrap::after, #composer::after {
+  font-family: var(--font-mono); font-size: 10.5px; line-height: 1; color: var(--muted);
+  padding: 3px 6px 4px; border-radius: 6px; pointer-events: none;
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  box-shadow: inset 0 -1.5px 0 color-mix(in srgb, var(--fg) 12%, transparent),
+              0 0 0 1px color-mix(in srgb, var(--fg) 9%, transparent);
+}
+.nav-search-wrap::after, #composer::after { display: none; }
+@media (hover: hover) and (pointer: fine) and (min-width: 601px) {
+  .nav-search-wrap::after { content: "/"; display: block; position: absolute; right: 10px; }
+  .nav-search-wrap:focus-within::after,
+  .nav-search-wrap:has(.nav-search:not(:placeholder-shown))::after { display: none; }
+  #composer:has(#text:focus:not(:placeholder-shown))::after {
+    content: "\21B5"; display: block; order: 3; align-self: center; margin: 0 4px 0 6px; }
+}
+
+/* -- surfaces: a top edge and a soft shadow -- */
+#composer, .nav-search, .msg .mk, .conv-more, .space-more-menu, .attach-menu, .picker-menu {
+  box-shadow: var(--edge-light), 0 10px 28px -18px rgba(0, 0, 0, .55);
+}
+#composer:focus-within {
+  box-shadow: var(--edge-light), 0 0 0 1px color-mix(in srgb, var(--acc) 34%, transparent),
+    0 10px 28px -18px rgba(0, 0, 0, .55); }
+.msg .bubble { box-shadow: var(--edge-light); }
+:root[data-theme="light"] .msg .bubble {
+  box-shadow: 0 1px 2px rgba(20, 28, 44, .07), 0 4px 14px -8px rgba(20, 28, 44, .14); }
+.msg > .msg-av, .space-av, .conv-icon {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--fg) 8%, transparent); }
+.space-more-menu, .attach-menu, .picker-menu { border: 0; border-radius: 14px; padding: 6px; }
+/* The primary acts catch a little light from above. */
+#composer button[type="submit"], .btn-filled {
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, .16), rgba(255, 255, 255, 0) 60%);
+  box-shadow: var(--edge-light), 0 6px 16px -8px color-mix(in srgb, var(--acc) 70%, transparent);
+}
+.nav-act[data-act="create"] { box-shadow: var(--edge-light),
+  inset 0 0 0 1px color-mix(in srgb, var(--acc) 34%, transparent); }
+
+/* -- dialogs are sheets -- */
+dialog {
+  border: 0; border-radius: var(--sheet-radius); padding: 24px;
+  background: color-mix(in srgb, var(--panel) 90%, transparent);
+  backdrop-filter: blur(30px) saturate(1.3); -webkit-backdrop-filter: blur(30px) saturate(1.3);
+  box-shadow: var(--edge-light), 0 0 0 1px color-mix(in srgb, var(--fg) 7%, transparent),
+    0 40px 90px -30px rgba(0, 0, 0, .7);
+}
+dialog::backdrop {
+  background: color-mix(in srgb, var(--canvas-deep) 62%, transparent);
+  backdrop-filter: blur(7px); -webkit-backdrop-filter: blur(7px);
+}
+dialog > h3:first-child, dialog.sheet h3 {
+  font-family: var(--font-display); font-size: calc(17px * var(--font-scale));
+  font-weight: 700; letter-spacing: .01em; color: var(--fg); margin-bottom: 14px;
+}
+dialog .hint { font-size: var(--text-meta); line-height: 1.45; }
+dialog input, dialog textarea, dialog select {
+  border: 0; border-radius: 12px; padding: 10px 12px; background: var(--surface-raised);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fg) 7%, transparent);
+  transition: box-shadow .12s ease;
+}
+dialog input:focus, dialog textarea:focus, dialog select:focus {
+  outline: none; box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--acc) 70%, transparent); }
+/* A plain button in a sheet is a soft neutral key; the classes (.btn-filled,
+   .btn-tinted, .btn-plain, .segmented, .me-row…) outrank this and say more. */
+dialog button {
+  border: 0; border-radius: 12px; padding: 8px 16px; font-weight: 500; color: var(--fg);
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+dialog button:hover { background: color-mix(in srgb, var(--fg) 13%, transparent); }
+dialog .btn-filled { color: var(--on-accent); background-color: var(--acc); }
+dialog .btn-filled:hover { background-color: var(--acc); filter: brightness(1.08); }
+dialog .btn-tinted { color: var(--acc); background: color-mix(in srgb, var(--acc) 15%, transparent); }
+dialog .btn-plain, dialog .icon-btn { background: transparent; }
+dialog .btn-plain { color: var(--acc); }
+dialog .segmented button { border-radius: 9px; padding: 0 12px; font-weight: 400;
+  background: transparent; color: var(--dim); }
+dialog .segmented button.sel { background: var(--panel); color: var(--fg);
+  box-shadow: var(--edge-light), 0 1px 3px rgba(0, 0, 0, .25); }
+/* CHOICES ARE ONE GROUPED LIST. Four outlined boxes in a column read as
+   four separate forms; one surface with hairlines between rows and a
+   chevron on each reads as a menu, which is what it is. */
+.me-rows { gap: 0; margin-top: 16px; border-radius: 16px; overflow: hidden;
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fg) 6%, transparent); }
+dialog .me-row {
+  position: relative; display: flex; flex-direction: column; gap: 2px; width: 100%;
+  text-align: left; padding: 12px 40px 12px 16px; border: 0; border-radius: 0;
+  background: transparent; font-weight: 400;
+}
+dialog .me-row + .me-row, .me-rows > div + .me-row, .me-rows > .me-row ~ .me-row {
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--fg) 7%, transparent); }
+dialog .me-row:hover { background: color-mix(in srgb, var(--fg) 6%, transparent); }
+dialog .me-row::after {
+  content: ""; position: absolute; right: 18px; top: 50%; width: 7px; height: 7px;
+  border-right: 1.5px solid var(--muted); border-top: 1.5px solid var(--muted);
+  transform: translateY(-50%) rotate(45deg);
+}
+.me-row-t { font-weight: 600; font-size: calc(14px * var(--font-scale)); }
+.me-row-s { font-size: var(--text-meta); }
+.me-rows > div:not(.me-row) { padding: 4px 16px 14px; }
+#meGlyph svg { width: 64px; height: 64px; }
+#meDeviceName { font-family: var(--font-mono); letter-spacing: .04em; }
+@media (prefers-reduced-transparency: reduce) {
+  dialog { background: var(--panel); backdrop-filter: none; -webkit-backdrop-filter: none; }
+  dialog::backdrop { backdrop-filter: none; -webkit-backdrop-filter: none; }
+}
 /* ---- UI-2 phone exceptions ------------------------------------------ */
 @media (max-width: 600px) {
   header .nav-act { padding: 0 11px; justify-content: center; min-height: 44px; }
