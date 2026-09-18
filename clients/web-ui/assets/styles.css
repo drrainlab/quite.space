@@ -4520,8 +4520,18 @@ header #tglNav { margin-right: -7px; }
 header b.brand { position: relative; display: block; flex: none; width: 29px; height: 28px; }
 header .brand-mark {
   position: absolute; max-width: none; margin: 0;
-  width: 62.33px; height: 62.33px; left: -16.31px; top: -15.34px;
+  width: 62.33px; height: 62.33px; left: -16.31px;
+  /* ON THE AXIS BY ITS DISC, not by its bounding box. The tail hangs below
+     the orb and the satellite barely rises above it, so the bbox centre
+     (y 120.5) is 6px under the disc's centre (y 114.1, the centroid of the
+     dark fill) — and the eye reads the disc as the mark. Centred by bbox
+     it sat a pixel and a half high. top = 14 − 114.14 × (28/115). */
+  top: -13.79px;
 }
+/* Every mark in the header is a DRAWN mark in one 16-box: the burger and the
+   gear were font glyphs (☰ ⚙), whose ink sits wherever the face put it
+   relative to the line box — never quite on the axis of the drawn ones. */
+header #tglNav .nav-mark, header #settingsBtn .nav-mark { width: 17px; height: 17px; opacity: 1; }
 header .icon-btn { font-size: 16px; }
 .nav-row { gap: 2px; }
 .nav-act {
