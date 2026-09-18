@@ -4737,7 +4737,16 @@ main {
   transition: transform .22s ease;
 }
 #members > * { min-width: 0; }
-body.fold-info #members, body.reading #members { transform: translateX(100%); }
+/* A pane parked off the right edge still widens main's scrollable area, and
+   `overflow: hidden` can be scrolled by anything that focuses or reveals a
+   node in there — seen: one click and the whole app slid a column to the
+   left. `clip` is not a scroll container at all, and a folded pane is also
+   taken out of focus order once it has finished leaving. */
+main { overflow: clip; }
+body.fold-info #members, body.reading #members {
+  transform: translateX(100%); visibility: hidden;
+  transition: transform .22s ease, visibility 0s linear .22s;
+}
 body.pane-open #content { position: relative; }
 body.pane-open #content::after {
   content: ""; position: absolute; inset: 0; z-index: 25;
@@ -4754,6 +4763,48 @@ body.pane-open #content::after {
   max-width: 28ch; overflow: hidden; text-overflow: ellipsis;
 }
 .now-chip.stale { color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent); }
+/* ---- the room's bar: one row ----------------------------------------
+   [face] name · N people [live chip]  Chat · Materials · Shelf ···   [make] [invite] [⋯]
+   It was two storeys — an identity row with up to seven buttons and an
+   architecture row under it. The two wrappers dissolve (display: contents)
+   and their children are ordered into one line; the tab strip is the same
+   strip, built once per visit by spacenav.js, now three tabs and the
+   overflow. A phone cannot hold a name and tabs on one line and keeps its
+   two storeys. */
+.conv-icon, #convSub { cursor: pointer; }
+#convSub:hover { color: var(--fg); }
+.conv-more { display: none; }
+.conv-more .act-glyph { width: 15px; text-align: center; flex: none; }
+#convMoreBtn { font-size: 18px; }
+@media (min-width: 601px) {
+  #convbar { flex-direction: row; align-items: center; flex-wrap: nowrap;
+    gap: 10px; padding: 8px 16px; min-height: 52px; }
+  .convbar-id, .convbar-nav { display: contents; }
+  .convbar-id > span[style*="flex:1"], .convbar-nav > span[style*="flex:1"] { display: none; }
+  .conv-icon { width: var(--av-head); height: var(--av-head); flex: none; order: 0; }
+  #convMode { order: 1; } #convTitle { order: 2; flex: 0 1 auto; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #convSub { order: 3; white-space: nowrap; } #visBadge { order: 4; } #nowChip { order: 5; }
+  #viewSwitch { order: 6; margin: 0 auto 0 10px; flex: 0 1 auto; min-width: 0;
+    flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  #viewSwitch::-webkit-scrollbar { display: none; }
+  #newPostBtn, #addSpaceBtn { order: 7; } #viewPrimary { order: 8; }
+  #inviteBtn { order: 9; } #convMoreBtn { order: 10; }
+  .conv-more {
+    position: fixed; z-index: 60; min-width: 210px; padding: 6px;
+    flex-direction: column; gap: 1px;
+    background: var(--panel); border-radius: 14px;
+    box-shadow: 0 0 0 1px var(--line), 0 18px 40px -16px rgba(0, 0, 0, .6);
+  }
+  .conv-more.open { display: flex; }
+  .conv-more > button {
+    display: flex; align-items: center; gap: 10px; justify-content: flex-start;
+    width: 100%; min-height: 36px; padding: 0 10px; border: 0; border-radius: 9px;
+    background: transparent; color: var(--fg); font-size: calc(13px * var(--font-scale));
+  }
+  .conv-more > button:hover, .conv-more > button:focus-visible {
+    background: color-mix(in srgb, var(--fg) 8%, transparent); color: var(--fg); }
+}
 /* ---- UI-2 phone exceptions ------------------------------------------ */
 @media (max-width: 600px) {
   header .nav-act { padding: 0 11px; justify-content: center; min-height: 44px; }
@@ -4763,7 +4814,17 @@ body.pane-open #content::after {
   .msg { max-width: 96%; }
   .msg .mk { top: -16px; left: 8px; }
   .msg.acting .mk { display: inline-flex; }
+  /* One track: both panels slide over the room here, and the two-track grid
+     above is a desktop sentence. (Forgetting this squeezed the conversation
+     into sixteen pixels — seen.) */
+  main { grid-template-columns: minmax(0, 1fr); }
+  #members { width: 78vw; max-width: 300px; }
   #composer { border-radius: 0; }
+  /* The room's bar is what it was: the menu's container dissolves and its
+     children stand in the row; the words stay behind on a wide screen. */
+  .conv-more { display: contents; }
+  #convMoreBtn { display: none; }
+  .conv-more > .icon-btn .act-label { display: none; }
   #composer button[type="submit"] { width: auto; min-width: 44px; min-height: 44px; height: auto; border-radius: 12px; }
   #composer button[type="submit"]::before { content: "\27A4"; }
   #composer .ic { width: 44px; height: 44px; }

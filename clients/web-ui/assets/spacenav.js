@@ -46,7 +46,7 @@ const NAV_ORDER = {
 // How many views earn a tab; the rest live behind "···". Four is what
 // fits a phone without wrapping, and the fifth is nearly always the one
 // this space does not use.
-const NAV_TABS = 4;
+const NAV_TABS = 3; // UI-2: the strip shares one row with the room's name
 
 // The one creation act that belongs to each view. Chat has none — its
 // composer is already at the bottom of the screen, and a second "write"

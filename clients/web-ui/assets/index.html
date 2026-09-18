@@ -68,10 +68,10 @@
          action from somebody else's context. -->
     <div id="convbar">
       <div class="convbar-id">
-        <span id="convIcon" class="conv-icon" aria-hidden="true"></span>
+        <span id="convIcon" class="conv-icon" aria-hidden="true" data-on-click="274"></span>
         <span id="convMode" class="conv-mode"></span>
         <span id="convTitle"></span>
-        <span id="convSub" class="conv-sub"></span>
+        <span id="convSub" class="conv-sub" role="button" tabindex="0" data-on-click="274" title="Space info" data-i18n-title="ui.convbar.space_info.title"></span>
         <span id="visBadge" class="vis-badge" style="display:none"></span>
         <button type="button" id="nowChip" class="now-chip" hidden data-on-click="274" title="Space info" data-i18n-title="ui.convbar.space_info.title"></button>
         <span style="flex:1"></span>
@@ -81,12 +81,7 @@
            16 px box, currentColor, 1.4 stroke — so they take the button's
            hue and dim with it. The word stays for a wide screen and for a
            screen reader. -->
-      <button id="shareLinkBtn" class="btn-plain" style="display:none" data-on-click="12"
-              title="Share link" aria-label="Share link" data-i18n-title="ui.convbar.share_link.title">
-        <svg class="act-mark" viewBox="0 0 16 16" aria-hidden="true">
-          <path d="M6.7 9.3a2.7 2.7 0 0 0 3.8 0l2-2a2.7 2.7 0 0 0-3.8-3.8l-.9.9"/>
-          <path d="M9.3 6.7a2.7 2.7 0 0 0-3.8 0l-2 2a2.7 2.7 0 0 0 3.8 3.8l.9-.9" opacity=".55"/>
-        </svg><span class="act-label" data-i18n="ui.convbar.share_link.label">Share link</span></button>
+
       <button id="newPostBtn" class="btn-tinted" style="display:none" data-on-click="13"
               title="New post" aria-label="New post" data-i18n-title="ui.convbar.new_post.title">
         <svg class="act-mark" viewBox="0 0 16 16" aria-hidden="true">
@@ -102,16 +97,34 @@
            lives on the second storey (spacenav.js), and two "new post"
            buttons in one header is one too many. It stays in the markup
            because the shortcut and the directory paths still press it. -->
+
+
+      <button id="inviteBtn" class="btn-tinted" style="display:none" data-on-click="17" data-i18n="ui.convbar.invite">invite</button>
+      <!-- ONE DOOR FOR THE REST (UI-2). Share link, customize, the reaction
+           palette and the space's own panel used to stand in the bar as four
+           more controls; they are the same elements with the same ids and
+           handlers, behind "⋯". On a phone the container dissolves
+           (display: contents) and the bar is what it was. -->
+      <button id="convMoreBtn" class="icon-btn" data-on-click="275" aria-haspopup="menu" aria-expanded="false"
+              aria-controls="convMore" title="More" aria-label="More" data-i18n-title="ui.convbar.more.title">⋯</button>
+      <div id="convMore" class="conv-more" role="menu">
+      <button id="shareLinkBtn" class="btn-plain" style="display:none" data-on-click="12"
+              title="Share link" aria-label="Share link" data-i18n-title="ui.convbar.share_link.title">
+        <svg class="act-mark" viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M6.7 9.3a2.7 2.7 0 0 0 3.8 0l2-2a2.7 2.7 0 0 0-3.8-3.8l-.9.9"/>
+          <path d="M9.3 6.7a2.7 2.7 0 0 0-3.8 0l-2 2a2.7 2.7 0 0 0 3.8 3.8l.9-.9" opacity=".55"/>
+        </svg><span class="act-label" data-i18n="ui.convbar.share_link.label">Share link</span></button>
       <button id="customizeBtn" class="icon-btn" style="display:none" data-on-click="15" title="Customize" data-i18n-title="ui.convbar.customize.title" aria-label="Customize space" data-i18n-aria="ui.convbar.customize.aria">
         <svg class="act-mark" viewBox="0 0 16 16" aria-hidden="true">
           <path d="M8 1.9a6.1 6.1 0 1 0 0 12.2c.85 0 1.35-.55 1.35-1.25 0-.75-.65-1.15-.65-1.85 0-.6.5-1 1.1-1h1.25A3.05 3.05 0 0 0 14.1 6.95C14.1 4.15 11.4 1.9 8 1.9Z"/>
           <circle cx="5.2" cy="6.5" r=".85" fill="currentColor" stroke="none" opacity=".55"/>
           <circle cx="8" cy="4.9" r=".85" fill="currentColor" stroke="none" opacity=".55"/>
           <circle cx="10.8" cy="6.5" r=".85" fill="currentColor" stroke="none" opacity=".55"/>
-        </svg></button>
-      <button id="resPalBtn" class="icon-btn" style="display:none" data-on-click="16" title="Reaction palette" aria-label="Reaction palette" data-i18n-title="ui.convbar.res_palette.title">✧</button>
-      <button id="inviteBtn" class="btn-tinted" style="display:none" data-on-click="17" data-i18n="ui.convbar.invite">invite</button>
-      <button class="icon-btn" data-on-click="18" title="Space info" aria-label="Space info" data-i18n-title="ui.convbar.space_info.title">ⓘ</button>
+        </svg><span class="act-label" data-i18n="ui.convbar.customize.title">Customize</span></button>
+      <button id="resPalBtn" class="icon-btn" style="display:none" data-on-click="16" title="Reaction palette" aria-label="Reaction palette" data-i18n-title="ui.convbar.res_palette.title"><span class="act-glyph" aria-hidden="true">✧</span><span class="act-label" data-i18n="ui.convbar.res_palette.title">Reaction palette</span></button>
+      <button class="icon-btn" data-on-click="18" title="Space info" aria-label="Space info" data-i18n-title="ui.convbar.space_info.title"><span class="act-glyph" aria-hidden="true">ⓘ</span><span class="act-label" data-i18n="ui.convbar.space_info.title">Space info</span></button>
+      </div>
+
       </div>
       <!-- The space's own architecture. Built by spacenav.js when a space
            opens: order and visibility come from the declared centre, so a

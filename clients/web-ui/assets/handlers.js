@@ -320,6 +320,7 @@ const UI_HANDLERS = [
   /* 272 click    */ (event, el) => { fieldPlaceMarker(); },
   /* 273 click    */ (event, el) => { document.getElementById('dlgMarker').close(); },
   /* 274 click    */ (event, el) => { toggleMembers(); },
+  /* 275 click    */ (event, el) => { convMoreToggle(event, el); },
 ];
 
 /** Attach every handler declared in the markup.

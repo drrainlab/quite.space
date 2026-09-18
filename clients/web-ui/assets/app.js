@@ -1955,6 +1955,35 @@ if (typeof window !== 'undefined') {
 }
 
 /** The space-info panel's own button, which predates the pair. */
+// "⋯" in the room's bar. The menu is position:fixed and placed from the
+// button's own rect, because #convbar clips (it collapses by max-height for
+// reading mode) and a dropdown inside it would be cut off at the bar's edge.
+function convMoreClose() {
+  const m = document.getElementById('convMore');
+  const b = document.getElementById('convMoreBtn');
+  if (m) m.classList.remove('open');
+  if (b) b.setAttribute('aria-expanded', 'false');
+  document.removeEventListener('keydown', convMoreEsc);
+}
+function convMoreEsc(e) { if (e.key === 'Escape') convMoreClose(); }
+function convMoreToggle(ev, btn) {
+  const m = document.getElementById('convMore');
+  if (!m) return;
+  const opening = !m.classList.contains('open');
+  convMoreClose();
+  if (!opening) return;
+  const r = btn.getBoundingClientRect();
+  m.style.top = Math.round(r.bottom + 6) + 'px';
+  m.style.right = Math.max(8, Math.round(window.innerWidth - r.right)) + 'px';
+  m.classList.add('open');
+  btn.setAttribute('aria-expanded', 'true');
+  ev.stopPropagation();
+  // Any press closes it — including the one on an item, which then does
+  // what it was for.
+  setTimeout(() => document.addEventListener('click', convMoreClose, { once: true }), 0);
+  document.addEventListener('keydown', convMoreEsc);
+}
+
 function toggleMembers() { togglePanel('info'); }
 
 async function refreshSpace() {
