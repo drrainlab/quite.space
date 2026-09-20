@@ -61,6 +61,10 @@
          app.js fills it from the node's own status; nothing here is a link. -->
     <div id="navFoot" class="nav-foot" aria-hidden="true"></div>
   </div>
+  <!-- The list's right edge is a handle (app.js: initNavResizer). Out of the
+       grid's flow on purpose — it sits ON the boundary, it is not a column. -->
+  <div id="navResizer" role="separator" aria-orientation="vertical" tabindex="0"
+       aria-label="Resize the list of spaces" data-i18n-aria="ui.nav.resize.aria"></div>
   <div id="content">
     <!-- TWO STOREYS, because they answer two different questions.
          The first is identity: what this place is, who may read it, and

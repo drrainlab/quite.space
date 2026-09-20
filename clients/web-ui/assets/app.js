@@ -6303,6 +6303,59 @@ function instrStaleWord(obs) {
   return age === Infinity ? t('instr.never') : t('instr.stale', { ago: relTime(age) });
 }
 
+// THE LIST IS AS WIDE AS THE PERSON NEEDS IT. 260px was one number for a
+// person with four places and a person with forty whose names all start the
+// same way ("ждём кого-…", five times). The boundary is a handle: drag it,
+// or focus it and use the arrows; a double-click goes back to the default.
+// The width is this device's own preference (localStorage), it only exists
+// on a wide screen, and folding the list still folds it.
+const NAV_W = { key: 'qp.nav.w', min: 220, max: 560, def: 260 };
+function applyNavWidth(px) {
+  const main = document.querySelector('main');
+  if (!main) return;
+  if (!px) { main.style.removeProperty('--w-nav'); return; }
+  const w = Math.max(NAV_W.min, Math.min(NAV_W.max, Math.round(px)));
+  main.style.setProperty('--w-nav', w + 'px');
+  return w;
+}
+function initNavResizer() {
+  const h = document.getElementById('navResizer');
+  const main = document.querySelector('main');
+  if (!h || !main) return;
+  let saved = 0;
+  try { saved = parseInt(localStorage.getItem(NAV_W.key) || '0', 10) || 0; } catch (_) {}
+  if (saved) applyNavWidth(saved);
+  const store = (w) => { try { if (w) localStorage.setItem(NAV_W.key, String(w)); else localStorage.removeItem(NAV_W.key); } catch (_) {} };
+  h.addEventListener('pointerdown', (ev) => {
+    if (compactScreen()) return;
+    ev.preventDefault();
+    h.setPointerCapture(ev.pointerId);
+    const left = main.getBoundingClientRect().left;
+    const pad = 2 * (parseFloat(getComputedStyle(main).getPropertyValue('--pad-panel')) || 12);
+    document.body.classList.add('nav-resizing');
+    let w = 0;
+    const move = (e) => { w = applyNavWidth(e.clientX - left - pad); };
+    const up = () => {
+      h.removeEventListener('pointermove', move);
+      h.removeEventListener('pointerup', up);
+      h.removeEventListener('pointercancel', up);
+      document.body.classList.remove('nav-resizing');
+      if (w) store(w);
+    };
+    h.addEventListener('pointermove', move);
+    h.addEventListener('pointerup', up);
+    h.addEventListener('pointercancel', up);
+  });
+  h.addEventListener('dblclick', () => { applyNavWidth(0); store(0); });
+  h.addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    e.preventDefault();
+    const cur = parseFloat(getComputedStyle(main).getPropertyValue('--w-nav')) || NAV_W.def;
+    store(applyNavWidth(cur + (e.key === 'ArrowRight' ? 16 : -16)));
+  });
+}
+if (typeof document !== 'undefined') document.addEventListener('DOMContentLoaded', initNavResizer);
+
 function reorderPane(mbox) {
   const kids = [...mbox.children];
   const sec = { head: [], now: [], people: [], about: [], manage: [], rest: [] };
@@ -6340,6 +6393,20 @@ function reorderPane(mbox) {
       chip.textContent = pres[0].textContent + (pres.length > 1 ? ' +' + (pres.length - 1) : '');
       chip.classList.toggle('stale', pres.some(p => p.classList.contains('stale')));
     }
+  }
+  // WHO MAY READ AND WRITE HERE is a fact about the place, so it lives with
+  // the place's other facts — not in the bar, where "public · read only" took
+  // the room the name needed (the owner's screenshot: "Smart Greenhou…").
+  const vis = document.getElementById('visBadge');
+  if (vis && vis.style.display !== 'none' && vis.textContent.trim()) {
+    const line = document.createElement('div');
+    line.className = 'pane-vis';
+    const b = document.createElement('span');
+    b.className = 'vis-badge';
+    b.textContent = vis.textContent;
+    if (vis.title) b.title = vis.title;
+    line.appendChild(b);
+    sec.about.unshift(line);
   }
   put('now', t('pane.now'), sec.now);
   put('people', t('pane.people'), sec.people);
