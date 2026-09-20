@@ -1,8 +1,8 @@
 # AN-1 — "notifications do not work": what the code says, and what changed
 
-Status: findings from the code, 2026-09-20. **No phone was attached**, so
-nothing below is a measurement on a device; the checklist at the end is what
-turns each line into one. The owner and several users report that nothing
+Status: findings from the code, then **measured on the owner's phone the
+same day** (Nothing Phone (1), Android 15, 1.0.21 → 1.0.22-rc1…rc3 over adb)
+— see "On the device" below. The owner and several users report that nothing
 arrives on Android.
 
 There is no push service, by design. For a message to become a system
@@ -42,6 +42,35 @@ install several were not, with no screen saying so.
 
 Channels were audited against every `Notification.Builder` site: the v2
 migration left no orphan id.
+
+## On the device (2026-09-20)
+
+- 1.0.21 as installed: POST_NOTIFICATIONS granted, all five channels present
+  (no orphan), `AvailabilityService` foreground, standby bucket 10, NOT on
+  the Doze whitelist, a message notification standing in the shade, seven
+  ESTABLISHED connections to the three relays. The basic path works here.
+- `am crash quite.space` (a system kill): the service was restarted by
+  Android in ~9 s — over a CLOSED core. Card: "Waiting to be unlocked".
+  Relay connections: **0**. It stayed that way. This is finding 1,
+  reproduced exactly.
+- The owner's passphrase is sealed behind a code, so the plain vault is
+  empty and nothing may reopen the node without them. rc2 therefore says so:
+  "Quiet was closed by Android — open it to keep receiving" appeared in the
+  shade after the same kill. (With a remembered passphrase the node reopens
+  instead; that branch is the doorbell's existing, shipped posture.)
+- The reopen/nudge runs ONLY on a system restart (`intent == null`): an
+  ordinary start comes from the Activity while the person is at the unlock
+  screen, where the node is also "not alive" for a second.
+- **The permanent card had never told the truth.** It read
+  `core.relay.{primary,backup,seconds_since_pull}` and the core's status
+  never contained a `relay` object, so it said "No relay · nothing yet" for
+  as long as it ran — on a phone holding seven relay connections. The core
+  writes that block now, and the card is re-read once a minute and re-posted
+  only when its sentence changes (LOW channel: no sound).
+- An app UPDATE also kills the process and the sticky service does not
+  survive a package replace: after every update the phone is deaf until the
+  app is opened. Not fixed here (`MY_PACKAGE_REPLACED` belongs with the boot
+  receiver).
 
 ## What changed in this commit
 

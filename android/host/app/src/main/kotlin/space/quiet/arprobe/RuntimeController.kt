@@ -741,13 +741,36 @@ class RuntimeController private constructor(appContext: Context) {
     }
 
     /**
+     * Android killed the process and brought the availability service back.
+     * If the node can open itself (a remembered passphrase) it does. If it
+     * cannot — the passphrase is sealed behind a code or a face, which is the
+     * person's own choice — then for as long as nobody opens the app this
+     * phone receives NOTHING, and the only honest thing left is to say so
+     * where it will be seen: one quiet line in the shade, naming no space
+     * and no sender, because nothing is known to be waiting.
+     */
+    fun reopenAfterSystemRestart() {
+        worker.execute {
+            if (isAlive()) return@execute
+            val stored = try { PassphraseVault(app).load() } catch (t: Throwable) { null }
+            if (stored != null) {
+                ensureStarted(stored, null, true)
+            } else {
+                lockedNudge("Quiet was closed by Android — open it to keep receiving")
+            }
+        }
+    }
+
+    /**
      * EN-3: the doorbell rang and the node is locked at rest. The nudge
      * names NOTHING — no space, no sender, no count — because the lock is
      * the person's decision and a notification that leaked around it
      * would make the doorbell a hole. One fixed id: a second ring while
      * the first nudge stands replaces it, which is also the truth.
      */
-    private fun doorbellNudge() {
+    private fun doorbellNudge() = lockedNudge("Something is waiting — open to see it")
+
+    private fun lockedNudge(text: String) {
         try {
             NotificationChannels.ensure(app)
             val open = android.app.PendingIntent.getActivity(
@@ -758,7 +781,7 @@ class RuntimeController private constructor(appContext: Context) {
             val n = android.app.Notification.Builder(app, NotificationPolicy.CHANNEL_MESSAGES)
                 .setSmallIcon(R.drawable.ic_stat_quiet)
                 .setContentTitle("Quiet")
-                .setContentText("Something is waiting — open to see it")
+                .setContentText(text)
                 .setContentIntent(open)
                 .setAutoCancel(true)
                 .build()

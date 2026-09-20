@@ -101,7 +101,16 @@ class AvailabilityService : Service() {
         // the node is open, nudge it; if it is not and the person chose to
         // have their passphrase remembered, open it. With no remembered
         // passphrase it stays shut, as it must, and the card says so.
-        controller.wakeForDoorbell()
+        //
+        // ONLY ON A RESTART BY THE SYSTEM, which is what a null intent means
+        // for START_STICKY. An ordinary start comes from the Activity while
+        // the person is looking at the unlock screen — the node is "not alive"
+        // for that second too, and telling them to open an app they are
+        // holding would be noise. (Proven on the owner's phone: `am crash`,
+        // the service came back in two seconds over a closed core with zero
+        // relay connections, and stayed that way.)
+        if (intent == null) controller.reopenAfterSystemRestart()
+        startCardRefresh(controller)
 
         // START_STICKY, NOT REDELIVER: if Android kills the process under
         // memory pressure the mode is still what the person asked for, so it
@@ -111,7 +120,41 @@ class AvailabilityService : Service() {
         return START_STICKY
     }
 
+    // THE CARD WAS WRITTEN ONCE AND NEVER AGAIN. It is built when the service
+    // starts, which is the moment the node is still opening — so it read "No
+    // relay · nothing yet" for as long as the mode ran, on a phone holding
+    // seven live relay connections (the owner's, 2026-09-20). A status line
+    // that is only true at boot is a wrong status line. Re-read once a
+    // minute, re-posted only when the sentence actually changed; the channel
+    // is LOW importance, so a change makes no sound and no heads-up.
+    private val cardHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var cardText: String? = null
+    private var cardTick: Runnable? = null
+
+    private fun startCardRefresh(controller: RuntimeController) {
+        if (cardTick != null) return
+        val tick = object : Runnable {
+            override fun run() {
+                try {
+                    val now = AvailabilityText.summary(controller.availabilitySnapshot())
+                    if (now != cardText) {
+                        cardText = now
+                        val nm = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
+                        nm.notify(NOTIFICATION_ID, buildNotification(controller))
+                    }
+                } catch (t: Throwable) {
+                    Log.w(TAG, "card refresh", t)
+                }
+                cardHandler.postDelayed(this, 60_000L)
+            }
+        }
+        cardTick = tick
+        cardHandler.postDelayed(tick, 15_000L)
+    }
+
     override fun onDestroy() {
+        cardTick?.let { cardHandler.removeCallbacks(it) }
+        cardTick = null
         if (leased) {
             leased = false
             RuntimeController.get(this).releaseAvailabilityLease()

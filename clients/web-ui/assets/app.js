@@ -1272,7 +1272,12 @@ async function refresh() {
     NAV.render(spacesCache, current);
     // Selection policy stays here: it belongs to the shell, not to the
     // panel that draws the choices.
-    if (!current && spacesCache.length) { current = spacesCache[0].id; }
+    // WHERE THE PERSON WAS, not the first row of the list: the app reopens on
+    // the place it was closed in (PLACE, below) when that place still exists.
+    if (!current && spacesCache.length) {
+      const last = PLACE.lastSpace();
+      current = (last && spacesCache.some(sp => sp.id === last)) ? last : spacesCache[0].id;
+    }
     if (current) await refreshSpace();
   } catch (e) {
     if (String(e.message || e).includes('token')) {
@@ -2122,7 +2127,14 @@ async function refreshSpace() {
   await RES.load(current); // palette must exist before rows render
   const entries = await fetchEntries(current);
   const log = document.getElementById('log');
-  const stick = (typeof OUTBOX !== 'undefined' && OUTBOX.takeStick()) ||
+  // NEVER ASK THE PREVIOUS ROOM WHETHER TO STICK. On a switch this read the
+  // scroll position of the log that was still showing the OLD space — so
+  // after reading up in one conversation, the next one opened at its top
+  // ("you come back and you are not at the end where you were", the owner).
+  // A room you enter is decided by what is remembered about THAT room.
+  const entering = seenSpace !== current;
+  const stick = entering ||
+    (typeof OUTBOX !== 'undefined' && OUTBOX.takeStick()) ||
     log.scrollTop + log.clientHeight >= log.scrollHeight - 40;
   // A SWITCH always rebuilds. Without this, entering an EMPTY space kept
   // the previous space's rows on screen: the reset below cleared the sigs
@@ -2270,7 +2282,8 @@ async function refreshSpace() {
       }
     }
     feedSig = sig; feedContentSig = contentSig;
-    if (stick) log.scrollTop = log.scrollHeight;
+    if (entering) PLACE.restore(log, current);
+    else if (stick) log.scrollTop = log.scrollHeight;
   }
   // THE MESSAGES ARE ON THE SCREEN — now the notification may come down. Said
   // here rather than when the space was selected: selecting starts a fetch
@@ -6236,6 +6249,7 @@ applyPanels();
 window.matchMedia(COMPACT).addEventListener('change', applyPanels);
 NAV.mount(document.getElementById('nav'));
 NAV.onOpen = (id) => {
+  PLACE.save(document.getElementById('log'), current);   // the room being left
   current = id;
   // On a phone the navigator IS the screen, and picking a space is the whole
   // reason it was open — staying would make somebody close it by hand every
@@ -6301,6 +6315,84 @@ function instrStaleWord(obs) {
     if (o && typeof o.age_seconds === 'number' && o.age_seconds < age) age = o.age_seconds;
   }
   return age === Infinity ? t('instr.never') : t('instr.stale', { ago: relTime(age) });
+}
+
+// WHERE YOU WERE. Closing the app or visiting another room used to cost
+// your place: the app reopened on the first row of the list, and a
+// conversation reopened wherever the previous one had been scrolled to.
+// Remembered per device (localStorage, bounded): the last room, and for
+// each room the MESSAGE that sat at the bottom of the screen — an id, not
+// a pixel offset, because pictures load and bubbles reflow. A room left at
+// its end reopens at its end, which is also where new messages are.
+const PLACE = (() => {
+  const KEY = 'qp.place', MAX = 300;
+  let mem = null;
+  const load = () => {
+    if (mem) return mem;
+    try { mem = JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch (_) { mem = {}; }
+    if (!mem.rooms) mem.rooms = {};
+    return mem;
+  };
+  const store = () => {
+    const m = load();
+    const ids = Object.keys(m.rooms);
+    if (ids.length > MAX) {
+      ids.sort((a, b) => (m.rooms[a].at || 0) - (m.rooms[b].at || 0))
+        .slice(0, ids.length - MAX).forEach(id => delete m.rooms[id]);
+    }
+    try { localStorage.setItem(KEY, JSON.stringify(m)); } catch (_) {}
+  };
+  function save(log, space) {
+    if (!log || !space || seenSpace !== space) return;   // only what is really on screen
+    const m = load();
+    m.last = space;
+    const atEnd = log.scrollTop + log.clientHeight >= log.scrollHeight - 40;
+    let eid = '';
+    if (!atEnd) {
+      const floor = log.getBoundingClientRect().bottom;
+      for (const el of log.querySelectorAll('.entry[data-eid]')) {
+        if (el.getBoundingClientRect().bottom <= floor + 2) eid = el.dataset.eid; else break;
+      }
+    }
+    m.rooms[space] = { end: atEnd || !eid, eid, at: Date.now() };
+    store();
+  }
+  function restore(log, space) {
+    const m = load();
+    m.last = space; store();
+    const pos = m.rooms[space];
+    const apply = () => {
+      const el = pos && !pos.end && pos.eid &&
+        log.querySelector('.entry[data-eid="' + cssId(pos.eid) + '"]');
+      if (el) el.scrollIntoView({ block: 'end' });
+      else log.scrollTop = log.scrollHeight;
+    };
+    apply();
+    // Previews decode and link cards unfold after the first paint; hold the
+    // place through that, unless the person has already taken the wheel.
+    let touched = false;
+    const stop = () => { touched = true; };
+    log.addEventListener('wheel', stop, { once: true, passive: true });
+    log.addEventListener('touchstart', stop, { once: true, passive: true });
+    for (const ms of [250, 900, 2000]) {
+      setTimeout(() => { if (!touched && current === space) apply(); }, ms);
+    }
+  }
+  return { save, restore, lastSpace: () => load().last || '' };
+})();
+if (typeof document !== 'undefined') {
+  document.addEventListener('DOMContentLoaded', () => {
+    const log = document.getElementById('log');
+    if (!log) return;
+    let t = 0;
+    log.addEventListener('scroll', () => {
+      clearTimeout(t);
+      t = setTimeout(() => PLACE.save(log, current), 350);
+    }, { passive: true });
+    // The last word before the app goes away.
+    window.addEventListener('pagehide', () => PLACE.save(log, current));
+    document.addEventListener('visibilitychange', () => { if (document.hidden) PLACE.save(log, current); });
+  });
 }
 
 // THE LIST IS AS WIDE AS THE PERSON NEEDS IT. 260px was one number for a

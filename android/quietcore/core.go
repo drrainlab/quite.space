@@ -366,6 +366,23 @@ func Status() string {
 		s["last_error"] = lastError
 	}
 	if rt != nil {
+		// WHAT THE PERMANENT CARD READS. The Kotlin side has always looked for
+		// core.relay.{primary,backup,seconds_since_pull} — and nothing here ever
+		// wrote it, so "Stay connected" said "No relay · nothing yet" for as
+		// long as it ran, on a phone holding seven live relay connections
+		// (the owner's, 2026-09-20). Two names and a number; nothing about
+		// who or what.
+		func() {
+			defer func() { _ = recover() }() // a status line must never take the core down
+			d := rt.RelayDiagnosticsSnapshot()
+			st := rt.RelaySync()
+			relay := map[string]any{"primary": d.Primary, "backup": d.Backup}
+			if st.AgoPull > 0 || st.Pulled > 0 {
+				relay["seconds_since_pull"] = st.AgoPull
+			}
+			relay["reachable"] = st.Reachable
+			s["relay"] = relay
+		}()
 		s["runtime_epoch"] = runtimeEpoch
 		s["data_dir"] = dataDir
 		s["api_port"] = apiPort
