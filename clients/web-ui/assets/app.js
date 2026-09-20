@@ -366,6 +366,9 @@ async function applyCustomize() {
 let llmSettings = { provider: '', model: '', base_url: '', has_key: false };
 async function openSettings() {
   syncSettingsUI();
+  // This phone's own reasons nothing may arrive, read fresh each time the
+  // sheet opens (host.js) — they change on a system screen, not in here.
+  if (typeof deviceHealthSyncUI === 'function') deviceHealthSyncUI();
   try {
     const s = await api('/api/settings');
     llmSettings = s.llm || llmSettings;

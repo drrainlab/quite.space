@@ -48,6 +48,13 @@ internal class HostBridge(
     private val unlockRemembered: () -> Boolean,
     private val forgetPassphrase: () -> Unit,
     private val stayRefused: () -> Boolean,
+    // WHY NOTHING ARRIVES, ANSWERABLE FROM THE PAGE. Two booleans about this
+    // device and two requests to show a SYSTEM screen — the same family as
+    // stayRefused/unlockRemembered: nothing a stolen token could carry away.
+    private val notificationsBlocked: () -> Boolean = { false },
+    private val openNotificationSettings: () -> Boolean = { false },
+    private val batteryRestricted: () -> Boolean = { false },
+    private val askBatteryExemption: () -> Boolean = { false },
     private val revealPassphrase: () -> Boolean = { false },
     private val changeCode: () -> Boolean = { false },
     // EN-3 — the UnifiedPush doorbell: status, on, off. Lambdas like
@@ -179,6 +186,36 @@ internal class HostBridge(
     fun stayRefused(pass: String?): Boolean {
         if (!admitted(pass)) return refuse("stayRefused")
         return stayRefused()
+    }
+
+    /** Android is not letting this app post notifications (and the core is
+     *  therefore disarmed — it produces no candidates at all). */
+    @JavascriptInterface
+    fun notificationsBlocked(pass: String?): Boolean {
+        if (!admitted(pass)) return refuse("notificationsBlocked")
+        return notificationsBlocked()
+    }
+
+    /** Show the system's own notification settings for this app. */
+    @JavascriptInterface
+    fun openNotificationSettings(pass: String?): Boolean {
+        if (!admitted(pass)) return refuse("openNotificationSettings")
+        return openNotificationSettings()
+    }
+
+    /** Android's battery optimisation applies to this app: in Doze its
+     *  network is cut and a parked listener hears nothing. */
+    @JavascriptInterface
+    fun batteryRestricted(pass: String?): Boolean {
+        if (!admitted(pass)) return refuse("batteryRestricted")
+        return batteryRestricted()
+    }
+
+    /** Raise the system's own "let this app run unrestricted?" question. */
+    @JavascriptInterface
+    fun askBatteryExemption(pass: String?): Boolean {
+        if (!admitted(pass)) return refuse("askBatteryExemption")
+        return askBatteryExemption()
     }
 
     /**

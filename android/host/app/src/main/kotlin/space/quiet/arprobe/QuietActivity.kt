@@ -457,6 +457,33 @@ class QuietActivity : ComponentActivity() {
                         }
                     },
                     stayRefused = { controller.availabilityRefused() },
+                    notificationsBlocked = { !gate.state().canPresent },
+                    openNotificationSettings = {
+                        runOnUiThread {
+                            try { startActivity(gate.systemSettingsIntent()) } catch (t: Throwable) {
+                                android.util.Log.w("quiet-bridge", "notification settings", t)
+                            }
+                        }
+                        true
+                    },
+                    batteryRestricted = {
+                        val pm = getSystemService(android.os.PowerManager::class.java)
+                        pm != null && !pm.isIgnoringBatteryOptimizations(packageName)
+                    },
+                    // The SYSTEM asks, on its own dialog, and the person answers:
+                    // on by default is not on by stealth.
+                    askBatteryExemption = {
+                        runOnUiThread {
+                            try {
+                                startActivity(android.content.Intent(
+                                    android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                                    android.net.Uri.parse("package:$packageName")))
+                            } catch (t: Throwable) {
+                                android.util.Log.w("quiet-bridge", "battery exemption", t)
+                            }
+                        }
+                        true
+                    },
                     // EN-3 — the doorbell. Status distinguishes "nothing on
                     // this phone can carry it" from "off", so the settings
                     // row can say the true sentence instead of a dead switch.

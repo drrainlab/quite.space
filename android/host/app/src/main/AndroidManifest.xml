@@ -25,6 +25,11 @@
          node runs with LAN on. -->
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- The one thing that lets a parked listener hear anything in Doze
+         without a push service. Never taken silently: the system's own dialog
+         is raised from a row the person pressed (This device → "Why nothing
+         arrives"). There is no store listing whose policy this would touch. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- Voice messages. Asked for at the moment the record button is pressed,
          not at launch, and never held: the WebView's getUserMedia is denied
          until this is granted (see QuietActivity.onPermissionRequest). -->

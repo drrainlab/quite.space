@@ -524,7 +524,11 @@ class RuntimeController private constructor(appContext: Context) {
             }
             return
         }
-        Quietcore.armNotifications(sink)
+        // On the worker, like the branch above: arming makes the core redeliver
+        // everything unacknowledged ON THE CALLER'S GOROUTINE, walking each
+        // space's log under its lock. From here that caller was the UI thread,
+        // on every resume — a long journal is a stall, not a lost message.
+        worker.execute { Quietcore.armNotifications(sink) }
     }
 
     /**

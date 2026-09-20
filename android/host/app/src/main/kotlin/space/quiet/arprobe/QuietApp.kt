@@ -22,8 +22,6 @@ import space.quiet.quietcore.Quietcore
 class QuietApp : Application() {
     override fun onCreate() {
         super.onCreate()
-        RuntimeController.get(this)
-
         // Channels are created here rather than where the first notification
         // is posted: from API 26 a notification without one is not shown at
         // all, and the first one this app ever posts may be produced while no
@@ -32,6 +30,13 @@ class QuietApp : Application() {
         // missed. See NotificationChannels for why the ids are effectively
         // frozen the moment they first exist.
         NotificationChannels.ensure(this)
+
+        // AFTER the channels, and the order is the point: the controller's
+        // init queues recoverPending() on its worker, which POSTS — and a
+        // notify() to a channel that does not exist yet is dropped without
+        // an exception. It used to be constructed first, so the first post
+        // after a crash could lose a race by a few instructions.
+        RuntimeController.get(this)
 
         // The USB service, handed to the core once. Registered at APPLICATION
         // scope on purpose: the core may ask for the device list from a

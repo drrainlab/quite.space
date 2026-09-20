@@ -121,6 +121,19 @@ const HOST = (() => {
       return call('stayRefused') === true;
     },
 
+    // WHY NOTHING ARRIVES. Absent verbs (an older host) read as "fine":
+    // a line that cannot be checked is not shown.
+    notificationsBlocked() {
+      return !!bridge && typeof bridge.notificationsBlocked === 'function' &&
+        call('notificationsBlocked') === true;
+    },
+    openNotificationSettings() { return call('openNotificationSettings') === true; },
+    batteryRestricted() {
+      return !!bridge && typeof bridge.batteryRestricted === 'function' &&
+        call('batteryRestricted') === true;
+    },
+    askBatteryExemption() { return call('askBatteryExemption') === true; },
+
     /**
      * Ask the phone to SHOW the recovery passphrase — in its own native
      * dialog, on its own screen. Nothing comes back into this page but
@@ -288,6 +301,57 @@ function forgetPassphrase() {
   if (ok) unlockSyncUI();
 }
 
+// ---- why nothing arrives ----
+//
+// People reported "notifications do not work", and the honest answer was
+// usually one of three facts about THEIR phone that no screen here stated:
+// Android had never been allowed to show notifications (and while that is so
+// the core is disarmed — it does not even produce them); Android's battery
+// optimisation cuts a sleeping app's network, so a listener hears nothing
+// until the phone is picked up; and a node that Android closed cannot reopen
+// itself unless the passphrase is remembered. Each line appears only while it
+// is true, says what to do, and the first two carry the button that does it.
+function deviceHealthSyncUI() {
+  const box = document.getElementById('deviceHealth');
+  if (!box || !HOST.present) return;
+  const rows = [];
+  if (HOST.notificationsBlocked()) {
+    rows.push({ text: t('dev.health.blocked'), btn: t('dev.health.blocked.btn'),
+      go: () => HOST.openNotificationSettings() });
+  }
+  if (HOST.batteryRestricted()) {
+    rows.push({ text: t('dev.health.battery'), btn: t('dev.health.battery.btn'),
+      go: () => HOST.askBatteryExemption() });
+  }
+  if (!HOST.unlockRemembered()) rows.push({ text: t('dev.health.locked') });
+  box.textContent = '';
+  box.hidden = rows.length === 0;
+  if (!rows.length) return;
+  const h = document.createElement('p');
+  h.className = 'sec-label';
+  h.textContent = t('dev.health.title');
+  box.appendChild(h);
+  for (const r of rows) {
+    const p = document.createElement('p');
+    p.className = 'hint warn';
+    p.textContent = r.text;
+    box.appendChild(p);
+    if (r.btn) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'btn-tinted';
+      b.textContent = r.btn;
+      // The answer is given on a system screen; read the facts again when
+      // the person comes back from it.
+      b.onclick = () => { r.go(); setTimeout(deviceHealthSyncUI, 1500); };
+      box.appendChild(b);
+    }
+  }
+}
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) deviceHealthSyncUI(); });
+}
+
 // The tab exists only where something is listening.
 if (typeof document !== 'undefined') {
   document.addEventListener('DOMContentLoaded', () => {
@@ -296,6 +360,7 @@ if (typeof document !== 'undefined') {
     notifSyncUI();
     staySyncUI();
     unlockSyncUI();
+    deviceHealthSyncUI();
   });
 }
 

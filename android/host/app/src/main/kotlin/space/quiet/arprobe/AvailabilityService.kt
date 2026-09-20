@@ -91,6 +91,18 @@ class AvailabilityService : Service() {
             controller.acquireAvailabilityLease()
         }
 
+        // A MODE THAT IS RUNNING OVER A CLOSED NODE IS A DECORATION. After
+        // Android kills the process — memory pressure, a swipe from recents on
+        // most OEM builds — START_STICKY brings THIS service back, and it used
+        // to stop there: a permanent "Stay connected" card over a core nobody
+        // had opened, so nothing synced and nothing could be announced until
+        // the person opened the app, which is when they would have seen the
+        // message anyway. This is the posture the doorbell already uses: if
+        // the node is open, nudge it; if it is not and the person chose to
+        // have their passphrase remembered, open it. With no remembered
+        // passphrase it stays shut, as it must, and the card says so.
+        controller.wakeForDoorbell()
+
         // START_STICKY, NOT REDELIVER: if Android kills the process under
         // memory pressure the mode is still what the person asked for, so it
         // comes back — but a FORCE-STOP does not, and must not. Android does
