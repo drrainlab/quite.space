@@ -53,7 +53,16 @@ jobs:
         run: |
           set -o pipefail
           go test -timeout 30m ./... 2>&1 | tee test.log || {
-            grep -aE "^--- FAIL|^FAIL|panic:|test timed out" test.log | head -60 | while IFS= read -r l; do echo "::error::${l}"; done
+            # GitHub shows TEN annotations per step and the log needs a
+            # login, so one line per annotation names ten tests and hides
+            # the rest — and W0 is the whole list. The digest (each failure
+            # with the lines under it that say why) goes out in nine chunks,
+            # newlines escaped the way the runner expects.
+            awk '/^(--- FAIL|FAIL|panic:)|test timed out/{print; c=8; next} c>0 && !/^(=== |--- PASS|PASS|ok )/{print "    " $0; c--}' test.log > digest.txt
+            split -l 45 digest.txt chunk.
+            for f in $(ls chunk.* | head -9); do
+              echo "::error::$(sed -e 's/%/%25/g' "$f" | awk '{printf "%s%%0A", $0}')"
+            done
             exit 1
           }
       - name: upload the log
@@ -61,5 +70,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-test-log
-          path: test.log
+          path: |
+            test.log
+            digest.txt
           if-no-files-found: ignore
