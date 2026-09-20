@@ -4513,73 +4513,70 @@ header { padding: 8px 16px; gap: 10px; }
    in the header is the ART's box (29×28) and the image is placed inside it
    by those numbers, which puts the orbit's own centre on the header's
    centre line with everything else. Scale = 28 / 115. */
-/* A LITTLE WEATHER BEHIND THE MARK. The owner: "a bright, fashionable spot
-   behind the logo, along the header — more interesting, younger". Three
-   soft lights in the orbit's own colours — cyan, violet, a breath of green —
-   pooled where the mark sits and fading out before the actions end. Plain
-   radial gradients: no blur filter, no animation, nothing for the
-   compositor to keep awake (the connection light is the one thing in this
-   header allowed to move). It sits under the header's children and above
-   its glass; on paper it is turned down rather than recoloured. */
-/* THE SEAM WAS THE HEADER ITSELF. Nothing ever scrolls under it — main is
-   its own box below — so its glass was filtering nothing and only drew a
-   level edge where the fill stopped. Without a fill there is no edge: the
-   row of actions stands on the same ground as the room, and the nebula is
-   the only thing that says "top". */
+/* STARS BEHIND THE MARK, NOT A GLOW. The nebula that lived here was a
+   mistake twice over. It was its own thing — a coloured cloud in an
+   interface that is otherwise a night sky — and its forty-second drift
+   (translate + scale on a layer wider than nothing) grew the document to
+   407px on a 375px phone: the whole app could be panned sideways into
+   emptiness and twitched as the layer breathed (the owner, on Android;
+   reproduced by pinning the animation at its far end and reading
+   scrollWidth). What is here instead belongs to the sky the app already
+   has: two handfuls of tiny stars, denser round the orbit and thinning out
+   along the row, drawn as box-shadows of a 1px dot. They never move; the
+   only life is one layer slowly dimming while the other brightens —
+   opacity alone, which cannot change a layout — and that rests with the
+   tab. Nothing here is wider than the header. */
 header.glass { background: transparent; backdrop-filter: none; -webkit-backdrop-filter: none;
   box-shadow: none; border: 0; }
-header { position: relative; isolation: isolate; }
-/* A NEBULA ARRIVING FROM ABOVE, not a stripe. The first version filled the
-   header's own box, so the light was cut off dead level with its bottom
-   edge (the owner saw the seam at once). Now every light is centred ABOVE
-   the window, so what shows is the underside of something larger drifting
-   in; the layer is taller than the header and a mask lets it thin out to
-   nothing well below the edge — it falls behind the room's surfaces the
-   way weather falls behind a roofline, and there is no line to see. */
+header { position: relative; isolation: isolate; overflow-x: clip; }
+header::before, header::after {
+  content: ""; position: absolute; left: 0; top: 0; width: 1px; height: 1px;
+  z-index: -1; pointer-events: none; border-radius: 50%; background: transparent;
+  color: color-mix(in srgb, var(--fg) 80%, var(--acc));
+}
 header::before {
-  content: ""; position: absolute; inset: 0 0 auto 0; height: 190px; z-index: -1;
-  pointer-events: none;
-  background:
-    radial-gradient(230px 130px at 76px -14px, oklch(.84 .15 205 / .32), transparent 70%),
-    radial-gradient(380px 170px at 240px -46px, oklch(.66 .24 300 / .26), transparent 70%),
-    radial-gradient(320px 150px at -30px -26px, oklch(.80 .17 165 / .15), transparent 70%),
-    radial-gradient(560px 160px at 560px -70px, oklch(.68 .20 275 / .18), transparent 72%),
-    radial-gradient(520px 130px at 980px -80px, oklch(.72 .16 235 / .10), transparent 72%);
-  -webkit-mask-image: linear-gradient(to bottom, #000 0, rgba(0,0,0,.8) 26%, rgba(0,0,0,.34) 52%, transparent 100%);
-  mask-image: linear-gradient(to bottom, #000 0, rgba(0,0,0,.8) 26%, rgba(0,0,0,.34) 52%, transparent 100%);
+  box-shadow:
+    34px 9px 0 0 rgb(from currentColor r g b / .50), 58px 40px 0 0 rgb(from currentColor r g b / .34),
+    96px 7px 0 0 rgb(from currentColor r g b / .62), 113px 33px 0 0 rgb(from currentColor r g b / .30),
+    131px 14px 0 0 rgb(from currentColor r g b / .44), 167px 43px 0 0 rgb(from currentColor r g b / .26),
+    204px 6px 0 0 rgb(from currentColor r g b / .40), 251px 27px 0 0 rgb(from currentColor r g b / .22),
+    313px 11px 0 0 rgb(from currentColor r g b / .30), 392px 38px 0 0 rgb(from currentColor r g b / .18),
+    476px 8px 0 0 rgb(from currentColor r g b / .22), 588px 30px 0 0 rgb(from currentColor r g b / .14),
+    730px 12px 0 0 rgb(from currentColor r g b / .12);
+  animation: star-breath-a 9s steps(45, end) infinite alternate;
 }
-/* A LITTLE LIFE WHEN EVERYBODY IS SILENT (the owner: "barely asking for
-   attention"). The nebula breathes and drifts a few pixels over forty
-   seconds — transform and opacity only, so it is the compositor's work and
-   never a repaint, sampled in steps at five frames a second like the
-   connection light, and at rest whenever nobody is here to see it. */
-header::before {
-  transform-origin: 20% 0; will-change: transform, opacity;
-  animation: nebula-drift 40s steps(200, end) infinite alternate;
+header::after {
+  box-shadow:
+    22px 30px 0 .5px rgb(from currentColor r g b / .46), 74px 20px 1px .5px rgb(from currentColor r g b / .70),
+    88px 46px 0 0 rgb(from currentColor r g b / .36), 148px 5px 0 .5px rgb(from currentColor r g b / .40),
+    186px 24px 1px .5px rgb(from currentColor r g b / .50), 228px 44px 0 0 rgb(from currentColor r g b / .24),
+    282px 18px 0 .5px rgb(from currentColor r g b / .30), 351px 4px 0 0 rgb(from currentColor r g b / .24),
+    437px 26px 1px .5px rgb(from currentColor r g b / .26), 534px 15px 0 0 rgb(from currentColor r g b / .16),
+    655px 41px 0 0 rgb(from currentColor r g b / .12);
+  animation: star-breath-b 13s steps(65, end) infinite alternate;
 }
-@keyframes nebula-drift {
-  from { transform: translate3d(-10px, -3px, 0) scale(1); opacity: .78; }
-  to   { transform: translate3d(14px, 2px, 0) scale(1.06); opacity: 1; }
-}
-body.hidden-tab header::before, body.unfocused header::before { animation-play-state: paused; }
-@media (prefers-reduced-motion: reduce) { header::before { animation: none; } }
-:root[data-theme="light"] header::before { filter: opacity(.7); }
-:root[data-preset="minimal-mono"] header::before { display: none; }
-@media (prefers-reduced-transparency: reduce) { header::before { opacity: .5; } }
+@keyframes star-breath-a { from { opacity: 1; } to { opacity: .45; } }
+@keyframes star-breath-b { from { opacity: .5; } to { opacity: 1; } }
+body.hidden-tab header::before, body.unfocused header::before,
+body.hidden-tab header::after, body.unfocused header::after { animation-play-state: paused; }
+@media (prefers-reduced-motion: reduce) { header::before, header::after { animation: none; } }
+/* On paper a star is a speck of ink, and fewer of them read. */
+:root[data-theme="light"] header::before, :root[data-theme="light"] header::after {
+  color: color-mix(in srgb, var(--fg) 55%, var(--acc)); filter: opacity(.55); }
+:root[data-preset="minimal-mono"] header::before,
+:root[data-preset="minimal-mono"] header::after { display: none; }
 /* Optical, not box, spacing: the burger's glyph is 14px in a 40px target,
    so its box carries 13px of air the mark's box does not. Pulled in, the
    INK is evenly spaced: burger · mark · relay · create, 16–17px apart. */
 header #tglNav { margin-right: -7px; }
-header b.brand { position: relative; display: block; flex: none; width: 29px; height: 28px; }
+header b.brand { position: relative; display: block; flex: none; width: 23px; height: 22px; }
 header .brand-mark {
   position: absolute; max-width: none; margin: 0;
-  width: 62.33px; height: 62.33px; left: -16.31px;
-  /* ON THE AXIS BY ITS DISC, not by its bounding box. The tail hangs below
-     the orb and the satellite barely rises above it, so the bbox centre
-     (y 120.5) is 6px under the disc's centre (y 114.1, the centroid of the
-     dark fill) — and the eye reads the disc as the mark. Centred by bbox
-     it sat a pixel and a half high. top = 14 − 114.14 × (28/115). */
-  top: -13.79px;
+  /* Scale = 22 / 115 (the owner: a little smaller). Same arithmetic as
+     before: the art's bbox starts at x 67, and the DISC's centre (y 114.14
+     of 256) is what sits on the row's axis, not the bbox's. */
+  width: 48.97px; height: 48.97px; left: -12.82px;
+  top: -10.84px;
 }
 /* Every mark in the header is a DRAWN mark in one 16-box: the burger and the
    gear were font glyphs (☰ ⚙), whose ink sits wherever the face put it
@@ -5070,6 +5067,58 @@ dialog .me-row::after {
 }
 .btn-tinted:hover { background: color-mix(in srgb, var(--acc) 22%, transparent); }
 .conv-more .act-mark { flex: none; }
+/* ---- THE SHELL DOES NOT SCROLL. Every scroller in this app is an inner
+   one (the log, the list, a post); the document itself is exactly one
+   screen. Said out loud so that the next decorative layer which pokes a few
+   pixels past an edge cannot turn the whole app into something a thumb can
+   drag sideways, and so Android's overscroll stretch has nothing to pull. */
+html, body { overflow: hidden; overscroll-behavior: none; }
+html { height: 100%; }
+
+/* ---- a room's colours are alive ---------------------------------------
+   Two neighbouring hues per archetype (app.js: --acc, --acc2) at the
+   theme's one lightness and one chroma. Flat tint became a run between
+   them wherever the room speaks in colour: send, invite, the view you are
+   in, our own bubbles — and a breath of the room's own light at the top
+   of the conversation. Small numbers on purpose: it is a room, not a
+   poster. */
+:root { --acc-c: .105; }
+:root[data-theme="light"] { --acc-c: .125; }
+#content { --acc-run: linear-gradient(120deg, var(--acc), var(--acc2, var(--acc))); position: relative; isolation: isolate; }
+#content::before {
+  content: ""; position: absolute; inset: 0 0 auto 0; height: 220px; z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(60% 120px at 78% -30px, color-mix(in srgb, var(--acc) 16%, transparent), transparent 70%),
+    radial-gradient(45% 100px at 22% -40px, color-mix(in srgb, var(--acc2, var(--acc)) 11%, transparent), transparent 70%);
+}
+:root[data-theme="light"] #content::before { opacity: .7; }
+body.reading #content::before { display: none; }
+#content #composer button[type="submit"] {
+  background-color: var(--acc); background-image: var(--acc-run);
+  box-shadow: var(--edge-light), 0 6px 18px -8px color-mix(in srgb, var(--acc) 75%, transparent);
+}
+#content .btn-tinted {
+  color: color-mix(in srgb, var(--acc) 82%, var(--fg));
+  background:
+    linear-gradient(120deg, color-mix(in srgb, var(--acc) 20%, transparent),
+      color-mix(in srgb, var(--acc2, var(--acc)) 14%, transparent));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--acc) 34%, transparent);
+}
+#content .space-tab.sel {
+  background: linear-gradient(120deg, color-mix(in srgb, var(--acc) 17%, transparent),
+    color-mix(in srgb, var(--acc2, var(--acc)) 10%, transparent));
+}
+#content .msg.own .bubble {
+  background: linear-gradient(135deg,
+    color-mix(in srgb, var(--acc) 11%, var(--bubble-own)),
+    color-mix(in srgb, var(--acc2, var(--acc)) 6%, var(--bubble-own)));
+  border-color: color-mix(in srgb, var(--acc) 22%, transparent);
+}
+#content .msg.k-visual:not(.media-fetching):not(.flash):not(.sig-target) .bubble,
+#content .msg.k-video:not(.media-fetching):not(.flash):not(.sig-target) .bubble { background: none; }
+#content .res-chip.res-own { border-color: var(--acc); color: var(--acc);
+  background: color-mix(in srgb, var(--acc) 10%, transparent); }
 /* ---- UI-2 phone exceptions ------------------------------------------ */
 @media (max-width: 600px) {
   header .nav-act { padding: 0 11px; justify-content: center; min-height: 44px; }

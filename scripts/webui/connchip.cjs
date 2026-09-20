@@ -169,6 +169,26 @@ verdict('nobody at all, and the relay is unwell — its complaint is the news',
 // unreachable because there is no internet. The device is not "relay · issue".
 verdict('wifi off, radio working, relay unreachable', 'radio', unwell, 'radio');
 
+// THE OWNER'S SCREENSHOT, 2026-09-20: "relay · issue" on the chip while
+// everything worked. last_error is the last failure ANYWHERE in the cycle —
+// somebody else's relay, an official one a VPN cannot reach — and our own
+// relay had answered. That is a healthy link with a footnote, not an issue.
+const elsewhere = { active: true, interval_ms: 4000, reachable: true,
+  last_error: 'relay is cooling down after failures — 178.20.45.239:7411' };
+{
+  const v = relayVerdict('off', elsewhere, 0);
+  if (!v || v.text !== 'relay' || !/up/.test(v.cls) || !v.why) {
+    failures++;
+    console.log('FAIL our relay answered: the chip must stay healthy and keep the reason as a footnote', v);
+  } else console.log('ok   our relay answers, a delivery elsewhere waits — healthy, with the reason kept');
+  // An older node does not say `reachable`: then the error is all we know.
+  const old = relayVerdict('off', { active: true, last_error: 'dial tcp: timeout' }, 0);
+  if (!old || old.text !== 'relay · issue') {
+    failures++;
+    console.log('FAIL without `reachable` the old reading must stand', old);
+  } else console.log('ok   no `reachable` from an older node — the old reading stands');
+}
+
 const kept = relayVerdict('radio', unwell);
 if (!kept || kept.text !== null || !kept.why) {
   failures++;

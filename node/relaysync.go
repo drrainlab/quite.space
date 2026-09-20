@@ -31,10 +31,16 @@ type relaySyncState struct {
 	legacyBasis  map[id.TerminalID]bool
 	lastRouteGen uint64
 	lastErr      string
-	lastPush     time.Time
-	lastPull     time.Time
-	pushed       int
-	pulled       int
+	// ownOK: THIS device's own relay answered the last cycle's pull. lastErr
+	// is the last thing that went wrong ANYWHERE in the cycle — a peer's
+	// relay that is down, a guessed relay a VPN cannot reach, a followed
+	// space whose publisher's relay is away — and with thirty spaces there
+	// is nearly always one. The connection light must be about our own link.
+	ownOK    bool
+	lastPush time.Time
+	lastPull time.Time
+	pushed   int
+	pulled   int
 	// Public projection publishing triggers (PA-0.4B): authorized log
 	// growth, bucket rotation, or a stale heartbeat each force a Replace.
 	lastPubLen     map[id.TerminalID]int
@@ -727,6 +733,7 @@ func (r *Runtime) relaySyncOnce(addr string) {
 	}
 	r.mu.Unlock()
 	pullOK := false
+	ownOK := false
 	for _, ingress := range ingresses {
 		got, err := r.PullFromRelay(ingress)
 		pulled += got
@@ -734,6 +741,9 @@ func (r *Runtime) relaySyncOnce(addr string) {
 			lastErr = err.Error()
 		} else {
 			pullOK = true
+			if ingress == addr {
+				ownOK = true
+			}
 		}
 	}
 
@@ -783,6 +793,7 @@ func (r *Runtime) relaySyncOnce(addr string) {
 
 	rs.mu.Lock()
 	rs.lastErr = lastErr
+	rs.ownOK = ownOK
 	// The retry schedule, kept here because this is the one place that knows
 	// whether the cycle worked. A HISTORICAL ingress dying must not put the
 	// whole loop on the failure schedule: the pre-T4 fence keeps every
@@ -841,6 +852,11 @@ type RelaySyncStatus struct {
 	Pushed     int    `json:"pushed"`
 	Pulled     int    `json:"pulled"`
 	LastErr    string `json:"last_error,omitempty"`
+	// Reachable: our own relay answered the last cycle. With it true,
+	// LastErr is about somebody else's endpoint — worth saying in the
+	// details, never worth a red light (the owner, 2026-09-20: "relay ·
+	// issue stays on, and yet everything works").
+	Reachable bool `json:"reachable"`
 	// Blocked says the relay is silent BY POLICY, not by failure. Without
 	// it the loop reports its own obedience through last_error — "relay is
 	// not permitted in offline mode" arrives in the same field as a dead
@@ -934,7 +950,8 @@ func (r *Runtime) RelaySync() RelaySyncStatus {
 		Addr: rs.addr, Active: rs.addr != "" && rs.stop != nil,
 		IntervalMs: int(rs.interval / time.Millisecond),
 		Pushed:     rs.pushed, Pulled: rs.pulled, LastErr: rs.lastErr,
-		Public: public, Blocked: blocked,
+		Reachable: rs.ownOK,
+		Public:    public, Blocked: blocked,
 	}
 	if blocked {
 		// The last thing that went wrong was that we declined to try. That

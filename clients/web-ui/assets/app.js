@@ -84,13 +84,13 @@ async function loadSpaceAppearance(sid) {
 // ---- archetypes, palettes, moods ----
 
 const ARCHETYPES = {
-  campfire:   { name: 'Campfire',   desc: 'friends, quiet presence, talk',           h: 48, acc: '#e8a862', bg: '#14100b', human: '#e8a862' },
-  forest:     { name: 'Forest',     desc: 'an organic space grown from shared life', h: 168, acc: '#64d8a4', bg: '#0c1210', human: '#64d8a4' },
-  studio:     { name: 'Studio',     desc: 'music, listening sessions, demos, notes', h: 318, acc: '#c88ce0', bg: '#100c14', human: '#c88ce0' },
-  workshop:   { name: 'Workshop',   desc: 'projects, tasks, devices, telemetry',     h: 250, acc: '#7ab4e0', bg: '#0c1014', human: '#7ab4e0' },
-  orbit:      { name: 'Orbit',      desc: 'a minimal scene for distributed teams',   h: 212, acc: '#9cc2e8', bg: '#0a0d12', human: '#9cc2e8' },
-  home:       { name: 'Home',       desc: 'close people, photos, family memory',     h: 18, acc: '#e0b49c', bg: '#12100d', human: '#e0b49c' },
-  radio_room: { name: 'Radio Room', desc: 'mesh, LoRa, BBS and node status',         h: 128, acc: '#6ce07a', bg: '#0a0f0a', human: '#6ce07a' },
+  campfire:   { name: 'Campfire',   desc: 'friends, quiet presence, talk',           h: 38, h2: 78, acc: '#e8a862', bg: '#14100b', human: '#e8a862' },
+  forest:     { name: 'Forest',     desc: 'an organic space grown from shared life', h: 165, h2: 128, acc: '#64d8a4', bg: '#0c1210', human: '#64d8a4' },
+  studio:     { name: 'Studio',     desc: 'music, listening sessions, demos, notes', h: 318, h2: 278, acc: '#c88ce0', bg: '#100c14', human: '#c88ce0' },
+  workshop:   { name: 'Workshop',   desc: 'projects, tasks, devices, telemetry',     h: 250, h2: 212, acc: '#7ab4e0', bg: '#0c1014', human: '#7ab4e0' },
+  orbit:      { name: 'Orbit',      desc: 'a minimal scene for distributed teams',   h: 215, h2: 268, acc: '#9cc2e8', bg: '#0a0d12', human: '#9cc2e8' },
+  home:       { name: 'Home',       desc: 'close people, photos, family memory',     h: 16, h2: 52, acc: '#e0b49c', bg: '#12100d', human: '#e0b49c' },
+  radio_room: { name: 'Radio Room', desc: 'mesh, LoRa, BBS and node status',         h: 135, h2: 178, acc: '#6ce07a', bg: '#0a0f0a', human: '#6ce07a' },
 };
 const MOOD_LIGHT = { dawn: 1.5, day: 1.9, dusk: 1.0, night: 0.62 };
 const RITUALS = [
@@ -136,6 +136,13 @@ function applyTheme(char) {
   const tint = OKLCH_OK ? `oklch(var(--acc-l) var(--acc-c) ${a.h})` : a.acc;
   el.style.setProperty('--acc', tint);
   el.style.setProperty('--human', tint);
+  // A ROOM HAS TWO NEIGHBOURING HUES, not one flat colour: ember and amber,
+  // moss and leaf, orchid and iris. The second is what gradients run toward
+  // (send, invite, our own bubbles, the faint light at the top of the room)
+  // — the owner asked for the themes to feel more alive. Same lightness and
+  // chroma tokens, so the pair is as even to the eye as the single was.
+  el.style.setProperty('--acc2', OKLCH_OK ? `oklch(var(--acc-l) var(--acc-c) ${a.h2})` : a.acc);
+  el.dataset.arch = char?.archetype || 'forest';
 }
 
 // ---- relic: the growing shared object ----
@@ -848,7 +855,16 @@ function relayVerdict(base, rs, room) {
   // Silent by policy is not a verdict about the relay at all — the person
   // already knows, because they chose it, and connectionSummary is saying so.
   if (!rs || !rs.active || rs.blocked) return null;
-  if (!rs.last_error) {
+  // OUR relay answering is what "relay" on the chip means. last_error is the
+  // last thing that went wrong ANYWHERE in the cycle — a peer's relay that is
+  // down, an official relay a VPN cannot reach, a followed space whose
+  // publisher is away — and a person with thirty spaces nearly always has
+  // one. It used to paint "relay · issue" while everything plainly worked
+  // (the owner's screenshot, 2026-09-20). It is carried as the chip's
+  // tooltip instead, and each space that is actually waiting says so on its
+  // own row. (`reachable` is absent on an older node: then an error is all
+  // we know, and the old reading stands.)
+  if (!rs.last_error || rs.reachable === true) {
     // The light breathes in the sync's own rhythm — the pulse IS the
     // cadence, not decoration. Clamped so a 2s cycle does not strobe and a
     // 5min one does not look dead.
@@ -860,6 +876,7 @@ function relayVerdict(base, rs, room) {
     // taking. `room` counts AUTHENTICATED local peers, never raw sockets.
     const text = room > 0 ? t('conn.relay_room', { count: room }) : 'relay';
     return { text, cls: 'conn-chip up', kind: 'relay',
+      why: rs.last_error ? t('conn.relay_elsewhere', { err: rs.last_error }) : '',
       pulseMs: Math.min(12000, Math.max(2400, rs.interval_ms || 4000)) };
   }
   // Unwell. Its complaint is carried either way — "issue" on its own is the
