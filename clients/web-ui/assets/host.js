@@ -112,6 +112,19 @@ const HOST = (() => {
     },
 
     /**
+     * AN-3 — may the node open while the phone is locked: 'on' | 'off' |
+     * 'na'. An older host has no such verb and `call` answers undefined,
+     * which reads as 'na': the row simply does not appear.
+     */
+    receiveLocked() {
+      if (call('receiveLockedApplies') !== true) return 'na';
+      return call('receiveLocked') === true ? 'on' : 'off';
+    },
+    setReceiveLocked(on) {
+      return call('setReceiveLocked', !!on) === true;
+    },
+
+    /**
      * Whether the platform refused to run "stay connected".
      *
      * False on a host that does not know the verb, which is the right answer
@@ -256,7 +269,7 @@ if (typeof document !== 'undefined') {
 // The page therefore never reads it back. It shows what was just chosen and
 // says so; on the next launch the host applies its own stored value, which is
 // the only one that ever mattered.
-let notifChoice = localStorage.getItem('notif.policy.echo') || 'hidden';
+let notifChoice = localStorage.getItem('notif.policy.echo') || 'sender';
 
 function notifPick(name) {
   const msg = document.getElementById('notifMsg');
@@ -269,11 +282,41 @@ function notifPick(name) {
   // last chose here rather than resetting to the strictest option every time
   // it opens. The host's copy is the one that decides.
   localStorage.setItem('notif.policy.echo', name);
+  notifEchoKeep(name);
   if (msg) msg.textContent = t('notif.saved');
   notifSyncUI();
 }
 
+// THE ECHO IS KEPT BY THE NODE, because on the one host that has this setting
+// the browser cannot keep anything: Android's core listens on a new port each
+// launch, so every launch is a new origin with empty storage — and the control
+// went back to its default over a phone that was doing something else. The
+// bridge will not say which mode is in force (it hands back booleans only, and
+// that rule is worth more than this row), so the page remembers its own last
+// choice where remembering works: the node's sealed ui-state document.
+async function notifEchoKeep(name) {
+  try {
+    const doc = await api('/api/ui/state').catch(() => ({}));
+    const next = Object.assign({}, doc && typeof doc === 'object' ? doc : {}, { notif_echo: name });
+    await api('/api/ui/state', { method: 'PUT', body: JSON.stringify(next) });
+  } catch (_) { /* the echo is a courtesy */ }
+}
+let notifEchoAsked = false;
+async function notifEchoRecall() {
+  if (notifEchoAsked) return;
+  notifEchoAsked = true;
+  try {
+    const doc = await api('/api/ui/state');
+    const v = doc && doc.notif_echo;
+    if (['hidden', 'space', 'sender', 'preview'].includes(v) && v !== notifChoice) {
+      notifChoice = v;
+      notifSyncUI();
+    }
+  } catch (_) { /* the default stands */ }
+}
+
 function notifSyncUI() {
+  notifEchoRecall();
   pickSeg('notifPolicy', notifChoice);
   const what = document.getElementById('notifPolicyWhat');
   if (what) what.textContent = t('notif.' + notifChoice);
@@ -288,6 +331,19 @@ function unlockSyncUI() {
   const sec = document.getElementById('unlockSec');
   if (!sec) return;
   sec.hidden = !HOST.unlockRemembered();
+  // The host is the truth: the control shows what the vault says, not what
+  // was pressed — a re-seal that failed leaves it where it was.
+  const mode = HOST.receiveLocked();
+  const row = document.getElementById('receiveLockedRow');
+  if (row) row.hidden = mode === 'na';
+  if (mode !== 'na') pickSeg('receiveLocked', mode);
+}
+
+function setReceiveLocked(on) {
+  const ok = HOST.setReceiveLocked(on);
+  const msg = document.getElementById('unlockMsg');
+  if (msg) msg.textContent = ok ? '' : t('ui.set.dev.locked.failed');
+  unlockSyncUI();
 }
 
 function forgetPassphrase() {

@@ -68,10 +68,43 @@ internal class SystemPresenter(
     private var presentCalls = 0
     private var clearCalls = 0
 
+    /**
+     * What is in the shade right now, by tag — kept so a mode that follows
+     * the lock (SENDER) can be re-rendered when the lock changes. Only the
+     * aggregation the coordinator already handed over; nothing is decided
+     * from it.
+     */
+    private val active = LinkedHashMap<String, NotificationCoordinator.Presentation>()
+
+    private fun deviceLocked(): Boolean = try {
+        app.getSystemService(android.app.KeyguardManager::class.java)?.isDeviceLocked ?: true
+    } catch (t: Throwable) {
+        true        // not knowing is answered strictly
+    }
+
+    /**
+     * The phone was locked or unlocked. Under SENDER the words belong on an
+     * unlocked screen only, so every card is drawn again for the new state —
+     * SILENTLY: nothing arrived, and the person has already been told.
+     */
+    @Synchronized
+    fun onLockChanged() {
+        if (!policy.followsTheLock || active.isEmpty()) return
+        val live = try { liveTags() } catch (t: Throwable) { return }
+        for (p in active.values.toList()) {
+            if (p.tag in live) render(p, silent = true) else active.remove(p.tag)
+        }
+    }
+
     @Synchronized
     override fun present(p: NotificationCoordinator.Presentation) {
         presentCalls++
         record(p)
+        active[p.tag] = p
+        render(p, silent = false)
+    }
+
+    private fun render(p: NotificationCoordinator.Presentation, silent: Boolean) {
 
         // WHICH RENDERER IS A PRIVACY DECISION, not a capability one. The
         // conversation surface carries names and people into system metadata
@@ -79,12 +112,12 @@ internal class SystemPresenter(
         // through a policy a person has chosen — and until AR-1b.7 asks them,
         // the default is the strict mode and this branch is never taken.
         val rendering = ConversationProjection.of(
-            policy, p.spaceLabel, p.items,
+            policy, p.spaceLabel, p.items, deviceLocked(),
         ) { device -> ledger.personKey(device, senderOf(p, device)) }
 
         if (rendering.useConversationSurface) {
             val conversation = conversations.build(
-                p, rendering, openSpace(p.spaceId), dismissed(p.spaceId),
+                p, rendering, openSpace(p.spaceId), dismissed(p.spaceId), silent,
             )
             if (conversation != null) {
                 post(p, conversation)
@@ -126,6 +159,7 @@ internal class SystemPresenter(
             // with a flat list and no way to collapse it.
             .setGroup(GroupSummary.KEY)
             .setGroupAlertBehavior(Notification.GROUP_ALERT_CHILDREN)
+            .setOnlyAlertOnce(silent)
             .build()
 
         post(p, notification)
@@ -244,6 +278,7 @@ internal class SystemPresenter(
     @Synchronized
     override fun retireConversation(spaceId: String, tag: String) {
         shown.remove(spaceId)
+        active.remove(tag)
         try {
             shortcuts.teardownConversationSurface(spaceId, tag)
         } catch (t: Throwable) {
@@ -277,6 +312,7 @@ internal class SystemPresenter(
     override fun clear(spaceId: String, tag: String) {
         clearCalls++
         shown.remove(spaceId)
+        active.remove(tag)
         try {
             nm?.cancel(tag, NOTIFICATION_ID)
             updateSummary()

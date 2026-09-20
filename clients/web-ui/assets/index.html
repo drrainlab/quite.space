@@ -1190,6 +1190,7 @@
     <div class="segmented" id="notifPolicy">
       <button data-v="hidden" data-i18n="ui.set.dev.notif.nothing" data-on-click="168">Nothing</button>
       <button data-v="space" data-i18n="ui.set.dev.notif.space" data-on-click="169">Space name</button>
+      <button data-v="sender" data-i18n="ui.set.dev.notif.sender" data-on-click="278">Who wrote</button>
       <button data-v="preview" data-i18n="ui.set.dev.notif.preview" data-on-click="170">Full preview</button>
     </div>
     <p class="hint" id="notifPolicyWhat" style="margin-left:4px"></p>
@@ -1202,6 +1203,18 @@
     <p class="sec-label" data-i18n="ui.set.dev.unlock">Opening this app</p>
     <p class="hint" style="margin-left:4px" data-i18n="ui.set.dev.unlock.hint">Saved in Android's own keystore, so Quiet opens without asking. It cannot
       leave the phone — but anyone who can unlock the phone can open Quiet.</p>
+    <!-- AN-3. Android restarts the app in a pocket — after an update, after
+         a battery saver's sweep — and whether the node may open THERE is this
+         switch. On by default, by the owner's decision; what it costs is said
+         under it rather than in a changelog. -->
+    <div id="receiveLockedRow" hidden>
+      <p class="sec-label" data-i18n="ui.set.dev.locked">While the phone is locked</p>
+      <div class="segmented" id="receiveLocked">
+        <button data-v="on" data-i18n="ui.set.dev.locked.on" data-on-click="276">Keep receiving</button>
+        <button data-v="off" data-i18n="ui.set.dev.locked.off" data-on-click="277">Wait for unlock</button>
+      </div>
+      <p class="hint" style="margin-left:4px" data-i18n="ui.set.dev.locked.hint">If Android restarts Quiet while the phone is locked, Quiet may open itself and messages keep arriving. With “Wait for unlock” it only tells you something is waiting, and opens when you unlock the phone — a locked phone then guards Quiet too.</p>
+    </div>
     <div class="row">
       <button class="btn-plain" data-i18n="ui.set.dev.unlock.forget" data-on-click="171">Ask for the passphrase every time</button>
     </div>
@@ -1209,8 +1222,9 @@
   </div>
   <div class="settings-sec">
     <p class="hint" style="margin-left:4px" data-i18n="ui.set.dev.notif.warn">A notification is not private: its text shows on the lock screen, and
-      every app with notification access can read it. That is why this starts
-      at “Nothing”.</p>
+      every app with notification access can read it. This starts at “Who wrote”,
+      which keeps the words off a locked screen; “Nothing” tells Android nothing
+      at all.</p>
     <p class="hint warn" id="notifMsg" style="margin-left:4px"></p>
   </div>
   </div>

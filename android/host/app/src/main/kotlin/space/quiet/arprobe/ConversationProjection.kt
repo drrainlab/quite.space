@@ -71,6 +71,23 @@ object ConversationProjection {
     )
 
     /**
+     * The words are withheld, so what is left is WHO and HOW MANY: one line
+     * per person, at the time of their latest message. Twelve lines reading
+     * "New message" would say nothing a count does not, and would say how
+     * busy the conversation is in a shape that invites reading the rhythm.
+     */
+    private fun withheld(lines: List<Line>): List<Line> =
+        lines.groupBy { it.personKey }.map { (_, theirs) ->
+            val last = theirs.last()
+            last.copy(
+                // The name must survive the collapse even when only an
+                // earlier line carried one.
+                senderLabel = theirs.lastOrNull { it.senderLabel.isNotEmpty() }?.senderLabel ?: "",
+                text = if (theirs.size == 1) "New message" else "${theirs.size} new messages",
+            )
+        }.sortedBy { it.occurredAtUnixMs }
+
+    /**
      * @param personKeyOf maps a sender's protocol device to the device-local
      *   opaque key. Passed in rather than looked up, so this stays pure and the
      *   storage stays in one place.
@@ -80,7 +97,21 @@ object ConversationProjection {
         spaceLabel: String,
         items: List<NotificationCoordinator.Item>,
         personKeyOf: (device: String) -> String,
+    ): Rendering = of(policy, spaceLabel, items, deviceLocked = true, personKeyOf = personKeyOf)
+
+    /**
+     * @param deviceLocked whether the phone is locked right now — it decides
+     *   what SENDER may show. The overload above answers "locked" for a
+     *   caller that does not ask, which is the strict answer.
+     */
+    fun of(
+        policy: PresentationPolicy,
+        spaceLabel: String,
+        items: List<NotificationCoordinator.Item>,
+        deviceLocked: Boolean,
+        personKeyOf: (device: String) -> String,
     ): Rendering {
+        val showText = policy.mayShowText(deviceLocked)
         val shown = if (items.size <= MESSAGES_SHOWN) items
         else items.subList(items.size - MESSAGES_SHOWN, items.size)
 
@@ -92,9 +123,11 @@ object ConversationProjection {
                     // have arrived — and an empty Person name is better than a
                     // guess with somebody's device id in it.
                     senderLabel = if (policy.mayNameSender) it.senderLabel else "",
-                    text = if (policy.mayShowText) it.previewText else "",
+                    text = if (showText) it.previewText else "",
                     occurredAtUnixMs = it.occurredAtUnixMs,
                 )
+            }.let { all ->
+                if (showText) all else withheld(all)
             }
 
         val n = items.size

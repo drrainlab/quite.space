@@ -33,35 +33,59 @@ package space.quiet.arprobe
  *             sender, the space's name, and a line of the message.
  * ```
  *
- * A fourth mode — the sender's name without the text — is a reasonable thing
- * to want and is deliberately not invented here. Three modes that each mean
- * something are better than four where one is a compromise nobody asked for;
- * it can be added when somebody does.
+ *   SENDER    who is writing and where, ALWAYS; the words only while the
+ *             phone is unlocked. This file once said a fourth mode "can be
+ *             added when somebody asks". Somebody did (AN-3): it is what a
+ *             person means by "like every other messenger" — a locked phone
+ *             on a table says Mike wrote, not what Mike wrote. It uses the
+ *             conversation surface exactly as PREVIEW does, so it publishes
+ *             the same identity into system metadata; what it withholds is
+ *             the text, and only from a locked screen.
+ *
+ *             THE LOCK IS ENFORCED HERE, NOT LEFT TO ANDROID. The platform's
+ *             own redaction (VISIBILITY_PRIVATE) is a system preference that
+ *             ships switched OFF on most phones, so relying on it would make
+ *             this mode a promise kept only where somebody had already
+ *             changed a setting they have never heard of. The presenter asks
+ *             whether the device is locked and renders accordingly, and
+ *             re-renders — silently — when that changes.
  */
 enum class PresentationPolicy {
     HIDDEN,
     SPACE,
+    SENDER,
     PREVIEW;
 
     /** Whether the conversation APIs may be used at all. */
     val mayUseConversationSurface: Boolean
-        get() = this == PREVIEW
+        get() = this == SENDER || this == PREVIEW
 
     /** Whether a long-lived shortcut may be published. */
     val mayPublishShortcut: Boolean
-        get() = this == PREVIEW
+        get() = this == SENDER || this == PREVIEW
 
     /** Whether the space's name may leave this process. */
     val mayNameSpace: Boolean
-        get() = this == SPACE || this == PREVIEW
+        get() = this != HIDDEN
 
     /** Whether a sender may be named, in the notification or in metadata. */
     val mayNameSender: Boolean
-        get() = this == PREVIEW
+        get() = this == SENDER || this == PREVIEW
 
-    /** Whether any of the message itself may be shown. */
-    val mayShowText: Boolean
-        get() = this == PREVIEW
+    /**
+     * Whether the message itself may be shown, given whether the phone is
+     * locked RIGHT NOW. Locked is the default argument on purpose: a caller
+     * that forgot to ask gets the strict answer.
+     */
+    fun mayShowText(deviceLocked: Boolean = true): Boolean = when (this) {
+        PREVIEW -> true
+        SENDER -> !deviceLocked
+        else -> false
+    }
+
+    /** Whether what is shown depends on the lock, so a change must re-render. */
+    val followsTheLock: Boolean
+        get() = this == SENDER
 
     /**
      * Whether moving from [previous] to this mode must take system surfaces
@@ -77,15 +101,26 @@ enum class PresentationPolicy {
 
     companion object {
         /**
-         * The default until a person has been asked (AR-1b.7b).
+         * The default until a person chooses otherwise.
          *
-         * Strictest, deliberately: every other choice publishes something
-         * about a conversation to software outside this app, and defaults
-         * chosen for us are how that happens without anybody deciding.
+         * IT WAS HIDDEN, and the reasoning was sound: every other choice
+         * publishes something about a conversation to software outside this
+         * app. It is SENDER now by the owner's decision (AN-3), made against
+         * a measured cost of the strict default: a notification that names
+         * nobody is one people learn to ignore, and in the situations this
+         * product is also built for — somebody waiting on a word that
+         * matters — an ignored notification is the app failing. The words
+         * stay off a locked screen; HIDDEN is one tap away and says so.
          */
-        val DEFAULT = HIDDEN
+        val DEFAULT = SENDER
 
+        /**
+         * A word that is not a mode — or no word at all — reads as the
+         * STRICTEST one, not as the default: the default is a decision about
+         * people who have not chosen, and a value nobody can interpret is not
+         * that. Being wrong towards silence is recoverable.
+         */
         fun parse(name: String?): PresentationPolicy =
-            entries.firstOrNull { it.name.equals(name, ignoreCase = true) } ?: DEFAULT
+            entries.firstOrNull { it.name.equals(name, ignoreCase = true) } ?: HIDDEN
     }
 }

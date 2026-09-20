@@ -42,6 +42,61 @@ class ConversationProjectionTest {
         assertEquals("A new message", r.genericText)
     }
 
+    // SENDER (AN-3): who and where always; the words on an unlocked phone only.
+
+    @Test
+    fun senderOnALockedPhoneNamesThePersonAndWithholdsEveryWord() {
+        val r = ConversationProjection.of(
+            PresentationPolicy.SENDER, "Rescue", listOf(
+                item("e1", text = "north ridge, two people", at = 1),
+                item("e2", text = "bring rope", at = 2),
+                item("e3", device = "device-c", sender = "carol", text = "on my way", at = 3),
+            ), deviceLocked = true, personKeyOf = ::personKey,
+        )
+        assertTrue(r.useConversationSurface)
+        assertEquals("Rescue", r.conversationTitle)
+        assertEquals("one line per person, not one per message", 2, r.lines.size)
+        assertEquals("bob", r.lines[0].senderLabel)
+        assertEquals("2 new messages", r.lines[0].text)
+        assertEquals("carol", r.lines[1].senderLabel)
+        assertEquals("New message", r.lines[1].text)
+        assertTrue(
+            "not one word of a message may reach a locked screen",
+            r.lines.none { l -> listOf("ridge", "rope", "way").any { it in l.text } },
+        )
+    }
+
+    @Test
+    fun senderOnAnUnlockedPhoneReadsLikeAPreview() {
+        val r = ConversationProjection.of(
+            PresentationPolicy.SENDER, "Rescue",
+            listOf(item("e1", text = "bring rope")), deviceLocked = false, personKeyOf = ::personKey,
+        )
+        assertEquals(listOf("bring rope"), r.lines.map { it.text })
+    }
+
+    @Test
+    fun aCallerThatForgotToAskAboutTheLockGetsTheStrictAnswer() {
+        val r = ConversationProjection.of(
+            PresentationPolicy.SENDER, "Rescue", listOf(item("e1", text = "bring rope")), ::personKey,
+        )
+        assertEquals(listOf("New message"), r.lines.map { it.text })
+    }
+
+    @Test
+    fun theLockChangesNothingForTheOtherModes() {
+        for (locked in listOf(true, false)) {
+            val preview = ConversationProjection.of(
+                PresentationPolicy.PREVIEW, "S", listOf(item("e1", text = "hello")), locked, ::personKey,
+            )
+            assertEquals(listOf("hello"), preview.lines.map { it.text })
+            val space = ConversationProjection.of(
+                PresentationPolicy.SPACE, "S", listOf(item("e1", text = "hello")), locked, ::personKey,
+            )
+            assertTrue(space.lines.isEmpty())
+        }
+    }
+
     @Test
     fun spaceNamesTheRoomAndNobodyInIt() {
         val r = ConversationProjection.of(

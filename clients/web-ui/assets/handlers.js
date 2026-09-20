@@ -321,6 +321,9 @@ const UI_HANDLERS = [
   /* 273 click    */ (event, el) => { document.getElementById('dlgMarker').close(); },
   /* 274 click    */ (event, el) => { toggleMembers(); },
   /* 275 click    */ (event, el) => { convMoreToggle(event, el); },
+  /* 276 click    */ (event, el) => { setReceiveLocked(true); },
+  /* 277 click    */ (event, el) => { setReceiveLocked(false); },
+  /* 278 click    */ (event, el) => { notifPick('sender'); },
 ];
 
 /** Attach every handler declared in the markup.

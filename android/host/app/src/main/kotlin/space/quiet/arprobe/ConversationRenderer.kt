@@ -46,6 +46,7 @@ internal class ConversationRenderer(
         r: ConversationProjection.Rendering,
         contentIntent: android.app.PendingIntent,
         deleteIntent: android.app.PendingIntent,
+        silent: Boolean = false,
     ): Notification? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
         if (!r.useConversationSurface) return null
@@ -105,6 +106,8 @@ internal class ConversationRenderer(
             .setDeleteIntent(deleteIntent)
             .setGroup(GroupSummary.KEY)
             .setGroupAlertBehavior(Notification.GROUP_ALERT_CHILDREN)
+            // A re-render for a lock change is not an arrival.
+            .setOnlyAlertOnce(silent)
             .build()
     }
 

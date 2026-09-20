@@ -132,6 +132,39 @@ class QuietActivity : ComponentActivity() {
     /** What the last failed attempt was refused for, shown on the panel. */
     private var unlockMessage: String? = null
 
+    /**
+     * THE INTERFACE IS LOCKED, WHETHER OR NOT THE NODE IS OPEN (AN-3).
+     *
+     * A code and a face used to guard the OPENING OF THE NODE, and so they
+     * were asked only when the node was closed — which, with "stay connected"
+     * on, is almost never: the app opened without a question for as long as
+     * the process lived, and the keypad was something a person met after a
+     * reboot. Meanwhile the same arrangement kept the node from opening in a
+     * pocket, so the phone heard nothing anybody could read.
+     *
+     * Both halves are turned around, the way every messenger on the phone
+     * already works: the NODE opens by itself in the background and keeps
+     * receiving; the SCREEN is what the code and the face guard, every time
+     * the app comes back after [LOCK_AFTER_MS] away. While this is set the
+     * WebView is not shown and nothing is pushed into it.
+     */
+    private var uiLocked = false
+
+    /** The gate's panel is already up — a re-render must not wipe typed digits. */
+    private var gateUp = false
+
+    /** The face was already asked for in this lock; a refusal must not loop it. */
+    private var bioAsked = false
+
+    /** When the app left the screen (elapsedRealtime), or 0. */
+    private var leftAt = 0L
+
+    /**
+     * A typed passphrase that could not be checked against an open node, so
+     * the node is being closed to let the ordinary open path judge it.
+     */
+    private var reopenWith: String? = null
+
     /** What is in the field, so rebuilding the panel does not empty it. */
     private var lastTyped: String = ""
 
@@ -432,6 +465,19 @@ class QuietActivity : ComponentActivity() {
                     // the next time it opens" is not what happens.
                     unlockRemembered = { vault.has() || bio.has() },
                     forgetPassphrase = { vault.forget(); bio.forget() },
+                    // AN-3. Governs only the copy kept WITHOUT a question: a
+                    // passphrase sealed behind a face or a code is the
+                    // person's own lock and nothing here reaches around it.
+                    // Typed every launch, by choice: nothing is kept, so
+                    // there is nothing for the setting to govern.
+                    receiveLockedApplies = { vault.has() || bio.has() || passcode.has() },
+                    receiveLocked = { vault.receiveWhileLocked() },
+                    setReceiveLocked = { on ->
+                        // OFF BEHIND A FACE MEANS NO PLAIN COPY AT ALL — that
+                        // was the face's whole promise before AN-3, and
+                        // switching this off is asking for it back.
+                        vault.setReceiveWhileLocked(on, openedPassphrase, keepCopy = on || !bio.has())
+                    },
                     // BOTH ANSWER WITH A DIALOG ON THE PHONE'S OWN SCREEN,
                     // never with a value into the page — the bridge's doctrine
                     // stands: the passphrase has no getter anywhere.
@@ -593,8 +639,10 @@ class QuietActivity : ComponentActivity() {
         // one of which cost a real handset to learn. Three things now want to
         // own this moment; the one place they are ranked is a file with tests
         // in front of it.
+        uiLocked = guarded()
         when (UnlockRoute.of(bio.has(), passcode.has(), vault.has())) {
-            UnlockRoute.BIOMETRIC ->
+            UnlockRoute.BIOMETRIC -> {
+                bioAsked = true
                 // NOTHING IS NEEDED ON REFUSAL. The prompt is raised over the
                 // panel the listener draws a moment later, and that panel is
                 // already the next door down — the keypad when a code is
@@ -602,10 +650,8 @@ class QuietActivity : ComponentActivity() {
                 // Activity falls through in and the order UnlockRoute.refused
                 // returns are the same order, and that is not a coincidence
                 // worth relying on quietly: see the test that pins it.
-                bio.unlock(this, onOpen = { stored ->
-                    autoAttempt = stored
-                    controller.ensureStarted(stored, null, true)
-                }, onRefused = { })
+                bio.unlock(this, onOpen = { stored -> proven(stored, typed = false) }, onRefused = { })
+            }
 
             UnlockRoute.REMEMBERED ->
                 vault.load()?.let { stored ->
@@ -625,6 +671,105 @@ class QuietActivity : ComponentActivity() {
     override fun onDestroy() {
         controller.removeListener(runtimeListener)
         super.onDestroy()
+    }
+
+    /** Whether a code or a face stands in front of this app. */
+    private fun guarded(): Boolean = bio.has() || passcode.has()
+
+    // onStop/onStart, not onPause/onResume: the face prompt, a permission
+    // dialog and the file chooser all PAUSE this Activity without anybody
+    // having left, and a gate that re-locked behind its own prompt would
+    // never open.
+    override fun onStop() {
+        leftAt = android.os.SystemClock.elapsedRealtime()
+        super.onStop()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        val away = if (leftAt == 0L) 0L else android.os.SystemClock.elapsedRealtime() - leftAt
+        if (!uiLocked && guarded() && away > LOCK_AFTER_MS) {
+            uiLocked = true
+            gateUp = false
+            bioAsked = false
+            render(controller.state())
+        }
+    }
+
+    /**
+     * A code, a face or a checked passphrase has just answered. The node may
+     * or may not be open: the background opens it without asking anybody, so
+     * what was proven here is the PERSON, and what it unlocks is the screen.
+     */
+    private fun proven(pass: String, typed: Boolean) {
+        uiLocked = false
+        gateUp = false
+        unlockMessage = null
+        openedPassphrase = pass
+        if (controller.isAlive()) {
+            keepBackgroundCopy(pass)
+            controller.notifications.onForeground(true)
+            render(RuntimeController.STATE_ALIVE)
+            return
+        }
+        // Closed: the ordinary open path, which also PROVES the value before
+        // anything is written down.
+        if (typed) pendingPassphrase = pass else autoAttempt = pass
+        controller.ensureStarted(pass, null, true)
+    }
+
+    /**
+     * The copy the background opens with (AN-3) — kept beside a code or a
+     * face when the person lets the node receive while locked, because
+     * neither of those can answer in a pocket. Only ever a value the node is
+     * open with.
+     */
+    private fun keepBackgroundCopy(pass: String) {
+        if (vault.receiveWhileLocked() && !vault.has()) vault.save(pass)
+    }
+
+    /**
+     * A passphrase typed at the gate while the node is already open. There
+     * is no open to judge it, so it is compared with the one the node is
+     * known to be open with; when nothing here knows that, the node is
+     * closed and opened again with what was typed — slower, and never wrong.
+     */
+    private fun checkTyped(pass: String) {
+        val truth = openedPassphrase ?: vault.load()
+        when {
+            truth == null -> {
+                reopenWith = pass
+                controller.stop()
+            }
+            java.security.MessageDigest.isEqual(
+                truth.toByteArray(Charsets.UTF_8), pass.toByteArray(Charsets.UTF_8),
+            ) -> proven(pass, typed = true)
+            else -> {
+                unlockMessage = "That passphrase does not open this device's data."
+                gateUp = false
+                showGate()
+            }
+        }
+    }
+
+    /** What the panel says about the node — it must not claim "not running" over one that is. */
+    private fun closedText(): String =
+        if (controller.isAlive()) "Locked. Quiet is still receiving."
+        else "Quiet is not running on this device yet."
+
+    private fun showGate() {
+        web.visibility = View.GONE
+        // Nobody is reading: a message for the conversation underneath must
+        // still notify.
+        controller.notifications.onForeground(false)
+        if (!gateUp) {
+            gateUp = true
+            showStatus(closedText(), unlockable = true)
+        }
+        if (bio.has() && !bioAsked) {
+            bioAsked = true
+            bio.unlock(this, onOpen = { stored -> proven(stored, typed = false) }, onRefused = { })
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -653,7 +798,7 @@ class QuietActivity : ComponentActivity() {
         // the web UI has to report, and that seam lands with b.7 — until it
         // does, a message for the conversation being read still notifies,
         // which is the safe direction to be wrong in.
-        controller.notifications.onForeground(true)
+        controller.notifications.onForeground(!uiLocked)
         controller.setForeground(true)
         applyPermissionState()
         // AR-1c — THE MODE COMES BACK HERE, AND ONLY HERE.
@@ -723,6 +868,21 @@ class QuietActivity : ComponentActivity() {
                 // passphrase the core has just opened with, so nothing
                 // unverified can ever be sealed. Offered once per instance
                 // and never nagged — the politeness recoveryOffered keeps.
+                // WHATEVER JUST OPENED THE NODE FROM THIS SCREEN PROVED THE
+                // PERSON TOO. autoAttempt is spent here: left standing it
+                // would unlock every later gate by itself.
+                (pendingPassphrase ?: autoAttempt)?.let { pass ->
+                    uiLocked = false
+                    gateUp = false
+                    openedPassphrase = pass
+                    keepBackgroundCopy(pass)
+                }
+                autoAttempt = null
+                if (uiLocked) {
+                    // The background opened it; nobody has answered here yet.
+                    showGate()
+                    return
+                }
                 var offering = false
                 pendingPassphrase?.let { pass ->
                     pendingPassphrase = null
@@ -732,7 +892,7 @@ class QuietActivity : ComponentActivity() {
                     // back on every successful open would quietly reopen the
                     // hole offerFace closed — the app would auto-open before
                     // the sensor was ever asked.
-                    if (!vault.has() && !bio.has()) vault.save(pass)
+                    if (!vault.has() && (vault.receiveWhileLocked() || !bio.has())) vault.save(pass)
                     val chosen = pendingBindCode
                     if (chosen != null) {
                         // The onboarding already asked for the code; binding it
@@ -779,6 +939,14 @@ class QuietActivity : ComponentActivity() {
                 // status, and throwing it away is what made this screen so
                 // hard to get past: a person typed a word, pressed Open, and
                 // got back the same blank field with no sentence anywhere.
+                reopenWith?.let { typed ->
+                    // checkTyped closed the node to have this judged properly.
+                    reopenWith = null
+                    pendingPassphrase = typed
+                    controller.ensureStarted(typed, null, true)
+                    return
+                }
+                gateUp = false
                 pendingBindCode = null
                 pendingPassphrase?.let {
                     pendingPassphrase = null
@@ -794,7 +962,7 @@ class QuietActivity : ComponentActivity() {
                             "Enter it again."
                     }
                 }
-                showStatus("Quiet is not running on this device yet.", unlockable = true)
+                showStatus(closedText(), unlockable = true)
             }
         }
     }
@@ -948,7 +1116,7 @@ class QuietActivity : ComponentActivity() {
                     // One press, and the code is out of the way for this
                     // attempt only — nothing is forgotten by asking.
                     unlockMessage = null
-                    showPassphraseStatus("Quiet is not running on this device yet.", unlockable = true)
+                    showPassphraseStatus(closedText(), unlockable = true)
                 },
             )
             return
@@ -1038,7 +1206,12 @@ class QuietActivity : ComponentActivity() {
                         // and only now: forgetting first would leave a phone
                         // with no stored passphrase at all if the prompt were
                         // cancelled halfway.
-                        vault.forget()
+                        //
+                        // AN-3: unless the node is to keep receiving while
+                        // the phone is locked — a face cannot answer in a
+                        // pocket. The screen is then what the face guards
+                        // (uiLocked), and that holds whatever the node does.
+                        if (!vault.receiveWhileLocked()) vault.forget()
                     } else {
                         Toast.makeText(this, "That did not turn on.", Toast.LENGTH_SHORT).show()
                     }
@@ -1081,8 +1254,7 @@ class QuietActivity : ComponentActivity() {
                 // Straight into the ordinary open path — the controller owns
                 // the directory and the lock, exactly as with a typed
                 // passphrase. Nothing about the node knows a code was used.
-                pendingPassphrase = r.passphrase
-                controller.ensureStarted(r.passphrase, null, true)
+                proven(r.passphrase, typed = true)
             }
             is PasscodeVault.Attempt.Wrong -> {
                 asked?.let { Haptics.refuse(it) }
@@ -1091,9 +1263,16 @@ class QuietActivity : ComponentActivity() {
             }
             PasscodeVault.Attempt.LockedOut -> {
                 asked?.let { Haptics.refuse(it) }
+                // THE REMEMBERED COPY GOES WITH THE CODE. It did not, and ten
+                // wrong guesses therefore ended in an app that opened by
+                // itself on the next launch: the code was gone, the route
+                // fell through to "remembered", and nobody was asked
+                // anything. Somebody who has just failed ten times is who
+                // the passphrase is for.
+                vault.forget()
                 unlockMessage = "Too many tries. The code is gone — " +
                     "your passphrase still opens everything."
-                showPassphraseStatus("Quiet is not running on this device yet.", unlockable = true)
+                showPassphraseStatus(closedText(), unlockable = true)
             }
             PasscodeVault.Attempt.Malformed -> {
                 asked?.let { Haptics.refuse(it) }
@@ -1105,7 +1284,7 @@ class QuietActivity : ComponentActivity() {
                 // The hardware key would not answer — on a locked phone that
                 // is the ordinary reply, not a wrong code. Nothing was spent.
                 unlockMessage = "Unlock the phone first, then try again."
-                showPassphraseStatus("Quiet is not running on this device yet.", unlockable = true)
+                showPassphraseStatus(closedText(), unlockable = true)
             }
         }
     }
@@ -1520,6 +1699,7 @@ class QuietActivity : ComponentActivity() {
             panel.addView(SpaceLook.primary(this, if (fresh) "Create and open" else "Open").apply {
                 setOnClickListener {
                     val pass = passOrComplain() ?: return@setOnClickListener
+                    if (controller.isAlive()) { checkTyped(pass); return@setOnClickListener }
                     pendingPassphrase = pass
                     // The CONTROLLER opens the node. This Activity never calls
                     // the binding's Start and never resolves a data directory
@@ -1777,6 +1957,15 @@ class QuietActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "quiet-activity"
+
+        /**
+         * How long the app may be off the screen before a code or a face is
+         * asked for again. A minute: long enough that answering a call or
+         * pasting from another app does not cost four digits, short enough
+         * that a phone put down on a table is locked by the time anybody
+         * else picks it up.
+         */
+        private const val LOCK_AFTER_MS = 60_000L
 
         /**
          * Mirrors kernel/storage's own floor (ErrPassphraseTooShort). Stated

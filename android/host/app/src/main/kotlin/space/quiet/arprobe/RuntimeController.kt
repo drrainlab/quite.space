@@ -250,6 +250,35 @@ class RuntimeController private constructor(appContext: Context) {
             Log.w(TAG, "network callback unavailable", t)
         }
 
+        // THE LOCK, for the notification mode that follows it (SENDER shows
+        // the words on an unlocked phone only). SCREEN_OFF rather than some
+        // "locked" broadcast, because there is none: the keyguard engages a
+        // moment after the screen goes dark, so the question is asked again
+        // a little later — until then the strict answer stands by itself,
+        // because a dark screen shows nothing either way.
+        try {
+            val f = android.content.IntentFilter().apply {
+                addAction(android.content.Intent.ACTION_USER_PRESENT)
+                addAction(android.content.Intent.ACTION_SCREEN_OFF)
+            }
+            val r = object : android.content.BroadcastReceiver() {
+                override fun onReceive(c: Context?, i: android.content.Intent?) {
+                    val off = i?.action == android.content.Intent.ACTION_SCREEN_OFF
+                    worker.schedule(
+                        { presenter.onLockChanged() },
+                        if (off) 6000L else 0L, java.util.concurrent.TimeUnit.MILLISECONDS,
+                    )
+                }
+            }
+            if (android.os.Build.VERSION.SDK_INT >= 33) {
+                app.registerReceiver(r, f, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                app.registerReceiver(r, f)
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "lock receiver unavailable", t)
+        }
+
         // ARMED AT APPLICATION SCOPE, BEFORE ANY CORE IS OPEN — and that
         // ordering is the invariant, not an optimisation. The binding arms the
         // runtime only after node.Open has returned, so history cannot reach
@@ -692,6 +721,7 @@ class RuntimeController private constructor(appContext: Context) {
                 // week ahead is written afresh.
                 wake.stop()
                 cancelLockedNudge()
+                disarmUnlockRetry()
                 try {
                     Quietcore.writeWatchPlan(DirectWatch.planFile(app).absolutePath)
                 } catch (t: Throwable) {
@@ -745,6 +775,7 @@ class RuntimeController private constructor(appContext: Context) {
                     }
                 }
             } else {
+                if (PassphraseVault(app).has()) armUnlockRetry()
                 doorbellNudge()
             }
         }
@@ -789,6 +820,9 @@ class RuntimeController private constructor(appContext: Context) {
                 ensureStarted(stored, null, true)
                 return@execute
             }
+            // A passphrase IS remembered and only the locked screen stands
+            // between it and the node: be there the moment that changes.
+            if (PassphraseVault(app).has()) armUnlockRetry()
             // IT CANNOT OPEN — so it WATCHES (AN-2). No key, no passphrase:
             // only the addresses the open node wrote down, parked at the
             // relay. The one thing it can learn is that something is
@@ -808,6 +842,73 @@ class RuntimeController private constructor(appContext: Context) {
             if (!watching) {
                 // Nothing to watch with: no plan yet, or it ran out.
                 lockedNudge("Quiet was closed by Android — open it to keep receiving")
+            }
+        }
+    }
+
+    /**
+     * THE PHONE WAS UNLOCKED — which is all the remembered passphrase was
+     * ever waiting for (AN-3).
+     *
+     * The vault's key is usable only on an unlocked device, so a process
+     * Android restarted in a pocket cannot open the node and falls back to
+     * the keyless watch. Until now it then stayed closed until somebody
+     * tapped the ICON — though the condition the key asks for is met the
+     * moment the screen unlocks, app or no app. A person who sees "something
+     * is waiting" and unlocks their phone has done everything the key
+     * requires; making them also find the app was our gap, not their choice.
+     *
+     * Nothing is weakened by this: same key, same requirement, no copy of
+     * anything. A node whose owner chose NOT to remember the passphrase has
+     * no vault entry, never arms this, and stays locked exactly as before.
+     */
+    private val unlockArmed = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val unlockReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(c: Context?, i: android.content.Intent?) {
+            disarmUnlockRetry()
+            openAfterUnlock(attempt = 0)
+        }
+    }
+
+    private fun armUnlockRetry() {
+        if (!unlockArmed.compareAndSet(false, true)) return
+        try {
+            val f = android.content.IntentFilter(android.content.Intent.ACTION_USER_PRESENT)
+            if (android.os.Build.VERSION.SDK_INT >= 33) {
+                app.registerReceiver(unlockReceiver, f, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                app.registerReceiver(unlockReceiver, f)
+            }
+            Log.i(TAG, "will open when the phone is unlocked")
+        } catch (t: Throwable) {
+            unlockArmed.set(false)
+            Log.w(TAG, "arm unlock retry", t)
+        }
+    }
+
+    private fun disarmUnlockRetry() {
+        if (!unlockArmed.compareAndSet(true, false)) return
+        try { app.unregisterReceiver(unlockReceiver) } catch (t: Throwable) { /* never registered */ }
+    }
+
+    /**
+     * USER_PRESENT can land a beat before the keystore agrees the device is
+     * unlocked, so a refusal is retried a few times before it is believed —
+     * and a believed refusal re-arms for the next unlock instead of giving up.
+     */
+    private fun openAfterUnlock(attempt: Int) {
+        worker.execute {
+            if (isAlive()) return@execute
+            val stored = try { PassphraseVault(app).load() } catch (t: Throwable) { null }
+            when {
+                stored != null -> {
+                    Log.i(TAG, "unlocked: opening the node")
+                    ensureStarted(stored, null, true)
+                }
+                attempt < 3 -> worker.schedule(
+                    { openAfterUnlock(attempt + 1) }, 1500, java.util.concurrent.TimeUnit.MILLISECONDS,
+                )
+                PassphraseVault(app).has() -> armUnlockRetry()
             }
         }
     }
@@ -1082,8 +1183,9 @@ class RuntimeController private constructor(appContext: Context) {
         private fun storedPolicy(app: Context): PresentationPolicy {
             val raw = app.getSharedPreferences("quiet-notifications", Context.MODE_PRIVATE)
                 .getString(KEY_POLICY, null) ?: return PresentationPolicy.DEFAULT
-            return runCatching { PresentationPolicy.valueOf(raw) }
-                .getOrDefault(PresentationPolicy.DEFAULT)
+            // A stored word nobody can read is NOT "has not chosen": it reads
+            // as the strictest mode (PresentationPolicy.parse).
+            return PresentationPolicy.parse(raw)
         }
 
         private const val TAG = "quiet-runtime"

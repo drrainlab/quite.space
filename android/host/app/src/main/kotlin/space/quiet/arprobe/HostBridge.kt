@@ -55,6 +55,12 @@ internal class HostBridge(
     private val openNotificationSettings: () -> Boolean = { false },
     private val batteryRestricted: () -> Boolean = { false },
     private val askBatteryExemption: () -> Boolean = { false },
+    // AN-3: whether the setting applies at all (something is remembered on
+    // this device), whether it is on, and the switch itself. Two booleans
+    // rather than one word: only a boolean crosses back (see the test).
+    private val receiveLockedApplies: () -> Boolean = { false },
+    private val receiveLocked: () -> Boolean = { false },
+    private val setReceiveLocked: (Boolean) -> Boolean = { false },
     private val revealPassphrase: () -> Boolean = { false },
     private val changeCode: () -> Boolean = { false },
     // EN-3 — the UnifiedPush doorbell: status, on, off. Lambdas like
@@ -150,6 +156,7 @@ internal class HostBridge(
         val next = when (name) {
             "hidden" -> PresentationPolicy.HIDDEN
             "space" -> PresentationPolicy.SPACE
+            "sender" -> PresentationPolicy.SENDER
             "preview" -> PresentationPolicy.PREVIEW
             else -> return false
         }
@@ -245,6 +252,29 @@ internal class HostBridge(
         if (!admitted(pass)) return refuse("forgetPassphrase")
         forgetPassphrase()
         return true
+    }
+
+    /**
+     * AN-3 — whether the node may open while the phone is locked. A fact
+     * about this device's own setting, like [unlockRemembered]; the value it
+     * governs has no getter here or anywhere.
+     */
+    @JavascriptInterface
+    fun receiveLockedApplies(pass: String?): Boolean {
+        if (!admitted(pass)) return refuse("receiveLockedApplies")
+        return receiveLockedApplies()
+    }
+
+    @JavascriptInterface
+    fun receiveLocked(pass: String?): Boolean {
+        if (!admitted(pass)) return refuse("receiveLocked")
+        return receiveLocked()
+    }
+
+    @JavascriptInterface
+    fun setReceiveLocked(pass: String?, on: Boolean): Boolean {
+        if (!admitted(pass)) return refuse("setReceiveLocked")
+        return setReceiveLocked(on)
     }
 
     /**
