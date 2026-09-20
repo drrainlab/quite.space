@@ -109,7 +109,7 @@ class AvailabilityService : Service() {
         // holding would be noise. (Proven on the owner's phone: `am crash`,
         // the service came back in two seconds over a closed core with zero
         // relay connections, and stayed that way.)
-        if (intent == null) controller.reopenAfterSystemRestart()
+        if (intent == null || intent.action == ACTION_RESTARTED) controller.reopenAfterSystemRestart()
         startCardRefresh(controller)
 
         // START_STICKY, NOT REDELIVER: if Android kills the process under
@@ -130,6 +130,7 @@ class AvailabilityService : Service() {
     private val cardHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private var cardText: String? = null
     private var cardTick: Runnable? = null
+    private var cardTicks = 0
 
     private fun startCardRefresh(controller: RuntimeController) {
         if (cardTick != null) return
@@ -145,6 +146,8 @@ class AvailabilityService : Service() {
                 } catch (t: Throwable) {
                     Log.w(TAG, "card refresh", t)
                 }
+                // Hourly: the week ahead, written down again (AN-2).
+                if (++cardTicks % 60 == 0) controller.writeWatchPlan()
                 cardHandler.postDelayed(this, 60_000L)
             }
         }
@@ -218,6 +221,17 @@ class AvailabilityService : Service() {
         const val NOTIFICATION_ID = 2
 
         const val ACTION_STOP = "space.quiet.arprobe.STOP_AVAILABILITY"
+        const val ACTION_RESTARTED = "space.quiet.arprobe.RESTARTED"
+
+        /** From RestartReceiver: after a reboot or an update, nobody present. */
+        fun startAfterRestart(context: Context) {
+            val i = Intent(context, AvailabilityService::class.java).setAction(ACTION_RESTARTED)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                context.startForegroundService(i)
+            } else {
+                context.startService(i)
+            }
+        }
 
         const val TITLE = "Quiet is staying connected"
         const val STOP_LABEL = "Turn off"

@@ -701,6 +701,8 @@ class QuietActivity : ComponentActivity() {
         controller.setSpeakingSink(null)
         controller.notifications.onForeground(false)
         controller.setForeground(false)
+        // AN-2: the person is leaving — write down where to listen for them.
+        controller.writeWatchPlan()
         super.onPause()
     }
 

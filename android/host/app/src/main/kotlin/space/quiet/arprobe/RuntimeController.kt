@@ -687,6 +687,16 @@ class RuntimeController private constructor(appContext: Context) {
                 // EN-3: a doorbell registration made while the node was
                 // locked replays into the freshly opened core.
                 UnifiedPushConnector.replay(app)
+                // AN-2: an open node listens for itself — and collects. The
+                // keyless watch steps aside, its line comes down, and the
+                // week ahead is written afresh.
+                wake.stop()
+                cancelLockedNudge()
+                try {
+                    Quietcore.writeWatchPlan(DirectWatch.planFile(app).absolutePath)
+                } catch (t: Throwable) {
+                    Log.w(TAG, "watch plan after open", t)
+                }
             } catch (t: Throwable) {
                 // A failure is a RESULT, not something to swallow: "the core
                 // would not open" is a state a host must be able to show.
@@ -740,6 +750,28 @@ class RuntimeController private constructor(appContext: Context) {
         }
     }
 
+    /** AN-2: what rings while the node is closed. Swappable — see WakeTransport. */
+    internal var wake: WakeTransport = DirectWatch(app)
+    private val mailAnnounced = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /**
+     * Write down where this device will be listening for the week ahead, for
+     * the day the node is closed and nobody is here (AN-2). Cheap; called when
+     * the node opens, when the person leaves the app, and hourly by the
+     * availability service — a space joined this morning must be watched
+     * tonight. A failure is a missed courtesy, not an error.
+     */
+    fun writeWatchPlan() {
+        worker.execute {
+            if (!isAlive()) return@execute
+            try {
+                Quietcore.writeWatchPlan(DirectWatch.planFile(app).absolutePath)
+            } catch (t: Throwable) {
+                Log.w(TAG, "watch plan", t)
+            }
+        }
+    }
+
     /**
      * Android killed the process and brought the availability service back.
      * If the node can open itself (a remembered passphrase) it does. If it
@@ -755,7 +787,26 @@ class RuntimeController private constructor(appContext: Context) {
             val stored = try { PassphraseVault(app).load() } catch (t: Throwable) { null }
             if (stored != null) {
                 ensureStarted(stored, null, true)
-            } else {
+                return@execute
+            }
+            // IT CANNOT OPEN — so it WATCHES (AN-2). No key, no passphrase:
+            // only the addresses the open node wrote down, parked at the
+            // relay. The one thing it can learn is that something is
+            // waiting, and that is the one thing said. It is said ONCE: a
+            // second arrival finds the same line already standing.
+            mailAnnounced.set(false)
+            val watching = wake.start(
+                onMail = {
+                    if (mailAnnounced.compareAndSet(false, true)) {
+                        lockedNudge("Something is waiting — open to see it")
+                    }
+                },
+                onExpired = {
+                    lockedNudge("Open Quiet to keep background notifications working")
+                },
+            )
+            if (!watching) {
+                // Nothing to watch with: no plan yet, or it ran out.
                 lockedNudge("Quiet was closed by Android — open it to keep receiving")
             }
         }
@@ -770,6 +821,15 @@ class RuntimeController private constructor(appContext: Context) {
      */
     private fun doorbellNudge() = lockedNudge("Something is waiting — open to see it")
 
+    private fun cancelLockedNudge() {
+        try {
+            (app.getSystemService(android.content.Context.NOTIFICATION_SERVICE)
+                as android.app.NotificationManager).cancel(DOORBELL_NUDGE_ID)
+        } catch (t: Throwable) {
+            Log.w(TAG, "cancel nudge", t)
+        }
+    }
+
     private fun lockedNudge(text: String) {
         try {
             NotificationChannels.ensure(app)
@@ -782,6 +842,7 @@ class RuntimeController private constructor(appContext: Context) {
                 .setSmallIcon(R.drawable.ic_stat_quiet)
                 .setContentTitle("Quiet")
                 .setContentText(text)
+                .setOnlyAlertOnce(true)
                 .setContentIntent(open)
                 .setAutoCancel(true)
                 .build()

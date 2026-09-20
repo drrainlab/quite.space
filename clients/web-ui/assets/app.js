@@ -1275,6 +1275,7 @@ async function refresh() {
     // WHERE THE PERSON WAS, not the first row of the list: the app reopens on
     // the place it was closed in (PLACE, below) when that place still exists.
     if (!current && spacesCache.length) {
+      await PLACE.ready();   // the node's copy — see PLACE: a phone has no other
       const last = PLACE.lastSpace();
       current = (last && spacesCache.some(sp => sp.id === last)) ? last : spacesCache[0].id;
     }
@@ -6324,14 +6325,55 @@ function instrStaleWord(obs) {
 // each room the MESSAGE that sat at the bottom of the screen — an id, not
 // a pixel offset, because pictures load and bubbles reflow. A room left at
 // its end reopens at its end, which is also where new messages are.
+//
+// KEPT BY THE NODE (GET/PUT /api/ui/state), NOT BY THE BROWSER. The first
+// version lived in localStorage and worked on a desktop — and on the owner's
+// phone it remembered nothing: Android's core listens on an ephemeral port,
+// every launch is a new origin, and the browser's storage starts empty each
+// time. He had asked for "on the node" in the first place. localStorage stays
+// as the instant copy for the launch in progress; the node's sealed document
+// is the one that survives.
 const PLACE = (() => {
   const KEY = 'qp.place', MAX = 300;
-  let mem = null;
+  let mem = null, fetched = null, pushT = 0;
   const load = () => {
     if (mem) return mem;
     try { mem = JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch (_) { mem = {}; }
     if (!mem.rooms) mem.rooms = {};
     return mem;
+  };
+  // Asked once per launch, before the first room is chosen. A node that does
+  // not know the route (an older one) or does not answer leaves the local
+  // copy standing — never a reason to hold the app at the door.
+  const ready = () => {
+    if (fetched) return fetched;
+    fetched = (async () => {
+      try {
+        const doc = await api('/api/ui/state');
+        const p = doc && doc.place;
+        if (p && typeof p === 'object') {
+          const local = load();
+          // The newer of the two wins per room; the node's `last` wins when
+          // this launch has not yet been anywhere.
+          const rooms = Object.assign({}, p.rooms || {});
+          for (const [id, r] of Object.entries(local.rooms || {})) {
+            if (!rooms[id] || (r.at || 0) > (rooms[id].at || 0)) rooms[id] = r;
+          }
+          mem = { last: local.last || p.last || '', rooms };
+        }
+      } catch (_) { /* local copy stands */ }
+    })();
+    return fetched;
+  };
+  const push = () => {
+    clearTimeout(pushT);
+    pushT = setTimeout(async () => {
+      try {
+        const doc = await api('/api/ui/state').catch(() => ({}));
+        const next = Object.assign({}, doc && typeof doc === 'object' ? doc : {}, { place: load() });
+        await api('/api/ui/state', { method: 'PUT', body: JSON.stringify(next) });
+      } catch (_) { /* a missed save is a missed courtesy */ }
+    }, 900);
   };
   const store = () => {
     const m = load();
@@ -6341,6 +6383,7 @@ const PLACE = (() => {
         .slice(0, ids.length - MAX).forEach(id => delete m.rooms[id]);
     }
     try { localStorage.setItem(KEY, JSON.stringify(m)); } catch (_) {}
+    push();
   };
   function save(log, space) {
     if (!log || !space || seenSpace !== space) return;   // only what is really on screen
@@ -6378,7 +6421,7 @@ const PLACE = (() => {
       setTimeout(() => { if (!touched && current === space) apply(); }, ms);
     }
   }
-  return { save, restore, lastSpace: () => load().last || '' };
+  return { save, restore, ready, lastSpace: () => load().last || '' };
 })();
 if (typeof document !== 'undefined') {
   document.addEventListener('DOMContentLoaded', () => {

@@ -274,6 +274,10 @@ func (a *APIServer) Handler() http.Handler {
 	// The Navigator (NAV-0): how this device arranges what it already has.
 	// Whole-document PUT with a base version — see node/navigator.go.
 	mux.HandleFunc("GET /api/navigator", a.auth(a.handleNavigator))
+	// This device's own interface notebook (node/uistate.go): device-local,
+	// sealed, never replicated.
+	mux.HandleFunc("GET /api/ui/state", a.auth(a.handleUIState))
+	mux.HandleFunc("PUT /api/ui/state", a.auth(a.handleSetUIState))
 	mux.HandleFunc("PUT /api/navigator", a.auth(a.handleSetNavigator))
 	// The door: who is waiting, and the host's answer.
 	mux.HandleFunc("PUT /api/spaces/{id}/name", a.auth(a.handleSetLocalTitle))

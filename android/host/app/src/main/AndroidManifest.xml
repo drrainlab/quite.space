@@ -30,6 +30,8 @@
          is raised from a row the person pressed (This device → "Why nothing
          arrives"). There is no store listing whose policy this would touch. -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- AN-2: come back after a reboot when the person chose to stay connected. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- Voice messages. Asked for at the moment the record button is pressed,
          not at launch, and never held: the WebView's getUserMedia is denied
          until this is granted (see QuietActivity.onPermissionRequest). -->
@@ -160,6 +162,13 @@
             </intent-filter>
         </receiver>
 
+        <!-- AN-2. Not exported: only the system sends these two. -->
+        <receiver android:name="space.quiet.arprobe.RestartReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
     </application>
 
     <!-- AR-0's rig — RigActivity and the :contender process — lives in
