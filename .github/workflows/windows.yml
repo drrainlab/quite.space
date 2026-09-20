@@ -1,0 +1,65 @@
+# DS-5 / W0 — the node on Windows, proven not assumed.
+#
+# The root module cross-compiles for windows today, which proves nothing:
+# a build says the tree LINKS, not that a lock holds, a path resolves or a
+# rename lands on NTFS. This runs the actual suite on a Windows runner and
+# names what falls over.
+#
+# A SEPARATE WORKFLOW, DELIBERATELY. release.yml waits on the workflow named
+# `ci` for the tagged commit; a Windows job inside ci.yml would make every
+# release hostage to a platform that has no artifact yet. When W3 puts a
+# Windows asset on the release train, this gate moves into ci — not before.
+name: windows
+
+on:
+  push:
+    branches:
+      - "ds5-**"
+    paths-ignore:
+      - "docs/**"
+      - "**.md"
+  workflow_dispatch:
+
+jobs:
+  root:
+    runs-on: windows-latest
+    # Windows runners are slower than the Linux ones and node is mostly
+    # scrypt; the numbers below are headroom over a first measurement that
+    # has not been taken yet — tighten them once it has.
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # The tree's text files are LF and several tests compare bytes
+      # (fixtures, golden catalogs, the embedded web-ui). A checkout that
+      # rewrites line endings would fail them for a reason that is not ours.
+      - name: keep line endings as committed
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: build (CGO_ENABLED=0)
+        run: CGO_ENABLED=0 go build ./...
+      - name: vet
+        run: go vet ./...
+      # Every package runs even after one fails — the point of W0 is the
+      # whole list of seams in one pass, not the first of them.
+      - name: test
+        run: |
+          set -o pipefail
+          go test -timeout 30m ./... 2>&1 | tee test.log || {
+            grep -aE "^--- FAIL|^FAIL|panic:|test timed out" test.log | head -60 | while IFS= read -r l; do echo "::error::${l}"; done
+            exit 1
+          }
+      - name: upload the log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-test-log
+          path: test.log
+          if-no-files-found: ignore
