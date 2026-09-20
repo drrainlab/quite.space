@@ -158,6 +158,20 @@ func (s *Store) Fetch(hint string, now uint64, maxBytes int) [][]byte {
 	return out
 }
 
+// Holds reports whether a hint has anything unexpired in it. Nothing is
+// read out and nothing is touched: it exists so a parked listener can be
+// told "there is mail" without a Fetch that would move the ciphertext.
+func (s *Store) Holds(hint string, now uint64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, it := range s.items[hint] {
+		if it.ExpiresAt == 0 || now < it.ExpiresAt {
+			return true
+		}
+	}
+	return false
+}
+
 // Collect hands over everything for a hint and forgets it (store-and-forward).
 func (s *Store) Collect(hint string, now uint64) [][]byte {
 	return s.CollectBudget(hint, now, 0)

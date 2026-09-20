@@ -376,6 +376,15 @@ func (c *Client) listen(park *Msg, stop <-chan struct{}, notify func(hint []byte
 	if c.OnParked != nil {
 		c.OnParked()
 	}
+	// MAIL THAT ARRIVED WHILE NOBODY WAS PARKED. The relay checks the hints
+	// it just registered and says so in the same breath (keyWaiting), so a
+	// listener that lost its network for an hour does not come back and sit
+	// in silence over a full mailbox. Reported as a wake with no hint: which
+	// box it was is not said, and the caller's answer is the same — go and
+	// look. An older relay never sets it.
+	if reply.Waiting && notify != nil {
+		notify(nil)
+	}
 	every := c.PingEvery
 	if every <= 0 {
 		every = ListenPing

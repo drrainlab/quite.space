@@ -608,7 +608,7 @@ func (s *Server) handle(m *relay.Msg, cs *connState) *relay.Msg {
 				return &relay.Msg{Type: relay.MsgError, Reason: "malformed hint"}
 			}
 		}
-		s.repark(cs, m.Hints)
+		waiting := s.repark(cs, m.Hints, uint64(now))
 		s.census.note(m.Hints, int64(now))
 		// EN-3: an endpoint riding the park registers the out-of-band
 		// doorbell for the same hints; an EMPTY one removes whatever this
@@ -635,7 +635,7 @@ func (s *Server) handle(m *relay.Msg, cs *connState) *relay.Msg {
 		}
 		// The advisory hold: how long the reaper tolerates silence on a
 		// parked connection. The client pings well inside it.
-		return &relay.Msg{Type: relay.MsgListenOK,
+		return &relay.Msg{Type: relay.MsgListenOK, Waiting: waiting,
 			Expires: uint64(s.limits.listenIdle() / time.Second)}
 	case relay.MsgPing:
 		// The keepalive that holds NATs and the idle reaper between
@@ -660,9 +660,20 @@ func (s *Server) handle(m *relay.Msg, cs *connState) *relay.Msg {
 }
 
 // repark replaces one connection's parked hints under the registry lock.
-func (s *Server) repark(cs *connState, hints [][]byte) {
+// It reports whether any of the hints ALREADY holds something, checked while
+// the listener lock is held and AFTER the registration — see keyWaiting for
+// why that order leaves no gap.
+func (s *Server) repark(cs *connState, hints [][]byte, now uint64) (waiting bool) {
 	s.listenMu.Lock()
 	defer s.listenMu.Unlock()
+	defer func() {
+		for _, h := range hints {
+			if s.store.Holds(string(h), now) {
+				waiting = true
+				return
+			}
+		}
+	}()
 	if s.listeners == nil {
 		s.listeners = map[string]map[*connState]struct{}{}
 	}
@@ -685,6 +696,7 @@ func (s *Server) repark(cs *connState, hints [][]byte) {
 		}
 		set[cs] = struct{}{}
 	}
+	return
 }
 
 // unpark removes a dying connection from the registry.

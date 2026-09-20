@@ -334,6 +334,15 @@ const (
 	// Absent = a pure park, and any standing registration ages out on its
 	// own TTL. Append-only; old peers skip it and part with a plain park.
 	keyPush = 16
+	// keyWaiting rides MsgListenOK: 1 = at least one of the hints just
+	// parked ALREADY HOLDS something. Decided under the same lock that
+	// registers the listener, so there is no moment in which a Put can land
+	// unannounced: before the registration it is seen by this check, after it
+	// the ordinary notify fires. One bit on purpose — not which hint and not
+	// how many: a listener that lost its network for an hour learns "there is
+	// mail", which is all it may act on, and the relay says nothing about how
+	// busy anybody's mailbox is. Older clients skip the key.
+	keyWaiting = 17
 )
 
 // Msg is one relay protocol message.
@@ -355,6 +364,8 @@ type Msg struct {
 	// "clear" when PushSet says the key travelled at all.
 	Push    string
 	PushSet bool
+	// Waiting: see keyWaiting (MsgListenOK only).
+	Waiting bool
 	// RR-3 probe fields.
 	Nonce     []byte
 	ProtoMin  uint64
@@ -409,6 +420,9 @@ func (m *Msg) Encode() []byte {
 		n++
 	}
 	if m.Accepting != 0 {
+		n++
+	}
+	if m.Waiting {
 		n++
 	}
 	buf := codec.AppendMap(nil, n)
@@ -482,6 +496,10 @@ func (m *Msg) Encode() []byte {
 	if m.Accepting != 0 {
 		buf = codec.AppendUint(buf, keyAccepting)
 		buf = codec.AppendUint(buf, m.Accepting)
+	}
+	if m.Waiting {
+		buf = codec.AppendUint(buf, keyWaiting)
+		buf = codec.AppendUint(buf, 1)
 	}
 	return buf
 }
@@ -583,6 +601,10 @@ func DecodeMsg(data []byte) (*Msg, error) {
 			m.Load, er = d.ReadText()
 		case keyAccepting:
 			m.Accepting, er = d.ReadUint()
+		case keyWaiting:
+			var w uint64
+			w, er = d.ReadUint()
+			m.Waiting = w != 0
 		default:
 			er = d.SkipItem()
 		}

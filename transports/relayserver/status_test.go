@@ -144,8 +144,8 @@ func TestParkedCountFollowsTheRegistry(t *testing.T) {
 	defer srv.Close()
 	one, two := &connState{}, &connState{}
 	h := make([]byte, relay.HintLen)
-	srv.repark(one, [][]byte{h})
-	srv.repark(two, [][]byte{h})
+	srv.repark(one, [][]byte{h}, 0)
+	srv.repark(two, [][]byte{h}, 0)
 	if n := srv.parkedCount(); n != 2 {
 		t.Fatalf("two parked connections, count %d", n)
 	}
