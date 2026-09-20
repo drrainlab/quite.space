@@ -109,3 +109,37 @@ SER=<serial> SOAK=1 scripts/android/ar1c-availability-gate.sh        # the hones
 ```
 `/api/status` carries the core's own answer: `notify_armed=false` is (2);
 `armed=true, delivered=0` is (1) or (3); `dropped>0` is the host not keeping up.
+
+## AN-2 — the keyless watch (2026-09-20, same day)
+
+The owner's question after the measurements above: *is there a secure way to
+learn only the FACT of new mail, revealing no content and copying no
+passphrase for the background?* Yes — and his review shaped it (addresses are
+a watch-capability, not harmless hashes; never park the week at once; check
+for mail already waiting at every reconnect; one general line; a swappable
+transport; an explicit expiry; no latency promises).
+
+- `transports/relay` + `relayserver`: MsgListenOK carries one bit, "something
+  is already there", decided under the listener lock after registration.
+- `node/watch.go`: BuildWatchPlan (hints for 7 days + endpoints with pins, no
+  capability), RunWatch (no key; current/previous epoch, next only 10 min
+  before a rollover; 5 s → 15 min backoff with jitter; Expired).
+- `android/quietcore/watch.go`, `WakeTransport.kt` (DirectWatch is the first
+  transport), `RestartReceiver.kt` (BOOT_COMPLETED, MY_PACKAGE_REPLACED).
+- Observed on the owner's phone: update → receiver → service → "watch parked"
+  with the node closed → "Something is waiting — open to see it".
+
+### Acceptance still to run on a device
+
+| case | how | expect |
+|---|---|---|
+| reboot | restart the phone, unlock the PHONE only, do not open Quiet | service card appears; `adb logcat -s quiet-watch` shows "parked"; a message from another device raises the line |
+| network loss | airplane mode 10 min with the app closed, send a message meanwhile, airplane mode off | the line appears soon after the network returns (the waiting bit), without opening the app |
+| night in Doze | leave the phone untouched overnight, app closed, send at 03:00 | note WHEN the line appears; repeat with the battery exemption on |
+| epoch rollover | keep the app closed across 00:00 / 06:00 / 12:00 / 18:00 UTC | "parked" is logged again after the rollover; a message after it still rings |
+| a week unopened | (or edit expires_at in a debug build) | "Open Quiet to keep background notifications working" |
+
+When reading notifications over adb, filter to the package — a bare
+`dumpsys notification --noredact` prints every app's texts:
+
+    adb shell dumpsys notification --noredact | awk '/NotificationRecord\(/{k=($0 ~ /pkg=quite\.space /)} k && /android\.(title|text)=String/'
