@@ -3272,8 +3272,10 @@ async function obSubmitName() {
   const name = document.getElementById('obName').value.trim();
   if (!name) { alert('please choose a name'); return; }
   try {
-    await api('/api/identity/name', { method: 'POST', body: JSON.stringify({ name }) });
+    const res = await api('/api/identity/name', { method: 'POST', body: JSON.stringify({ name }) });
     onboardInfo = await api('/api/onboarding');
+    // The name is set; a space that did not take it yet is said, not hidden.
+    if (res && res.warning) alert(res.warning);
     document.getElementById('obGlyph').innerHTML =
       `<span class="glyph" style="width:56px;height:56px">${glyphSVG(onboardInfo.fingerprint, 'human', 56)}</span>`;
     document.getElementById('obWho').textContent = onboardInfo.name;
@@ -3303,10 +3305,13 @@ async function renameSelf() {
   const name = prompt('Change your name to:', (onboardInfo && onboardInfo.name) || '');
   if (!name || !name.trim()) return;
   try {
-    await api('/api/identity/name', { method: 'POST', body: JSON.stringify({ name: name.trim() }) });
+    const res = await api('/api/identity/name', { method: 'POST', body: JSON.stringify({ name: name.trim() }) });
     onboardInfo = await api('/api/onboarding');
     dlgMe.close();
     refresh();
+    // The rename happened — the sheet shows it first; a space that did not
+    // take the new name yet is said after, never instead.
+    if (res && res.warning) alert(res.warning);
   } catch (err) { alert(err.message); }
 }
 

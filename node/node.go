@@ -1421,9 +1421,50 @@ func (r *Runtime) IsFirstRun() bool {
 	return r.ks.DisplayName == "" && len(r.spaces) == 0
 }
 
+// RenameUnpublishedError says a rename HAPPENED — the name is saved and this
+// device answers to it — but one or more spaces this device writes into did
+// not take the new manifest. It is deliberately not a plain error: the caller
+// must not read it as "the rename failed" and keep showing the old name
+// (ADR-023 cuts both ways — a done thing is never reported as undone).
+type RenameUnpublishedError struct {
+	Name   string
+	Spaces []id.TerminalID
+	Errs   []error
+}
+
+func (e *RenameUnpublishedError) Error() string {
+	parts := make([]string, len(e.Spaces))
+	for i, tid := range e.Spaces {
+		parts[i] = fmt.Sprintf("%s: %v", tid, e.Errs[i])
+	}
+	return fmt.Sprintf("node: your name is now %q and is saved, but it could not be published into %s — publishing is retried when the space next opens",
+		e.Name, strings.Join(parts, "; "))
+}
+
 // SetName records the user's display name (onboarding or rename): it bumps
-// the self manifest revision, republishes it into every space so members
-// see the new name, and persists it.
+// the self manifest revision, persists it, and republishes it into every
+// space this device WRITES into so members see the new name.
+//
+// Three rules, each one a thing the first version got wrong (measured on a
+// stand, 2026-09-18: a node that had kept one read-only public space from
+// Discover could not rename at all):
+//
+//   - A space this device only reads is skipped, and that is not a failure:
+//     a reader has no member card there and no name to publish. The open
+//     path has always known this (it never publishes into a reader replica);
+//     the rename loop asked every space and took the reader gate's refusal
+//     for the rename's.
+//   - A hold-class refusal (frozen space, a curated space that does not list
+//     this device yet) is the same ordinary state it is at open: a
+//     diagnostic, and the open path republishes once it can.
+//   - The name is saved BEFORE anything is published. A manifest revision in
+//     an append-only log cannot be taken back, so the old order — publish,
+//     then save — left a refused rename half-applied: new name in memory and
+//     in whichever spaces the map walk reached first, old name in the
+//     keystore, and after a restart an orphaned revision those spaces would
+//     never let this terminal chain past. Now a save that fails rolls back
+//     cleanly with nothing published, and a publish that fails is reported
+//     as what it is — *RenameUnpublishedError, a rename that happened.
 func (r *Runtime) SetName(name string) error {
 	name = strings.TrimSpace(name)
 	if name == "" || len(name) > 64 {
@@ -1431,19 +1472,41 @@ func (r *Runtime) SetName(name string) error {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	prevManifest, prevFrame := r.Self.Manifest, r.Self.ManifestFrame
+	prevName, prevKsFrame := r.ks.DisplayName, r.ks.SelfManifestFrame
 	frame, err := r.Self.Rename(name)
 	if err != nil {
 		return err
 	}
 	r.ks.DisplayName = name
 	r.ks.SelfManifestFrame = frame
+	if err := r.saveKeystore(); err != nil {
+		r.Self.Manifest, r.Self.ManifestFrame = prevManifest, prevFrame
+		r.ks.DisplayName, r.ks.SelfManifestFrame = prevName, prevKsFrame
+		return fmt.Errorf("node: saving the new name: %w", err)
+	}
+	unpublished := &RenameUnpublishedError{Name: name}
 	for tid, st := range r.spaces {
+		if st.space.ReadOnly {
+			continue
+		}
 		if _, _, err := r.Self.PublishManifest(st.space); err != nil {
-			return fmt.Errorf("node: republishing name into %s: %w", tid, err)
+			if holdClassRefusal(err) {
+				r.noteIngressRefusal(IngressRefusal{
+					Space: tid, Reason: "self_manifest_deferred", Detail: err.Error(),
+				})
+				continue
+			}
+			unpublished.Spaces = append(unpublished.Spaces, tid)
+			unpublished.Errs = append(unpublished.Errs, err)
+			continue
 		}
 		r.publishCertLocked(st.space)
 	}
-	return r.saveKeystore()
+	if len(unpublished.Spaces) > 0 {
+		return unpublished
+	}
+	return nil
 }
 
 // Members projects the member cards of a space.

@@ -607,6 +607,17 @@ func (a *APIServer) handleSetName(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := a.rt.SetName(body.Name); err != nil {
+		// A rename that HAPPENED but did not reach every space is not a
+		// failed request: answering 4xx made the client keep the old name
+		// on screen while the node already answered to the new one. The
+		// name comes back as changed, and the shortfall rides beside it.
+		var unpublished *RenameUnpublishedError
+		if errors.As(err, &unpublished) {
+			writeJSON(w, map[string]string{
+				"name": a.rt.DisplayName(), "warning": unpublished.Error(),
+			})
+			return
+		}
 		httpErr(w, http.StatusBadRequest, err)
 		return
 	}
