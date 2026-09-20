@@ -128,6 +128,27 @@ func TestLocalGroupStopsUsingRelayForLocalRecipients(t *testing.T) {
 		return alice.lanPeerDevice(carol.Device.ID)
 	})
 
+	// THE BASELINE IS TAKEN AFTER THE RELAY ERA HAS FINISHED LANDING.
+	// stopRelay ends a loop; it does not recall a cycle already in flight,
+	// and such a cycle decided its recipients BEFORE anybody was on the
+	// wire. Its Put can land after the count below and read as "a member
+	// copy for carol while she was on the wire" — traced with timestamps
+	// (2026-09-20): bob's own last cycle, 185 ms before the count. It was
+	// always possible and lost the race 0 times in 39; a node that runs a
+	// follow-up cycle after a doorbell's mail pass made it 1 in 8.
+	settle := func() {
+		last, since := -1, time.Now()
+		waitUntil(t, 20*time.Second, "the relay-era deposits never stopped landing", func() bool {
+			n := mailboxCount(t, addr, tid, bob.Device.ID) +
+				mailboxCount(t, addr, tid, carol.Device.ID) +
+				mailboxCount(t, addr, tid, dave.Device.ID)
+			if n != last {
+				last, since = n, time.Now()
+			}
+			return time.Since(since) > 5*cadence
+		})
+	}
+	settle()
 	bobBefore := mailboxCount(t, addr, tid, bob.Device.ID)
 	carolBefore := mailboxCount(t, addr, tid, carol.Device.ID)
 	daveBefore := mailboxCount(t, addr, tid, dave.Device.ID)

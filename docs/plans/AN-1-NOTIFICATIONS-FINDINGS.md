@@ -143,3 +143,48 @@ When reading notifications over adb, filter to the package — a bare
 `dumpsys notification --noredact` prints every app's texts:
 
     adb shell dumpsys notification --noredact | awk '/NotificationRecord\(/{k=($0 ~ /pkg=quite\.space /)} k && /android\.(title|text)=String/'
+
+## AN-3 — the conventional flow, by the owner's decision (2026-09-20, evening)
+
+AN-2 rang a bell that named nothing, and the owner's brother still missed two
+messages: a contentless line is one people learn to ignore, and nothing was
+*delivered* until the app was opened. The owner's words: "представь спас
+операция — важное уведомление будет пропущено", then, asked directly, "давай
+как в Signal" and "по умолчанию давай включим".
+
+What changed (1.0.24):
+
+| piece | before | now |
+|---|---|---|
+| node in a pocket | opens only on an unlocked phone; never behind a code/face | opens by itself (second keystore key without `setUnlockedDeviceRequired`), setting default ON; OFF = wait for `USER_PRESENT`, then open |
+| code / face | guard the node's opening — asked only when the node is closed | guard the SCREEN — asked after 60 s away, node open or not (`uiLocked`) |
+| 10 wrong codes | code erased, remembered passphrase kept → next launch opens unasked | remembered passphrase erased with the code |
+| notification default | HIDDEN | SENDER: who + where always, words only while unlocked (enforced by us: `KeyguardManager.isDeviceLocked`, silent re-render on `USER_PRESENT` / `SCREEN_OFF`+6 s) |
+| ring → notification | full cycle, mail collected last: 26 s measured | mail pass first: 1–3 s measured |
+| invite door | polled (3 min dark) | parked on (`ReqHint` in the listen set), admission 0.3 s in the test |
+
+Measured on the owner's phone (A063, locked, process killed with `am crash`):
+node back in seconds, 7 relay connections; message → notification 0.9–3.4 s;
+1.76 MB photo (27 chunks) handed to a peer with the screen dark.
+
+The keyless watch (AN-2) stays: it is what runs when the setting is off and
+the phone is locked, and when nothing is remembered at all.
+
+Tried and withdrawn: (1) a `notificationPolicy()` getter on the bridge — the
+bridge hands back booleans only, and its test says so by name; the page's
+echo lives in the node's ui-state instead. (2) the delivery receipt sent straight after the doorbell's pull — it put
+receipts on the relay for peers sitting on the same LAN
+(`t6_lan_offload_test`); the receipt stays with the cycle, so "delivered" can
+trail the other phone's notification by a cycle. (3) the mail pull moved onto
+the sync loop's own goroutine, on the suspicion that the separate lane was
+what upset that same test: measured on the phone it was 18–30 s again — a
+ring also earns a full cycle, the cycle takes ~20 s there, and the next
+message of a conversation rings into a busy loop. The separate lane is back.
+What had actually upset the test was the test: `stopRelay` does not recall a
+cycle in flight, and bob's last one landed 185 ms before the baseline count
+(traced with timestamps). It lost that race 0 times in 39 before and 1 in 8
+once rings caused extra activity; the baseline is now taken after deposits
+stop landing — 40 of 40.
+
+Still not run on a device: a night in Doze, network loss and return, reboot,
+epoch rollover — the AN-2 table above stands.

@@ -306,6 +306,14 @@ func (r *Runtime) runListener(addr string, stop, done chan struct{}) {
 		// notification, all of it spent on things nobody had rung about.
 		// The same reasoning that gave a said word its own outbox lane
 		// (LT-3) applies to a heard one.
+		//
+		// A LANE OF ITS OWN, AND THAT WAS MEASURED TWICE. The obvious
+		// alternative — the pull first on the sync loop's own goroutine —
+		// was built and put on the same phone: 18 to 30 seconds again,
+		// because a ring also earns a full cycle, the cycle takes twenty
+		// seconds there, and the next message of a conversation rings into
+		// a loop that is busy. A conversation is a burst; only a lane that
+		// the cycle cannot occupy answers each ring.
 		r.doorbellPull(addr)
 		r.kickPassPoll()
 		r.kickRelaySync()
@@ -350,6 +358,14 @@ func (r *Runtime) runListener(addr string, stop, done chan struct{}) {
 // burst of rings while a pull is in flight becomes exactly one more pull
 // after it — never a queue, never two at once on the same lane.
 func (r *Runtime) doorbellPull(addr string) {
+	// ONLY WHILE THE RELAY IS SWITCHED ON. A park outlives the setting by a
+	// manager tick, and a ring in that window used to be harmless: it kicked
+	// a loop that was no longer there. A pull of its own is not harmless —
+	// it would go on draining a mailbox the person had just turned off
+	// (t6: dave's copy vanished from the relay he had left).
+	if !r.relaySyncArmed() {
+		return
+	}
 	if !r.doorbellBusy.CompareAndSwap(false, true) {
 		r.doorbellAgain.Store(true)
 		return
@@ -364,20 +380,32 @@ func (r *Runtime) doorbellPull(addr string) {
 				return
 			}
 			// An error is not reported from here: the cycle that the same
-			// ring kicked pulls again and owns the status line.
-			if got, _ := r.PullFromRelay(addr); got > 0 {
-				// AND SAY SO. The receipt rode the cycle too, so a sender
-				// watched "relay accepted" for half a minute over a message
-				// the other phone had shown in one second — the very thing
-				// the owner reported as "it hangs". Sending twice is
-				// harmless: a receipt is a high-water mark.
-				r.sendReceipts()
-			}
+			// ring kicked pulls again and owns the status line. The RECEIPT
+			// stays with the cycle too — sending it from this lane was tried
+			// and put receipts into the mailboxes of peers reached over the
+			// LAN (t6_lan_offload_test caught it); a sender therefore still
+			// sees "relayed" for up to one cycle after the other phone has
+			// already shown the message.
+			_, _ = r.PullFromRelay(addr)
 			if !r.doorbellAgain.Load() {
 				return
 			}
 		}
 	}()
+}
+
+// relaySyncArmed reports whether the background relay loop is running —
+// the person's own relay setting, as the loop itself reads it.
+func (r *Runtime) relaySyncArmed() bool {
+	r.mu.Lock()
+	rs := r.relaySync
+	r.mu.Unlock()
+	if rs == nil {
+		return false
+	}
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	return rs.stop != nil && rs.addr != ""
 }
 
 // kickPassPoll brings the invite-door poll forward (see ensurePassPolling).
