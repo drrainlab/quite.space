@@ -237,6 +237,11 @@ type Runtime struct {
 	// measured cost of politely waiting was the first third of every
 	// "фото ооочень медленно стартовало".
 	syncKick chan struct{}
+	// passKick brings the invite-door poll forward when the relay rings;
+	// doorbellBusy/Again coalesce the mail-first pull (relaylisten.go).
+	passKick      chan struct{}
+	doorbellBusy  atomic.Bool
+	doorbellAgain atomic.Bool
 	// outboxKick wakes the outbox (node/outbox.go): a push pass now, on
 	// its own lane, whatever the cycle is busy with.
 	outboxKick chan struct{}
@@ -521,6 +526,7 @@ func Open(dataDir string, passphrase []byte, displayName string) (rt *Runtime, e
 		assetIdx:     newAssetIndex(), passes: newPassRegistry(),
 		joins: map[string]*joinAttempt{}, stop: make(chan struct{}),
 		syncKick:            make(chan struct{}, 1),
+		passKick:            make(chan struct{}, 1),
 		outboxKick:          make(chan struct{}, 1),
 		startupReconsidered: make(chan struct{}),
 		relayWants:          map[id.TerminalID]map[id.Hash]struct{}{},

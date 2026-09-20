@@ -119,6 +119,8 @@ func (r *Runtime) MintPass(tid id.TerminalID, maxUses, ttlHours uint64, relayAdd
 		return PassInfo{}, err
 	}
 	r.ensurePassPolling()
+	// A new door: the parked listeners re-park so the relay rings for it.
+	r.BounceListeners()
 	return PassInfo{
 		PassID: hexShort(pass.PassID[:]), Space: tid.Hex(),
 		ExpiresAt: pass.ExpiresAt, MaxUses: maxUses,
@@ -227,6 +229,9 @@ func (r *Runtime) ensurePassPolling() {
 			case <-r.stop:
 				return
 			case <-t.C:
+			case <-r.passKick:
+				// The relay rang at a door this node is parked on
+				// (relaylisten.go: passDoorHints).
 			}
 			// Regroup every tick: passes come and go, and so do relays.
 			for addr := range r.passRelays() {

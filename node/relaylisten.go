@@ -33,6 +33,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/drrainlab/quiet_places/terminals"
 	"github.com/drrainlab/quiet_places/transports/relay"
 )
 
@@ -166,7 +167,7 @@ func (r *Runtime) listenIngresses() []string {
 // bucket — the same pair the drain collects), the identity mailbox and the
 // knock mailbox. Hints, never capabilities: a parked hint can wake us and
 // nothing else.
-func (r *Runtime) listenHints() [][]byte {
+func (r *Runtime) listenHints(addr string) [][]byte {
 	now := uint64(time.Now().Unix())
 	b := relay.Bucket(now)
 	self := r.Device.ID
@@ -183,7 +184,48 @@ func (r *Runtime) listenHints() [][]byte {
 	}
 	add(relay.HintIdentityPlane(self, b))
 	add(relay.HintKnock(self, b))
+	// THE DOOR. A standing invite is a mailbox on its rendezvous relay, and
+	// nothing was listening at it: with the app in a pocket a guest's
+	// request waited for the background poll — three minutes behind a
+	// parked listener — so a person shared a link, locked their phone, and
+	// the guest sat at "waiting for the owner" until the owner happened to
+	// open the app (the owner's own report, 2026-09-20). The relay already
+	// rings for any mailbox a listener names; the door is now one of them.
+	// Only on the relay the pass lives on, and never past the relay's own
+	// limit on a park — an owner with a hundred standing links keeps the
+	// poll for the rest rather than losing the whole park to a refusal.
+	for _, h := range r.passDoorHints(addr, passDoorHintsMax) {
+		add(h)
+	}
 	return hints
+}
+
+// passDoorHintsMax bounds how many invite doors ride one park. The relay's
+// default ceiling is generous and unknown from here; spaces come first.
+const passDoorHintsMax = 16
+
+// passDoorHints are the request mailboxes of this node's live passes on addr.
+func (r *Runtime) passDoorHints(addr string, max int) [][]byte {
+	if r.passes == nil {
+		return nil
+	}
+	now := uint64(time.Now().Unix())
+	r.passes.mu.Lock()
+	defer r.passes.mu.Unlock()
+	var out [][]byte
+	for _, rec := range r.passes.byID {
+		if len(out) >= max {
+			break
+		}
+		if rec.revoked || rec.relay != addr || rec.pass == nil {
+			continue
+		}
+		if rec.pass.ExpiresAt != 0 && rec.pass.ExpiresAt < now {
+			continue
+		}
+		out = append(out, terminals.ReqHint(rec.pass.Rendezvous))
+	}
+	return out
 }
 
 // runListener parks one connection at one ingress and holds it until it
@@ -221,7 +263,7 @@ func (r *Runtime) runListener(addr string, stop, done chan struct{}) {
 		}
 		r.listenMu.Unlock()
 	}()
-	hints := r.listenHints()
+	hints := r.listenHints(addr)
 	if len(hints) == 0 {
 		r.noteListenFailure(addr, false)
 		return
@@ -252,9 +294,20 @@ func (r *Runtime) runListener(addr string, stop, done chan struct{}) {
 	r.markListening(addr, true)
 	defer r.markListening(addr, false)
 	notify := func([]byte) {
-		// The doorbell. Content never rides a notification; the sync
-		// cycle answers it through the capability discipline it already
-		// has, and the 1-deep kick channel coalesces a burst for free.
+		// The doorbell. Content never rides a notification; the node
+		// answers it through the capability discipline it already has.
+		//
+		// THE MAIL FIRST, ON ITS OWN LANE. The ring used to do nothing but
+		// kick the sync cycle — and the cycle collects personal mail LAST,
+		// after draining public ingress, collecting reply boxes on other
+		// relays, publishing projections and fetching the outbox of every
+		// public space this person reads. Measured on the owner's phone,
+		// locked, in a dozen public spaces: 26 seconds from the ring to the
+		// notification, all of it spent on things nobody had rung about.
+		// The same reasoning that gave a said word its own outbox lane
+		// (LT-3) applies to a heard one.
+		r.doorbellPull(addr)
+		r.kickPassPoll()
 		r.kickRelaySync()
 	}
 	// EN-3: the park carries the out-of-band endpoint when the person
@@ -290,6 +343,49 @@ func (r *Runtime) runListener(addr string, stop, done chan struct{}) {
 	// collected now rather than at the next cadence.
 	r.noteListenRetrySoon(addr)
 	r.kickRelaySync()
+}
+
+// doorbellPull collects this device's own mail from the relay that just
+// rang, now, without waiting for the sync cycle to get to it. Coalesced: a
+// burst of rings while a pull is in flight becomes exactly one more pull
+// after it — never a queue, never two at once on the same lane.
+func (r *Runtime) doorbellPull(addr string) {
+	if !r.doorbellBusy.CompareAndSwap(false, true) {
+		r.doorbellAgain.Store(true)
+		return
+	}
+	r.wg.Add(1)
+	go func() {
+		defer r.wg.Done()
+		defer r.doorbellBusy.Store(false)
+		for {
+			r.doorbellAgain.Store(false)
+			if r.stopped() {
+				return
+			}
+			// An error is not reported from here: the cycle that the same
+			// ring kicked pulls again and owns the status line.
+			if got, _ := r.PullFromRelay(addr); got > 0 {
+				// AND SAY SO. The receipt rode the cycle too, so a sender
+				// watched "relay accepted" for half a minute over a message
+				// the other phone had shown in one second — the very thing
+				// the owner reported as "it hangs". Sending twice is
+				// harmless: a receipt is a high-water mark.
+				r.sendReceipts()
+			}
+			if !r.doorbellAgain.Load() {
+				return
+			}
+		}
+	}()
+}
+
+// kickPassPoll brings the invite-door poll forward (see ensurePassPolling).
+func (r *Runtime) kickPassPoll() {
+	select {
+	case r.passKick <- struct{}{}:
+	default:
+	}
 }
 
 // ---- bookkeeping the manager and the heartbeat read ----
