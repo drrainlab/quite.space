@@ -76,9 +76,24 @@ type relaySyncState struct {
 	// (LT-3): both hand frames to mailboxes, and the later one must see
 	// the cursor the earlier one advanced.
 	pushMu sync.Mutex
+	// outboxMu serialises the outbox's OWN passes and nothing else. The
+	// outbox used to take pushMu — and the cycle holds pushMu for its whole
+	// push phase, which on a fresh process re-walks every space against
+	// every member and on a phone with a couple of dozen spaces runs for
+	// minutes. A word said in that window waited for all of it; measured
+	// on the owner's phone (1.0.26-rc8, own socket already): "sent" for
+	// over ten seconds and counting, on a live network. Running the two
+	// unserialised is safe because a re-push is idempotent — event ids
+	// dedup on every receiver, and the cursors are written under rs.mu —
+	// so the worst case is one copy sent twice, and the best case is the
+	// word leaving now.
+	outboxMu sync.Mutex
 	// beforeCycle is a test seam: run at the top of every cycle, so a test
 	// can hold the cycle busy and watch what does NOT wait for it.
 	beforeCycle func()
+	// phaseProbe is a test seam: named once per phase of a cycle, in
+	// order, so a test can pin the order itself rather than infer it.
+	phaseProbe func(phase string)
 }
 
 // heldReason is one space's answer to "why has this not left yet".
@@ -381,9 +396,19 @@ func (r *Runtime) snapshotSyncSpaces() []syncSpace {
 // cycle and the outbox both push, and a push that started later must see
 // the cursor the earlier one advanced, not race it to the same mailbox.
 func (r *Runtime) pushSpaces(addr string, spaces []syncSpace) (pushed int, lastErr string, held map[id.TerminalID]heldReason) {
+	return r.pushSpacesVia(addr, spaces, false)
+}
+
+// pushSpacesVia is pushSpaces with the lane named: the outbox passes true
+// and its puts ride the sender's own socket.
+func (r *Runtime) pushSpacesVia(addr string, spaces []syncSpace, viaOutbox bool) (pushed int, lastErr string, held map[id.TerminalID]heldReason) {
 	rs := r.relaySync
-	rs.pushMu.Lock()
-	defer rs.pushMu.Unlock()
+	mu := &rs.pushMu
+	if viaOutbox {
+		mu = &rs.outboxMu
+	}
+	mu.Lock()
+	defer mu.Unlock()
 	// Why each space handed nothing over this pass. Rebuilt from scratch
 	// every pass so a space that recovers stops reporting instantly.
 	held = map[id.TerminalID]heldReason{}
@@ -407,7 +432,7 @@ func (r *Runtime) pushSpaces(addr string, spaces []syncSpace) (pushed int, lastE
 		// member's own route, not to this node's relay. `addr` plays no
 		// part here any more — it survives below only for the public
 		// personal-fallback paths.
-		n, reached, noRoute, tentative, legacyBasis, err := r.deliverSpace(sp.tid, AssetsManifests, addr)
+		n, reached, noRoute, tentative, legacyBasis, err := r.deliverSpaceVia(sp.tid, AssetsManifests, addr, false, viaOutbox)
 		if err != nil {
 			lastErr = err.Error()
 			continue
@@ -547,19 +572,60 @@ func (r *Runtime) relaySyncOnce(addr string) {
 		}
 		rs.lastRouteGen = gen
 		rs.mu.Unlock()
-		// The delta book is knowledge about mailboxes at endpoints; a
-		// displaced guess means some of those mailboxes were the wrong
-		// ones. Forget it all — one full re-offer, deduped at the receiver.
-		r.resetOffers()
+		// The offer book needs nothing here (LT-4 S5): a mark is keyed by
+		// the mailbox it names, so a copy parked at a guessed relay stays
+		// true about THAT box and the stated route starts a fresh cursor
+		// at its own. Zeroing lastLen above is what makes the push happen.
+	}
+
+	rs.mu.Lock()
+	probe := rs.phaseProbe
+	rs.mu.Unlock()
+	if probe == nil {
+		probe = func(string) {}
+	}
+
+	// THE PERSONAL MAIL FIRST (LT-4 S3). The cycle used to collect this
+	// device's own mailboxes LAST — after draining public ingress, reply
+	// boxes, publishing and fetching every projection — so on a phone that
+	// reads a dozen public spaces the first pull after open came minutes
+	// later, and a peer's "I moved" collected here reached the push only
+	// on the NEXT cycle. The armed relay is pulled now; the historical
+	// ingresses keep their place below, after the reading.
+	pulled := 0
+	pullOK, ownOK := false, false
+	probe("pull")
+	if addr != "" {
+		if got, err := r.PullFromRelay(addr); err != nil {
+			lastErr = err.Error()
+		} else {
+			pulled += got
+			pullOK, ownOK = true, true
+		}
+	}
+
+	// THE DAILY RE-OFFER (LT-4 S5): a mailbox whose last full offer is a
+	// day old is laid again from the start — the relay keeps items in
+	// memory for 48 h and a restart forgets them. The per-space "nothing
+	// new" short-circuit below would never consult the cursor, so the
+	// stale spaces re-enter the push here.
+	if stale := r.offerBook.staleSpaces(); len(stale) > 0 {
+		rs.mu.Lock()
+		for tid := range stale {
+			rs.lastLen[tid] = 0
+		}
+		rs.mu.Unlock()
 	}
 
 	// THE PUSH IS ITS OWN PHASE, shared with the outbox (LT-3): a word said
 	// while this cycle is busy reading leaves on the outbox's lane, and
 	// the cycle's own push then finds its cursor already advanced.
+	probe("push")
 	pushed, pushErr, held := r.pushSpaces(addr, spaces)
 	if pushErr != "" {
 		lastErr = pushErr
 	}
+	probe("public")
 
 	// PA-0.4B — public projections. Publishers Replace their outbox when
 	// the log grew, the 6h bucket rotated, or the heartbeat expired (a
@@ -705,7 +771,6 @@ func (r *Runtime) relaySyncOnce(addr string) {
 	// advertised endpoint stays in this loop until a migration wave (T4)
 	// retires it honestly. Never derived from peer routes — the inversion
 	// rule — and each endpoint keeps its own chunk cursor and throttle.
-	pulled := 0
 	// The endpoint this cycle is ARMED with, plus every stored
 	// (once-advertised) ingress. The armed endpoint is the personal relay in
 	// force for this cycle — deliberately NOT re-resolved from settings
@@ -732,9 +797,11 @@ func (r *Runtime) relaySyncOnce(addr string) {
 		ingresses = append(ingresses, ing.Endpoint)
 	}
 	r.mu.Unlock()
-	pullOK := false
-	ownOK := false
+	probe("historical")
 	for _, ingress := range ingresses {
+		if ingress == addr {
+			continue // pulled first, above
+		}
 		got, err := r.PullFromRelay(ingress)
 		pulled += got
 		if err != nil {

@@ -119,6 +119,9 @@ func (r *Runtime) DeleteSpace(tid id.TerminalID) error {
 	if err := os.RemoveAll(root.EventsDir(tid)); err != nil {
 		errs = append(errs, "removing the events: "+err.Error())
 	}
+	if r.offerBook != nil {
+		r.offerBook.forgetSpace(tid)
+	}
 	if err := r.deleteSealedFor(tid); err != nil {
 		errs = append(errs, "removing the drafts: "+err.Error())
 	}

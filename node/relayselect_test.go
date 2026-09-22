@@ -283,3 +283,31 @@ func TestAFallenRelayIsReplacedWithoutARestart(t *testing.T) {
 		t.Error("re-selection found nothing while a healthy relay was up")
 	}
 }
+
+// The loop starts on the last-known-good relay AT ONCE, however stale the
+// choice, and the measurement runs behind it — because the outbox lives in
+// that loop, and a probe round that has not finished is a message that
+// cannot leave (owner's phone, 1.0.26-rc3: fourteen minutes on "sent").
+func TestAStaleLastKnownGoodRelayStartsTheLoopBeforeAnyProbe(t *testing.T) {
+	srv, addr := startRelay(t)
+	defer srv.Close()
+	rt := openRuntime(t, t.TempDir(), "alice")
+	defer rt.Close()
+	if err := rt.updateRelayState(func(st *RelayLocalState) {
+		st.SelectedPrimary = "custom:tls://" + addr
+		st.NetworkFingerprint = "a network this phone has left"
+		st.LastSelectionUnix = time.Now().Add(-3 * time.Hour).Unix()
+	}); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	rt.startAutomaticRelay(cadence)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && rt.relaySyncAddr() != addr {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if got := rt.relaySyncAddr(); got != addr {
+		t.Fatalf("after %v the loop points at %q, want the stale last-known-good %q — the outbox waited on the probes", time.Since(start), got, addr)
+	}
+	t.Logf("loop armed on the stale choice in %v", time.Since(start))
+}

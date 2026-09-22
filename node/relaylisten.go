@@ -402,7 +402,7 @@ func (r *Runtime) doorbellPull(addr string) {
 			// LAN (t6_lan_offload_test caught it); a sender therefore still
 			// sees "relayed" for up to one cycle after the other phone has
 			// already shown the message.
-			_, _ = r.PullFromRelay(addr)
+			_, _ = r.pullFromRelayVia(addr, true)
 			if !r.doorbellAgain.Load() {
 				return
 			}

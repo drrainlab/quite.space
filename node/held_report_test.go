@@ -83,10 +83,13 @@ func TestASpaceThatCannotSendSaysSo(t *testing.T) {
 	if _, err := bob.PullFromRelay(addr); err != nil {
 		t.Fatal(err)
 	}
-	bob.relaySyncOnce(addr)
-	held := bob.RelaySync().Held
-	if len(held) != 1 || held[0].Reason != heldTentative {
-		t.Fatalf("delivery on a guess must be held as a guess: %+v", held)
+	// The push phase alone: a copy that leaves on a GUESS is held as a
+	// guess. (Through a whole cycle the pull now runs first — LT-4 S3 —
+	// and may already have learned alice's stated route from her own
+	// push, which is the point of the order; the guess is pinned here.)
+	_, _, heldNow := bob.pushSpaces(addr, bob.snapshotSyncSpaces())
+	if hr, ok := heldNow[tid]; !ok || hr.reason != heldTentative {
+		t.Fatalf("delivery on a guess must be held as a guess: %+v", heldNow)
 	}
 
 	// And the hold clears only for the real thing: a STATED route.

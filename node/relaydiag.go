@@ -50,6 +50,11 @@ type RelayDiagnostics struct {
 	// Latency (LT-1): the last own frames' timeline — minted → a relay
 	// took it (which) → a foreign device signed for it — in ms.
 	Latency []LatencySample `json:"latency,omitempty"`
+	// Typical (LT-4 S7): the medians behind the samples, and Outbox: the
+	// sender's lane as it last ran — a word sits on the dot for exactly
+	// as long as the number here says.
+	Typical *LatencyTypical `json:"latency_typical,omitempty"`
+	Outbox  *OutboxDiag     `json:"outbox,omitempty"`
 	// Listeners (LT-2): every parked session and its own evidence — how
 	// long parked, when the relay last answered a ping, how often the
 	// doorbell rang. A listener whose last pong is older than its ping
@@ -218,6 +223,11 @@ func (r *Runtime) RelayDiagnosticsSnapshot() RelayDiagnostics {
 	r.mu.Unlock()
 	sort.Slice(d.Peers, func(i, j int) bool { return d.Peers[i].Device < d.Peers[j].Device })
 	d.Latency = r.lat.snapshot(8)
+	if typ := r.lat.typical(); typ.Frames > 0 {
+		d.Typical = &typ
+	}
+	ob := r.outboxDiag()
+	d.Outbox = &ob
 	d.Listeners = r.listenerDiags()
 	sort.Strings(d.LocalPeers)
 	sort.Slice(d.Fetches, func(i, j int) bool {

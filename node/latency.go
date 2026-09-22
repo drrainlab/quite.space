@@ -86,6 +86,38 @@ type LatencySample struct {
 	Receiptor   string `json:"receiptor,omitempty"`
 }
 
+// LatencyTypical is the median of the recent own frames' timeline, so
+// one slow message does not read as "the app is slow": -1 where fewer
+// than two frames have made that step.
+type LatencyTypical struct {
+	Frames      int   `json:"frames"`
+	RelayedMs   int64 `json:"relayed_ms"`
+	DeliveredMs int64 `json:"delivered_ms"`
+}
+
+func (l *latencyLedger) typical() LatencyTypical {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var rel, del []int64
+	for _, s := range l.list {
+		if !s.relayed.IsZero() {
+			rel = append(rel, s.relayed.Sub(s.minted).Milliseconds())
+		}
+		if !s.delivered.IsZero() {
+			del = append(del, s.delivered.Sub(s.minted).Milliseconds())
+		}
+	}
+	return LatencyTypical{Frames: len(l.list), RelayedMs: medianMs(rel), DeliveredMs: medianMs(del)}
+}
+
+func medianMs(v []int64) int64 {
+	if len(v) < 2 {
+		return -1
+	}
+	sort.Slice(v, func(i, j int) bool { return v[i] < v[j] })
+	return v[len(v)/2]
+}
+
 func (l *latencyLedger) snapshot(limit int) []LatencySample {
 	l.mu.Lock()
 	defer l.mu.Unlock()

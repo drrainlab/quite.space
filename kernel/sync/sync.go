@@ -122,6 +122,9 @@ type Engine struct {
 	// bridge on this link. The NODE verifies against its pinned custodian
 	// keys — the engine only routes (an unpinned receipt records nothing).
 	OnCustodyReceipt func(receipt []byte)
+	// OnDeliveryReceipts receives signed DR-1 receipts a live peer sent
+	// (LT-4 S4). Routed, never verified here — the node checks them.
+	OnDeliveryReceipts func(receipts [][]byte)
 
 	// pending holds requested wire ids awaiting delivery. The engine is not
 	// safe for concurrent use; callers serialize (the node runtime holds
@@ -231,6 +234,7 @@ type message struct {
 	hashes   []id.Hash
 	blobs    [][]byte
 	receipt  []byte
+	receipts [][]byte
 	attempt  []byte
 	beacon   []byte
 	hello    []byte
@@ -359,6 +363,16 @@ func decodeMessage(data []byte) (*message, error) {
 			b, err = d.ReadBytes()
 			if err == nil {
 				msg.epochs = append([]byte(nil), b...)
+			}
+		case keyReceipts:
+			var cnt int
+			cnt, err = d.ReadArray()
+			for i := 0; err == nil && i < cnt; i++ {
+				var b []byte
+				b, err = d.ReadBytes()
+				if err == nil {
+					msg.receipts = append(msg.receipts, append([]byte(nil), b...))
+				}
 			}
 		case keyReceipt:
 			var b []byte
@@ -549,6 +563,10 @@ func (e *Engine) Handle(ep transports.Endpoint, raw []byte) (applied int, reject
 	case msgCustody:
 		if e.OnCustodyReceipt != nil && len(msg.receipt) > 0 {
 			e.OnCustodyReceipt(msg.receipt)
+		}
+	case msgReceipts:
+		if e.OnDeliveryReceipts != nil && len(msg.receipts) > 0 {
+			e.OnDeliveryReceipts(msg.receipts)
 		}
 	}
 	return applied, rejected, nil

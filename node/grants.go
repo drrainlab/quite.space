@@ -476,7 +476,6 @@ type offerItem struct {
 	dev  id.DeviceID
 	tid  id.TerminalID
 	body []byte
-	eps  []storage.Route
 }
 
 func (r *Runtime) grantsInit() {
@@ -527,8 +526,7 @@ func (r *Runtime) offerGrants() {
 			if body == nil {
 				continue
 			}
-			offers = append(offers, offerItem{dev: dev, tid: tid, body: body,
-				eps: append([]storage.Route(nil), r.ks.PeerRoutes[dev]...)})
+			offers = append(offers, offerItem{dev: dev, tid: tid, body: body})
 		}
 	}
 	// THE CERTIFIED SET ITSELF travels the same plane (transitivity: A
@@ -546,8 +544,7 @@ func (r *Runtime) offerGrants() {
 			continue
 		}
 		r.grants.setSent[dev] = setSize
-		offers = append(offers, offerItem{dev: dev, body: body,
-			eps: append([]storage.Route(nil), r.ks.PeerRoutes[dev]...)})
+		offers = append(offers, offerItem{dev: dev, body: body})
 	}
 	// THE REFUSALS TRAVEL THE SAME PLANE (ADR-027). A person who declined
 	// somebody on one device must not be knocked on again from the other:
@@ -563,8 +560,7 @@ func (r *Runtime) offerGrants() {
 			continue
 		}
 		r.grants.refusalsSent[dev] = refusalCount
-		offers = append(offers, offerItem{dev: dev, body: body,
-			eps: append([]storage.Route(nil), r.ks.PeerRoutes[dev]...)})
+		offers = append(offers, offerItem{dev: dev, body: body})
 	}
 	own := ""
 	r.mu.Unlock()
@@ -584,13 +580,9 @@ func (r *Runtime) offerGrants() {
 		// relay as the tentative courtesy otherwise — siblings usually
 		// share one, and the same honesty rules as delivery apply: a
 		// guess is an attempt, and the derived pending set IS the hold.
-		ep := own
-		for _, rt := range o.eps {
-			if rt.Transport == "relay" && rt.Endpoint != "" {
-				ep = rt.Endpoint
-				break
-			}
-		}
+		// The one chooser every plane uses (LT-4 S2): best dialable stated
+		// route, own relay as the courtesy.
+		ep, _ := r.courtesyRoute(o.dev)
 		if ep == "" {
 			continue
 		}
@@ -750,13 +742,9 @@ func (r *Runtime) mailboxTags(offers []offerItem, own string, now uint64) map[st
 			continue
 		}
 		seen[o.dev] = true
-		ep := own
-		for _, rt := range o.eps {
-			if rt.Transport == "relay" && rt.Endpoint != "" {
-				ep = rt.Endpoint
-				break
-			}
-		}
+		// The one chooser every plane uses (LT-4 S2): best dialable stated
+		// route, own relay as the courtesy.
+		ep, _ := r.courtesyRoute(o.dev)
 		if ep == "" {
 			continue
 		}
@@ -798,6 +786,7 @@ func (r *Runtime) siblingIngresses(already []string) []string {
 	for _, ep := range already {
 		seen[ep] = true
 	}
+	own := r.ResolvePersonalRelay() // before r.mu: the resolver takes its own locks
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	self := r.Device.ID
@@ -807,7 +796,7 @@ func (r *Runtime) siblingIngresses(already []string) []string {
 			continue
 		}
 		for _, rt := range r.ks.PeerRoutes[dev] {
-			if rt.Transport != "relay" || rt.Endpoint == "" || seen[rt.Endpoint] {
+			if rt.Transport != "relay" || rt.Endpoint == "" || seen[rt.Endpoint] || !routableFrom(rt.Endpoint, own) {
 				continue
 			}
 			seen[rt.Endpoint] = true

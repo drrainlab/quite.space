@@ -305,15 +305,33 @@ func (r *Runtime) startAutomaticRelay(interval time.Duration) {
 		defer r.wg.Done()
 		st := r.loadRelayState()
 		fingerprint := networkFingerprint()
-		// Last-known-good first: start syncing immediately, re-measure in
-		// the background only when the network moved or the data is stale.
-		if st.SelectedPrimary != "" && st.NetworkFingerprint == fingerprint &&
-			time.Since(time.Unix(st.LastSelectionUnix, 0)) < time.Hour {
+		// LAST-KNOWN-GOOD FIRST, AND FIRST MEANS NOW. The loop starts on
+		// the relay this node used last time, whatever the network looks
+		// like today; a re-measurement follows in the background and moves
+		// the loop only if it finds something better. It used to start the
+		// loop only when the stored choice was fresh (under an hour, same
+		// network) and otherwise waited for a full round of probes to
+		// succeed — and the outbox lives inside that loop, so until the
+		// probes agreed nothing this node said could leave. Measured on the
+		// owner's phone (1.0.26-rc3): two and a half minutes from open to
+		// the first pull, a message on "sent" for fourteen, while the
+		// listener had parked on those same relays within seconds. A
+		// stale choice that answers beats a perfect choice that is still
+		// being made; the loop reports its own failures honestly if the
+		// old relay is gone, and the watcher below switches away from a
+		// sick one.
+		provisional := false
+		if st.SelectedPrimary != "" {
 			if ref, err := ParseRelayRef(st.SelectedPrimary); err == nil {
 				if ep, ok := ref.Resolve(BuiltinRelayRegistry()); ok {
 					r.applyRelaySync(ep, interval)
-					r.watchForABetterRelay(interval, fingerprint)
-					return
+					fresh := st.NetworkFingerprint == fingerprint &&
+						time.Since(time.Unix(st.LastSelectionUnix, 0)) < time.Hour
+					if fresh {
+						r.watchForABetterRelay(interval, fingerprint)
+						return
+					}
+					provisional = true
 				}
 			}
 		}
@@ -338,7 +356,12 @@ func (r *Runtime) startAutomaticRelay(interval time.Duration) {
 			if primary, _ := r.runAutoSelection(); primary != "" {
 				if ref, err := ParseRelayRef(primary); err == nil {
 					if ep, ok := ref.Resolve(BuiltinRelayRegistry()); ok {
-						r.applyRelaySync(ep, interval)
+						// A provisional loop already on this address is
+						// left alone: applyRelaySync would tear it down
+						// to rebuild the same thing.
+						if !provisional || ep != r.relaySyncAddr() {
+							r.applyRelaySync(ep, interval)
+						}
 						r.watchForABetterRelay(interval, fingerprint)
 						return
 					}

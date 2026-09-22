@@ -181,11 +181,8 @@ func (r *Runtime) pendingGrantsLocked(dev id.DeviceID, own string) []PendingGran
 			continue
 		}
 		pg := PendingGrant{Space: tid.Hex(), Title: meta.Title, Guessed: true}
-		for _, rt := range r.ks.PeerRoutes[dev] {
-			if rt.Transport == "relay" && rt.Endpoint != "" {
-				pg.Via, pg.Guessed = rt.Endpoint, false
-				break
-			}
+		if ep := r.dialableStatedLocked(dev, own); ep != "" {
+			pg.Via, pg.Guessed = ep, false
 		}
 		if pg.Guessed {
 			pg.Via = own

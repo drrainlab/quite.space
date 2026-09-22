@@ -140,3 +140,116 @@ func TestWakeDoesNotForgiveAnUntrustedRelay(t *testing.T) {
 		t.Error("an untrusted endpoint was rehabilitated by a sleep")
 	}
 }
+
+// A return after a real absence drops the pooled sockets (Doze leaves them
+// half-open, and the first word said then costs a Put timeout plus an
+// outbox retry — "about 15 s to the relay", measured on 1.0.25); a glance
+// away and back keeps them.
+func TestReturningAfterARealAbsenceDropsThePooledSockets(t *testing.T) {
+	srv, addr := startRelay(t)
+	defer srv.Close()
+	rt := openRuntime(t, t.TempDir(), "alice")
+	defer rt.Close()
+	setPersonalRelay(t, rt, addr)
+
+	live := func() bool {
+		pe := rt.pool().peer(addr)
+		pe.control.mu.Lock()
+		defer pe.control.mu.Unlock()
+		return pe.control.client != nil
+	}
+	warm := func() {
+		c, release, err := rt.pool().Control(addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := c.Time(); err != nil {
+			t.Fatal(err)
+		}
+		release(nil)
+		if !live() {
+			t.Fatal("setup: no pooled connection to lose")
+		}
+	}
+
+	warm()
+	rt.SetForeground(false) // a glance at another app
+	rt.SetForeground(true)
+	if !live() {
+		t.Fatal("a moment away cost a handshake")
+	}
+
+	rt.SetForeground(false)
+	rt.awayAt.Store(time.Now().Add(-staleAfterAway - time.Second).UnixNano())
+	rt.SetForeground(true)
+	if live() {
+		t.Fatal("a real absence left the stale socket in the pool")
+	}
+	warm() // and the next use simply dials again
+}
+
+// The outbox's socket is nobody else's: a lane held by the cycle does not
+// make a word said wait.
+func TestTheOutboxLaneIsNotTheControlLane(t *testing.T) {
+	srv, addr := startRelay(t)
+	defer srv.Close()
+	rt := openRuntime(t, t.TempDir(), "alice")
+	defer rt.Close()
+	setPersonalRelay(t, rt, addr)
+
+	control, releaseControl, err := rt.pool().Control(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer releaseControl(nil)
+	// The control lane is HELD. The outbox must still get through, now.
+	done := make(chan *relay.Client, 1)
+	go func() {
+		c, release, err := rt.pool().Outbox(addr)
+		if err != nil {
+			t.Error(err)
+			done <- nil
+			return
+		}
+		defer release(nil)
+		done <- c
+	}()
+	select {
+	case c := <-done:
+		if c == nil || c == control {
+			t.Fatal("the outbox was handed the control lane's client")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the outbox waited behind a held control lane")
+	}
+}
+
+// A word said does not wait for the cycle's push phase: the outbox's pass
+// runs while pushMu is held by somebody else.
+func TestTheOutboxDoesNotWaitForTheCyclesPushPhase(t *testing.T) {
+	srv, addr := startRelay(t)
+	defer srv.Close()
+	rt := openRuntime(t, t.TempDir(), "alice")
+	defer rt.Close()
+	setPersonalRelay(t, rt, addr)
+	tid, err := rt.CreateSpace("a word in a hurry")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.Say(tid, "now", SayOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	rs := rt.relaySync
+	rs.pushMu.Lock() // the cycle, mid-phase, for a long time
+	defer rs.pushMu.Unlock()
+	done := make(chan struct{})
+	go func() {
+		rt.pushSpacesVia(addr, rt.snapshotSyncSpaces(), true)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the outbox waited behind the cycle's push phase")
+	}
+}

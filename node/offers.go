@@ -20,12 +20,10 @@ package node
 //                            relaysync.go keep saying "on a guess, cursor
 //                            unmoved" exactly as before
 //
-// A mark is only as good as the mailbox it names. It is void when the
-// recipient's endpoint changes (the mailbox on the other relay is empty),
-// when stated knowledge displaces a guess (resetOffers, from relaysync),
-// and — for guessed endpoints — after guessReofferAfter, because a relay
-// keeps items for 48 h and a recipient who turns up later must still find
-// the history. In memory only: a restart re-offers once, deduped.
+// The book itself is DURABLE and keyed by mailbox since LT-4 S5 — see
+// offerbook.go for the three rules (log-index cursor, cursor moves only
+// after PutOK, a full re-offer a day after the last one). This file keeps
+// the two thin doors the push uses and the legacy-route shelf life.
 
 import (
 	"time"
@@ -33,18 +31,6 @@ import (
 	"github.com/drrainlab/quiet_places/kernel/storage"
 	"github.com/drrainlab/quiet_places/protocol/id"
 )
-
-type offerMark struct {
-	endpoint string
-	guess    bool
-	base     int
-	at       time.Time // when the mailbox last received a FULL offer
-}
-
-// guessReofferAfter is how long a copy on a guessed relay is trusted to
-// still be there: half the relay TTL, so the history is re-laid before
-// the relay forgets it.
-const guessReofferAfter = 24 * time.Hour
 
 // legacyRouteMaxAge is the shelf life of a recorded assumption. Nothing a
 // peer does refreshes a legacy route (a statement deletes it instead), so
@@ -61,47 +47,18 @@ func legacyRouteExpired(rt storage.Route, nowUnix int64) bool {
 
 // offerBase answers "how many base frames does D's mailbox at E already
 // hold?" — the cursor the next push starts from. Zero means a full offer.
-func (r *Runtime) offerBase(tid id.TerminalID, dev id.DeviceID, ep string, guess bool, nBase int) int {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	m, ok := r.offers[tid][dev]
-	if !ok || m.endpoint != ep || m.guess != guess {
-		return 0
-	}
-	if m.guess && time.Since(m.at) > guessReofferAfter {
-		return 0
-	}
-	if m.base > nBase {
-		// The log is shorter than the mark (a truncation window aged
-		// frames out): nothing new below the mark, offer from the end.
-		return nBase
-	}
-	return m.base
+// offerBase is the log index the next push to this mailbox may start from;
+// n is the log's length now. The durable book (offerbook.go) answers.
+func (r *Runtime) offerBase(tid id.TerminalID, dev id.DeviceID, ep string, n int) int {
+	return r.offerBook.cursor(offerKey{tid, dev, ep}, n)
 }
 
-// markOffered records that D's mailbox at E now holds the first nBase base
-// frames. `from` is the cursor this push started at: zero means the whole
-// history was just laid down, which restarts the re-offer clock.
-func (r *Runtime) markOffered(tid id.TerminalID, dev id.DeviceID, ep string, guess bool, from, nBase int) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.offers == nil {
-		r.offers = map[id.TerminalID]map[id.DeviceID]offerMark{}
-	}
-	if r.offers[tid] == nil {
-		r.offers[tid] = map[id.DeviceID]offerMark{}
-	}
-	prev, had := r.offers[tid][dev]
-	at := time.Now()
-	if had && from > 0 && prev.endpoint == ep && prev.guess == guess {
-		at = prev.at
-	}
-	r.offers[tid][dev] = offerMark{endpoint: ep, guess: guess, base: nBase, at: at}
+// markOffered records, AFTER the relay accepted every body, that frames
+// with index < n are in this mailbox now.
+func (r *Runtime) markOffered(tid id.TerminalID, dev id.DeviceID, ep string, guess, legacy bool, from, n int) {
+	r.offerBook.mark(offerKey{tid, dev, ep}, from, n, guess, legacy)
 }
 
-// aliveWindow is how recently a device must have written for the guess
-// to be worth every official relay: a device silent for longer gets the
-// single cheap guess.
 const aliveWindow = 30 * 24 * time.Hour
 
 // guessRelays is where a live device with no stated route is guessed:
@@ -114,13 +71,14 @@ func (r *Runtime) guessRelays(syncingAt string) []string {
 	}
 	seen := map[string]bool{}
 	var out []string
+	own := r.ResolvePersonalRelay()
 	add := func(ep string) {
-		if ep != "" && !seen[ep] {
+		if ep != "" && !seen[ep] && routableFrom(ep, own) {
 			seen[ep] = true
 			out = append(out, ep)
 		}
 	}
-	add(r.ResolvePersonalRelay())
+	add(own)
 	add(syncingAt)
 	for _, d := range BuiltinRelayRegistry().Relays {
 		add(d.Endpoint)
@@ -154,8 +112,10 @@ func (r *Runtime) announceRoutes() {
 
 // resetOffers forgets every mark: the next push re-offers everything,
 // which EventID dedup makes a no-op wherever the copy was already right.
+// resetOffers forgets every mark — a test's way of losing all knowledge of
+// what any mailbox holds. Nothing in the product calls it any more: a
+// route change starts a fresh cursor by itself, because a mark is keyed by
+// the mailbox it names.
 func (r *Runtime) resetOffers() {
-	r.mu.Lock()
-	r.offers = nil
-	r.mu.Unlock()
+	r.offerBook.forgetAll()
 }

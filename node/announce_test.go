@@ -175,13 +175,13 @@ func TestAGhostGetsTheSingleCheapGuess(t *testing.T) {
 		t.Fatal(err)
 	}
 	var seen []string
-	route := func(dev id.DeviceID, alive bool) ([]string, bool) {
+	route := func(dev id.DeviceID, alive bool) ([]string, bool, bool) {
 		if alive {
 			seen = append(seen, "alive")
 		}
-		return []string{addrA}, true
+		return []string{addrA}, true, false
 	}
-	if _, _, _, _, _, err := rt.deliverSpaceRouted(tid, AssetsManifests, route, false, true, false); err != nil {
+	if _, _, _, _, _, err := rt.deliverSpaceRouted(tid, AssetsManifests, route, false, true, false, false); err != nil {
 		t.Fatal(err)
 	}
 	if len(seen) != 0 {

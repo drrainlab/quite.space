@@ -43,23 +43,33 @@ const relTime = (s) => `${s}s`;
 const honestyParts = new Function('t', 'esc', 'relTime',
   cut('honestyParts') + '; return honestyParts;')(t, esc, relTime);
 
-// A three-line DOM: enough for rows of label + value.
+// A three-line DOM: enough for rows of label + value, built into a
+// fragment and swapped in whole (the panel refreshes itself while open).
 function element(tag) {
   return {
     tag, className: '', textContent: '', innerHTML: '', children: [],
     appendChild(c) { this.children.push(c); return c; },
     append(...cs) { this.children.push(...cs); },
+    replaceChildren(frag) { this.children = frag.children.slice(); },
   };
 }
 let panel;
 const document = {
   getElementById: (id) => (id === 'relayDiagPanel' ? panel : null),
   createElement: element,
+  createDocumentFragment: () => element('#fragment'),
 };
 let diag = {};
 const api = async () => diag;
-const renderRelayDiagnostics = new Function('api', 't', 'document',
-  cut('renderRelayDiagnostics') + '; return renderRelayDiagnostics;')(api, t, document);
+// The refresh timer is stubbed: the harness checks one paint, not the clock.
+const timers = { armed: 0 };
+const setInterval = () => { timers.armed++; return 1; };
+const clearInterval = () => {};
+// relayDiagTimer / RELAY_DIAG_EVERY_MS live beside the function in app.js;
+// here they are parameters, so the evaluated copy sees the same names.
+const renderRelayDiagnostics = new Function('api', 't', 'document', 'setInterval', 'clearInterval',
+  'relayDiagTimer', 'RELAY_DIAG_EVERY_MS',
+  cut('renderRelayDiagnostics') + '; return renderRelayDiagnostics;')(api, t, document, setInterval, clearInterval, null, 3000);
 
 let failures = 0;
 function fail(what, detail) { failures++; console.log(`FAIL ${what}\n  ${detail}`); }
@@ -150,6 +160,40 @@ function row(rs, label) { return rs.find(r => r[0] === label); }
       ? ok('the hold rows come after the relay state, not among it')
       : fail('row order', JSON.stringify(order));
   }
+  // LT-4 S7: the sender's lane and the medians.
+  {
+    const rs = await rows({ ...base, outbox: { last_pass_ms: 120, last_pass_ago_s: 5, spaces: 1, pushed: 1, held: 0, express: 1, bulk: 0 } });
+    const r = row(rs, 'relay.diag.outbox');
+    r && r[1] === 'relay.diag.outbox.value|took=120 ms,ago=5 s,express=1,bulk=0'
+      ? ok('the last outbox pass is a row: how long, how long ago, which lane')
+      : fail('the outbox pass reaches the screen', JSON.stringify(rs));
+  }
+  {
+    const rs = await rows({ ...base, outbox: { last_pass_ms: 2400, last_pass_ago_s: 70, spaces: 2, pushed: 0, held: 0, express: 0, bulk: 0, streak: 3, last_error: 'dial tcp: refused' } });
+    const r = row(rs, 'relay.diag.outbox');
+    r && r[1] === 'relay.diag.outbox.value|took=2.4 s,ago=1 min,express=0,bulk=0 · relay.diag.outbox.retrying|n=3 · dial tcp: refused'
+      ? ok('a failing outbox says it is retrying, how many times, and why')
+      : fail('the outbox failure reaches the screen', JSON.stringify(rs));
+  }
+  {
+    const rs = await rows({ ...base, outbox: { last_pass_ms: -1, last_pass_ago_s: -1 } });
+    const r = row(rs, 'relay.diag.outbox');
+    r && r[1] === 'relay.diag.outbox.never'
+      ? ok('before the first pass the outbox row says so, not 0 ms')
+      : fail('outbox before first pass', JSON.stringify(rs));
+  }
+  {
+    const rs = await rows({ ...base, latency_typical: { frames: 6, relayed_ms: 340, delivered_ms: 1900 } });
+    const r = row(rs, 'relay.diag.typical');
+    r && r[1] === '→ relay.diag.latency.relay 340 ms → ✓✓ 1.9 s'
+      ? ok('the medians are one row, → relay → ✓✓')
+      : fail('typical latency reaches the screen', JSON.stringify(rs));
+    const none = await rows({ ...base, latency_typical: { frames: 1, relayed_ms: -1, delivered_ms: -1 } });
+    !row(none, 'relay.diag.typical')
+      ? ok('one frame is not a median: no row')
+      : fail('typical with nothing measured', JSON.stringify(none));
+  }
+  timers.armed >= 1 ? ok('the panel arms its refresh while open') : fail('the panel does not refresh itself', String(timers.armed));
   if (failures) { console.log(`\n${failures} failure(s)`); process.exit(1); }
-  console.log('\nhonesty surfaces: all checks passed');
+  console.log(`\nhonesty surfaces: all checks passed`);
 })().catch(e => { console.log('FAIL harness threw: ' + (e.stack || e)); process.exit(1); });

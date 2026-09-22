@@ -213,12 +213,8 @@ func (r *Runtime) KnockOn(via id.TerminalID, who id.PrincipalID, line string) (s
 // node's own as the courtesy otherwise — the same rule the identity plane
 // uses, and for the same reason: a guess is an attempt, not a promise.
 func (r *Runtime) routeForDevice(dev id.DeviceID, fallback string) string {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	for _, rt := range r.ks.PeerRoutes[dev] {
-		if rt.Transport == "relay" && rt.Endpoint != "" {
-			return rt.Endpoint
-		}
+	if ep, guessed := r.courtesyRoute(dev); !guessed && ep != "" {
+		return ep
 	}
 	return fallback
 }

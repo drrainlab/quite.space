@@ -281,3 +281,143 @@ func TestPreT4NeverRetiresEstablishedIngress(t *testing.T) {
 		return countMsg(t, alice, tid, "still here?") >= 1
 	})
 }
+
+func TestAPeersLoopbackRouteIsNotDialledFromAnotherMachine(t *testing.T) {
+	cases := []struct {
+		ep, own string
+		want    bool
+	}{
+		{"127.0.0.1:7411", "178.20.45.239:7411", false}, // a stand's stale loopback, seen from a phone
+		{"localhost:7411", "178.20.45.239:7411", false},
+		{"0.0.0.0:7411", "178.20.45.239:7411", false},
+		{"[::1]:7411", "178.20.45.239:7411", false},
+		{"127.0.0.1:7411", "127.0.0.1:7412", true}, // the test bench: everybody on one machine
+		{"127.0.0.1:7411", "", true},               // no own relay yet: dial what was said
+		{"178.20.45.239:7411", "127.0.0.1:7412", true},
+		{"", "178.20.45.239:7411", false},
+	}
+	for _, c := range cases {
+		if got := routableFrom(c.ep, c.own); got != c.want {
+			t.Errorf("routableFrom(%q, own=%q) = %v, want %v", c.ep, c.own, got, c.want)
+		}
+	}
+}
+
+// LT-4 S2. A receipt goes where a message would: the author's best DIALABLE
+// stated route, not whatever sits first in the raw book. Bob's first stated
+// route (A) is a relay alice's pool has marked untrusted; the receipt must
+// land at his second (B). Alice herself lives on C by then.
+func TestReceiptsUseTheDialableRoute(t *testing.T) {
+	srvA, addrA := startRelay(t)
+	defer srvA.Close()
+	srvB, addrB := startRelay(t)
+	defer srvB.Close()
+	srvC, addrC := startRelay(t)
+	defer srvC.Close()
+	alice, bob, tid := pairOnRelay(t, addrA)
+	defer alice.Close()
+	defer bob.Close()
+	setPersonalRelay(t, alice, addrC)
+
+	// A word from bob that alice folds: alice owes him a receipt.
+	if _, err := bob.Say(tid, "квитанцию сюда", SayOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	nodes := map[string]*Runtime{"alice": alice, "bob": bob}
+	addrs := map[string]string{"alice": addrC, "bob": addrA}
+	waitUntil(t, 30*time.Second, "alice never received bob's word", func() bool {
+		convergeTick(nodes, addrs)
+		return countMsg(t, alice, tid, "квитанцию сюда") >= 1
+	})
+
+	// Bob states B as well; A is dead to alice's pool from here on.
+	alice.mu.Lock()
+	alice.recordPeerRouteLocked(bob.Device.ID, addrB, "relay", storage.RouteAdvertised)
+	alice.mu.Unlock()
+	pe := alice.pool().peer(addrA)
+	pe.mu.Lock()
+	pe.untrusted = true
+	pe.mu.Unlock()
+	defer func() { pe.mu.Lock(); pe.untrusted = false; pe.mu.Unlock() }()
+
+	ep, guessed := alice.courtesyRoute(bob.Device.ID)
+	if guessed || ep != addrB {
+		t.Fatalf("courtesyRoute = %q guessed=%v, want bob's dialable second route %q", ep, guessed, addrB)
+	}
+	before := mailboxCount(t, addrB, tid, bob.Device.ID)
+	alice.receipts = nil // forget what was receipted; the next pass owes one
+	alice.sendReceipts()
+	if got := mailboxCount(t, addrB, tid, bob.Device.ID); got <= before {
+		t.Fatalf("the receipt did not land at bob's dialable route B (mailbox %d → %d)", before, got)
+	}
+}
+
+// LT-4 S2. A stated return route that nobody could dial from here is not
+// written into the book — and a statement made only of such routes does
+// not erase the routes already known. (A real, certified peer: a claim
+// from a device nobody's root has named is not knowledge at all.)
+func TestAStatedLoopbackRouteIsNotRecordedOffTheBench(t *testing.T) {
+	srv, addr := startRelay(t)
+	defer srv.Close()
+	alice, bob, _ := pairOnRelay(t, addr)
+	defer alice.Close()
+	defer bob.Close()
+	// Off the bench: alice's own relay is a public address (never dialled here).
+	if err := alice.SetSettings(Settings{Relay: "203.0.113.9:7411"}); err != nil {
+		t.Fatal(err)
+	}
+	raw := func() []string {
+		alice.mu.Lock()
+		defer alice.mu.Unlock()
+		var out []string
+		for _, rt := range alice.ks.PeerRoutes[bob.Device.ID] {
+			out = append(out, rt.Endpoint)
+		}
+		return out
+	}
+	before := raw()
+	alice.recordStatedReturnRoutes(bob.Device.ID[:], []string{"127.0.0.1:7411", "0.0.0.0:7411", "198.51.100.5:0"})
+	if after := raw(); len(after) != len(before) {
+		t.Fatalf("a statement of unroutable addresses changed the book: %v → %v", before, after)
+	}
+	alice.recordStatedReturnRoutes(bob.Device.ID[:], []string{"127.0.0.1:7411", "198.51.100.6:7411"})
+	after := raw()
+	sawReal := false
+	for _, ep := range after {
+		if ep == "127.0.0.1:7411" {
+			t.Fatalf("a loopback address entered the book beside a real one: %v", after)
+		}
+		if ep == "198.51.100.6:7411" {
+			sawReal = true
+		}
+	}
+	if !sawReal {
+		t.Fatalf("the real address of the statement was not recorded: %v", after)
+	}
+}
+
+// LT-4 S2. This node's own loopback past is not advertised to peers who
+// cannot dial it — unless this node itself lives on a loopback relay (the
+// bench), where everybody shares one machine.
+func TestALoopbackIngressIsNotAdvertisedOffTheBench(t *testing.T) {
+	in := []string{"203.0.113.9:7411", "127.0.0.1:7411", "[::1]:7411", "203.0.113.10:7411"}
+	got := advertisable(in, "203.0.113.9:7411")
+	if len(got) != 2 || got[0] != "203.0.113.9:7411" || got[1] != "203.0.113.10:7411" {
+		t.Fatalf("advertisable off the bench = %v", got)
+	}
+	bench := advertisable(in, "127.0.0.1:7412")
+	if len(bench) != 4 {
+		t.Fatalf("on the bench every ingress is advertisable, got %v", bench)
+	}
+	for _, c := range []struct {
+		ep   string
+		want bool
+	}{
+		{"198.51.100.4:7411", true}, {"198.51.100.4:0", false}, {"169.254.1.2:7411", false},
+		{"224.0.0.1:7411", false}, {"127.0.0.1:7411", false}, {"nohost", false},
+	} {
+		if got := statableEndpoint(c.ep, "203.0.113.9:7411"); got != c.want {
+			t.Errorf("statableEndpoint(%q) = %v, want %v", c.ep, got, c.want)
+		}
+	}
+}

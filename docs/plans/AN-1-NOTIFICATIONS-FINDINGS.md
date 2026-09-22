@@ -266,3 +266,67 @@ produced zero rings (accepted 3 → 3).
 **Deploy pitfall:** an `ssh` without `-n` inside a `bash <<HEREDOC` loop
 swallows the rest of the script as its stdin — the gateway step after the
 relay loop silently never ran.
+
+## LT-4 — a word said leaves now, for real (2026-09-22, night)
+
+The owner: "смутила доставка на реле — секунд 15, с телефона". Then, on
+the stand with a forced 75 s Doze and a send right after: "точка долго",
+messages on "sent" for 4–14 minutes, leaving only when the process was
+restarted. Five causes, found one under the other, each measured on the
+phone (1.0.26-rc1…rc11):
+
+| # | what held the word | fix |
+|---|---|---|
+| 1 | half-open sockets after Doze: a Put into a dead socket fails at the read (4 s) and the outbox retries 5 s later | return after >20 s away = `onWake` (pool sockets dropped); the outbox's first failure = `onWake` + one immediate retry |
+| 2 | a node opened from the background counted as "watched" | the controller re-applies the true foreground state after every open |
+| 3 | **automatic relay selection**: with a stale last-known-good the loop was not armed until a full probe round succeeded — 2.5 min after open on the phone, and no loop means no outbox | start on the last-known-good at once, measure behind it, switch only to a better one |
+| 4 | **the outbox shared the control socket** with the cycle (a lane is held acquire→release) | `relayPeer.outbox` lane; the doorbell pull got `inbox` |
+| 5 | **the outbox shared `pushMu`** with the cycle's whole push phase, which on a fresh process re-walks every space — minutes on a phone | `outboxMu`; a re-push is idempotent (event-id dedup) |
+
+Plus: the node's log now lands in `<dataDir>/logs` on Android too (Go's
+stderr reaches nobody there — measured: not one node line in logcat), the
+host prints its tail for ten minutes after every open, and the status
+carries `relay.armed/pulled/sync_error`.
+
+Left on the stand: the phone's only stated route for the stand node was a
+stale `127.0.0.1:7411` (the screenshot stand once ran a loopback relay, and
+`SelfIngress` keeps every once-advertised ingress). Loopback routes are now
+skipped outside a loopback world; with no routable stated route left the
+copy lands on a guessed relay the peer only polls — 28.8 s on the last
+measurement, against 9.8–11.9 s before the filter. Real peers state real
+relays. The open question for a later slice: `SelfIngress` never forgets,
+so a relay somebody used once is announced forever.
+
+Timeline of the last sends, stand clock: rc7 367 s (left on reopen), rc8
+203 s (left on reopen), rc9 9.8 s / 11.9 s, rc10 292 s (left on reopen),
+rc11 28.8 s.
+
+## LT-4 — built (2026-09-23)
+
+The five causes above were the surface; the plan in
+`LT-4-A-WORD-LEAVES-FOR-GOOD.md` rebuilt what let them happen. Shipped in
+1.0.26: lane by delta (S1), one route chooser and loopback hygiene (S2),
+pull-first cycle (S3), receipts on arrival with a one-second debounce and
+LAN receipts over the link (S4), the durable offer book keyed per mailbox
+(S5), the outbox row and the medians on the diagnostics sheet (S7). PutMany
+(S6) waits for the relays.
+
+What the tests measured on the laptop, cycle held shut on the receiver:
+the word on the express lane with 80 KiB of history behind it in about
+0.2 s; ✓✓ home about 1.3 s after the receiver's pull; twenty words, one
+receipt Put; a restart followed by six cycles, zero new items in the
+peer's mailbox.
+
+Pitfalls met on the way, for the next reader:
+- `ResolvePersonalRelay()` takes `r.mu`; called under the lock it hangs
+  joins on "waiting_for_owner". Resolvers go before the lock.
+- The full node package runs about ten and a half minutes; two media tests
+  and one principal-convergence test fail under CPU load (an APK build or
+  a second suite alongside) and pass isolated. Suites run one at a time.
+- t6 failed once in eight in a four-test loop with "ingress custody lost"
+  and no cause, then five in twelve alone. The cause was a race in the
+  ingress hold: two concurrent collects of identical bytes shared one
+  temporary file, and the loser's ENOENT latched "custody lost" — a node
+  that silently stops collecting. Serialised in `kernel/storage`, covered
+  by a test that is red on the old code; the latch now logs its cause.
+  Likely behind earlier unexplained "never converged" flakes as well.

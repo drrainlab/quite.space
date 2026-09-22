@@ -5,6 +5,10 @@ package node
 // cycle re-arms sooner than the next tick.
 
 import (
+	"fmt"
+	"github.com/drrainlab/quiet_places/protocol/id"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -144,5 +148,168 @@ func TestWhatARelayTookStaysTakenAcrossARestart(t *testing.T) {
 	defer alice.Close()
 	if got := deliveryOf(t, alice, tid, "переживёт рестарт"); got != "relayed" {
 		t.Fatalf("after the restart the word shows %q — the relay's acceptance was forgotten", got)
+	}
+}
+
+// laneOpen reports whether a pool lane to addr currently holds a socket.
+func laneOpen(rt *Runtime, addr string, which string) bool {
+	pe := rt.pool().peer(addr)
+	var lane *relayLane
+	switch which {
+	case "bulk":
+		lane = &pe.bulk
+	case "outbox":
+		lane = &pe.outbox
+	default:
+		lane = &pe.control
+	}
+	lane.mu.Lock()
+	defer lane.mu.Unlock()
+	return lane.client != nil
+}
+
+// closeLane drops a lane's socket so the test can see whether it reopens.
+func closeLane(rt *Runtime, addr string, which string) {
+	pe := rt.pool().peer(addr)
+	lane := &pe.control
+	if which == "bulk" {
+		lane = &pe.bulk
+	}
+	lane.mu.Lock()
+	if lane.client != nil {
+		lane.client.Close()
+		lane.client = nil
+	}
+	lane.mu.Unlock()
+}
+
+// growHistory says n words of about 1 KiB each and waits until bob has them.
+func growHistory(t *testing.T, alice, bob *Runtime, tid id.TerminalID, n int) {
+	t.Helper()
+	word := strings.Repeat("история ", 128) // ~1 KiB of UTF-8
+	for i := 0; i < n; i++ {
+		if _, err := alice.Say(tid, fmt.Sprintf("%d %s", i, word), SayOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	waitUntil(t, 60*time.Second, "bob never caught up with the history", func() bool {
+		return countMsg(t, bob, tid, "99 история") >= 1 || countMsg(t, bob, tid, fmt.Sprintf("%d история", n-1)) >= 1
+	})
+}
+
+// LT-4 S1. A space whose history is past the bulk threshold still sends a
+// word on the EXPRESS lane: the lane is chosen by the delta a recipient
+// needs, not by the size of the whole log. (In a live process; a fresh
+// process still owes each peer its history once — on bulk — until S5.)
+func TestTheOutboxSendsTheDeltaOnTheExpressLane(t *testing.T) {
+	srv, addr := startRelay(t)
+	defer srv.Close()
+	alice, bob, tid := pairOnRelay(t, addr)
+	defer alice.Close()
+	defer bob.Close()
+	growHistory(t, alice, bob, tid, 80) // ~80 KiB > bulkThreshold
+
+	// The cycle is held shut; the bulk lane is closed so its reopening
+	// would be visible.
+	release := make(chan struct{})
+	defer close(release)
+	rs := alice.relaySync
+	rs.mu.Lock()
+	rs.beforeCycle = func() { <-release }
+	rs.mu.Unlock()
+	closeLane(alice, addr, "bulk")
+
+	start := time.Now()
+	if _, err := alice.Say(tid, "одно слово", SayOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, 10*time.Second, "the word did not arrive", func() bool {
+		return countMsg(t, bob, tid, "одно слово") >= 1
+	})
+	took := time.Since(start)
+	if laneOpen(alice, addr, "bulk") {
+		t.Fatal("a 400-byte word opened the bulk lane — the lane was chosen by the log, not the delta")
+	}
+	if !laneOpen(alice, addr, "outbox") {
+		t.Fatal("the word did not ride the outbox lane")
+	}
+	if took > 2*time.Second {
+		t.Fatalf("the word took %v", took)
+	}
+	t.Logf("word on the express lane in %v with %d KiB of history behind it", took, 80)
+}
+
+// LT-4 S1. A recipient whose cursor is unknown (first contact, or a book
+// lost) gets the history on the bulk lane in its own goroutine, while the
+// word still leaves for everybody else on the express lane.
+func TestAFirstContactDoesNotHoldTheExpressLane(t *testing.T) {
+	srv, addr := startRelay(t)
+	defer srv.Close()
+	alice, bob, tid := pairOnRelay(t, addr)
+	defer alice.Close()
+	defer bob.Close()
+	// Bob signs no receipts: without the signed floor a forgotten cursor
+	// really does owe him the whole history.
+	off := false
+	if err := bob.SetSettings(Settings{Relay: addr, DeliveryReceipts: &off}); err != nil {
+		t.Fatal(err)
+	}
+	growHistory(t, alice, bob, tid, 80)
+
+	release := make(chan struct{})
+	defer close(release)
+	rs := alice.relaySync
+	rs.mu.Lock()
+	rs.beforeCycle = func() { <-release }
+	rs.mu.Unlock()
+	// Bob's cursor is forgotten: the next push owes him everything.
+	alice.resetOffers()
+	closeLane(alice, addr, "bulk")
+
+	start := time.Now()
+	if _, err := alice.Say(tid, "ещё слово", SayOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, 15*time.Second, "the word did not arrive with the history", func() bool {
+		return countMsg(t, bob, tid, "ещё слово") >= 1
+	})
+	if !laneOpen(alice, addr, "bulk") {
+		t.Fatal("a full history did not ride the bulk lane")
+	}
+	t.Logf("history and word in %v; bulk lane open: %v", time.Since(start), laneOpen(alice, addr, "bulk"))
+}
+
+// LT-4 S3. The cycle collects this device's own mail FIRST, then pushes,
+// then reads the public world; the historical ingresses come after the
+// reading. Pinned by the phase probe rather than inferred from timing.
+func TestThePersonalPullRunsBeforeThePush(t *testing.T) {
+	srv, addr := startRelay(t)
+	defer srv.Close()
+	alice, bob, tid := pairOnRelay(t, addr)
+	defer alice.Close()
+	defer bob.Close()
+	var mu sync.Mutex
+	var phases []string
+	rs := alice.relaySync
+	rs.mu.Lock()
+	rs.phaseProbe = func(p string) { mu.Lock(); phases = append(phases, p); mu.Unlock() }
+	rs.mu.Unlock()
+	if _, err := alice.Say(tid, "порядок", SayOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	alice.relaySyncOnce(addr)
+	mu.Lock()
+	got := append([]string(nil), phases...)
+	mu.Unlock()
+	// The probe may have seen earlier background cycles; take the last four.
+	if len(got) < 4 {
+		t.Fatalf("phases = %v", got)
+	}
+	last := got[len(got)-4:]
+	want := []string{"pull", "push", "public", "historical"}
+	for i := range want {
+		if last[i] != want[i] {
+			t.Fatalf("cycle order = %v, want %v", last, want)
+		}
 	}
 }

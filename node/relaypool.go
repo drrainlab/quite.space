@@ -73,6 +73,19 @@ type relayPeer struct {
 	addr    string
 	control relayLane
 	bulk    relayLane
+	// outbox is the SENDER'S OWN SOCKET (LT-3, finished). The outbox has
+	// had its own goroutine since LT-3 and shared the control lane with the
+	// cycle — a lane is held from acquire to release, so a word said while
+	// the cycle was collecting or announcing on that socket waited its
+	// turn, and after a sleep every turn was a ten-second timeout on a
+	// dead connection. Measured on the owner's phone (1.0.26): a message on
+	// "sent" for minutes, on a fresh process with the network up. A lane
+	// nothing else may touch is what "its own lane" always meant.
+	outbox relayLane
+	// inbox is the DOORBELL'S OWN SOCKET: the pull a ring earns must not
+	// queue behind the cycle either — the same reasoning as outbox, for the
+	// word coming in.
+	inbox relayLane
 
 	mu           sync.Mutex
 	failures     int       // consecutive, resets after recovery
@@ -121,6 +134,18 @@ func (r *Runtime) pool() *relayPool {
 // drop it and advance the health ladder).
 func (r *Runtime) withRelayControl(addr string, fn func(*relay.Client) error) error {
 	client, release, err := r.pool().Control(addr)
+	if err != nil {
+		return err
+	}
+	opErr := fn(client)
+	release(opErr)
+	return opErr
+}
+
+// withRelayOutbox is the sender's lane: small puts of a word just said,
+// never queued behind the cycle's collects and fetches.
+func (r *Runtime) withRelayOutbox(addr string, fn func(*relay.Client) error) error {
+	client, release, err := r.pool().Outbox(addr)
 	if err != nil {
 		return err
 	}
@@ -247,6 +272,18 @@ func (p *relayPool) Bulk(addr string) (*relay.Client, func(error), error) {
 	return p.acquire(pe, &pe.bulk)
 }
 
+// Inbox is the doorbell's own lane: see relayPeer.inbox.
+func (p *relayPool) Inbox(addr string) (*relay.Client, func(error), error) {
+	pe := p.peer(addr)
+	return p.acquire(pe, &pe.inbox)
+}
+
+// Outbox is the sender's own lane: see relayPeer.outbox.
+func (p *relayPool) Outbox(addr string) (*relay.Client, func(error), error) {
+	pe := p.peer(addr)
+	return p.acquire(pe, &pe.outbox)
+}
+
 // ourNetworkIsDown says the dial never left this machine: the OS refused to
 // send. ENETUNREACH and friends are what a phone with Wi-Fi off produces, and
 // they are a fact about US, not about the relay.
@@ -321,7 +358,7 @@ func (p *relayPool) closeAll() {
 	}
 	p.mu.Unlock()
 	for _, pe := range peers {
-		for _, lane := range []*relayLane{&pe.control, &pe.bulk} {
+		for _, lane := range []*relayLane{&pe.control, &pe.bulk, &pe.outbox, &pe.inbox} {
 			lane.mu.Lock()
 			if lane.client != nil {
 				lane.client.Close()
@@ -363,7 +400,7 @@ func (p *relayPool) reachable(addr string) {
 	if !cooling {
 		return
 	}
-	for _, lane := range []*relayLane{&pe.control, &pe.bulk} {
+	for _, lane := range []*relayLane{&pe.control, &pe.bulk, &pe.outbox, &pe.inbox} {
 		lane.mu.Lock()
 		if lane.client != nil {
 			lane.client.Close()
@@ -421,7 +458,7 @@ func (p *relayPool) wake() {
 		// connection that looks open and is not, which is the slowest way
 		// to learn it: a write succeeds into a dead socket and the failure
 		// arrives at the read, a timeout later.
-		for _, lane := range []*relayLane{&pe.control, &pe.bulk} {
+		for _, lane := range []*relayLane{&pe.control, &pe.bulk, &pe.outbox, &pe.inbox} {
 			lane.mu.Lock()
 			if lane.client != nil {
 				lane.client.Close()
@@ -448,7 +485,7 @@ func (p *relayPool) janitor() {
 			}
 			p.mu.Unlock()
 			for _, pe := range peers {
-				for _, lane := range []*relayLane{&pe.control, &pe.bulk} {
+				for _, lane := range []*relayLane{&pe.control, &pe.bulk, &pe.outbox, &pe.inbox} {
 					lane.mu.Lock()
 					if lane.client != nil && time.Since(lane.lastUsed) > poolIdleClose {
 						lane.client.Close()

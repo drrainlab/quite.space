@@ -173,6 +173,11 @@ const I18N = {
     'relay.diag.on': 'running',
     'relay.diag.off': 'off',
     'relay.diag.error': 'Last error',
+    'relay.diag.typical': 'Typically',
+    'relay.diag.outbox': 'Outbox',
+    'relay.diag.outbox.value': 'last pass {took} · {ago} ago · express {express} · bulk {bulk}',
+    'relay.diag.outbox.retrying': 'retrying ×{n}',
+    'relay.diag.outbox.never': 'no pass yet',
     'relay.diag.no_route': 'No route',
     'relay.diag.no_route_value': ({ count }) =>
       `${count} ${plural(count, 'member', 'members')} with no stated route — their copies are not sent`,
@@ -1665,6 +1670,11 @@ const I18N = {
     'relay.diag.on': 'идёт',
     'relay.diag.off': 'выключена',
     'relay.diag.error': 'Последняя ошибка',
+    'relay.diag.typical': 'Обычно',
+    'relay.diag.outbox': 'Отправка',
+    'relay.diag.outbox.value': 'последний проход {took} · {ago} назад · экспресс {express} · большие {bulk}',
+    'relay.diag.outbox.retrying': 'повтор ×{n}',
+    'relay.diag.outbox.never': 'проходов ещё не было',
     'relay.diag.no_route': 'Без маршрута',
     'relay.diag.no_route_value': ({ count }) =>
       `${count} ${pluralRu(count, 'участник', 'участника', 'участников')} без заявленного маршрута — их копии не отправляются`,

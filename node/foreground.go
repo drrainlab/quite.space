@@ -157,14 +157,35 @@ func (r *Runtime) applyAttention() {
 	if prev == v {
 		return
 	}
-	if fg {
-		// Coming back is urgent in a way leaving is not: whatever piled
-		// up while the radio slept should be on screen before the person
-		// finishes lifting the phone. The kick wakes the sync loop out of
-		// turn; the loop re-reads its interval on every wake.
-		r.kickRelaySync()
+	if !fg {
+		r.awayAt.Store(time.Now().UnixNano())
+		return
 	}
+	// Coming back is urgent in a way leaving is not: whatever piled up
+	// while the radio slept should be on screen before the person finishes
+	// lifting the phone. The kick wakes the sync loop out of turn; the loop
+	// re-reads its interval on every wake.
+	//
+	// AND THE SOCKETS FROM BEFORE ARE NOT TRUSTED. A phone that was away
+	// long enough for Doze to have cut its network comes back holding
+	// connections that look open and are not; the first word said then
+	// went into a dead socket, failed at the read four seconds later, and
+	// left on the outbox's retry five seconds after that — "about 15 s to
+	// the relay", the owner's own measurement on 1.0.25. The same reset a
+	// noticed sleep gets, and only after a real absence: a window focus
+	// flicking away and back on the desktop must not cost a handshake.
+	if at := r.awayAt.Load(); at != 0 && time.Since(time.Unix(0, at)) > staleAfterAway {
+		r.onWake()
+	}
+	r.kickRelaySync()
+	r.kickOutbox()
 }
+
+// staleAfterAway is how long a background must have lasted before the
+// return drops the pooled sockets. Doze's first network cut comes minutes
+// after the screen goes dark; twenty seconds is well under a pocket and
+// well over a glance at another app.
+const staleAfterAway = 20 * time.Second
 
 // KickRelaySync is the exported face of the sync kick, for shells whose
 // doorbell rang: the ping carried nothing, the drain fetches everything.

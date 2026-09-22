@@ -580,20 +580,34 @@ function honestyParts(st) {
 
 // renderRelayDiagnostics paints the honest one-screen state: which relay,
 // under what trust, how healthy, how fast (bucketed).
+// While the sheet is open the panel refreshes itself every few seconds:
+// the numbers it shows — the outbox pass, → relay, ✓✓ — are the ones the
+// owner watches WHILE sending, and a snapshot taken on open is stale by
+// the time the word leaves. Built into a fragment and swapped in whole, so
+// a refresh never flashes an empty panel.
+let relayDiagTimer = null;
+const RELAY_DIAG_EVERY_MS = 3000;
 async function renderRelayDiagnostics() {
   const box = document.getElementById('relayDiagPanel');
   if (!box) return;
-  box.innerHTML = '';
   let d;
   try { d = await api('/api/relay/diagnostics'); } catch (_) { return; }
+  const frag = document.createDocumentFragment();
   const line = (k, v) => {
     if (v === '' || v === undefined || v === null) return;
     const row = document.createElement('div');
     row.className = 'list-row';
     const a = document.createElement('span'); a.className = 'lr-label'; a.textContent = k;
     const b = document.createElement('span'); b.className = 'lr-sub'; b.textContent = v;
-    row.append(a, b); box.appendChild(row);
+    row.append(a, b); frag.appendChild(row);
   };
+  if (!relayDiagTimer) {
+    relayDiagTimer = setInterval(() => {
+      const b = document.getElementById('relayDiagPanel');
+      if (!b || !b.offsetParent) { clearInterval(relayDiagTimer); relayDiagTimer = null; return; }
+      renderRelayDiagnostics();
+    }, RELAY_DIAG_EVERY_MS);
+  }
   line(t('relay.diag.mode'), d.mode);
   line(t('relay.diag.primary'), d.primary || '—');
   line(t('relay.diag.backup'), d.backup || '');
@@ -606,12 +620,28 @@ async function renderRelayDiagnostics() {
   const host = (ep) => (ep || '').replace(/:\d+$/, '');
   // LT-1: where the seconds go. The last few own messages, as the node
   // measured them — a relay took it after X, a device held it after Y.
+  const fmt = (ms) => ms < 0 ? '—' : (ms < 1000 ? ms + ' ms' : (ms / 1000).toFixed(1) + ' s');
   if (Array.isArray(d.latency) && d.latency.length) {
-    const fmt = (ms) => ms < 0 ? '—' : (ms < 1000 ? ms + ' ms' : (ms / 1000).toFixed(1) + ' s');
-    d.latency.slice(0, 3).forEach((l, i) => {
+    d.latency.slice(0, 5).forEach((l, i) => {
       line(i === 0 ? t('relay.diag.latency') : '',
         `→ ${t('relay.diag.latency.relay')} ${fmt(l.relayed_ms)}${l.relay ? ' (' + host(l.relay) + ')' : ''} → ✓✓ ${fmt(l.delivered_ms)}`);
     });
+  }
+  // LT-4 S7: the medians, so one slow word is not "the app is slow".
+  if (d.latency_typical && (d.latency_typical.relayed_ms >= 0 || d.latency_typical.delivered_ms >= 0))
+    line(t('relay.diag.typical'),
+      `→ ${t('relay.diag.latency.relay')} ${fmt(d.latency_typical.relayed_ms)} → ✓✓ ${fmt(d.latency_typical.delivered_ms)}`);
+  // LT-4 S7: the sender's lane. The dot on a message lasts exactly as
+  // long as the pass here says; a bulk count climbing in a quiet space is
+  // the offer book forgetting.
+  if (d.outbox) {
+    const o = d.outbox;
+    const ago = (s) => s < 60 ? s + ' s' : Math.round(s / 60) + ' min';
+    let v = o.last_pass_ms < 0 ? t('relay.diag.outbox.never')
+      : t('relay.diag.outbox.value', { took: fmt(o.last_pass_ms), ago: ago(o.last_pass_ago_s), express: o.express, bulk: o.bulk });
+    if (o.streak) v += ' · ' + t('relay.diag.outbox.retrying', { n: o.streak });
+    if (o.last_error) v += ' · ' + o.last_error;
+    line(t('relay.diag.outbox'), v);
   }
   // LT-2: is the doorbell real? Each parked session, with its own
   // evidence. A pong older than the ping interval is a dead socket the
@@ -638,6 +668,7 @@ async function renderRelayDiagnostics() {
   for (const s of d.stranded || [])
     line(t('relay.diag.stranded'), t('relay.diag.stranded_value',
       { seq: s.seq, device: s.device, kb: Math.ceil((s.bytes || 0) / 1024) }));
+  box.replaceChildren(frag);
 }
 
 // copyText: navigator.clipboard first, textarea+execCommand as the

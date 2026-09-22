@@ -16,6 +16,7 @@ package node
 
 import (
 	"encoding/json"
+	"net"
 	"time"
 
 	"github.com/drrainlab/quiet_places/kernel/eventlog"
@@ -159,19 +160,10 @@ func (r *Runtime) PeerRoutesFor(dev id.DeviceID) []string {
 	return out
 }
 
-// rankedPeerRoutes is PeerRoutesFor with the provenance kept: stated
-// routes for one device, best knowledge first, dead relays filtered.
-// Delivery accounting needs the provenance — a copy sent on invitation
-// knowledge and a copy sent on a legacy assumption must not be recorded
-// as the same kind of success.
-func (r *Runtime) rankedPeerRoutes(dev id.DeviceID) []storage.Route {
-	r.mu.Lock()
-	routes := append([]storage.Route(nil), r.ks.PeerRoutes[dev]...)
-	r.mu.Unlock()
-	if len(routes) == 0 {
-		return nil
-	}
-	// Insertion sort by rank, then recency — the lists are tiny.
+// rankRoutes copies and orders a device's routes: best provenance first,
+// most recently seen first within a rank. Pure; the lists are tiny.
+func rankRoutes(in []storage.Route) []storage.Route {
+	routes := append([]storage.Route(nil), in...)
 	for i := 1; i < len(routes); i++ {
 		for j := i; j > 0; j-- {
 			a, b := routes[j-1], routes[j]
@@ -182,8 +174,33 @@ func (r *Runtime) rankedPeerRoutes(dev id.DeviceID) []storage.Route {
 			routes[j-1], routes[j] = routes[j], routes[j-1]
 		}
 	}
+	return routes
+}
+
+// rankedPeerRoutes is PeerRoutesFor with the provenance kept: stated
+// routes for one device, best knowledge first, dead relays filtered.
+// Delivery accounting needs the provenance — a copy sent on invitation
+// knowledge and a copy sent on a legacy assumption must not be recorded
+// as the same kind of success.
+func (r *Runtime) rankedPeerRoutes(dev id.DeviceID) []storage.Route {
+	r.mu.Lock()
+	routes := rankRoutes(r.ks.PeerRoutes[dev])
+	r.mu.Unlock()
+	if len(routes) == 0 {
+		return nil
+	}
 	out := make([]storage.Route, 0, len(routes))
+	own := r.ResolvePersonalRelay()
 	for _, rt := range routes {
+		if !routableFrom(rt.Endpoint, own) {
+			// A peer's loopback address reaches nothing from here. Kept in
+			// the book (it is what they said), never dialled: on the owner's
+			// phone a stand node's stale 127.0.0.1 route was the ONLY route
+			// for that peer, every push failed on it and every word waited
+			// for the cycle's fallback — ten seconds, measured, on a good
+			// network.
+			continue
+		}
 		if rt.Transport != "relay" {
 			continue // LAN/radio candidates join the resolver in T6
 		}
@@ -314,4 +331,77 @@ func (r *Runtime) backfillLegacyRoutesLocked() {
 	if stamped {
 		r.recordSelfIngressLocked(ep, storage.RouteLegacy)
 	}
+}
+
+// routableFrom says whether a peer's stated endpoint can be dialled from
+// this node. Loopback and unspecified addresses are somebody else's
+// machine — unless this node's own relay is loopback too, which is the
+// test bench and a developer's laptop, where everybody shares one machine.
+func routableFrom(endpoint, ownRelay string) bool {
+	if endpoint == "" {
+		return false
+	}
+	if !loopbackAddr(endpoint) && !unspecifiedAddr(endpoint) {
+		return true
+	}
+	// A node that does not yet know its own relay cannot tell which world
+	// it is in; it dials what it was told rather than refuse on a guess.
+	return ownRelay == "" || loopbackAddr(ownRelay)
+}
+
+func unspecifiedAddr(addr string) bool {
+	host := addr
+	if h, _, err := net.SplitHostPort(addr); err == nil {
+		host = h
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsUnspecified()
+}
+
+// courtesyRoute is where a plane that speaks to a device UNPROMPTED — a
+// receipt, a grant, a knock — puts its item: the device's best dialable
+// stated route, or this node's own relay as the courtesy when it states
+// none (guessed = true). Never the raw book: a stale or unroutable entry in
+// first position used to catch every receipt (LT-4 S2). Takes r.mu itself.
+func (r *Runtime) courtesyRoute(dev id.DeviceID) (ep string, guessed bool) {
+	if ranked := r.rankedPeerRoutes(dev); len(ranked) > 0 {
+		return ranked[0].Endpoint, false
+	}
+	return r.ResolvePersonalRelay(), true
+}
+
+// dialableStatedLocked is courtesyRoute's stated half for a caller that
+// already holds r.mu: the first stated relay route a peer could dial, or "".
+func (r *Runtime) dialableStatedLocked(dev id.DeviceID, own string) string {
+	for _, rt := range rankRoutes(r.ks.PeerRoutes[dev]) {
+		if rt.Transport == "relay" && routableFrom(rt.Endpoint, own) {
+			return rt.Endpoint
+		}
+	}
+	return ""
+}
+
+// advertisable is the part of this node's ingress list a peer elsewhere
+// could dial: everything, on a bench where the own relay is loopback too.
+func advertisable(ingress []string, own string) []string {
+	out := ingress[:0:0]
+	for _, ep := range ingress {
+		if routableFrom(ep, own) {
+			out = append(out, ep)
+		}
+	}
+	return out
+}
+
+// statableEndpoint says whether a peer's stated endpoint may enter the
+// book at all: well-formed, a real port, and dialable from here.
+func statableEndpoint(ep, own string) bool {
+	host, port, err := net.SplitHostPort(ep)
+	if err != nil || host == "" || port == "" || port == "0" {
+		return false
+	}
+	if ip := net.ParseIP(host); ip != nil && (ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast()) {
+		return false
+	}
+	return routableFrom(ep, own)
 }

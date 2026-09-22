@@ -30,7 +30,6 @@ import (
 	"crypto/ed25519"
 
 	"github.com/drrainlab/quiet_places/kernel/eventlog"
-	"github.com/drrainlab/quiet_places/kernel/storage"
 	"github.com/drrainlab/quiet_places/protocol/claims"
 	"github.com/drrainlab/quiet_places/protocol/codec"
 	"github.com/drrainlab/quiet_places/protocol/id"
@@ -151,20 +150,24 @@ func (r *Runtime) rejudgePendingReceipts() {
 	}
 }
 
-func (r *Runtime) sendReceipts() {
+// receiptItem is one receipt this device owes: "I hold author dev's chain
+// in space tid up to pos", signed, in the bytes installReceipts reads.
+type receiptItem struct {
+	tid    id.TerminalID
+	dev    id.DeviceID
+	pos    uint64
+	signed []byte
+}
+
+// receiptsOwed is the pure half of sending receipts (LT-4 S4): every
+// chain that grew past what this device last receipted, signed. With only
+// set, just those spaces — the arrival path asks for what a pull touched.
+func (r *Runtime) receiptsOwed(only map[id.TerminalID]struct{}) []receiptItem {
 	r.rejudgePendingReceipts()
 	if !r.receiptsEnabled() {
-		return
+		return nil
 	}
-	type outItem struct {
-		dev  id.DeviceID
-		tid  id.TerminalID
-		body []byte
-		pos  uint64
-		eps  []storage.Route
-	}
-	var out []outItem
-	conn := r.connectivity() // read BEFORE r.mu: settings take the same lock
+	var out []receiptItem
 	r.mu.Lock()
 	if r.receipts == nil {
 		r.receipts = &receiptState{
@@ -177,11 +180,13 @@ func (r *Runtime) sendReceipts() {
 		if meta.LocalOnly {
 			continue
 		}
+		if only != nil {
+			if _, ok := only[tid]; !ok {
+				continue
+			}
+		}
 		st, ok := r.spaces[tid]
 		if !ok || st.space == nil || st.space.Log == nil {
-			continue
-		}
-		if !conn.allows(TransportRelay, tid) {
 			continue
 		}
 		for _, ch := range st.space.Log.Summary() {
@@ -196,45 +201,87 @@ func (r *Runtime) sendReceipts() {
 				Pos: ch.ContiguousUntil, Receiptor: self,
 			}
 			signReceipt(rc, r.Device.SignKey())
-			out = append(out, outItem{
-				dev: ch.Device, tid: tid,
-				body: bundle.EncodeReceipts(tid, [][]byte{encodeSignedReceipt(rc)}),
-				pos:  ch.ContiguousUntil,
-				eps:  append([]storage.Route(nil), r.ks.PeerRoutes[ch.Device]...),
-			})
+			out = append(out, receiptItem{tid: tid, dev: ch.Device, pos: ch.ContiguousUntil,
+				signed: encodeSignedReceipt(rc)})
 		}
 	}
 	r.mu.Unlock()
-	if len(out) == 0 {
+	return out
+}
+
+// deliverReceipts hands owed receipts to their authors (LT-4 S4).
+//
+// ON ARRIVAL (arrival = true — a pull or a LAN batch just applied frames):
+// an author live on a local link gets its receipt OVER THAT LINK, never a
+// relay copy (t6's promise: the relay carries nothing for the room's local
+// members); everybody else gets a Put into their mailbox on the OUTBOX
+// lane, so ✓✓ follows the other phone's display by seconds, not by a
+// cycle. FROM THE CYCLE (arrival = false): the net under the arrival path,
+// on the control lane, exactly as before this slice.
+//
+// Every relay receipt is one Put into the author's own mailbox — which
+// rings their doorbell. That is one wake of the sender's phone a second
+// or so after they typed; the arrival debounce (receiptDebounce) keeps a
+// burst of messages to one receipt.
+func (r *Runtime) deliverReceipts(items []receiptItem, arrival bool) {
+	if len(items) == 0 {
 		return
 	}
-	own := r.ResolvePersonalRelay()
 	now := uint64(time.Now().Unix())
 	expires := now + uint64(DefaultRelayTTL/time.Second)
-	for _, o := range out {
-		// The author's stated relay when the book holds one; this node's
-		// own as the courtesy otherwise — the grants plane's exact rule.
-		ep := own
-		for _, rt := range o.eps {
-			if rt.Transport == "relay" && rt.Endpoint != "" {
-				ep = rt.Endpoint
-				break
+	conn := r.connectivity()
+	// ONLY WHILE THE RELAY IS SWITCHED ON — the doorbell's lesson, again.
+	// The arrival path runs whenever frames land, over any transport; a
+	// device whose relay is off must not answer a LAN arrival by putting
+	// receipts into other members' mailboxes (t6: carol's mailbox grew
+	// while she was on the wire, and it was bob's receipt for her chain).
+	relayOK := !arrival || r.relaySyncArmed()
+	for _, o := range items {
+		delivered := false
+		if arrival {
+			r.mu.Lock()
+			if l, ok := r.lanPeers[o.dev]; ok && l != nil {
+				if closed, _ := l.Closed(); !closed {
+					if st := r.spaces[o.tid]; st != nil && st.eng != nil {
+						if err := st.eng.SendReceipts(l, [][]byte{o.signed}); err == nil {
+							delivered = true
+						}
+					}
+				}
+			}
+			r.mu.Unlock()
+			if !delivered && r.lanPeerDevice(o.dev) {
+				continue // on the wire but the send failed: the cycle's net, never the relay from here
 			}
 		}
-		if ep == "" {
-			continue
-		}
-		if _, yes := r.relayThrottled(ep); yes {
-			continue
-		}
-		hint := relay.HintFor(o.tid, o.dev, relay.Bucket(now))
-		body := o.body
-		err := r.withRelayControl(ep, func(client *relay.Client) error {
-			_, err := client.Put(hint, expires, body)
-			return err
-		})
-		if err != nil {
-			continue // the chain will still be ahead next tick; retried then
+		if !delivered {
+			if !relayOK || !conn.allows(TransportRelay, o.tid) {
+				continue
+			}
+			// The author's best dialable stated relay; this node's own as
+			// the courtesy otherwise — the one chooser every plane uses.
+			ep, _ := r.courtesyRoute(o.dev)
+			if ep == "" {
+				continue
+			}
+			if _, yes := r.relayThrottled(ep); yes {
+				continue
+			}
+			hint := relay.HintFor(o.tid, o.dev, relay.Bucket(now))
+			body := bundle.EncodeReceipts(o.tid, [][]byte{o.signed})
+			lane := r.withRelayControl
+			if arrival {
+				lane = r.withRelayOutbox
+			}
+			err := lane(ep, func(client *relay.Client) error {
+				_, err := client.Put(hint, expires, body)
+				return err
+			})
+			if err != nil {
+				continue // the chain will still be ahead next tick; retried then
+			}
+			r.receiptPuts.Add(1)
+			delivered = true
 		}
 		r.mu.Lock()
 		if r.receipts.sent[o.tid] == nil {
@@ -245,6 +292,44 @@ func (r *Runtime) sendReceipts() {
 		}
 		r.mu.Unlock()
 	}
+}
+
+// sendReceipts is the cycle's net: whatever the arrival path did not
+// deliver, on the control lane.
+func (r *Runtime) sendReceipts() {
+	r.deliverReceipts(r.receiptsOwed(nil), false)
+}
+
+// receiptDebounce is how long after the last applied frame the arrival
+// receipts leave: a burst of twenty messages is one receipt, not twenty
+// Puts and twenty wakes of the author's phone.
+const receiptDebounce = time.Second
+
+// noteArrival records that frames were just applied in tid — from a relay
+// pull or a LAN batch — and arms the arrival receipts. Cheap and lock-light
+// on purpose: callers hold r.mu.
+func (r *Runtime) noteArrival(tid id.TerminalID) {
+	r.arrivalMu.Lock()
+	if r.arrivals == nil {
+		r.arrivals = map[id.TerminalID]struct{}{}
+	}
+	r.arrivals[tid] = struct{}{}
+	if r.arrivalTimer == nil {
+		r.arrivalTimer = time.AfterFunc(receiptDebounce, r.flushArrivalReceipts)
+	}
+	r.arrivalMu.Unlock()
+}
+
+func (r *Runtime) flushArrivalReceipts() {
+	r.arrivalMu.Lock()
+	set := r.arrivals
+	r.arrivals = nil
+	r.arrivalTimer = nil
+	r.arrivalMu.Unlock()
+	if r.stopped() || len(set) == 0 {
+		return
+	}
+	r.deliverReceipts(r.receiptsOwed(set), true)
 }
 
 // installReceipts folds the receipts one drained bundle carried. Each is
@@ -258,6 +343,15 @@ func (r *Runtime) installReceipts(tid id.TerminalID, receipts [][]byte) {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.installReceiptsLocked(tid, receipts)
+}
+
+// installReceiptsLocked is installReceipts for a caller that holds r.mu —
+// the LAN pump, whose engine callbacks run under it.
+func (r *Runtime) installReceiptsLocked(tid id.TerminalID, receipts [][]byte) {
+	if len(receipts) == 0 {
+		return
+	}
 	st, ok := r.spaces[tid]
 	if !ok || st.space == nil || st.space.Log == nil {
 		return
@@ -309,6 +403,12 @@ func (r *Runtime) installReceipts(tid id.TerminalID, receipts [][]byte) {
 		}
 		if r.ks.Delivered[tid] == nil {
 			r.ks.Delivered[tid] = map[id.DeviceID]uint64{}
+		}
+		if had := r.ks.Delivered[tid][rc.Receiptor]; pos < had && r.offerBook != nil {
+			// A receipt for LESS than this device once signed for: it was
+			// restored from an older backup and holds less than the book
+			// says its mailboxes were given. Everything to it is re-laid.
+			r.offerBook.forgetDevice(rc.Receiptor)
 		}
 		if r.ks.Delivered[tid][rc.Receiptor] < pos {
 			r.ks.Delivered[tid][rc.Receiptor] = pos

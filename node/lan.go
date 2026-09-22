@@ -609,8 +609,11 @@ func (r *Runtime) adoptLinkFilteredOpts(c link, pump, summaryEvery time.Duration
 					continue
 				}
 				if st := byTerm[term]; st != nil {
-					if _, _, err := st.eng.Handle(c, raw); err != nil {
+					a, _, err := st.eng.Handle(c, raw)
+					if err != nil {
 						note(err)
+					} else if a > 0 {
+						r.noteArrival(term) // LT-4 S4: receipts over this link, soon
 					}
 				}
 			}

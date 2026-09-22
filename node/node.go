@@ -247,10 +247,32 @@ type Runtime struct {
 	// outboxKick wakes the outbox (node/outbox.go): a push pass now, on
 	// its own lane, whatever the cycle is busy with.
 	outboxKick chan struct{}
+	// said is the set of spaces a word was just said in — what the next
+	// outbox pass pushes, and nothing else (node/outbox.go).
+	saidMu sync.Mutex
+	said   map[id.TerminalID]struct{}
+	// offerBook is what this node has already put into which mailbox —
+	// durable, keyed per mailbox (node/offerbook.go, LT-4 S5).
+	offerBook *offerBook
+	// arrivals: spaces that just applied frames, awaiting their receipts
+	// (node/receipts.go noteArrival, LT-4 S4). receiptPuts counts relay
+	// receipt Puts, for tests.
+	arrivalMu    sync.Mutex
+	arrivals     map[id.TerminalID]struct{}
+	arrivalTimer *time.Timer
+	receiptPuts  atomic.Int64
+	// The outbox's own account (node/outbox.go, LT-4 S7): mailboxes served
+	// on the express and bulk lanes since open, and the last pass.
+	outboxExpress atomic.Int64
+	outboxBulk    atomic.Int64
+	outboxMu2     sync.Mutex
+	outboxLast    outboxPass
 	// backgrounded is 1 while no person is looking (node/foreground.go).
 	// An atomic rather than a field under r.mu: read on every loop tick,
 	// including ticks that deliberately avoid the runtime lock.
 	backgrounded atomic.Int64
+	// awayAt is when the background began (unix nanos), for the return.
+	awayAt atomic.Int64
 	// EN-2 relay push: healthy parked listeners, and the per-ingress
 	// retry schedule (node/relaylisten.go).
 	listenParked  atomic.Int64
@@ -357,12 +379,6 @@ type Runtime struct {
 	// (media on-demand when there is no direct peer). The auto-sync push rides
 	// these to peers as a request; a holder answers into our inbox. r.mu-guarded.
 	relayWants map[id.TerminalID]map[id.Hash]struct{}
-	// offers is the delivery delta book (node/offers.go): per space and
-	// recipient device, how much of the log this node has already handed
-	// to that device's mailbox at which endpoint. In memory only — a
-	// restart re-offers once, and EventID dedup makes that a no-op for
-	// the recipient.
-	offers map[id.TerminalID]map[id.DeviceID]offerMark
 	// guessRelaysOverride replaces the official registry in the guess
 	// (node/offers.go guessRelays) — tests only.
 	guessRelaysOverride []string
@@ -849,8 +865,10 @@ func Open(dataDir string, passphrase []byte, displayName string) (rt *Runtime, e
 	// primary from measurements in the background — unlock never waits on
 	// a probe; custom mode uses exactly the configured address.
 	if s := r.GetSettings(); relayIsAutomatic(s) {
+		r.loadOfferBook()
 		r.startAutomaticRelay(relayInterval(s))
 	} else if s.Relay != "" {
+		r.loadOfferBook()
 		r.applyRelaySync(s.Relay, relayInterval(s))
 	}
 	// EN-2: the listening lane — parked connections that let the polls
@@ -976,6 +994,9 @@ func (r *Runtime) attach(tid id.TerminalID, s *terminals.Space) {
 	// Bridge custody ACKs: honored only under a pinned custodian key for
 	// the ingress link (custodian.go).
 	st.eng.OnCustodyReceipt = func(raw []byte) { r.handleCustodyReceipt(tid, raw) }
+	// LT-4 S4: a peer on a live link sends its DR-1 receipts over the link;
+	// the pump holds r.mu when it calls in.
+	st.eng.OnDeliveryReceipts = func(rc [][]byte) { r.installReceiptsLocked(tid, rc) }
 	// MD-0b decision C, on the SYNC path (LAN, radio): the batch's own proofs
 	// become trust before its frames are judged, and a hold-class refusal is
 	// taken into durable custody instead of dropped. The second half matters
@@ -1132,6 +1153,20 @@ const closeGrace = 5 * time.Second
 // application-quit callback, a deferred Close and an explicit one, an aborted
 // Open unwinding through the same path a healthy shutdown uses.
 func (r *Runtime) Close() {
+	// The book is written BEFORE the runtime stops: whatever the last push
+	// accepted must not be re-offered on the next open for want of a flush.
+	if r.offerBook != nil {
+		r.offerBook.close()
+	}
+	// Arrival receipts armed but not yet sent die with the process: the
+	// next cycle's net owes them anyway (LT-4 S4).
+	r.arrivalMu.Lock()
+	if r.arrivalTimer != nil {
+		r.arrivalTimer.Stop()
+		r.arrivalTimer = nil
+	}
+	r.arrivals = nil
+	r.arrivalMu.Unlock()
 	r.stopOnce.Do(func() { close(r.stop) })
 	// Preview fetchers watch r.stop too; closeAll additionally releases
 	// their memory budgets so a long-lived process (tests, the desktop
@@ -1584,6 +1619,7 @@ func (r *Runtime) Say(tid id.TerminalID, text string, opt SayOptions) (id.EventI
 	// The word is durable; it leaves now (LT-3). The API door kicks too,
 	// for media and for the loop — this is the outbox's own cue, so a
 	// word said from any shell goes out on the sender's lane.
+	r.noteSaid(tid)
 	r.kickOutbox()
 	return a.ID, nil
 }
@@ -1623,6 +1659,7 @@ func (r *Runtime) MakeCard(tid id.TerminalID, title string, opt CardOptions) (id
 	// The word is durable; it leaves now (LT-3). The API door kicks too,
 	// for media and for the loop — this is the outbox's own cue, so a
 	// word said from any shell goes out on the sender's lane.
+	r.noteSaid(tid)
 	r.kickOutbox()
 	return a.ID, nil
 }
@@ -1649,6 +1686,7 @@ func (r *Runtime) EmitBlock(tid id.TerminalID, schema string, payload []byte) (i
 	// The word is durable; it leaves now (LT-3). The API door kicks too,
 	// for media and for the loop — this is the outbox's own cue, so a
 	// word said from any shell goes out on the sender's lane.
+	r.noteSaid(tid)
 	r.kickOutbox()
 	return a.ID, nil
 }
@@ -1811,4 +1849,27 @@ func (r *Runtime) Spaces() []SpaceInfo {
 		return out[i].ID.Hex() < out[j].ID.Hex()
 	})
 	return out
+}
+
+// loadOfferBook opens the durable offer book (LT-4 S5): once, before the
+// first relay loop is armed. A missing or unreadable document is an empty
+// book. The save is the sealed document; marks for spaces no longer here
+// are dropped on the way in.
+func (r *Runtime) loadOfferBook() {
+	if r.offerBook != nil {
+		return
+	}
+	root := r.root
+	r.offerBook = newOfferBook(func(data []byte) error { return root.SaveSealed(offerBookName, data) })
+	data, err := root.LoadSealed(offerBookName)
+	if err != nil || len(data) == 0 {
+		return
+	}
+	r.mu.Lock()
+	known := map[id.TerminalID]bool{}
+	for tid := range r.spaces {
+		known[tid] = true
+	}
+	r.mu.Unlock()
+	r.offerBook.load(data, func(tid id.TerminalID) bool { return known[tid] })
 }
