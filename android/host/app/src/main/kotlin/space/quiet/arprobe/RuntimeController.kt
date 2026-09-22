@@ -721,6 +721,15 @@ class RuntimeController private constructor(appContext: Context) {
                     android.os.Build.MODEL ?: "Android",
                     withLAN,
                 )
+                // THE CORE STARTS "WATCHED" BY DEFAULT, AND A NODE OPENED
+                // FROM THE BACKGROUND IS NOT. Tell it the truth right away,
+                // or the first return of the person after a sleep is not a
+                // transition and the stale-socket reset never runs.
+                try {
+                    Quietcore.setForeground(foregroundNow)
+                } catch (t: Throwable) {
+                    Log.w(TAG, "foreground after open", t)
+                }
                 // EN-3: a doorbell registration made while the node was
                 // locked replays into the freshly opened core.
                 Doorbell.replay(app)
@@ -729,6 +738,31 @@ class RuntimeController private constructor(appContext: Context) {
                     Log.i(TAG, "doorbell in core: ${relay?.optBoolean("doorbell")}")
                 } catch (t: Throwable) {
                     Log.w(TAG, "doorbell status", t)
+                }
+                // THE CORE'S OWN WORD ON ITS RELAY, in the log, for a while
+                // after every open: what the settings screen would show,
+                // readable over a cable when the screen is not. Numbers and
+                // an error sentence; no space, no sender, no address of a
+                // person. Every 30 s for ten minutes, then silence.
+                for (i in 1..20) {
+                    worker.schedule({
+                        try {
+                            val st = JSONObject(Quietcore.status())
+                            val relay = st.optJSONObject("relay")
+                            Log.i(TAG, "relay: armed=${relay?.opt("armed")} reachable=${relay?.opt("reachable")} pulled=${relay?.opt("pulled")} " +
+                                "since_pull=${relay?.opt("seconds_since_pull")}s sync_error=${relay?.optString("sync_error", "")?.take(160)} " +
+                                "last_error=${st.optString("last_error", "").take(120)}")
+                            // And the node's own diary, which lands in a
+                            // file this process can read: the last lines,
+                            // verbatim. The diary names no person; it names
+                            // relays, counts and errors.
+                            val logs = File(dataDir(), "logs").listFiles()?.filter { it.isFile }
+                                ?.maxByOrNull { it.lastModified() }
+                            logs?.readLines()?.takeLast(25)?.forEach { Log.i(TAG, "node-log: ${it.take(220)}") }
+                        } catch (t: Throwable) {
+                            Log.w(TAG, "relay status", t)
+                        }
+                    }, 30L * i, java.util.concurrent.TimeUnit.SECONDS)
                 }
                 // AN-2: an open node listens for itself — and collects. The
                 // keyless watch steps aside, its line comes down, and the
@@ -977,7 +1011,10 @@ class RuntimeController private constructor(appContext: Context) {
      * activity's own resume/pause, beside the notification coordinator's
      * identical signal.
      */
+    @Volatile private var foregroundNow = false
+
     fun setForeground(fg: Boolean) {
+        foregroundNow = fg
         worker.execute {
             try {
                 Quietcore.setForeground(fg)

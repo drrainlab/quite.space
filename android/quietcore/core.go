@@ -21,6 +21,7 @@
 package quietcore
 
 import (
+	"log"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -110,6 +111,8 @@ var (
 // withLAN is off by default at the call site: on Android multicast needs a
 // held lock and a permission, and AR-0c syncs over a relay. Exposed anyway so
 // the LAN path can be measured deliberately rather than by accident.
+var installLogOnce sync.Once
+
 func Start(dir, passphrase, name string, withLAN bool) error {
 	return StartAs(dir, passphrase, name, "", withLAN)
 }
@@ -119,6 +122,15 @@ func Start(dir, passphrase, name string, withLAN bool) error {
 func StartAs(dir, passphrase, name, deviceLabel string, withLAN bool) error {
 	openMu.Lock()
 	defer openMu.Unlock()
+	// THE NODE'S DIARY LANDS IN A FILE HERE TOO. On Android the standard
+	// logger's stderr reaches nobody — gomobile hands the WebView's stderr
+	// to logcat and not ours, measured: not one node line in the log while
+	// a message sat unsent for fourteen minutes (2026-09-22). The desktop
+	// has kept <dataDir>/logs since DS-1; the phone keeps the same, and
+	// the host reads its tail over a cable.
+	installLogOnce.Do(func() {
+		log.SetOutput(node.NewRollingLog(dir))
+	})
 
 	stateMu.Lock()
 	if rt != nil {
@@ -381,6 +393,12 @@ func Status() string {
 				relay["seconds_since_pull"] = st.AgoPull
 			}
 			relay["reachable"] = st.Reachable
+			// What the sync loop itself would say, for a log read over a
+			// cable: is it armed at all, what did it last fail on, how
+			// many pulls. Numbers and an error sentence, nothing personal.
+			relay["armed"] = st.Active
+			relay["pulled"] = st.Pulled
+			relay["sync_error"] = st.LastErr
 			// EN-4: whether a doorbell endpoint is set — a boolean, never
 			// the URL (it is a capability to wake this phone).
 			relay["doorbell"] = rt.GetSettings().PushEndpoint != ""
