@@ -343,7 +343,7 @@ func (r *Runtime) routeFor(dev id.DeviceID, alive bool, syncingAt string, nowUni
 			return []string{ranked[0].Endpoint}, false, false
 		}
 	}
-	own := r.ResolvePersonalRelay()
+	own := r.ownWorld()
 	r.mu.Lock()
 	known := 0
 	for _, rt := range r.ks.PeerRoutes[dev] {
@@ -425,7 +425,7 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 	// Only what a peer can dial from THEIR machine is stated: a loopback
 	// ingress from this node's own past (a bench, a laptop's local relay)
 	// is nobody's route (LT-4 S2). Both resolvers take r.mu — hence here.
-	ownIngress := advertisable(r.SelfIngressRoutes(), r.ResolvePersonalRelay())
+	ownIngress := advertisable(r.SelfIngressRoutes(), r.ownWorld())
 	r.mu.Lock()
 	st, ok := r.spaces[tid]
 	if !ok {
@@ -2169,7 +2169,7 @@ func (r *Runtime) recordStatedReturnRoutes(wanter []byte, eps []string) {
 	// nothing from here — and a statement made only of those must not
 	// erase the routes already known. A stand once said 127.0.0.1:7411
 	// and a phone kept that as its only route for a week.
-	own := r.ResolvePersonalRelay()
+	own := r.ownWorld()
 	valid := eps[:0]
 	for _, ep := range eps {
 		if !statableEndpoint(ep, own) {

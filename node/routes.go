@@ -190,7 +190,7 @@ func (r *Runtime) rankedPeerRoutes(dev id.DeviceID) []storage.Route {
 		return nil
 	}
 	out := make([]storage.Route, 0, len(routes))
-	own := r.ResolvePersonalRelay()
+	own := r.ownWorld()
 	for _, rt := range routes {
 		if !routableFrom(rt.Endpoint, own) {
 			// A peer's loopback address reaches nothing from here. Kept in
@@ -337,6 +337,15 @@ func (r *Runtime) backfillLegacyRoutesLocked() {
 // this node. Loopback and unspecified addresses are somebody else's
 // machine — unless this node's own relay is loopback too, which is the
 // test bench and a developer's laptop, where everybody shares one machine.
+// ownWorld is the relay address this node would NAME — configured or
+// selected, health not consulted — which is the only sane input to "which
+// world am I in". The health-filtered resolver answers "" the moment the
+// dial breaker trips, and "" means "bench" to routableFrom: under load a
+// peer's loopback statement slipped into the book exactly then (found by
+// the race detector, 3 in 6). Whether the relay answers right now has
+// nothing to do with whether 127.0.0.1 is somebody's address.
+func (r *Runtime) ownWorld() string { return r.PersonalRelayAddress() }
+
 func routableFrom(endpoint, ownRelay string) bool {
 	if endpoint == "" {
 		return false

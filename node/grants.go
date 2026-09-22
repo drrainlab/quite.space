@@ -786,7 +786,7 @@ func (r *Runtime) siblingIngresses(already []string) []string {
 	for _, ep := range already {
 		seen[ep] = true
 	}
-	own := r.ResolvePersonalRelay() // before r.mu: the resolver takes its own locks
+	own := r.ownWorld() // before r.mu: the resolver takes its own locks
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	self := r.Device.ID

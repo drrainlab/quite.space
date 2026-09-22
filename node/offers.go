@@ -71,7 +71,7 @@ func (r *Runtime) guessRelays(syncingAt string) []string {
 	}
 	seen := map[string]bool{}
 	var out []string
-	own := r.ResolvePersonalRelay()
+	own := r.ownWorld()
 	add := func(ep string) {
 		if ep != "" && !seen[ep] && routableFrom(ep, own) {
 			seen[ep] = true
