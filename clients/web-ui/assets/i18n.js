@@ -177,6 +177,7 @@ const I18N = {
     'relay.diag.outbox': 'Outbox',
     'relay.diag.outbox.value': 'last pass {took} · {ago} ago · express {express} · bulk {bulk}',
     'relay.diag.outbox.retrying': 'retrying ×{n}',
+    'relay.diag.outbox.history': 'history to {n}',
     'relay.diag.outbox.never': 'no pass yet',
     'relay.diag.no_route': 'No route',
     'relay.diag.no_route_value': ({ count }) =>
@@ -1674,6 +1675,7 @@ const I18N = {
     'relay.diag.outbox': 'Отправка',
     'relay.diag.outbox.value': 'последний проход {took} · {ago} назад · экспресс {express} · большие {bulk}',
     'relay.diag.outbox.retrying': 'повтор ×{n}',
+    'relay.diag.outbox.history': 'история → {n}',
     'relay.diag.outbox.never': 'проходов ещё не было',
     'relay.diag.no_route': 'Без маршрута',
     'relay.diag.no_route_value': ({ count }) =>

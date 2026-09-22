@@ -639,6 +639,7 @@ async function renderRelayDiagnostics() {
     const ago = (s) => s < 60 ? s + ' s' : Math.round(s / 60) + ' min';
     let v = o.last_pass_ms < 0 ? t('relay.diag.outbox.never')
       : t('relay.diag.outbox.value', { took: fmt(o.last_pass_ms), ago: ago(o.last_pass_ago_s), express: o.express, bulk: o.bulk });
+    if (o.history_in_flight) v += ' · ' + t('relay.diag.outbox.history', { n: o.history_in_flight });
     if (o.streak) v += ' · ' + t('relay.diag.outbox.retrying', { n: o.streak });
     if (o.last_error) v += ' · ' + o.last_error;
     line(t('relay.diag.outbox'), v);

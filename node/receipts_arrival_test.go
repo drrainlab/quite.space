@@ -33,8 +33,11 @@ func TestAReceiptLeavesOnArrivalNotOnTheCycle(t *testing.T) {
 	if _, err := alice.Say(tid, "дошло?", SayOptions{}); err != nil {
 		t.Fatal(err)
 	}
+	// The relay's own word for it, not a mailbox count: the observer reads
+	// one bucket, and a bucket boundary between the Put and the count read
+	// as "never reached" once in ten.
 	waitUntil(t, 10*time.Second, "the word never reached the relay", func() bool {
-		return mailboxCount(t, addr, tid, bob.Device.ID) >= 1
+		return deliveryOf(t, alice, tid, "дошло?") != "sent"
 	})
 	start := time.Now()
 	if _, err := bob.PullFromRelay(addr); err != nil {

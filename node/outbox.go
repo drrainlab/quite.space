@@ -132,6 +132,9 @@ type OutboxDiag struct {
 	// space is the offer book failing to remember.
 	ExpressTotal int64 `json:"express_total"`
 	BulkTotal    int64 `json:"bulk_total"`
+	// HistoryInFlight is how many mailboxes' histories the bulk courier is
+	// carrying right now — the pass does not wait for them (LT-4 S1b).
+	HistoryInFlight int `json:"history_in_flight,omitempty"`
 }
 
 func (r *Runtime) outboxDiag() OutboxDiag {
@@ -139,7 +142,8 @@ func (r *Runtime) outboxDiag() OutboxDiag {
 	p := r.outboxLast
 	r.outboxMu2.Unlock()
 	d := OutboxDiag{LastPassMs: -1, LastPassAgoS: -1,
-		ExpressTotal: r.outboxExpress.Load(), BulkTotal: r.outboxBulk.Load()}
+		ExpressTotal: r.outboxExpress.Load(), BulkTotal: r.outboxBulk.Load(),
+		HistoryInFlight: r.bulkInFlightCount()}
 	if !p.at.IsZero() {
 		d.LastPassMs = p.took.Milliseconds()
 		d.LastPassAgoS = int64(time.Since(p.at) / time.Second)

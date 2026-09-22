@@ -106,7 +106,7 @@ func (r *Runtime) announceRoutes() {
 		if !r.TransportAllowed(TransportRelay, tid) {
 			continue
 		}
-		_, _, _, _, _, _ = r.deliverSpaceAnnouncing(tid, AssetsManifests, addr, true)
+		_, _, _, _, _, _, _ = r.deliverSpaceAnnouncing(tid, AssetsManifests, addr, true)
 	}
 }
 

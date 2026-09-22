@@ -313,3 +313,83 @@ func TestThePersonalPullRunsBeforeThePush(t *testing.T) {
 		}
 	}
 }
+
+// LT-4 S1b. A history on its way to one space's newcomer does not hold a
+// word in ANOTHER space: the pass hands histories to the bulk courier and
+// does not wait. Pinned by holding the bulk lane shut: with the old pass
+// the second space's word could not leave while the first space's history
+// had the lane.
+func TestAnotherSpacesHistoryDoesNotHoldTheWord(t *testing.T) {
+	srv, addr := startRelay(t)
+	defer srv.Close()
+	alice, bob, big := pairOnRelay(t, addr)
+	defer alice.Close()
+	defer bob.Close()
+	off := false
+	if err := bob.SetSettings(Settings{Relay: addr, DeliveryReceipts: &off}); err != nil {
+		t.Fatal(err)
+	}
+	// A second, small room with the same two people.
+	small, err := alice.CreateSpace("маленькая")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pass, err := alice.MintPass(small, 2, 24, addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := bob.JoinByPass(pass.Link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitJoin(t, bob, req, JoinReady)
+	if _, err := alice.Say(small, "привет в маленькой", SayOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, 30*time.Second, "the small room never converged", func() bool {
+		return countMsg(t, bob, small, "привет в маленькой") >= 1
+	})
+	growHistory(t, alice, bob, big, 80)
+
+	release := make(chan struct{})
+	defer close(release)
+	rs := alice.relaySync
+	rs.mu.Lock()
+	rs.beforeCycle = func() { <-release }
+	rs.mu.Unlock()
+	time.Sleep(4 * cadence)
+	// Bob's cursor in the big room is forgotten: it owes him the whole
+	// history — on bulk. The bulk lane is HELD by the test: nothing bulk
+	// can move until it lets go.
+	alice.offerBook.forgetSpace(big)
+	_, releaseBulk, err := alice.pool().Bulk(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := alice.Say(big, "слово за историей", SayOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(2 * cadence) // the pass takes the big room first
+	start := time.Now()
+	if _, err := alice.Say(small, "а это сразу", SayOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, 5*time.Second, "the small room's word waited behind the big room's history", func() bool {
+		return countMsg(t, bob, small, "а это сразу") >= 1
+	})
+	took := time.Since(start)
+	if countMsg(t, bob, big, "слово за историей") > 0 {
+		t.Fatal("the big room's word arrived while the bulk lane was held — it did not ride bulk")
+	}
+	if alice.bulkInFlightCount() == 0 {
+		t.Fatal("no history is in the courier's hands while the bulk lane is held")
+	}
+	releaseBulk(nil)
+	waitUntil(t, 30*time.Second, "the big room's history never arrived once the lane was free", func() bool {
+		return countMsg(t, bob, big, "слово за историей") >= 1
+	})
+	waitUntil(t, 10*time.Second, "the courier did not let go of its claims", func() bool {
+		return alice.bulkInFlightCount() == 0
+	})
+	t.Logf("the small room's word in %v while the big room's history was held", took)
+}

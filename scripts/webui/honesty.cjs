@@ -176,6 +176,13 @@ function row(rs, label) { return rs.find(r => r[0] === label); }
       : fail('the outbox failure reaches the screen', JSON.stringify(rs));
   }
   {
+    const rs = await rows({ ...base, outbox: { last_pass_ms: 90, last_pass_ago_s: 2, spaces: 3, pushed: 1, held: 1, express: 1, bulk: 2, history_in_flight: 2 } });
+    const r = row(rs, 'relay.diag.outbox');
+    r && r[1].endsWith(' · relay.diag.outbox.history|n=2')
+      ? ok('histories still on the courier are named on the outbox row')
+      : fail('history in flight reaches the screen', JSON.stringify(rs));
+  }
+  {
     const rs = await rows({ ...base, outbox: { last_pass_ms: -1, last_pass_ago_s: -1 } });
     const r = row(rs, 'relay.diag.outbox');
     r && r[1] === 'relay.diag.outbox.never'

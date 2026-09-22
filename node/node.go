@@ -267,6 +267,11 @@ type Runtime struct {
 	outboxBulk    atomic.Int64
 	outboxMu2     sync.Mutex
 	outboxLast    outboxPass
+	// The bulk courier's claims (node/relay.go courier, LT-4 S1b): which
+	// mailboxes' histories are on the bulk lane right now.
+	bulkMu       sync.Mutex
+	bulkInFlight map[offerKey]struct{}
+	bulkFailLog  map[string]time.Time
 	// backgrounded is 1 while no person is looking (node/foreground.go).
 	// An atomic rather than a field under r.mu: read on every loop tick,
 	// including ticks that deliberately avoid the runtime lock.

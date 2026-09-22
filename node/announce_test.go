@@ -181,7 +181,7 @@ func TestAGhostGetsTheSingleCheapGuess(t *testing.T) {
 		}
 		return []string{addrA}, true, false
 	}
-	if _, _, _, _, _, err := rt.deliverSpaceRouted(tid, AssetsManifests, route, false, true, false, false); err != nil {
+	if _, _, _, _, _, _, err := rt.deliverSpaceRouted(tid, AssetsManifests, route, false, true, false, false); err != nil {
 		t.Fatal(err)
 	}
 	if len(seen) != 0 {

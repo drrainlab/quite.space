@@ -118,9 +118,13 @@ const (
 	// way it is a GUESS, and a guess is not delivery: the cursor stays,
 	// the space re-offers (the relay store dedups identical bytes), and
 	// the hold clears the moment a stated route carries a real copy.
-	heldTentative   = "delivered on a guess — no stated route for some members"
-	heldNoRelay     = "no usable relay for this space"
-	heldNoReadRelay = "no usable relay to read this space from"
+	heldTentative = "delivered on a guess — no stated route for some members"
+	// heldSendingHistory: some members' copies are a history the bulk
+	// courier is still carrying (LT-4 S1b). Not lost, not delivered yet;
+	// the next pass finds the mark and the hold clears.
+	heldSendingHistory = "sending history to some members"
+	heldNoRelay        = "no usable relay for this space"
+	heldNoReadRelay    = "no usable relay to read this space from"
 )
 
 // Tiering policy (RR-2): a space with no observed change for quietAfter
@@ -432,12 +436,12 @@ func (r *Runtime) pushSpacesVia(addr string, spaces []syncSpace, viaOutbox bool)
 		// member's own route, not to this node's relay. `addr` plays no
 		// part here any more — it survives below only for the public
 		// personal-fallback paths.
-		n, reached, noRoute, tentative, legacyBasis, err := r.deliverSpaceVia(sp.tid, AssetsManifests, addr, false, viaOutbox)
+		n, reached, noRoute, tentative, inflight, legacyBasis, err := r.deliverSpaceVia(sp.tid, AssetsManifests, addr, false, viaOutbox)
 		if err != nil {
 			lastErr = err.Error()
 			continue
 		}
-		if reached == 0 && noRoute == 0 && tentative == 0 {
+		if reached == 0 && noRoute == 0 && tentative == 0 && inflight == 0 {
 			// Nobody addressable yet (fresh joiner before its first pull, or a
 			// solo space): leave lastLen untouched so we retry once we learn a
 			// peer device, instead of marking these frames as handed off.
@@ -463,6 +467,16 @@ func (r *Runtime) pushSpacesVia(addr string, spaces []syncSpace, viaOutbox bool)
 			// Phase-0 table's every starving asset came through here with
 			// the old code counting it delivered.
 			held[sp.tid] = heldReason{heldTentative, tentative}
+			if reached > 0 {
+				pushed += n
+			}
+			continue
+		}
+		if inflight > 0 {
+			// A history is on its way on the bulk lane. lastLen stays so
+			// the next pass looks again — and finds the courier's mark, or
+			// the courier still at it (claimed, not offered twice).
+			held[sp.tid] = heldReason{heldSendingHistory, inflight}
 			if reached > 0 {
 				pushed += n
 			}

@@ -113,7 +113,7 @@ func TestALegacyRouteExpiresIntoAGuess(t *testing.T) {
 	if _, err := rt.Say(tid, "кто-нибудь", SayOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	_, _, noRoute, tentative, legacyBasis, err := rt.deliverSpace(tid, AssetsManifests, addr)
+	_, _, noRoute, tentative, _, legacyBasis, err := rt.deliverSpace(tid, AssetsManifests, addr)
 	if err != nil {
 		t.Fatal(err)
 	}

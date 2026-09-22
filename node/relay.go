@@ -267,7 +267,7 @@ func (r *Runtime) PushToRelay(addr string, tid id.TerminalID) (int, uint64, erro
 func (r *Runtime) pushToRelay(addr string, tid id.TerminalID, policy AssetPolicy) (int, int, uint64, error) {
 	// Manual: hand EVERYTHING to the named relay, no delta — "push current
 	// space" is the explicit whole-log verb.
-	pushed, reached, _, _, deadline, err := r.deliverSpaceRouted(tid, policy,
+	pushed, reached, _, _, _, deadline, err := r.deliverSpaceRouted(tid, policy,
 		func(id.DeviceID, bool) ([]string, bool, bool) { return []string{addr}, false, false }, false, false, false, false)
 	return pushed, reached, deadline, err
 }
@@ -300,13 +300,13 @@ func (r *Runtime) pushToRelay(addr string, tid id.TerminalID, policy AssetPolicy
 // the settings resolve to nothing, and it is never RouteBook knowledge: it
 // must not create PeerRoutes or SelfIngress entries, must not survive the
 // cycle, and is never returned by the general resolver.
-func (r *Runtime) deliverSpace(tid id.TerminalID, policy AssetPolicy, syncingAt string) (pushed, reached, noRoute, tentative int, legacyBasis bool, err error) {
+func (r *Runtime) deliverSpace(tid id.TerminalID, policy AssetPolicy, syncingAt string) (pushed, reached, noRoute, tentative, inflight int, legacyBasis bool, err error) {
 	return r.deliverSpaceVia(tid, policy, syncingAt, false, false)
 }
 
 // deliverSpaceVia is deliverSpace with the lane named: viaOutbox puts the
 // small copies on the sender's own socket (relayPeer.outbox).
-func (r *Runtime) deliverSpaceVia(tid id.TerminalID, policy AssetPolicy, syncingAt string, announce, viaOutbox bool) (pushed, reached, noRoute, tentative int, legacyBasis bool, err error) {
+func (r *Runtime) deliverSpaceVia(tid id.TerminalID, policy AssetPolicy, syncingAt string, announce, viaOutbox bool) (pushed, reached, noRoute, tentative, inflight int, legacyBasis bool, err error) {
 	return r.deliverSpaceAnnouncingVia(tid, policy, syncingAt, announce, viaOutbox)
 }
 
@@ -393,11 +393,11 @@ func (r *Runtime) routeFor(dev id.DeviceID, alive bool, syncingAt string, nowUni
 // when announce is set, a recipient with nothing new to receive still
 // gets a frameless bundle carrying this device's current ingress (see
 // announceRoutes).
-func (r *Runtime) deliverSpaceAnnouncing(tid id.TerminalID, policy AssetPolicy, syncingAt string, announce bool) (pushed, reached, noRoute, tentative int, legacyBasis bool, err error) {
+func (r *Runtime) deliverSpaceAnnouncing(tid id.TerminalID, policy AssetPolicy, syncingAt string, announce bool) (pushed, reached, noRoute, tentative, inflight int, legacyBasis bool, err error) {
 	return r.deliverSpaceAnnouncingVia(tid, policy, syncingAt, announce, false)
 }
 
-func (r *Runtime) deliverSpaceAnnouncingVia(tid id.TerminalID, policy AssetPolicy, syncingAt string, announce, viaOutbox bool) (pushed, reached, noRoute, tentative int, legacyBasis bool, err error) {
+func (r *Runtime) deliverSpaceAnnouncingVia(tid id.TerminalID, policy AssetPolicy, syncingAt string, announce, viaOutbox bool) (pushed, reached, noRoute, tentative, inflight int, legacyBasis bool, err error) {
 	nowUnix := time.Now().Unix()
 	route := func(dev id.DeviceID, alive bool) ([]string, bool, bool) {
 		eps, guess, legacy := r.routeFor(dev, alive, syncingAt, nowUnix)
@@ -406,19 +406,22 @@ func (r *Runtime) deliverSpaceAnnouncingVia(tid id.TerminalID, policy AssetPolic
 		}
 		return eps, guess, legacy
 	}
-	pushed, reached, noRoute, tentative, _, err = r.deliverSpaceRouted(tid, policy, route, true, true, announce, viaOutbox)
-	return pushed, reached, noRoute, tentative, legacyBasis, err
+	pushed, reached, noRoute, tentative, inflight, _, err = r.deliverSpaceRouted(tid, policy, route, true, true, announce, viaOutbox)
+	return pushed, reached, noRoute, tentative, inflight, legacyBasis, err
 }
 
-// deliverSpaceRouted returns (framesPrepared, reached, noRoute, deadline,
-// err). reached is how many peer inboxes actually received a copy — 0 means
-// "nobody addressable yet" (a solo space, or a fresh joiner before its first
-// pull), which is a clean no-op, not an error. The auto-sync loop keys its
+// deliverSpaceRouted returns (framesPrepared, reached, noRoute, tentative,
+// inflight, deadline, err). reached is how many peer inboxes actually
+// received a copy — 0 means "nobody addressable yet" (a solo space, or a
+// fresh joiner before its first pull), which is a clean no-op, not an
+// error. inflight is how many recipients' copies are a HISTORY the bulk
+// courier is still carrying (LT-4 S1b): not reached, not lost — the next
+// pass finds either the mark or the courier. The auto-sync loop keys its
 // progress on reached so it retries rather than marking undelivered frames
 // as sent. route answers "which endpoint carries this recipient's copy";
 // "" means no route is known and the recipient is skipped and counted.
 func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
-	route func(dev id.DeviceID, alive bool) (eps []string, guess, legacy bool), lanOffload, delta, announce, viaOutbox bool) (int, int, int, int, uint64, error) {
+	route func(dev id.DeviceID, alive bool) (eps []string, guess, legacy bool), lanOffload, delta, announce, viaOutbox bool) (int, int, int, int, int, uint64, error) {
 	// Computed BEFORE the lock: SelfIngressRoutes takes r.mu itself, and
 	// the first draft of this line sat inside the locked section — a
 	// self-deadlock the two-relay gate caught in seven quiet minutes.
@@ -430,7 +433,7 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 	st, ok := r.spaces[tid]
 	if !ok {
 		r.mu.Unlock()
-		return 0, 0, 0, 0, 0, errors.New("node: unknown space")
+		return 0, 0, 0, 0, 0, 0, errors.New("node: unknown space")
 	}
 	var frames [][]byte
 	var eventIDs []id.EventID
@@ -511,7 +514,7 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 		return nil
 	}); err != nil {
 		r.mu.Unlock()
-		return 0, 0, 0, 0, 0, err
+		return 0, 0, 0, 0, 0, 0, err
 	}
 	var fleeting [][]byte    // frames that carry their own deadline
 	var fleetingUntil uint64 // the earliest of those deadlines
@@ -624,10 +627,6 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 	// built per cursor: a mailbox that already holds the first N base
 	// frames gets the frames after N (plus every flipped one). One group
 	// per distinct cursor, built lazily; in the common case that is one.
-	type offerGroup struct {
-		bodies [][]byte
-		ids    []id.EventID
-	}
 	type groupKey struct {
 		from int
 		dev  id.DeviceID
@@ -731,7 +730,7 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 		// first pull). Frames were prepared but delivered to no one — a clean
 		// no-op. Reporting reached==0 lets the auto-sync loop retry rather
 		// than mark these frames as handed off.
-		return len(frames), 0, 0, 0, 0, nil
+		return len(frames), 0, 0, 0, 0, 0, nil
 	}
 	// THE LOCAL WIRE FIRST (T6-LAN). A recipient whose device is
 	// authenticated live on a local link gets its copy pushed over that
@@ -779,14 +778,14 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 	}
 	if len(recipients) == 0 {
 		// Everybody was on the wire. The relay is not even dialled.
-		return len(frames), lanReached, 0, 0, 0, nil
+		return len(frames), lanReached, 0, 0, 0, 0, nil
 	}
 	if err := r.relayGate(); err != nil {
 		if lanReached > 0 {
 			// The relay is refused by policy, but the room heard us.
-			return len(frames), lanReached, len(recipients), 0, 0, nil
+			return len(frames), lanReached, len(recipients), 0, 0, 0, nil
 		}
-		return 0, 0, 0, 0, 0, err
+		return 0, 0, 0, 0, 0, 0, err
 	}
 	now = uint64(time.Now().Unix())
 	bucket := relay.Bucket(now)
@@ -862,20 +861,10 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 	// loop retries the whole space.
 	var pushMu sync.Mutex
 	var pushWG sync.WaitGroup
-	// One recipient's copy at one endpoint: its cursor and its bodies,
-	// decided BEFORE any lane is taken.
-	type copyJob struct {
-		dev  id.DeviceID
-		from int
-		g    offerGroup
-	}
-	// run puts one list of copies through one lane, and merges the counters.
-	run := func(ep string, lane func(string, func(*relay.Client) error) error, jobs []copyJob) {
-		defer pushWG.Done()
-		d0 := uint64(0)
-		var epIDs []id.EventID
-		var accepted []id.DeviceID
-		err := lane(ep, func(client *relay.Client) error {
+	// put puts one list of copies through one lane: the wire work, shared
+	// by the pass (run) and the bulk courier below.
+	put := func(ep string, lane func(string, func(*relay.Client) error) error, jobs []copyJob) (epIDs []id.EventID, accepted []id.DeviceID, d0 uint64, err error) {
+		err = lane(ep, func(client *relay.Client) error {
 			for _, j := range jobs {
 				hint := relay.HintFor(tid, j.dev, bucket)
 				// One mailbox, several items. A Collect drains them all and
@@ -909,6 +898,12 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 			}
 			return nil
 		})
+		return epIDs, accepted, d0, err
+	}
+	// run is the pass's lane: it waits, and merges the counters.
+	run := func(ep string, lane func(string, func(*relay.Client) error) error, jobs []copyJob) {
+		defer pushWG.Done()
+		epIDs, accepted, d0, err := put(ep, lane, jobs)
 		pushMu.Lock()
 		defer pushMu.Unlock()
 		for _, dev := range accepted {
@@ -929,8 +924,10 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 			}
 		}
 	}
+	inflight := 0
+	var claimed []offerKey // the cycle's own bulk claims, released after the wait
 	for _, ep := range eps {
-		var expressJobs, bulkJobs []copyJob
+		var expressJobs, bulkJobs, courierJobs []copyJob
 		for _, dev := range byEndpoint[ep] {
 			from := 0
 			if delta {
@@ -954,10 +951,34 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 			for _, b := range g.bodies {
 				size += len(b)
 			}
-			if size >= bulkThreshold {
-				bulkJobs = append(bulkJobs, copyJob{dev, from, g})
-			} else {
+			if size < bulkThreshold {
 				expressJobs = append(expressJobs, copyJob{dev, from, g})
+				continue
+			}
+			if !delta {
+				bulkJobs = append(bulkJobs, copyJob{dev, from, g}) // the manual whole-log verb waits
+				continue
+			}
+			// A HISTORY GOES TO THE COURIER (LT-4 S1b) when a WORD is being
+			// sent, and the outbox pass does not wait for it. The pass used
+			// to wait for every space's bulk in turn, so a word in the
+			// twentieth space stood behind the histories of nineteen —
+			// measured on the owner's phone the night the offer book was
+			// born empty: one outbox pass, 6m32s, the word at its tail. The
+			// CYCLE still waits for its bulk: its last run before Close is
+			// what carries a photo ahead of the request when the phone goes
+			// back into the pocket (ride_ahead_test), and a courier cannot
+			// outlive the node. Either way one mailbox is claimed once: a
+			// history already in the courier's hands is counted in flight.
+			if !r.bulkClaim(offerKey{tid, dev, ep}) {
+				inflight++
+				continue
+			}
+			if viaOutbox {
+				courierJobs = append(courierJobs, copyJob{dev, from, g})
+			} else {
+				claimed = append(claimed, offerKey{tid, dev, ep})
+				bulkJobs = append(bulkJobs, copyJob{dev, from, g})
 			}
 		}
 		// EVERY ENDPOINT AT ONCE (LT-1), and within an endpoint the express
@@ -971,14 +992,20 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 			go run(ep, express, expressJobs)
 		}
 		if len(bulkJobs) > 0 {
-			if viaOutbox {
-				r.outboxBulk.Add(int64(len(bulkJobs)))
-			}
 			pushWG.Add(1)
 			go run(ep, r.withRelayBulk, bulkJobs)
 		}
+		if len(courierJobs) > 0 {
+			if viaOutbox {
+				r.outboxBulk.Add(int64(len(courierJobs)))
+			}
+			inflight += len(courierJobs)
+			r.wg.Add(1)
+			go r.courier(tid, ep, courierJobs, put, ownSeq)
+		}
 	}
 	pushWG.Wait()
+	r.bulkRelease(claimed)
 	// Each device counted once, whichever of its endpoints accepted.
 	relayReached, relayTentative := 0, 0
 	for dev := range acceptedDevs {
@@ -989,7 +1016,7 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 		}
 	}
 	if relayReached == 0 && relayTentative == 0 && lanReached == 0 && sendErr != nil {
-		return 0, 0, noRoute, 0, 0, sendErr
+		return 0, 0, noRoute, 0, inflight, 0, sendErr
 	}
 	// Said out loud rather than dropped in silence: a single frame past the
 	// item cap can never travel this way, and nothing downstream can tell
@@ -1014,28 +1041,125 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 		// to a relay" — for weeks, for every peer whose only route was a
 		// recorded assumption that had just aged out, while the peer was
 		// reading the message from that very relay.
-		r.mu.Lock()
-		top := uint64(0)
-		for eid := range sentIDs {
-			_ = st.space.Trust.RecordTransportReceipt(eid, tid, claims.DeliveryAcceptedByRelay)
-			if seq := ownSeq[eid]; seq > top {
-				top = seq
-			}
-		}
-		// The watermark outlives the process: what a relay took stays
-		// taken across a restart (kernel/storage: Relayed).
-		if top > 0 && r.ks.Relayed[tid] < top {
-			if r.ks.Relayed == nil {
-				r.ks.Relayed = map[id.TerminalID]uint64{}
-			}
-			r.ks.Relayed[tid] = top
-			if err := r.saveKeystore(); err != nil {
-				log.Printf("node: relayed watermark not persisted: %v", err)
-			}
-		}
-		r.mu.Unlock()
+		r.noteRelayAccepted(tid, sentIDs, ownSeq)
 	}
-	return len(frames), relayReached + lanReached, noRoute, relayTentative, deadline, sendErr
+	return len(frames), relayReached + lanReached, noRoute, relayTentative, inflight, deadline, sendErr
+}
+
+// offerGroup is what one cursor's recipients need: the bodies and the
+// event ids they carry.
+type offerGroup struct {
+	bodies [][]byte
+	ids    []id.EventID
+}
+
+// copyJob is one recipient's copy at one endpoint: its cursor and its
+// bodies, decided BEFORE any lane is taken.
+type copyJob struct {
+	dev  id.DeviceID
+	from int
+	g    offerGroup
+}
+
+// noteRelayAccepted records, for every own frame a relay just took, the
+// honest receipt level (accepted by a relay — nobody received anything
+// yet) and the durable watermark. Called by the pass and by the courier.
+func (r *Runtime) noteRelayAccepted(tid id.TerminalID, sentIDs map[id.EventID]struct{}, ownSeq map[id.EventID]uint64) {
+	if len(sentIDs) == 0 {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	st := r.spaces[tid]
+	if st == nil || st.space == nil {
+		return
+	}
+	top := uint64(0)
+	for eid := range sentIDs {
+		_ = st.space.Trust.RecordTransportReceipt(eid, tid, claims.DeliveryAcceptedByRelay)
+		if seq := ownSeq[eid]; seq > top {
+			top = seq
+		}
+	}
+	// The watermark outlives the process: what a relay took stays
+	// taken across a restart (kernel/storage: Relayed).
+	if top > 0 && r.ks.Relayed[tid] < top {
+		if r.ks.Relayed == nil {
+			r.ks.Relayed = map[id.TerminalID]uint64{}
+		}
+		r.ks.Relayed[tid] = top
+		if err := r.saveKeystore(); err != nil {
+			log.Printf("node: relayed watermark not persisted: %v", err)
+		}
+	}
+}
+
+// courier carries one endpoint's histories on the bulk lane, outside any
+// pass (LT-4 S1b). Success is the same bookkeeping the pass does — the
+// cursor moved inside put, the timeline and the receipt level here; a
+// failure releases the claim and the next pass or cycle offers again (the
+// lane's breaker keeps that cheap while the relay is cooling down).
+func (r *Runtime) courier(tid id.TerminalID, ep string, jobs []copyJob, put func(string, func(string, func(*relay.Client) error) error, []copyJob) ([]id.EventID, []id.DeviceID, uint64, error), ownSeq map[id.EventID]uint64) {
+	defer r.wg.Done()
+	keys := make([]offerKey, 0, len(jobs))
+	for _, j := range jobs {
+		keys = append(keys, offerKey{tid, j.dev, ep})
+	}
+	defer r.bulkRelease(keys)
+	if r.stopped() {
+		return
+	}
+	epIDs, _, _, err := put(ep, r.withRelayBulk, jobs)
+	if err != nil {
+		r.bulkMu.Lock()
+		last := r.bulkFailLog[ep]
+		if time.Since(last) > 30*time.Second {
+			r.bulkFailLog[ep] = time.Now()
+			log.Printf("outbox: history to %s failed: %v", ep, err)
+		}
+		r.bulkMu.Unlock()
+		return
+	}
+	if len(epIDs) == 0 {
+		return
+	}
+	r.lat.relayed(epIDs, ep)
+	sent := make(map[id.EventID]struct{}, len(epIDs))
+	for _, eid := range epIDs {
+		sent[eid] = struct{}{}
+	}
+	r.noteRelayAccepted(tid, sent, ownSeq)
+}
+
+// bulkClaim marks one mailbox as in the courier's hands; false when it
+// already is. bulkRelease gives the claims back. bulkInFlightCount is for
+// the diagnostics screen.
+func (r *Runtime) bulkClaim(k offerKey) bool {
+	r.bulkMu.Lock()
+	defer r.bulkMu.Unlock()
+	if r.bulkInFlight == nil {
+		r.bulkInFlight = map[offerKey]struct{}{}
+		r.bulkFailLog = map[string]time.Time{}
+	}
+	if _, busy := r.bulkInFlight[k]; busy {
+		return false
+	}
+	r.bulkInFlight[k] = struct{}{}
+	return true
+}
+
+func (r *Runtime) bulkRelease(keys []offerKey) {
+	r.bulkMu.Lock()
+	for _, k := range keys {
+		delete(r.bulkInFlight, k)
+	}
+	r.bulkMu.Unlock()
+}
+
+func (r *Runtime) bulkInFlightCount() int {
+	r.bulkMu.Lock()
+	defer r.bulkMu.Unlock()
+	return len(r.bulkInFlight)
 }
 
 // addRelayWants records blob hashes to request over the relay for a space
