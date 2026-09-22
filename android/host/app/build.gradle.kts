@@ -6,6 +6,17 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+// EN-4. The Firebase project file is not in the repository (CI writes it
+// from a secret; a local build copies it in by hand). Without it the build
+// still succeeds and GoogleDoorbell.available() answers false — the row in
+// Settings says the doorbell cannot be carried, which is the truth of that
+// build rather than a crash on the first token fetch.
+if (file("google-services.json").exists()) {
+    apply(plugin = "com.google.gms.google-services")
+} else {
+    logger.warn("quite.space: no google-services.json — this build carries no Google doorbell")
+}
+
 android {
     namespace = "space.quiet.arprobe"
     compileSdk = 35
@@ -199,6 +210,18 @@ dependencies {
     // not the door opening for Compose, Hilt or Navigation — the interface
     // stays the web UI the node already serves.
     implementation("androidx.activity:activity:1.9.3")
+
+    // EN-4. The second and last Google dependency, for the platform push
+    // lane alone (GoogleDoorbell). Messaging only — no analytics, no
+    // crashlytics, no BOM pulling in a family.
+    implementation("com.google.firebase:firebase-messaging:24.1.1")
+    constraints {
+        // firebase-messaging drags an androidx.fragment from 2018 onto the
+        // classpath, and lint refuses registerForActivityResult beside it.
+        // A CONSTRAINT, not a dependency: nothing here uses a Fragment; the
+        // transitive one is merely held at the floor lint accepts.
+        implementation("androidx.fragment:fragment:1.3.6")
+    }
 
     // AR-1b.2. Plain JUnit on the JVM, not instrumentation: the notification
     // decisions are ordinary Java by design — no Android type appears in

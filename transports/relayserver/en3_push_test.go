@@ -27,7 +27,28 @@ func pushProbe(s *Server) (*sync.Mutex, *[]string) {
 	return &mu, &got
 }
 
-func TestTheDoorbellRingsOnlyWhenNobodyIsParked(t *testing.T) {
+// rings waits up to d for the probe to record at least n rings.
+func rings(mu *sync.Mutex, got *[]string, n int, d time.Duration) int {
+	deadline := time.Now().Add(d)
+	for {
+		mu.Lock()
+		k := len(*got)
+		mu.Unlock()
+		if k >= n || time.Now().After(deadline) {
+			return k
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+}
+
+// A parked connection that COLLECTS keeps the doorbell quiet; when the
+// process dies, the doorbell is the only ear left. The registration must
+// survive the socket — that is its whole point.
+func TestTheDoorbellStaysQuietForAParkThatCollects(t *testing.T) {
+	old := pushGrace
+	pushGrace = 400 * time.Millisecond
+	defer func() { pushGrace = old }()
+
 	srv, port, err := StartServer("127.0.0.1:0", DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
@@ -36,18 +57,25 @@ func TestTheDoorbellRingsOnlyWhenNobodyIsParked(t *testing.T) {
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	mu, got := pushProbe(srv)
 
-	hint := []byte("dddddddddddddddd")
+	cap := []byte("capcapcapcapcapcapcapcapcapcapca")
+	hint := relay.CollectHint(cap)
 	endpoint := "https://push.example/dev/abc"
 
-	// Register the endpoint by parking WITH it, then let the connection die
-	// — the registration must survive the socket, that is its whole point.
+	drainer, err := relay.DialClient(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer drainer.Close()
 	listener, err := relay.DialClient(addr)
 	if err != nil {
 		t.Fatal(err)
 	}
 	stop := make(chan struct{})
 	go func() {
-		_ = listener.ListenPush([][]byte{hint}, endpoint, stop, func([]byte) {})
+		// A live phone: the notify is answered with a collect.
+		_ = listener.ListenPush([][]byte{hint}, endpoint, stop, func([]byte) {
+			_, _ = drainer.Collect([][]byte{cap})
+		})
 	}()
 	time.Sleep(300 * time.Millisecond)
 
@@ -56,17 +84,11 @@ func TestTheDoorbellRingsOnlyWhenNobodyIsParked(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer writer.Close()
-
-	// Parked and listening: the socket hears it, the doorbell stays quiet.
 	if _, err := writer.Put(hint, 0, []byte("heard on the socket")); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(300 * time.Millisecond)
-	mu.Lock()
-	rings := len(*got)
-	mu.Unlock()
-	if rings != 0 {
-		t.Fatalf("the doorbell rang %d time(s) while a connection was parked", rings)
+	if n := rings(mu, got, 1, 3*pushGrace); n != 0 {
+		t.Fatalf("the doorbell rang %d time(s) for a park that collected", n)
 	}
 
 	// The process dies. Now the doorbell is the only ear left.
@@ -76,20 +98,72 @@ func TestTheDoorbellRingsOnlyWhenNobodyIsParked(t *testing.T) {
 	if _, err := writer.Put(hint, 0, []byte("for the dead process")); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		mu.Lock()
-		n := len(*got)
-		mu.Unlock()
-		if n > 0 {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
+	if n := rings(mu, got, 1, 3*time.Second); n != 1 {
+		t.Fatalf("doorbell rang %d time(s) for a dead process, want 1", n)
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if len(*got) != 1 || (*got)[0] != endpoint {
+	if (*got)[0] != endpoint {
 		t.Fatalf("doorbell record: %v", *got)
+	}
+}
+
+// THE DOZE CASE. Android cuts the app's network and closes nothing: the
+// park looks alive from here for up to listenIdle. A park that does not
+// collect within the grace is not here, and the doorbell rings anyway.
+func TestADozingParkDoesNotSilenceTheDoorbell(t *testing.T) {
+	old := pushGrace
+	pushGrace = 400 * time.Millisecond
+	defer func() { pushGrace = old }()
+
+	srv, port, err := StartServer("127.0.0.1:0", DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	mu, got := pushProbe(srv)
+
+	hint := []byte("dozedozedozedoze")
+	endpoint := "https://push.example/dev/doze"
+	listener, err := relay.DialClient(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	stop := make(chan struct{})
+	defer close(stop)
+	go func() {
+		// Parked, notified, and never collecting — a phone in a pocket.
+		_ = listener.ListenPush([][]byte{hint}, endpoint, stop, func([]byte) {})
+	}()
+	time.Sleep(300 * time.Millisecond)
+
+	writer, err := relay.DialClient(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	start := time.Now()
+	if _, err := writer.Put(hint, 0, []byte("into the pocket")); err != nil {
+		t.Fatal(err)
+	}
+	if n := rings(mu, got, 1, pushGrace/2); n != 0 {
+		t.Fatalf("rang %d time(s) before the grace — a live park would have been given no chance", n)
+	}
+	if n := rings(mu, got, 1, 3*time.Second); n != 1 {
+		t.Fatalf("rang %d time(s) after the grace, want exactly 1", n)
+	}
+	if took := time.Since(start); took < pushGrace {
+		t.Fatalf("rang at %v, before the grace of %v", took, pushGrace)
+	}
+	// A hint nobody registered for never grows a timer.
+	srv.pushRegs().ring("unregisteredhint", true)
+	srv.pushRegs().mu.Lock()
+	pending := len(srv.pushRegs().unproven)
+	srv.pushRegs().mu.Unlock()
+	if pending != 0 {
+		t.Fatalf("%d unproven timer(s) for hints nobody registered", pending)
 	}
 }
 

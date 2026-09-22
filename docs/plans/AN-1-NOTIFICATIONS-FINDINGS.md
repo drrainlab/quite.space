@@ -188,3 +188,43 @@ stop landing — 40 of 40.
 
 Still not run on a device: a night in Doze, network loss and return, reboot,
 epoch rollover — the AN-2 table above stands.
+
+## EN-4 — the doorbell carried by Google (2026-09-22)
+
+**The report.** A tester on 1.0.24: "после блокировки уведомления не идут";
+"запускаю приложуху и все приходит, уже со звуком". Every measurement in
+AN-3 was taken over USB — on a charger — and a charging phone never enters
+Doze. His phone lay on a table: light Doze cuts an app's network minutes
+after the screen goes dark and closes nothing. The node was alive and deaf.
+
+**Two holes, not one.**
+
+1. *No carrier.* The platform's push lane is the one channel Android keeps
+   open through Doze. EN-3 built the doorbell for a UnifiedPush distributor,
+   which almost nobody has installed.
+2. *The relay believed the park.* `ring` fired only when NO connection was
+   parked at the hint. A dozing phone's socket looks parked for up to
+   `listenIdle` (45 min) — so even a registered doorbell stayed silent.
+
+**What changed.**
+
+| piece | where | rule |
+|---|---|---|
+| relay | `transports/relayserver/push.go` | a park is trusted only while it proves itself: notify, then if nobody COLLECTS at that hint within `pushGrace` (12 s) the doorbell rings anyway; a collect cancels it. Tests: a collecting park stays quiet; a dozing park rings after the grace and not before; unregistered hints grow no timers |
+| gateway | `cmd/quiet-push` (new) | `POST /fcm/{token}` → one FCM HTTP v1 message: `android.priority=high`, `ttl=120s`, `data={qp:1}`, no notification block. Service-account OAuth2 in stdlib (RS256 JWT → token endpoint, cached, renewed a minute early). Token shape checked; 30 s per-token coalesce; nothing logged or kept. Deployed on 195.63.160.237 as `quiet-push.service` (user quietpush, `/etc/quiet-push/sa.json` root:quietpush 0640) behind nginx `push.quite.space` → 127.0.0.1:8993 (Cloudflare-proxied; DNS record is the owner's) |
+| android | `GoogleDoorbell.kt` | `FcmDoorbell : FirebaseMessagingService`; token → endpoint `https://push.quite.space/fcm/<token>` → the same `SetPushEndpoint` the UnifiedPush path uses; ring → `Doorbell.ring` (shared with UnifiedPush). Default ON where Google services exist and no UnifiedPush distributor is installed (owner's decision); `firebase_messaging_auto_init_enabled=false` so the switch is real. Build: `firebase-messaging:24.1.1`, google-services plugin applied only when `app/google-services.json` exists (CI writes it from the `GOOGLE_SERVICES_JSON` secret, base64) |
+| core | `quietcore.KickSync` → `node.DoorbellRing` | a push ring is the mail-first pull + door poll + cycle, not a plain cycle kick |
+
+**What Google learns:** a token it issued, and the moment. The relay's ping
+is a fixed marker; the gateway forwards a fixed marker. Said in the settings
+row (`ui.set.doorbell.google`).
+
+**Acceptance (to run):** phone unplugged → `adb shell dumpsys battery unplug
+&& adb shell dumpsys deviceidle force-idle` → message from the stand →
+notification within seconds, `logcat -s quiet-fcm quiet-doorbell` shows the
+ring; then `dumpsys deviceidle unforce && dumpsys battery reset`. Then the
+tester's phone overnight.
+
+**Key hygiene:** the service-account key was attached in chat once. After
+the end-to-end check, mint a new key in the Firebase console, replace
+`/etc/quiet-push/sa.json`, restart `quiet-push`, delete the old key.

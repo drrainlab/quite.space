@@ -456,11 +456,9 @@ func (s *Server) handle(m *relay.Msg, cs *connState) *relay.Msg {
 		}
 		s.st.puts.Add(1)
 		s.st.bytesStored.Add(uint64(len(m.Body)))
-		if s.notifyListeners(string(m.Hint)) == 0 {
-			// Nobody parked is here to hear it — ring the out-of-band
-			// doorbell, if one is registered for this hint (EN-3).
-			s.pushRegs().ring(string(m.Hint))
-		}
+		// The out-of-band doorbell (EN-3): now when nobody is parked,
+		// after a grace when somebody is but does not come to collect.
+		s.pushRegs().ring(string(m.Hint), s.notifyListeners(string(m.Hint)) > 0)
 		// The receipt proves exactly accepted_by_relay and nothing more
 		// (ADR-008): the expiry is echoed so the sender knows the deadline.
 		return &relay.Msg{Type: relay.MsgPutOK, Expires: expires}
@@ -493,7 +491,9 @@ func (s *Server) handle(m *relay.Msg, cs *connState) *relay.Msg {
 			if len(c) != relay.CapLen {
 				return &relay.Msg{Type: relay.MsgError, Reason: "malformed capability"}
 			}
-			got := s.store.CollectBudget(string(relay.CollectHint(c)), now, budget)
+			hint := string(relay.CollectHint(c))
+			s.pushRegs().heard(hint)
+			got := s.store.CollectBudget(hint, now, budget)
 			for _, it := range got {
 				budget -= len(it)
 				s.st.bytesServed.Add(uint64(len(it)))

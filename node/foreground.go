@@ -170,6 +170,18 @@ func (r *Runtime) applyAttention() {
 // doorbell rang: the ping carried nothing, the drain fetches everything.
 func (r *Runtime) KickRelaySync() { r.kickRelaySync() }
 
+// DoorbellRing is what a platform push means to the node: the same three
+// things a ring on the parked connection does (relaylisten.go) — the mail
+// first, on its own lane, from this node's own relay; the invite doors;
+// then the full cycle. Safe with no relay configured.
+func (r *Runtime) DoorbellRing() {
+	if addr := r.ResolvePersonalRelay(); addr != "" {
+		r.doorbellPull(addr)
+	}
+	r.kickPassPoll()
+	r.kickRelaySync()
+}
+
 // servingCadence is the heartbeat while this node is answering somebody's
 // media; servingWindow is how long one answer keeps it, refreshed by the
 // next. Two minutes covers the requester's own background collect.

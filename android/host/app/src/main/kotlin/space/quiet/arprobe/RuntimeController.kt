@@ -279,6 +279,14 @@ class RuntimeController private constructor(appContext: Context) {
             Log.w(TAG, "lock receiver unavailable", t)
         }
 
+        // EN-4: the doorbell is on by default where Google can carry it
+        // (owner's decision); a person who switched it off stays off.
+        try {
+            GoogleDoorbell.ensureDefault(app)
+        } catch (t: Throwable) {
+            Log.w(TAG, "doorbell default", t)
+        }
+
         // ARMED AT APPLICATION SCOPE, BEFORE ANY CORE IS OPEN — and that
         // ordering is the invariant, not an optimisation. The binding arms the
         // runtime only after node.Open has returned, so history cannot reach
@@ -715,7 +723,7 @@ class RuntimeController private constructor(appContext: Context) {
                 )
                 // EN-3: a doorbell registration made while the node was
                 // locked replays into the freshly opened core.
-                UnifiedPushConnector.replay(app)
+                Doorbell.replay(app)
                 // AN-2: an open node listens for itself — and collects. The
                 // keyless watch steps aside, its line comes down, and the
                 // week ahead is written afresh.

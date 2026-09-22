@@ -482,6 +482,7 @@ func KickSync() {
 	r := rt
 	stateMu.Unlock()
 	if r != nil {
-		r.KickRelaySync()
+		// A doorbell, not a tick: the mail first (node.DoorbellRing).
+		r.DoorbellRing()
 	}
 }

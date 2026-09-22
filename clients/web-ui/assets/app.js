@@ -316,6 +316,7 @@ function doorbellSyncUI(forced) {
     no_distributor: t('ui.set.doorbell.none'),
     registering: t('ui.set.doorbell.registering'),
     on: t('ui.set.doorbell.live'),
+    on_google: t('ui.set.doorbell.google'),
   };
   note.textContent = lines[st] || '';
   note.style.display = lines[st] ? '' : 'none';

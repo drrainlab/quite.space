@@ -533,15 +533,11 @@ class QuietActivity : ComponentActivity() {
                     // EN-3 — the doorbell. Status distinguishes "nothing on
                     // this phone can carry it" from "off", so the settings
                     // row can say the true sentence instead of a dead switch.
-                    doorbellStatus = {
-                        if (!UnifiedPushConnector.hasDistributor(this@QuietActivity)) {
-                            "no_distributor"
-                        } else {
-                            UnifiedPushConnector.status(this@QuietActivity)
-                        }
-                    },
-                    doorbellOn = { UnifiedPushConnector.register(this@QuietActivity) },
-                    doorbellOff = { UnifiedPushConnector.unregister(this@QuietActivity) },
+                    // EN-4: the carrier is chosen by Doorbell — UnifiedPush
+                    // when a distributor is installed, Google otherwise.
+                    doorbellStatus = { Doorbell.status(this@QuietActivity) },
+                    doorbellOn = { Doorbell.on(this@QuietActivity) },
+                    doorbellOff = { Doorbell.off(this@QuietActivity) },
                     // SR-0 — Radio Mode and push-to-talk. The store write is
                     // the host's; the page gets the authoritative state
                     // pushed back so a stale localStorage echo self-corrects.
@@ -1749,6 +1745,29 @@ class QuietActivity : ComponentActivity() {
                 recoveryPanel()
             }
 
+            // EN-4 — THE BATTERY QUESTION, ONCE PER INSTALL, AFTER
+            // NOTIFICATIONS ARE SETTLED. Android's battery optimisation cuts
+            // a sleeping app's network, and a node in a pocket then hears
+            // nothing until the phone is picked up (a tester, 2026-09-22).
+            // The exemption is what lets the parked connection live through
+            // Doze — the doorbell wakes the phone, the exemption keeps it
+            // reachable in between. Only the SYSTEM may grant it, on its own
+            // dialog with the app named, so "on by default" here means the
+            // question is asked by default, one time; the answer is the
+            // person's, and Settings → This device keeps the button.
+            state.canPresent && batteryQuestionDue() -> {
+                getSharedPreferences("quiet-battery", MODE_PRIVATE).edit()
+                    .putBoolean("asked", true).apply()
+                try {
+                    startActivity(Intent(
+                        android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                        android.net.Uri.parse("package:$packageName")))
+                } catch (t: Throwable) {
+                    Log.w(TAG, "battery exemption", t)
+                }
+                return
+            }
+
             else -> return
         }
         root.addView(
@@ -1760,6 +1779,12 @@ class QuietActivity : ComponentActivity() {
             ),
         )
         permissionPanel = panel
+    }
+
+    private fun batteryQuestionDue(): Boolean {
+        if (getSharedPreferences("quiet-battery", MODE_PRIVATE).getBoolean("asked", false)) return false
+        val pm = getSystemService(android.os.PowerManager::class.java) ?: return false
+        return !pm.isIgnoringBatteryOptimizations(packageName)
     }
 
     /** The product's own question, asked before the system's. */

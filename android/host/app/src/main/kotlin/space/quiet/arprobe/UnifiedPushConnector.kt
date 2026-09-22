@@ -129,7 +129,7 @@ object UnifiedPushConnector {
         }
     }
 
-    private fun pushEndpointToCore(endpoint: String) {
+    internal fun pushEndpointToCore(endpoint: String) {
         try {
             space.quiet.quietcore.Quietcore.setPushEndpoint(endpoint)
         } catch (t: Throwable) {
@@ -152,22 +152,7 @@ class UnifiedPushReceiver : BroadcastReceiver() {
                 val ep = intent.getStringExtra("endpoint") ?: return
                 UnifiedPushConnector.onNewEndpoint(ctx, ep)
             }
-            UnifiedPushConnector.ACTION_MESSAGE -> {
-                // The ping carries nothing; the drain fetches everything.
-                // ensureStarted opens with the remembered passphrase where
-                // that posture is on; a locked node stays locked and the
-                // person gets a nameless nudge instead.
-                val controller = RuntimeController.get(ctx)
-                if (controller.isAlive()) {
-                    try {
-                        space.quiet.quietcore.Quietcore.kickSync()
-                    } catch (t: Throwable) {
-                        Log.w("quiet-up", "kick failed", t)
-                    }
-                } else {
-                    controller.wakeForDoorbell()
-                }
-            }
+            UnifiedPushConnector.ACTION_MESSAGE -> Doorbell.ring(ctx)
             UnifiedPushConnector.ACTION_UNREGISTERED -> {
                 UnifiedPushConnector.onUnregistered(ctx)
             }

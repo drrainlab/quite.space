@@ -13,4 +13,8 @@ plugins {
     // This module owns only the seams Android will not let anybody else own —
     // process lifecycle, permissions, notifications, services, deep links.
     id("org.jetbrains.kotlin.android") version "2.2.20" apply false
+    // EN-4 — Firebase Cloud Messaging, the one Google dependency, for the
+    // one thing only the platform's push lane can do: wake a phone in Doze.
+    // Applied by the app module ONLY when google-services.json is present.
+    id("com.google.gms.google-services") version "4.4.2" apply false
 }

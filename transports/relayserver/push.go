@@ -9,6 +9,16 @@
 //	a Put lands at a registered hint, and NO parked connection is here
 //	to hear it → POST a contentless ping to the endpoint.
 //
+// AND A PARKED CONNECTION THAT DOES NOT ANSWER IS NOT HERE. Measured on a
+// tester's phone (2026-09-22): Android's Doze cuts the app's network but
+// closes nothing, so the park looked alive from this side for up to
+// listenIdle — 45 minutes — and the doorbell, which exists for exactly
+// that hour, stayed silent behind it. So a park is trusted only for as
+// long as it proves itself: the notify goes out, and if nobody COLLECTS
+// at that hint within pushGrace, the doorbell rings anyway. A live phone
+// drains in a second or two and the grace never expires; a dozing one
+// costs the grace once and is woken.
+//
 // What crosses the third party is NOTHING: a fixed two-byte body, no
 // hint, no sender, no size, no count. The endpoint learns "check your
 // relay", which is exactly what the device's own poll would have asked a
@@ -51,6 +61,12 @@ const (
 	maxPushEndpoints = 10000
 )
 
+// pushGrace is how long a parked connection has to collect after a notify
+// before the doorbell rings anyway. Well above a live phone's drain (one to
+// three seconds measured) and well below what a person notices waiting; a
+// variable so a test can shorten it.
+var pushGrace = 12 * time.Second
+
 // pushReg is one endpoint's registration: the hints that ring it.
 type pushReg struct {
 	hints     map[string]struct{}
@@ -61,13 +77,17 @@ type pushReg struct {
 type pushRegistry struct {
 	mu   sync.Mutex
 	regs map[string]*pushReg // endpoint URL → registration
+	// unproven holds, per hint, the timer of a notify a parked connection
+	// has not yet answered with a collect. Fires the doorbell; a collect
+	// stops it.
+	unproven map[string]*time.Timer
 	// post is the delivery seam — replaced in tests, where the SSRF guard
 	// would otherwise refuse the loopback test server.
 	post func(endpoint string)
 }
 
 func newPushRegistry() *pushRegistry {
-	p := &pushRegistry{regs: map[string]*pushReg{}}
+	p := &pushRegistry{regs: map[string]*pushReg{}, unproven: map[string]*time.Timer{}}
 	p.post = p.deliver
 	return p
 }
@@ -117,7 +137,28 @@ func (p *pushRegistry) evictOldestLocked() {
 
 // ring pings every endpoint registered for the hint, coalesced and
 // asynchronous: a Put must never wait on a third party's HTTP server.
-func (p *pushRegistry) ring(hint string) {
+//
+// parked says whether a connection was notified for this hint. If so the
+// ring is DEFERRED by pushGrace and cancelled by a collect at the hint
+// (heard); if not, it goes now.
+func (p *pushRegistry) ring(hint string, parked bool) {
+	if parked {
+		p.mu.Lock()
+		if !p.registeredLocked(hint) {
+			p.mu.Unlock()
+			return // nothing to ring: no timer, no bookkeeping
+		}
+		if _, pending := p.unproven[hint]; !pending {
+			p.unproven[hint] = time.AfterFunc(pushGrace, func() {
+				p.mu.Lock()
+				delete(p.unproven, hint)
+				p.mu.Unlock()
+				p.ring(hint, false)
+			})
+		}
+		p.mu.Unlock()
+		return
+	}
 	now := time.Now()
 	var due []string
 	p.mu.Lock()
@@ -139,6 +180,27 @@ func (p *pushRegistry) ring(hint string) {
 	for _, ep := range due {
 		go p.post(ep)
 	}
+}
+
+// heard: somebody collected at the hint — the park proved itself, and a
+// deferred ring for it is called off.
+func (p *pushRegistry) heard(hint string) {
+	p.mu.Lock()
+	t, ok := p.unproven[hint]
+	if ok {
+		t.Stop()
+		delete(p.unproven, hint)
+	}
+	p.mu.Unlock()
+}
+
+func (p *pushRegistry) registeredLocked(hint string) bool {
+	for _, reg := range p.regs {
+		if _, ok := reg.hints[hint]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 // deliver POSTs the contentless ping. The dialer refuses non-public

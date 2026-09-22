@@ -320,11 +320,20 @@ jobs:
           QUIET_KEYSTORE_PASSWORD: ${{ secrets.QUITE_SPACE_KEYSTORE_PASSWORD }}
           QUIET_KEY_ALIAS: ${{ secrets.QUITE_SPACE_KEY_ALIAS }}
           QUIET_KEY_PASSWORD: ${{ secrets.QUITE_SPACE_KEY_PASSWORD }}
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
         run: |
           set -euo pipefail
           # The keystore exists only inside this runner, only for this job.
           echo "${{ secrets.QUITE_SPACE_ACTION_KEY }}" | base64 -d > "$QUIET_KEYSTORE"
           trap 'shred -u "$QUIET_KEYSTORE" 2>/dev/null || rm -f "$QUIET_KEYSTORE"' EXIT
+          # EN-4: the Firebase project file, base64 in a secret. Absent, the
+          # build still succeeds — and carries no Google doorbell, which the
+          # app then says in its settings rather than pretending otherwise.
+          if [ -n "${GOOGLE_SERVICES_JSON:-}" ]; then
+            echo "$GOOGLE_SERVICES_JSON" | base64 -d > android/host/app/google-services.json
+          else
+            echo "::warning::GOOGLE_SERVICES_JSON secret is not set — this APK carries no Google doorbell"
+          fi
           ./scripts/android/beta-apk.sh
           mkdir -p dist
           cp android/host/app/build/outputs/apk/release/*.apk dist/quite-space-android.apk
