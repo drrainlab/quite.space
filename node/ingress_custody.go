@@ -39,6 +39,7 @@ package node
 import (
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/drrainlab/quiet_places/kernel/eventlog"
@@ -92,6 +93,12 @@ func (r *Runtime) ingressHold() (*storage.IngressHold, error) {
 	r.holdMu.Lock()
 	defer r.holdMu.Unlock()
 	if r.custodyLost {
+		// The latch names its first cause: a later caller's error must not
+		// read as a fresh disk failure when the disk failed once, an hour
+		// ago, for a reason only the first error carried.
+		if r.custodyLostErr != nil {
+			return nil, fmt.Errorf("%w (first: %v)", ErrIngressCustodyLost, r.custodyLostErr)
+		}
 		return nil, ErrIngressCustodyLost
 	}
 	if r.hold != nil {
@@ -108,10 +115,20 @@ func (r *Runtime) ingressHold() (*storage.IngressHold, error) {
 // noteCustodyLost latches the catastrophic case. One-way by design: nothing
 // short of an operator's attention should let a node that has already
 // destroyed ingress go back to collecting more.
-func (r *Runtime) noteCustodyLost() {
+func (r *Runtime) noteCustodyLost(cause error) {
 	r.holdMu.Lock()
-	r.custodyLost = true
+	if !r.custodyLost {
+		r.custodyLost = true
+		r.custodyLostErr = cause
+	}
 	r.holdMu.Unlock()
+	if cause != nil {
+		// In the log as well as the record: this is the one failure after
+		// which the node silently stops collecting, and a silent stop is
+		// exactly what it must not look like.
+		log.Printf("ingress: custody lost, collection halted: %v", cause)
+		r.noteIngressRefusal(IngressRefusal{Reason: "custody_lost", Detail: cause.Error()})
+	}
 }
 
 // IngressCustodyLost reports the latch, so a caller about to drain a mailbox
@@ -160,7 +177,7 @@ func (r *Runtime) takeIngressCustody(items [][]byte, src storage.IngressSource) 
 	for _, item := range items {
 		hid, err := hold.Put(item, meta)
 		if err != nil {
-			r.noteCustodyLost()
+			r.noteCustodyLost(err)
 			return held, fmt.Errorf("%w: %v", ErrIngressCustodyLost, err)
 		}
 		held = append(held, storage.HeldIngress{ID: hid, Raw: item, Meta: meta})

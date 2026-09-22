@@ -46,6 +46,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/drrainlab/quiet_places/protocol/codec"
 	"github.com/drrainlab/quiet_places/protocol/id"
@@ -136,6 +137,15 @@ type HeldIngress struct {
 type IngressHold struct {
 	dir         string
 	targetItems int
+	// mu serialises Put and Delete. Content addressing makes two Puts of
+	// the same bytes the same file — and the same TEMP file: two collects
+	// landing the same item at once (the cycle's pull and the doorbell's,
+	// each with a copy a different member re-offered) used to race on
+	// `<path>.tmp`, and the loser's rename failed with ENOENT. That error
+	// is indistinguishable from a full disk to the caller, which latches
+	// "custody lost" and stops collecting for good. A mutex is the whole
+	// fix: the second Put sees the first one's file and returns.
+	mu sync.Mutex
 }
 
 // OpenIngressHold opens (or creates) the hold under the data root.
@@ -179,6 +189,8 @@ func (h *IngressHold) metaPath(hid HoldID) string {
 // to drop them.
 func (h *IngressHold) Put(raw []byte, meta HeldIngressMeta) (HoldID, error) {
 	hid := id.HashOf(raw)
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	if _, err := os.Stat(h.framePath(hid)); err == nil {
 		return hid, nil // already ours; content-addressing dedups
 	}
@@ -195,6 +207,8 @@ func (h *IngressHold) Put(raw []byte, meta HeldIngressMeta) (HoldID, error) {
 // deleting, and already-gone is the desired state — the crash boundary
 // replays a delete after a restart on purpose.
 func (h *IngressHold) Delete(hid HoldID) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	// Frame first: while it exists the bytes are held, so removing the
 	// diagnostics first could leave a held frame without them.
 	if err := removeIfPresent(h.framePath(hid)); err != nil {

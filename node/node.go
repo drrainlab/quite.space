@@ -105,9 +105,11 @@ type Runtime struct {
 	// (MD-0b). holdMu guards it and the two records beside it rather than
 	// r.mu, because the custody phase must not be serialised behind the
 	// space map it does not touch.
-	holdMu          sync.Mutex
-	hold            *storage.IngressHold
-	custodyLost     bool
+	holdMu         sync.Mutex
+	hold           *storage.IngressHold
+	custodyLost    bool
+	custodyLostErr error // the first cause behind the latch, for the diagnostic
+
 	ingressRefusals []IngressRefusal
 	// wantHolds: media answers this node could not route yet (relay.go).
 	wantHolds []WantHold
@@ -996,7 +998,7 @@ func (r *Runtime) attach(tid id.TerminalID, s *terminals.Space) {
 			// the radio receiver has marked this transfer complete and will
 			// never deliver it upward again, so bytes we cannot durably keep
 			// are bytes nobody holds. Latch, do not shrug.
-			r.noteCustodyLost()
+			r.noteCustodyLost(perr)
 			r.noteIngressRefusal(IngressRefusal{
 				Space: tid, Reason: "ingress_custody_lost", Detail: perr.Error(),
 			})
