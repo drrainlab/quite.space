@@ -236,3 +236,47 @@ func TestAFailedPushLeavesTheCursorWhereItWas(t *testing.T) {
 		t.Fatalf("after a successful push the cursor stayed at %d", got)
 	}
 }
+
+// A flipped frame — presence that became structure because a word
+// followed it — rides ONCE per mailbox, with the word that flipped it. It
+// used to ride every push "regardless": on a space held on a guess (whose
+// lastLen never advances) every outbox pass then had a body for every
+// mailbox, and the owner's phone dialled 67 mailboxes every 15 s, forever.
+func TestAFlippedFrameRidesOnce(t *testing.T) {
+	srv, addr := startRelay(t)
+	defer srv.Close()
+	alice, bob, tid := pairOnRelay(t, addr)
+	defer alice.Close()
+	defer bob.Close()
+	// Bob signs no receipts: the signed floor would hide alice's own
+	// flipped frame, and on the phone the frames that rode were OTHER
+	// authors' (a tester's presence, a sensor's stale readings) — which no
+	// receipt floors.
+	off := false
+	if err := bob.SetSettings(Settings{Relay: addr, DeliveryReceipts: &off}); err != nil {
+		t.Fatal(err)
+	}
+	// Bob's route is forgotten: the space is delivered on a guess and held
+	// as such — the walk that never ends on the phone.
+	alice.mu.Lock()
+	delete(alice.ks.PeerRoutes, bob.Device.ID)
+	alice.guessRelaysOverride = []string{addr}
+	alice.mu.Unlock()
+	if err := alice.SetPresence(tid, "around", 600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := alice.Say(tid, "после присутствия", SayOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, 30*time.Second, "bob never got the word after the presence", func() bool {
+		return countMsg(t, bob, tid, "после присутствия") >= 1
+	})
+	time.Sleep(4 * cadence) // the outbox's own retries, if any, settle
+	before := putsTotal(srv)
+	for i := 0; i < 3; i++ {
+		alice.pushSpacesVia(addr, alice.snapshotSyncSpaces(), true)
+	}
+	if got := putsTotal(srv) - before; got != 0 {
+		t.Fatalf("three passes over a converged space cost %d Put(s) — a flipped frame is riding every push", got)
+	}
+}

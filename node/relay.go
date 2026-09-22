@@ -517,6 +517,7 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 		return 0, 0, 0, 0, 0, 0, err
 	}
 	var fleeting [][]byte    // frames that carry their own deadline
+	var fleetingIdx []int    // and their log indices: a mailbox is offered one ONCE
 	var fleetingUntil uint64 // the earliest of those deadlines
 	// THE DELTA BOOK-KEEPING. `frames` is the whole deliverable log, as it
 	// always was; what changed is that a recipient no longer receives all
@@ -529,14 +530,40 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 	// rides every push regardless — few, small, and the one thing a cursor
 	// must never hide (see the 2026-08-09 note above).
 	var flipped []bool
+	var flipAt []int           // for a flipped frame: the log index of the frame that made it structure
 	var logIdx []int           // each deliverable frame's index in the log's order
 	var frameDev []id.DeviceID // and its author
 	var frameSeq []uint64      // and its sequence in that author's chain
-	for _, c := range cands {
+	// WHEN did each flipped frame flip? A skippable frame becomes structure
+	// the moment a custody frame later in its author's chain lands, and
+	// that frame has a log index. A mailbox whose cursor is past that index
+	// received the flipped frame WITH it — offering it again on every push
+	// "regardless" made every mailbox non-empty on every pass, which on the
+	// owner's phone (26 rooms, 19 held on a guess) was 67 dials and 15 s a
+	// pass, back to back, each pass ringing the sibling that rang us.
+	flipIdx := map[int]int{} // candidate index → flip index
+	pendingSkippable := map[id.DeviceID][]int{}
+	for ci, c := range cands {
+		if c.skippable {
+			pendingSkippable[c.dev] = append(pendingSkippable[c.dev], ci)
+			continue
+		}
+		keep := pendingSkippable[c.dev][:0]
+		for _, pi := range pendingSkippable[c.dev] {
+			if cands[pi].seq < c.seq {
+				flipIdx[pi] = c.idx
+			} else {
+				keep = append(keep, pi)
+			}
+		}
+		pendingSkippable[c.dev] = keep
+	}
+	for ci, c := range cands {
 		if c.skippable && c.seq >= needed[c.dev] {
 			// Nothing depends on it yet. It still goes — on its own clock.
 			if c.expires > now {
 				fleeting = append(fleeting, c.frame)
+				fleetingIdx = append(fleetingIdx, c.idx)
 				if fleetingUntil == 0 || c.expires < fleetingUntil {
 					fleetingUntil = c.expires
 				}
@@ -546,6 +573,13 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 		frames = append(frames, c.frame)
 		eventIDs = append(eventIDs, c.id)
 		flipped = append(flipped, c.skippable)
+		fa := c.idx
+		if c.skippable {
+			if j, ok := flipIdx[ci]; ok {
+				fa = j
+			}
+		}
+		flipAt = append(flipAt, fa)
 		logIdx = append(logIdx, c.idx)
 		frameDev = append(frameDev, c.dev)
 		frameSeq = append(frameSeq, c.seq)
@@ -654,7 +688,9 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 			if frameDev[i] == self && frameSeq[i] <= floor {
 				continue
 			}
-			if flipped[i] || logIdx[i] >= from {
+			// A frame past the cursor, or a flipped frame whose flip is
+			// past the cursor: what this mailbox has not been offered.
+			if logIdx[i] >= from || (flipped[i] && flipAt[i] >= from) {
 				sel = append(sel, f)
 				ids = append(ids, eventIDs[i])
 			}
@@ -680,7 +716,24 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 			}
 			b = [][]byte{bundle.EncodeWithReturnRoutes(tid, nil, nil, wants, w, replyBox, rr)}
 		}
-		g := offerGroup{b, ids}
+		// A FLEETING FRAME IS OFFERED ONCE PER MAILBOX TOO. Presence with an
+		// hour to live used to ride to every mailbox on every pass — it has
+		// no place in the cursor, so nothing remembered it had gone — and
+		// with the cursor doing its job that was the one body every mailbox
+		// still had: 52 dials a pass on the owner's phone, and each Put a
+		// ring for the sibling that rang us. Its log index says whether
+		// this mailbox's last offer already carried it.
+		var fl [][]byte
+		for i, f := range fleeting {
+			if fleetingIdx[i] >= from {
+				fl = append(fl, f)
+			}
+		}
+		var fleet [][]byte
+		if len(fl) > 0 {
+			fleet, _ = splitBundles(tid, fl, nil, nil, nil, nil, nil)
+		}
+		g := offerGroup{b, ids, fleet}
 		groups[key] = g
 		return g
 	}
@@ -693,12 +746,8 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 		}
 	}
 	sentIDs := map[id.EventID]struct{}{}
-	// The fleeting frames get a bundle of their own, so their short deadline
-	// cannot land on anybody's messages.
-	var fleetingBodies [][]byte
-	if len(fleeting) > 0 {
-		fleetingBodies, _ = splitBundles(tid, fleeting, nil, nil, nil, nil, nil)
-	}
+	// The fleeting frames get a bundle of their own (offerGroup.fleet), so
+	// their short deadline cannot land on anybody's messages.
 	// Per-recipient dead-drop: hand a copy to every OTHER member's own relay
 	// inbox. The shared per-terminal mailbox is single-reader (destructive
 	// Collect), so with many members polling one relay the first poller drains
@@ -890,7 +939,7 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 				// A status, on its own clock. The relay forgets it when it
 				// goes stale, which is the whole of what "no custody" was
 				// protecting.
-				for _, b := range fleetingBodies {
+				for _, b := range j.g.fleet {
 					if _, err := client.Put(hint, fleetingUntil, b); err != nil {
 						return err
 					}
@@ -934,7 +983,7 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 				from = r.offerBase(tid, dev, ep, logN)
 			}
 			g := bodiesFor(from, dev)
-			if len(g.bodies) == 0 && len(fleetingBodies) == 0 {
+			if len(g.bodies) == 0 && len(g.fleet) == 0 {
 				// NOTHING TO PUT — no dial. A mailbox that already holds
 				// everything is counted as reached (the cursor advances)
 				// without a connection being opened for it: after a restart
@@ -1051,6 +1100,7 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 type offerGroup struct {
 	bodies [][]byte
 	ids    []id.EventID
+	fleet  [][]byte // the fleeting frames this cursor has not been offered, bundled apart
 }
 
 // copyJob is one recipient's copy at one endpoint: its cursor and its
