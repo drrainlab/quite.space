@@ -249,3 +249,20 @@ gateway's counters on the server.
 
 `adb tcpip` over Wi-Fi did not reach the phone from this Mac (no route);
 the USB session survived.
+
+**Real Doze (2026-09-22, 19:12–19:52).** Phone unplugged, face down, 40
+minutes, stay-connected OFF, whitelist on. Message from the stand at
+19:52:19: relay → gateway (+1 forwarded) → the owner read 19:52 on the
+lock-screen card, one notification; "delivered" at the sender within 45 s.
+
+**Rings at rest.** During those 40 minutes the gateway forwarded 49 wakes
+with nobody talking — about one a minute, the relay's coalesce period. The
+identity plane: a sibling's grant offer sits in the phone's mailbox, the
+phone collects it on the wake, the sibling re-offers on its next pass, and
+the park (dozing, unproven) lets the grace fire again. Fixed by naming the
+hints worth a wake (keyPushHints = 18): with rc7 parked, five quiet minutes
+produced zero rings (accepted 3 → 3).
+
+**Deploy pitfall:** an `ssh` without `-n` inside a `bash <<HEREDOC` loop
+swallows the rest of the script as its stdin — the gateway step after the
+relay loop silently never ran.

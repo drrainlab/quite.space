@@ -13,6 +13,10 @@ plugins {
 // build rather than a crash on the first token fetch.
 if (file("google-services.json").exists()) {
     apply(plugin = "com.google.gms.google-services")
+    // The debug variant carries the ".dev" application id, which is not a
+    // client of the Firebase project and must not become one: a debug build
+    // carries no Google doorbell, and GoogleDoorbell.available() says so.
+    tasks.matching { it.name == "processDebugGoogleServices" }.configureEach { enabled = false }
 } else {
     logger.warn("quite.space: no google-services.json — this build carries no Google doorbell")
 }
