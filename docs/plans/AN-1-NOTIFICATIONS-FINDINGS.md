@@ -330,3 +330,20 @@ Pitfalls met on the way, for the next reader:
   that silently stops collecting. Serialised in `kernel/storage`, covered
   by a test that is red on the old code; the latch now logs its cause.
   Likely behind earlier unexplained "never converged" flakes as well.
+
+Owner's phone, the night of 2026-09-23 (Moscow time): rc13 — the word
+left about 15 s after typing, at the tail of a 6m32s first pass (the
+offer book born empty, 52 histories on bulk, the pass waiting for each
+space's bulk in turn) → S1b, the bulk courier. rc14 — about 15 s again:
+passes back to back every ~15 s over all 26 spaces, 52 mailboxes dialled
+each pass (flipped and fleeting frames riding every push, 19 spaces held
+on a guess re-walked forever, each Put ringing the sibling) → S5b, offered
+once per mailbox. rc15 — **the dot gone in 3–4 s** (owner's words:
+"точка почти сразу ушла"); the message reached the stand node. On the
+owner's relay a minute after the send: 47 Puts and 155 Collects across 24
+connections, against ~200 Puts a minute during rc14's loop.
+
+Debt noted: a node opened by the doorbell (the FCM ring three seconds
+before the owner tapped the icon) does not start the host's ten-minute
+log tail, so `outbox: pass` lines were not in logcat for rc15; the node's
+own file has them. The host should start the tail on any open.
