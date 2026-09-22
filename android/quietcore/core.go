@@ -381,6 +381,9 @@ func Status() string {
 				relay["seconds_since_pull"] = st.AgoPull
 			}
 			relay["reachable"] = st.Reachable
+			// EN-4: whether a doorbell endpoint is set — a boolean, never
+			// the URL (it is a capability to wake this phone).
+			relay["doorbell"] = rt.GetSettings().PushEndpoint != ""
 			s["relay"] = relay
 		}()
 		s["runtime_epoch"] = runtimeEpoch

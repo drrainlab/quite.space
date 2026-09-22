@@ -15,6 +15,10 @@
         <intent>
             <action android:name="org.unifiedpush.android.distributor.REGISTER" />
         </intent>
+        <!-- EN-4: without this line Android 11+ hides Play services from
+             getPackageInfo and the Google doorbell reports itself
+             unavailable on every phone — measured before it was added. -->
+        <package android:name="com.google.android.gms" />
     </queries>
 
     <uses-permission android:name="android.permission.INTERNET" />

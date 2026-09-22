@@ -18,8 +18,9 @@ import com.google.firebase.messaging.RemoteMessage
  * open through Doze is the platform's own push lane; on phones with Google
  * services that is FCM, and most phones are those. UnifiedPush stays the
  * carrier for phones without Google — [UnifiedPushConnector] — and wins
- * when a distributor is installed: it is the person's own choice of
- * carrier, and it tells Google nothing.
+ * when the person has TURNED IT ON: that is a choice of carrier, and it
+ * tells Google nothing. A distributor merely installed is not a choice
+ * (the owner's own phone had ntfy from EN-3 and nothing registered).
  *
  * WHAT GOOGLE LEARNS, said where the switch is: that this installation had
  * something to check, and when. The relay POSTs a fixed marker to
@@ -104,8 +105,12 @@ object GoogleDoorbell {
      */
     fun ensureDefault(ctx: Context) {
         if (prefs(ctx).getBoolean(KEY_DECIDED, false)) return
-        if (!available(ctx)) return
-        if (UnifiedPushConnector.hasDistributor(ctx)) return // theirs to choose
+        if (!available(ctx)) {
+            Log.i(TAG, "google doorbell unavailable on this phone")
+            return
+        }
+        if (UnifiedPushConnector.status(ctx) != "off") return // they chose a carrier
+        Log.i(TAG, "google doorbell on by default")
         register(ctx)
     }
 
@@ -114,6 +119,7 @@ object GoogleDoorbell {
         if (token.isEmpty()) return
         val endpoint = GATEWAY + token
         prefs(ctx).edit().putString(KEY_ENDPOINT, endpoint).apply()
+        Log.i(TAG, "doorbell endpoint registered (google)")
         UnifiedPushConnector.pushEndpointToCore(endpoint)
     }
 
@@ -122,7 +128,13 @@ object GoogleDoorbell {
         val p = prefs(ctx)
         if (!p.getBoolean(KEY_WANTED, false)) return
         val ep = p.getString(KEY_ENDPOINT, "") ?: ""
-        if (ep.isNotEmpty()) UnifiedPushConnector.pushEndpointToCore(ep)
+        if (ep.isEmpty()) {
+            Log.i(TAG, "wanted, no endpoint yet — asking again")
+            register(ctx)
+            return
+        }
+        Log.i(TAG, "replaying the doorbell endpoint into the core")
+        UnifiedPushConnector.pushEndpointToCore(ep)
     }
 }
 
@@ -133,8 +145,9 @@ object GoogleDoorbell {
  */
 object Doorbell {
     fun status(ctx: Context): String = when {
-        UnifiedPushConnector.hasDistributor(ctx) -> UnifiedPushConnector.status(ctx)
+        UnifiedPushConnector.status(ctx) != "off" -> UnifiedPushConnector.status(ctx)
         GoogleDoorbell.available(ctx) -> GoogleDoorbell.status(ctx)
+        UnifiedPushConnector.hasDistributor(ctx) -> "off"
         else -> "no_distributor"
     }
 
@@ -181,7 +194,9 @@ class FcmDoorbell : FirebaseMessagingService() {
     }
 
     override fun onMessageReceived(message: RemoteMessage) {
-        // Whatever rode along is not read: the ring is the message.
+        // Whatever rode along is not read: the ring is the message. The line
+        // names no space and no sender because it knows none.
+        Log.i("quiet-doorbell", "ring via google")
         Doorbell.ring(applicationContext)
     }
 }

@@ -175,6 +175,17 @@ func (r *Runtime) KickRelaySync() { r.kickRelaySync() }
 // first, on its own lane, from this node's own relay; the invite doors;
 // then the full cycle. Safe with no relay configured.
 func (r *Runtime) DoorbellRing() {
+	// THE PHONE WAS ASLEEP, OR THE RING WOULD NOT HAVE COME THIS WAY: Doze
+	// cut the network and closed nothing, so every socket this node holds
+	// — the pool's lanes and the parked listeners — is half-open. A pull
+	// on one of them hangs until TCP gives up, which is minutes, and the
+	// few seconds of network the platform grants for a high-priority push
+	// are spent waiting on a corpse (measured 2026-09-22: the ring landed
+	// 2 s after the message, the notification never came). So: the same
+	// reset a noticed sleep gets, then the parks are re-made, then the
+	// pull — on a fresh connection.
+	r.onWake()
+	r.BounceListeners()
 	if addr := r.ResolvePersonalRelay(); addr != "" {
 		r.doorbellPull(addr)
 	}

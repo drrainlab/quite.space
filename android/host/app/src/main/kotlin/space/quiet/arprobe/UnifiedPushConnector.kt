@@ -132,6 +132,7 @@ object UnifiedPushConnector {
     internal fun pushEndpointToCore(endpoint: String) {
         try {
             space.quiet.quietcore.Quietcore.setPushEndpoint(endpoint)
+            Log.i(TAG, if (endpoint.isEmpty()) "doorbell cleared in core" else "doorbell endpoint set in core")
         } catch (t: Throwable) {
             // The core is not running or refused the URL; the stored copy
             // replays on the next open (see replay), and a malformed

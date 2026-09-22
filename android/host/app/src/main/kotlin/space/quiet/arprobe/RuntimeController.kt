@@ -724,6 +724,12 @@ class RuntimeController private constructor(appContext: Context) {
                 // EN-3: a doorbell registration made while the node was
                 // locked replays into the freshly opened core.
                 Doorbell.replay(app)
+                try {
+                    val relay = JSONObject(Quietcore.status()).optJSONObject("relay")
+                    Log.i(TAG, "doorbell in core: ${relay?.optBoolean("doorbell")}")
+                } catch (t: Throwable) {
+                    Log.w(TAG, "doorbell status", t)
+                }
                 // AN-2: an open node listens for itself — and collects. The
                 // keyless watch steps aside, its line comes down, and the
                 // week ahead is written afresh.
