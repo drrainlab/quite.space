@@ -228,3 +228,24 @@ tester's phone overnight.
 **Key hygiene:** the service-account key was attached in chat once. After
 the end-to-end check, mint a new key in the Firebase console, replace
 `/etc/quiet-push/sa.json`, restart `quiet-push`, delete the old key.
+
+### EN-4 on the owner's phone (2026-09-22, evening)
+
+All runs with `dumpsys battery unplug` + `deviceidle force-idle`, stay-connected OFF.
+
+| run | whitelist | result | what it showed |
+|---|---|---|---|
+| rc2 | on (the new one-time question had just been answered) | 2 s | the exemption keeps the park alive in Doze — not an FCM result |
+| rc3 | off | nothing in 90 s; gateway `accepted 0` | the relay never rang: no endpoint registered. Two causes: `getPackageInfo("com.google.android.gms")` fails without a `<queries>` entry (Android 11+), and an installed-but-unused ntfy made Google step aside |
+| stand | — | `accepted 2, dropped 1` | relay → Cloudflare → gateway → FCM auth all work (a fake token is answered "gone") |
+| rc5 | off | ring at +2 s, **no notification in 150 s** | the pull ran on a socket Doze left half-open; the platform's few seconds of network went to a corpse |
+| rc6 | off | 9.5 s, then 1.4 s | `DoorbellRing` = `onWake` + `BounceListeners` + fresh pull |
+
+Forced Doze is an approximation (the second rc6 message arrived with no
+Google ring in the log — the re-made parks were still allowed through). The
+real acceptance is the phone unplugged on a table for 40 minutes, then a
+message from the stand, with the owner's eyes on the lock screen and the
+gateway's counters on the server.
+
+`adb tcpip` over Wi-Fi did not reach the phone from this Mac (no route);
+the USB session survived.
