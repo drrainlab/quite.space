@@ -343,6 +343,15 @@ const (
 	// mail", which is all it may act on, and the relay says nothing about how
 	// busy anybody's mailbox is. Older clients skip the key.
 	keyWaiting = 17
+	// keyPushHints (EN-4): riding MsgListen beside keyPush, the SUBSET of
+	// the parked hints worth waking a phone for. A park listens for
+	// everything a device may receive — its mailboxes, its identity plane,
+	// its knock box — and the socket may ring for all of it. The platform
+	// push wakes a sleeping phone through Google and costs a radio burst,
+	// and a sibling's grant offer converging ten seconds later changes
+	// nothing anybody is waiting for. Absent = every parked hint rings
+	// (EN-3's behaviour); older relays skip the key and do exactly that.
+	keyPushHints = 18
 )
 
 // Msg is one relay protocol message.
@@ -364,6 +373,8 @@ type Msg struct {
 	// "clear" when PushSet says the key travelled at all.
 	Push    string
 	PushSet bool
+	// PushHints: see keyPushHints (MsgListen only; nil = all of Hints).
+	PushHints [][]byte
 	// Waiting: see keyWaiting (MsgListenOK only).
 	Waiting bool
 	// RR-3 probe fields.
@@ -399,6 +410,9 @@ func (m *Msg) Encode() []byte {
 		n++
 	}
 	if m.PushSet {
+		n++
+	}
+	if len(m.PushHints) > 0 {
 		n++
 	}
 	if m.Now != 0 {
@@ -462,6 +476,13 @@ func (m *Msg) Encode() []byte {
 		buf = codec.AppendUint(buf, keyPush)
 		buf = codec.AppendText(buf, m.Push)
 	}
+	if len(m.PushHints) > 0 {
+		buf = codec.AppendUint(buf, keyPushHints)
+		buf = codec.AppendArray(buf, len(m.PushHints))
+		for _, h := range m.PushHints {
+			buf = codec.AppendBytes(buf, h)
+		}
+	}
 	if m.RetryAfterMs != 0 {
 		buf = codec.AppendUint(buf, keyRetryAfterMs)
 		buf = codec.AppendUint(buf, m.RetryAfterMs)
@@ -505,6 +526,24 @@ func (m *Msg) Encode() []byte {
 }
 
 // DecodeMsg parses a message.
+// readByteArrays reads an array of byte strings, each copied out of the
+// decoder's buffer.
+func readByteArrays(d *codec.Decoder) ([][]byte, error) {
+	cnt, err := d.ReadArray()
+	if err != nil {
+		return nil, err
+	}
+	out := make([][]byte, 0, cnt)
+	for range cnt {
+		h, e := d.ReadBytes()
+		if e != nil {
+			return nil, e
+		}
+		out = append(out, append([]byte(nil), h...))
+	}
+	return out, nil
+}
+
 func DecodeMsg(data []byte) (*Msg, error) {
 	d := codec.NewDecoder(data)
 	mr, err := d.ReadMapHeader()
@@ -536,6 +575,8 @@ func DecodeMsg(data []byte) (*Msg, error) {
 		case keyPush:
 			m.Push, er = d.ReadText()
 			m.PushSet = true
+		case keyPushHints:
+			m.PushHints, er = readByteArrays(d)
 		case keyReason:
 			// READ, because it was written and never read. The encoder has
 			// always sent the reason a relay refused for, and the decoder

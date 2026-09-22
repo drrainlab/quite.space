@@ -608,6 +608,22 @@ func (s *Server) handle(m *relay.Msg, cs *connState) *relay.Msg {
 				return &relay.Msg{Type: relay.MsgError, Reason: "malformed hint"}
 			}
 		}
+		// EN-4: the doorbell rings for PushHints when the client names
+		// them, for every parked hint otherwise. A push hint that is not
+		// also parked is a request shape problem, refused as such.
+		pushHints := m.Hints
+		if len(m.PushHints) > 0 {
+			parked := make(map[string]struct{}, len(m.Hints))
+			for _, h := range m.Hints {
+				parked[string(h)] = struct{}{}
+			}
+			for _, h := range m.PushHints {
+				if _, ok := parked[string(h)]; !ok {
+					return &relay.Msg{Type: relay.MsgError, Reason: "push hint not parked"}
+				}
+			}
+			pushHints = m.PushHints
+		}
 		waiting := s.repark(cs, m.Hints, uint64(now))
 		s.census.note(m.Hints, int64(now))
 		// EN-3: an endpoint riding the park registers the out-of-band
@@ -630,7 +646,7 @@ func (s *Server) handle(m *relay.Msg, cs *connState) *relay.Msg {
 					s.pushRegs().remove(cs.pushEndpoint)
 				}
 				cs.pushEndpoint = m.Push
-				s.pushRegs().register(m.Push, m.Hints)
+				s.pushRegs().register(m.Push, pushHints)
 			}
 		}
 		// The advisory hold: how long the reaper tolerates silence on a

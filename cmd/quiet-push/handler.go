@@ -51,7 +51,7 @@ type handler struct {
 	mu     sync.Mutex
 	last   map[string]time.Time
 	// counters for /healthz — numbers, never tokens
-	accepted, forwarded, dropped atomic.Uint64
+	accepted, forwarded, gone, failed, refused atomic.Uint64
 }
 
 // NewHandler serves POST /fcm/{token} and GET /healthz.
@@ -85,14 +85,14 @@ func (h *handler) ping(w http.ResponseWriter, r *http.Request) {
 		h.forwarded.Add(1)
 		w.WriteHeader(http.StatusNoContent)
 	case Gone:
-		h.dropped.Add(1)
+		h.gone.Add(1)
 		w.WriteHeader(http.StatusGone)
 	case Refused:
-		h.dropped.Add(1)
+		h.refused.Add(1)
 		log.Printf("quiet-push: the push service refused a send — check the key and the project")
 		w.WriteHeader(http.StatusBadGateway)
 	default:
-		h.dropped.Add(1)
+		h.failed.Add(1)
 		w.WriteHeader(http.StatusBadGateway)
 	}
 }
@@ -131,7 +131,9 @@ func (h *handler) health(w http.ResponseWriter, r *http.Request) {
 	b.WriteString("ok\n")
 	b.WriteString("accepted " + itoa(h.accepted.Load()) + "\n")
 	b.WriteString("forwarded " + itoa(h.forwarded.Load()) + "\n")
-	b.WriteString("dropped " + itoa(h.dropped.Load()) + "\n")
+	b.WriteString("gone " + itoa(h.gone.Load()) + "\n")       // the push service says the token is dead
+	b.WriteString("failed " + itoa(h.failed.Load()) + "\n")   // transient upstream failures
+	b.WriteString("refused " + itoa(h.refused.Load()) + "\n") // our key or project refused
 	_, _ = w.Write([]byte(b.String()))
 }
 

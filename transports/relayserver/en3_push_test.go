@@ -267,3 +267,67 @@ func longHost(n int) string {
 	}
 	return string(b)
 }
+
+// EN-4: the socket rings for everything parked; the out-of-band doorbell
+// only for the hints the client named as worth a wake. A push hint that is
+// not parked is a request-shape problem, refused as such.
+func TestOnlyTheNamedHintsRingTheDoorbell(t *testing.T) {
+	old := pushGrace
+	pushGrace = 300 * time.Millisecond
+	defer func() { pushGrace = old }()
+
+	srv, port, err := StartServer("127.0.0.1:0", DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	mu, got := pushProbe(srv)
+
+	mail := []byte("mailmailmailmail")
+	plane := []byte("planeplaneplanep")
+	endpoint := "https://push.example/dev/named"
+	listener, err := relay.DialClient(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	stop := make(chan struct{})
+	defer close(stop)
+	go func() {
+		// Parked on both, never collecting; the doorbell named for mail only.
+		_ = listener.ListenPushFor([][]byte{mail, plane}, [][]byte{mail}, endpoint, stop, func([]byte) {})
+	}()
+	time.Sleep(300 * time.Millisecond)
+
+	writer, err := relay.DialClient(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	if _, err := writer.Put(plane, 0, []byte("a grant offer")); err != nil {
+		t.Fatal(err)
+	}
+	if n := rings(mu, got, 1, 4*pushGrace); n != 0 {
+		t.Fatalf("the identity plane rang the doorbell %d time(s)", n)
+	}
+	if _, err := writer.Put(mail, 0, []byte("a word")); err != nil {
+		t.Fatal(err)
+	}
+	if n := rings(mu, got, 1, 3*time.Second); n != 1 {
+		t.Fatalf("mail rang %d time(s), want 1", n)
+	}
+
+	// Naming a hint that is not parked is refused.
+	other, err := relay.DialClient(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+	stop2 := make(chan struct{})
+	defer close(stop2)
+	err = other.ListenPushFor([][]byte{mail}, [][]byte{plane}, endpoint, stop2, func([]byte) {})
+	if err == nil {
+		t.Fatal("a push hint that is not parked was accepted")
+	}
+}

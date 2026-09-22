@@ -168,22 +168,38 @@ func (r *Runtime) listenIngresses() []string {
 // knock mailbox. Hints, never capabilities: a parked hint can wake us and
 // nothing else.
 func (r *Runtime) listenHints(addr string) [][]byte {
+	hints, _ := r.listenHintSets(addr)
+	return hints
+}
+
+// listenHintSets is the park's hint list and, within it, the hints WORTH
+// WAKING A PHONE FOR (EN-4). The socket rings for all of them; the platform
+// push — a radio burst and a word to Google — only for mail, a knock at
+// this device (somebody pairing), and the doors of standing invites. The
+// identity plane stays off the doorbell: a sibling's grant offer converging
+// on the next poll instead of now changes nothing anybody is waiting for,
+// and measured on the owner's phone it re-rang every minute at rest.
+func (r *Runtime) listenHintSets(addr string) (hints, push [][]byte) {
 	now := uint64(time.Now().Unix())
 	b := relay.Bucket(now)
 	self := r.Device.ID
-	var hints [][]byte
-	add := func(h []byte) { hints = append(hints, h) }
+	add := func(h []byte, wakes bool) {
+		hints = append(hints, h)
+		if wakes {
+			push = append(push, h)
+		}
+	}
 	for _, tid := range r.relayMailboxSpaces() {
 		if !r.TransportAllowed(TransportRelay, tid) {
 			continue
 		}
-		add(relay.HintFor(tid, self, b))
+		add(relay.HintFor(tid, self, b), true)
 		if b > 0 {
-			add(relay.HintFor(tid, self, b-1))
+			add(relay.HintFor(tid, self, b-1), true)
 		}
 	}
-	add(relay.HintIdentityPlane(self, b))
-	add(relay.HintKnock(self, b))
+	add(relay.HintIdentityPlane(self, b), false)
+	add(relay.HintKnock(self, b), true)
 	// THE DOOR. A standing invite is a mailbox on its rendezvous relay, and
 	// nothing was listening at it: with the app in a pocket a guest's
 	// request waited for the background poll — three minutes behind a
@@ -195,9 +211,9 @@ func (r *Runtime) listenHints(addr string) [][]byte {
 	// limit on a park — an owner with a hundred standing links keeps the
 	// poll for the rest rather than losing the whole park to a refusal.
 	for _, h := range r.passDoorHints(addr, passDoorHintsMax) {
-		add(h)
+		add(h, true)
 	}
-	return hints
+	return hints, push
 }
 
 // passDoorHintsMax bounds how many invite doors ride one park. The relay's
@@ -263,7 +279,7 @@ func (r *Runtime) runListener(addr string, stop, done chan struct{}) {
 		}
 		r.listenMu.Unlock()
 	}()
-	hints := r.listenHints(addr)
+	hints, pushHints := r.listenHintSets(addr)
 	if len(hints) == 0 {
 		r.noteListenFailure(addr, false)
 		return
@@ -323,7 +339,7 @@ func (r *Runtime) runListener(addr string, stop, done chan struct{}) {
 	// not — an off switch that only removes on transition would leave a
 	// stale registration standing on the relay that last saw it on.
 	if ep := r.GetSettings().PushEndpoint; ep != "" {
-		err = client.ListenPush(hints, ep, sessionStop, notify)
+		err = client.ListenPushFor(hints, pushHints, ep, sessionStop, notify)
 	} else {
 		err = client.ListenPushClear(hints, sessionStop, notify)
 	}

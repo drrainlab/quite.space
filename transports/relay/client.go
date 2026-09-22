@@ -354,6 +354,14 @@ func (c *Client) ListenPush(hints [][]byte, endpoint string, stop <-chan struct{
 	return c.listen(&Msg{Type: MsgListen, Hints: hints, Push: endpoint, PushSet: true}, stop, notify)
 }
 
+// ListenPushFor is ListenPush with the doorbell limited to pushHints, a
+// subset of hints (EN-4): the socket rings for everything parked, the
+// out-of-band ping only for what is worth waking a phone for. An older
+// relay skips the key and rings for all of hints.
+func (c *Client) ListenPushFor(hints, pushHints [][]byte, endpoint string, stop <-chan struct{}, notify func(hint []byte)) error {
+	return c.listen(&Msg{Type: MsgListen, Hints: hints, PushHints: pushHints, Push: endpoint, PushSet: true}, stop, notify)
+}
+
 // ListenPushClear is the off switch: park as usual and remove whatever
 // endpoint this connection last registered.
 func (c *Client) ListenPushClear(hints [][]byte, stop <-chan struct{}, notify func(hint []byte)) error {
