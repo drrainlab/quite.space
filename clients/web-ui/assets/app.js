@@ -4401,7 +4401,7 @@ function assetNote(e) {
     n.onclick = () => {
       const kind = e.kind === 'visual' || e.kind === 'video' || e.kind === 'audio' || e.kind === 'voice';
       if (kind) openViewer(a, e.kind === 'voice' ? 'audio' : e.kind, e.alt || e.title || e.caption || '');
-      else window.open(`/api/spaces/${current}/assets/${a.id}?token=${token}`, '_blank');
+      else saveAsset(a.id, e.filename || downloadName(e.title || e.caption || '', a.media_type));
     };
   } else if (a.state === 'fetching' && a.reason === 'no_source') {
     // STILL ASKING. Not a progress bar — nothing is progressing — and not a
@@ -4591,6 +4591,30 @@ function assetURL(assetId) {
   // being malformed in the first place, which is the layer that should
   // not have needed the other one.)
   return `/api/spaces/${current}/assets/${encodeURIComponent(assetId)}?token=${token}`;
+}
+
+// assetSaveURL is the asset with its NAME: the node writes it into the
+// Content-Disposition, which is the only name Android's download path ever
+// sees (an anchor's download attribute never reaches the DownloadListener).
+// Without it a saved document was "asset-<hash>.bin".
+function assetSaveURL(assetId, name) {
+  return assetURL(assetId) + (name ? `&name=${encodeURIComponent(name)}` : '');
+}
+
+// saveAsset hands the bytes to the platform's save path, by name. In the
+// Android WebView window.open() is a no-op — multiple windows are not
+// enabled, and must not be — which is why "open original" on a file and
+// every tap in Materials did nothing on a phone. A click on an anchor with
+// a download attribute goes through the DownloadListener there and through
+// the browser's own download elsewhere.
+function saveAsset(assetId, name) {
+  const a = document.createElement('a');
+  a.href = assetSaveURL(assetId, name);
+  a.setAttribute('download', name || '');
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => a.remove(), 0);
 }
 // A media element whose bytes never arrive renders as nothing at all — an
 // empty rectangle that looks like a layout bug rather than an absence. When
@@ -4996,31 +5020,127 @@ async function forwardPost(docID) {
 // kind decides the element and nothing else: video keeps its controls, a
 // picture is a picture.
 function openViewer(asset, kind, label) {
-  const stage = document.getElementById('viewerStage');
   const dlg = document.getElementById('dlgViewer');
-  if (!stage || !dlg || !asset) return;
-  const name = downloadName(label, asset.media_type);
-  const src = `/api/spaces/${current}/assets/${asset.id}?token=${token}`;
+  if (!dlg || !asset) return;
+  // THE ROOM'S GALLERY, not one file: every photo and video of the space,
+  // in feed order, with the tapped one in front. Music stays a single
+  // item — a track is listened to, not leafed through.
+  let items = [{ asset, kind, label }];
+  if (kind === 'visual' || kind === 'video') {
+    const gallery = viewerGallery();
+    if (gallery.some(it => it.asset.id === asset.id)) items = gallery;
+  }
+  let i = items.findIndex(it => it.asset.id === asset.id);
+  if (i < 0) i = 0;
+  VIEWER.items = items; VIEWER.i = i;
+  dlg.classList.remove('immersive');
+  viewerArm(dlg);
+  viewerShow();
+  if (!dlg.open) dlg.showModal();
+}
+
+const VIEWER = { items: [], i: 0, armed: false, touch: null };
+
+// viewerGallery lists the room's photos and videos whose bytes are here,
+// from the last feed body the node served (fetchEntries keeps it).
+function viewerGallery() {
+  const body = entriesTag.get(current)?.body;
+  const list = Array.isArray(body) ? body : (body?.entries || []);
+  const out = [];
+  for (const e of list) {
+    if ((e.kind === 'visual' || e.kind === 'video') && e.asset?.state === 'complete') {
+      out.push({ asset: e.asset, kind: e.kind, label: e.alt || e.caption || e.title || (e.kind === 'video' ? 'video' : 'photo') });
+    }
+  }
+  return out;
+}
+
+function viewerShow() {
+  const stage = document.getElementById('viewerStage');
+  const it = VIEWER.items[VIEWER.i];
+  if (!stage || !it) return;
+  const name = downloadName(it.label, it.asset.media_type);
+  const src = assetURL(it.asset.id);
+  // A video that was playing stops with its slide, not with the dialog.
+  stage.querySelectorAll('video, audio').forEach(m => { try { m.pause(); } catch (_) {} });
   stage.innerHTML = '';
   let el;
-  if (kind === 'video') {
+  if (it.kind === 'video') {
     el = document.createElement('video');
     el.controls = true; el.autoplay = true; el.playsInline = true;
-  } else if (kind === 'audio') {
+  } else if (it.kind === 'audio' || it.kind === 'voice') {
     el = document.createElement('audio');
     el.controls = true; el.autoplay = true;
   } else {
     el = document.createElement('img');
     el.alt = name || '';
+    el.draggable = false;
   }
   el.src = src;
   stage.appendChild(el);
   document.getElementById('viewerName').textContent = name;
+  const n = VIEWER.items.length;
+  const count = document.getElementById('viewerCount');
+  if (count) count.textContent = n > 1 ? t('ui.viewer.count', { i: VIEWER.i + 1, n }) : '';
+  const cap = document.getElementById('viewerCaption');
+  if (cap) cap.textContent = n > 1 && it.label && it.label !== 'photo' && it.label !== 'video' ? it.label : '';
+  const prev = document.getElementById('viewerPrev');
+  const next = document.getElementById('viewerNext');
+  if (prev) prev.hidden = n < 2 || VIEWER.i === 0;
+  if (next) next.hidden = n < 2 || VIEWER.i >= n - 1;
   const save = document.getElementById('viewerSave');
-  save.href = src;
-  // Without this a save lands under the asset id, which is a hash.
+  // The name rides the URL as well as the attribute: the attribute is for
+  // browsers, the URL is for the phone's download path, which only reads
+  // the header the node writes from it.
+  save.href = assetSaveURL(it.asset.id, name);
   save.setAttribute('download', name);
-  dlg.showModal();
+}
+
+// viewerStep turns the page; off the ends it does nothing (no wrap — the
+// end of a room's photos is a fact worth feeling).
+function viewerStep(d) {
+  const n = VIEWER.items.length;
+  const j = VIEWER.i + d;
+  if (j < 0 || j >= n) return;
+  VIEWER.i = j;
+  viewerShow();
+}
+
+// viewerArm wires the gestures once: a horizontal swipe turns the page, the
+// arrow keys do the same, a tap on the picture hides and shows the bars,
+// and closing the dialog stops whatever was playing.
+function viewerArm(dlg) {
+  if (VIEWER.armed) return;
+  VIEWER.armed = true;
+  const stage = document.getElementById('viewerStage');
+  stage.addEventListener('touchstart', (ev) => {
+    if (ev.touches.length !== 1) { VIEWER.touch = null; return; }
+    VIEWER.touch = { x: ev.touches[0].clientX, y: ev.touches[0].clientY, at: Date.now() };
+  }, { passive: true });
+  stage.addEventListener('touchend', (ev) => {
+    const t0 = VIEWER.touch; VIEWER.touch = null;
+    if (!t0 || !ev.changedTouches.length) return;
+    const dx = ev.changedTouches[0].clientX - t0.x;
+    const dy = ev.changedTouches[0].clientY - t0.y;
+    if (Math.abs(dx) > 48 && Math.abs(dx) > Math.abs(dy) * 1.5) viewerStep(dx < 0 ? 1 : -1);
+    else if (Math.abs(dx) < 8 && Math.abs(dy) < 8 && Date.now() - t0.at < 400 && ev.target.tagName === 'IMG') {
+      dlg.classList.toggle('immersive');
+    }
+  }, { passive: true });
+  stage.addEventListener('click', (ev) => {
+    // A mouse click on the picture: the same immersive toggle; a touch
+    // already handled it above and its synthetic click must not undo it.
+    if (ev.target.tagName === 'IMG' && !('ontouchstart' in window)) dlg.classList.toggle('immersive');
+  });
+  dlg.addEventListener('keydown', (ev) => {
+    if (ev.key === 'ArrowRight') { ev.preventDefault(); viewerStep(1); }
+    else if (ev.key === 'ArrowLeft') { ev.preventDefault(); viewerStep(-1); }
+  });
+  dlg.addEventListener('close', () => {
+    stage.querySelectorAll('video, audio').forEach(m => { try { m.pause(); } catch (_) {} });
+    stage.innerHTML = '';
+    dlg.classList.remove('immersive');
+  });
 }
 
 // A NAME A FILE SYSTEM WILL TAKE, AND AN EXTENSION SO THE FILE OPENS.
@@ -5296,7 +5416,7 @@ function renderFile(e) {
   // The card is the control: tap to load; once here, tap to open.
   card.onclick = () => {
     if (!a || !a.id) return;
-    if (a.state === 'complete') window.open(`/api/spaces/${current}/assets/${a.id}?token=${token}`, '_blank');
+    if (a.state === 'complete') saveAsset(a.id, e.filename);
     else askForMedia(a.id);
   };
   wrap.appendChild(card);

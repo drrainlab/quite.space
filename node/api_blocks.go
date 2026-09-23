@@ -16,6 +16,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"path"
 	"strings"
 	"time"
 
@@ -335,8 +336,15 @@ func serveAssetContent(w http.ResponseWriter, r *http.Request, ref *schemas.Asse
 	if schemas.AllowedInlineMIME(ct) {
 		disp = "inline"
 	}
+	// THE FILE KEEPS ITS NAME. The UI passes the block's own filename (or
+	// the name it composed from the caption and the media type) as ?name=;
+	// without it the download landed as "asset-<hash>" and, through
+	// Android's DownloadManager, as "asset-<hash>.bin" — a document nobody
+	// could open by tapping it. The name is normalised like every filename
+	// that enters the protocol, and it always ends in an extension the
+	// media type vouches for, because a phone opens files by extension.
 	w.Header().Set("Content-Disposition",
-		mime.FormatMediaType(disp, map[string]string{"filename": schemas.NormalizeFilename("asset-" + aid[:min(12, len(aid))])}))
+		mime.FormatMediaType(disp, map[string]string{"filename": downloadFilename(r.URL.Query().Get("name"), aid, ct)}))
 	// Content-addressed bytes are immutable — unless the caller already
 	// declared a stricter policy (the preview route sets no-store BEFORE
 	// serving: transient media must not enter a durable browser layer, and
@@ -345,6 +353,41 @@ func serveAssetContent(w http.ResponseWriter, r *http.Request, ref *schemas.Asse
 		w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
 	}
 	http.ServeContent(w, r, "", time.Time{}, content)
+}
+
+// downloadFilename is the name a saved asset gets: the caller's name if
+// one was given, "asset-<id>" otherwise, with an extension the media type
+// vouches for when the name has none.
+func downloadFilename(name, aid, ct string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		name = "asset-" + aid[:min(12, len(aid))]
+	}
+	name = schemas.NormalizeFilename(name)
+	if path.Ext(name) != "" {
+		return name
+	}
+	if ext := commonExt[ct]; ext != "" {
+		return name + ext
+	}
+	if exts, _ := mime.ExtensionsByType(ct); len(exts) > 0 {
+		// Go's table lists ".jpe" before ".jpeg"; the common ones are pinned
+		// above so a photo is a .jpg, and this is only the long tail.
+		return name + exts[len(exts)-1]
+	}
+	return name
+}
+
+// commonExt pins the extension people expect for the media types the app
+// itself produces; anything else falls through to the system's table.
+var commonExt = map[string]string{
+	"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif",
+	"image/heic": ".heic", "image/avif": ".avif", "image/svg+xml": ".svg",
+	"video/mp4": ".mp4", "video/quicktime": ".mov", "video/webm": ".webm",
+	"audio/mpeg": ".mp3", "audio/ogg": ".ogg", "audio/wav": ".wav", "audio/mp4": ".m4a",
+	"audio/webm": ".weba", "audio/flac": ".flac", "audio/aac": ".aac",
+	"application/pdf": ".pdf", "text/plain": ".txt", "application/zip": ".zip",
+	"application/octet-stream": ".bin",
 }
 
 func (a *APIServer) handleFetchAsset(w http.ResponseWriter, r *http.Request) {

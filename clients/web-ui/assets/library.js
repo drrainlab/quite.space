@@ -79,7 +79,11 @@ function libRow(e, view) {
         try { await api(`/api/spaces/${current}/assets/${e.asset.id}/fetch`, { method: 'POST' }); } catch (_) {}
         return;
       }
-      window.open(assetURL(e.asset.id), '_blank');
+      // Media opens in the viewer; a document goes to the platform's save
+      // path by its own name. window.open did neither on a phone.
+      const media = e.kind === 'visual' || e.kind === 'video' || e.kind === 'audio' || e.kind === 'voice';
+      if (media) openViewer(e.asset, e.kind === 'voice' ? 'audio' : e.kind, e.alt || e.title || e.caption || libFileTitle(e));
+      else saveAsset(e.asset.id, e.filename || libFileTitle(e));
     };
     a.onclick = open;
     a.onkeydown = (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); open(); } };
