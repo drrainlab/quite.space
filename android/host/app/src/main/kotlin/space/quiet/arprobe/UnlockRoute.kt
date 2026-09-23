@@ -70,5 +70,18 @@ internal enum class UnlockRoute {
          */
         fun refused(code: Boolean, remembered: Boolean): UnlockRoute =
             of(biometric = false, code = code, remembered = remembered)
+
+        /**
+         * Whether the code and the face stand in front of the screen at all.
+         *
+         * BY DEFAULT THEY DO NOT (owner's decision, 2026-09-23, after the
+         * beta: "every time the code again", and the face offer that a
+         * frequent code invites). With a remembered passphrase the node opens
+         * on its own, and the doors are asked for only when the person turned
+         * the switch on in Settings → This device. Without a remembered copy
+         * the doors are the only way in, whatever the switch says — a
+         * passphrase sealed behind a face cannot be opened past the face.
+         */
+        fun doorsApply(requireCode: Boolean, remembered: Boolean): Boolean = requireCode || !remembered
     }
 }

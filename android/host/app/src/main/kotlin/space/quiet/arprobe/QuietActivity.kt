@@ -478,6 +478,11 @@ class QuietActivity : ComponentActivity() {
                         // switching this off is asking for it back.
                         vault.setReceiveWhileLocked(on, openedPassphrase, keepCopy = on || !bio.has())
                     },
+                    // The code at the screen: off by default, a switch beside
+                    // the one above. Applies only where a door exists.
+                    requireCodeApplies = { passcode.has() || bio.has() },
+                    requireCode = { vault.requireCode() },
+                    setRequireCode = { on -> vault.setRequireCode(on) },
                     // BOTH ANSWER WITH A DIALOG ON THE PHONE'S OWN SCREEN,
                     // never with a value into the page — the bridge's doctrine
                     // stands: the passphrase has no getter anywhere.
@@ -636,7 +641,8 @@ class QuietActivity : ComponentActivity() {
         // own this moment; the one place they are ranked is a file with tests
         // in front of it.
         uiLocked = guarded()
-        when (UnlockRoute.of(bio.has(), passcode.has(), vault.has())) {
+        val doors = UnlockRoute.doorsApply(vault.requireCode(), vault.has())
+        when (UnlockRoute.of(bio.has() && doors, passcode.has() && doors, vault.has())) {
             UnlockRoute.BIOMETRIC -> {
                 bioAsked = true
                 // NOTHING IS NEEDED ON REFUSAL. The prompt is raised over the
@@ -670,7 +676,10 @@ class QuietActivity : ComponentActivity() {
     }
 
     /** Whether a code or a face stands in front of this app. */
-    private fun guarded(): Boolean = bio.has() || passcode.has()
+    // The doors stand in front of the screen only when the person asked for
+    // them, or when nothing else can open the node (UnlockRoute.doorsApply).
+    private fun guarded(): Boolean =
+        UnlockRoute.doorsApply(vault.requireCode(), vault.has()) && (bio.has() || passcode.has())
 
     // onStop/onStart, not onPause/onResume: the face prompt, a permission
     // dialog and the file chooser all PAUSE this Activity without anybody

@@ -123,6 +123,13 @@ const HOST = (() => {
     setReceiveLocked(on) {
       return call('setReceiveLocked', !!on) === true;
     },
+    requireCode() {
+      if (call('requireCodeApplies') !== true) return 'na';
+      return call('requireCode') === true ? 'on' : 'off';
+    },
+    setRequireCode(on) {
+      return call('setRequireCode', !!on) === true;
+    },
 
     /**
      * Whether the platform refused to run "stay connected".
@@ -337,6 +344,19 @@ function unlockSyncUI() {
   const row = document.getElementById('receiveLockedRow');
   if (row) row.hidden = mode === 'na';
   if (mode !== 'na') pickSeg('receiveLocked', mode);
+  // The code at the screen — off by default; the row exists only where a
+  // code or a face is bound on this device.
+  const code = HOST.requireCode();
+  const crow = document.getElementById('requireCodeRow');
+  if (crow) crow.hidden = code === 'na';
+  if (code !== 'na') pickSeg('requireCode', code);
+}
+
+function setRequireCode(on) {
+  const ok = HOST.setRequireCode(on);
+  const msg = document.getElementById('unlockMsg');
+  if (msg) msg.textContent = ok ? '' : t('ui.set.dev.locked.failed');
+  unlockSyncUI();
 }
 
 function setReceiveLocked(on) {

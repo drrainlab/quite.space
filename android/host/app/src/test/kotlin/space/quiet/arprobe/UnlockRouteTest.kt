@@ -62,6 +62,18 @@ class UnlockRouteTest {
     }
 
     @Test
+    fun `the doors stand aside by default when a passphrase is remembered`() {
+        assertEquals(false, UnlockRoute.doorsApply(requireCode = false, remembered = true))
+        assertEquals(true, UnlockRoute.doorsApply(requireCode = true, remembered = true))
+    }
+
+    @Test
+    fun `without a remembered passphrase the doors are the only way in`() {
+        assertEquals(true, UnlockRoute.doorsApply(requireCode = false, remembered = false))
+        assertEquals(true, UnlockRoute.doorsApply(requireCode = true, remembered = false))
+    }
+
+    @Test
     fun `a refused face falls through to the other doors in the same order`() {
         assertEquals(UnlockRoute.CODE, UnlockRoute.refused(code = true, remembered = true))
         assertEquals(UnlockRoute.REMEMBERED, UnlockRoute.refused(code = false, remembered = true))

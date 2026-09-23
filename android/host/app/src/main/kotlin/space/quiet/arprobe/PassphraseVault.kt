@@ -71,6 +71,16 @@ internal class PassphraseVault(app: Context) {
     fun receiveWhileLocked(): Boolean = prefs.getBoolean(KEY_RECEIVE_LOCKED, true)
 
     /**
+     * Whether the code or the face is asked for at the screen when a
+     * passphrase is remembered. OFF by default (owner's decision after the
+     * beta: the code every time, and the face offer it invites). See
+     * [UnlockRoute.doorsApply] for the one rule that reads it.
+     */
+    fun requireCode(): Boolean = prefs.getBoolean(KEY_REQUIRE_CODE, false)
+
+    fun setRequireCode(on: Boolean): Boolean = prefs.edit().putBoolean(KEY_REQUIRE_CODE, on).commit()
+
+    /**
      * Change the choice and RE-SEAL what is already stored, so the switch
      * means something the moment it is thrown. Needs the value in hand: the
      * caller passes the passphrase the node is open with, or we read our own
@@ -267,6 +277,7 @@ internal class PassphraseVault(app: Context) {
         const val KEY_BLOB_BG = "passphrase_bg_v1"
         const val ALIAS_BG = "quiet.passphrase.bg.v1"
         const val KEY_RECEIVE_LOCKED = "receive_while_locked"
+        const val KEY_REQUIRE_CODE = "require_code_on_open"
         const val TRANSFORM = "AES/GCM/NoPadding"
         const val IV_LEN = 12
         const val TAG_BITS = 128

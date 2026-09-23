@@ -61,6 +61,10 @@ internal class HostBridge(
     private val receiveLockedApplies: () -> Boolean = { false },
     private val receiveLocked: () -> Boolean = { false },
     private val setReceiveLocked: (Boolean) -> Boolean = { false },
+    // The code at the screen (off by default): applies, on, switch.
+    private val requireCodeApplies: () -> Boolean = { false },
+    private val requireCode: () -> Boolean = { false },
+    private val setRequireCode: (Boolean) -> Boolean = { false },
     private val revealPassphrase: () -> Boolean = { false },
     private val changeCode: () -> Boolean = { false },
     // EN-3 — the UnifiedPush doorbell: status, on, off. Lambdas like
@@ -275,6 +279,25 @@ internal class HostBridge(
     fun setReceiveLocked(pass: String?, on: Boolean): Boolean {
         if (!admitted(pass)) return refuse("setReceiveLocked")
         return setReceiveLocked(on)
+    }
+
+    /** Whether the code or face is asked at the screen — off by default. */
+    @JavascriptInterface
+    fun requireCodeApplies(pass: String?): Boolean {
+        if (!admitted(pass)) return refuse("requireCodeApplies")
+        return requireCodeApplies()
+    }
+
+    @JavascriptInterface
+    fun requireCode(pass: String?): Boolean {
+        if (!admitted(pass)) return refuse("requireCode")
+        return requireCode()
+    }
+
+    @JavascriptInterface
+    fun setRequireCode(pass: String?, on: Boolean): Boolean {
+        if (!admitted(pass)) return refuse("setRequireCode")
+        return setRequireCode(on)
     }
 
     /**

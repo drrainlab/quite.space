@@ -1215,6 +1215,17 @@
       </div>
       <p class="hint" style="margin-left:4px" data-i18n="ui.set.dev.locked.hint">If Android restarts Quiet while the phone is locked, Quiet may open itself and messages keep arriving. With “Wait for unlock” it only tells you something is waiting, and opens when you unlock the phone — a locked phone then guards Quiet too.</p>
     </div>
+    <!-- The code at the screen. OFF by default (owner's decision after the
+         beta: "the code every time", and the face offer a frequent code
+         invites). The row exists only where a code or a face is bound. -->
+    <div id="requireCodeRow" hidden>
+      <p class="sec-label" data-i18n="ui.set.dev.code">Code when opening</p>
+      <div class="segmented" id="requireCode">
+        <button data-v="off" data-i18n="ui.set.dev.code.off" data-on-click="280">Open right away</button>
+        <button data-v="on" data-i18n="ui.set.dev.code.on" data-on-click="279">Ask for the code</button>
+      </div>
+      <p class="hint" style="margin-left:4px" data-i18n="ui.set.dev.code.hint">With a remembered passphrase Quiet opens on its own. Turn this on to be asked for your code or face each time you come back after a minute away — your phone's own lock guards Quiet either way.</p>
+    </div>
     <div class="row">
       <button class="btn-plain" data-i18n="ui.set.dev.unlock.forget" data-on-click="171">Ask for the passphrase every time</button>
     </div>
