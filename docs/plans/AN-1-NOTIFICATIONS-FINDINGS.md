@@ -358,4 +358,8 @@ phase named. Fixed as LT-4 S1c: media bytes are their own channel (never
 in a frame's bundle, never to a guessed mailbox, on the bulk lane under
 their own claim), blobs are read only when something is sent, and the
 pass line now says where its time went (lock / prep / plan / send). The
-58 s is still unexplained until the next log with phases.
+next log, with phases, named the 58 s: `plan` — route decisions, each of
+which read and parsed relays.json from disk through the automatic-mode
+resolver, several times per recipient. Cached per file change now
+(TestRelayStateIsReadOncePerChange). The rc16 send itself: one space,
+eight express mailboxes, 1.6 s, no bytes to guessed mailboxes.

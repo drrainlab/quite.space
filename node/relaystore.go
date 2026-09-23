@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 )
 
 // RelayProbeStats is one relay's measured history (EWMA-smoothed; the
@@ -67,8 +68,39 @@ type RelayLocalState struct {
 
 var relayStateMu sync.Mutex
 
+// relayStateCache remembers the last parsed relays.json per data dir,
+// keyed on the file's size and modification time. The state is asked for
+// on every route decision — several times per recipient per space per
+// pass — and each ask used to read and parse the file: on the owner's
+// phone (26 spaces, automatic relay) that was hundreds of reads a pass and
+// the "plan" phase of an EMPTY pass ran one to eight seconds. A stat is
+// what a read costs now; an in-process update refreshes the entry itself,
+// and a writer from outside the process is seen by the next stat.
+var relayStateCache = map[string]relayStateEntry{}
+
+type relayStateEntry struct {
+	size  int64
+	mtime time.Time
+	st    RelayLocalState
+}
+
 func relayStatePath(dataDir string) string {
 	return filepath.Join(dataDir, "relays.json")
+}
+
+// cloneRelayState copies the state so a caller's edits never reach the
+// cache (UpdateRelayStateAt edits a copy and then replaces the entry).
+func cloneRelayState(st RelayLocalState) RelayLocalState {
+	out := st
+	out.Stats = make(map[string]*RelayProbeStats, len(st.Stats))
+	for k, v := range st.Stats {
+		if v != nil {
+			c := *v
+			out.Stats[k] = &c
+		}
+	}
+	out.Trust = append([]RelayTrust(nil), st.Trust...)
+	return out
 }
 
 // LoadRelayStateAt reads relays.json under dataDir; a missing or
@@ -82,8 +114,15 @@ func LoadRelayStateAt(dataDir string) RelayLocalState {
 }
 
 func loadRelayStateLocked(dataDir string) RelayLocalState {
+	path := relayStatePath(dataDir)
+	fi, statErr := os.Stat(path)
+	if statErr == nil {
+		if e, ok := relayStateCache[dataDir]; ok && e.size == fi.Size() && e.mtime.Equal(fi.ModTime()) {
+			return cloneRelayState(e.st)
+		}
+	}
 	var st RelayLocalState
-	b, err := os.ReadFile(relayStatePath(dataDir))
+	b, err := os.ReadFile(path)
 	if err == nil {
 		_ = json.Unmarshal(b, &st)
 	}
@@ -92,6 +131,11 @@ func loadRelayStateLocked(dataDir string) RelayLocalState {
 	}
 	if st.Stats == nil {
 		st.Stats = map[string]*RelayProbeStats{}
+	}
+	if statErr == nil {
+		relayStateCache[dataDir] = relayStateEntry{size: fi.Size(), mtime: fi.ModTime(), st: cloneRelayState(st)}
+	} else {
+		delete(relayStateCache, dataDir)
 	}
 	return st
 }
@@ -110,7 +154,17 @@ func UpdateRelayStateAt(dataDir string, fn func(*RelayLocalState)) error {
 	if err := os.WriteFile(tmp, b, 0o600); err != nil {
 		return err
 	}
-	return os.Rename(tmp, relayStatePath(dataDir))
+	if err := os.Rename(tmp, relayStatePath(dataDir)); err != nil {
+		return err
+	}
+	// The entry follows the write: the next load is a stat and a copy,
+	// and never a stale read of what this very call replaced.
+	if fi, err := os.Stat(relayStatePath(dataDir)); err == nil {
+		relayStateCache[dataDir] = relayStateEntry{size: fi.Size(), mtime: fi.ModTime(), st: cloneRelayState(st)}
+	} else {
+		delete(relayStateCache, dataDir)
+	}
+	return nil
 }
 
 func (r *Runtime) loadRelayState() RelayLocalState { return LoadRelayStateAt(r.dataDir) }

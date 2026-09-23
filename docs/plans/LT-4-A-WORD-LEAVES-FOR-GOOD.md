@@ -395,3 +395,15 @@ truth после open, tail лога узла. Тесты вечера зелё�
   `TestAWordDoesNotWaitBehindAPhoto`: bulk-линия удержана, карточка фото у
   боба через 215 мс, слово через 430 мс, байты — после освобождения линии;
   на старом коде карточка ждала выгрузку (тест висит до таймаута).
+- **Загадка 58 с решена (rc16, фазы в строке прохода):** пустой проход по 26
+  пространствам — `plan=1…8 с` при `lock≈0.1 с prep≈10 мс send≈0`. Причина:
+  `personalRelayLadder()` в автоматическом режиме зовёт `loadRelayState()` =
+  `os.ReadFile("relays.json")` + JSON-парсинг на КАЖДЫЙ вызов, а зовётся он
+  через `ownWorld()`/`ResolvePersonalRelay()` по несколько раз на получателя
+  (`rankedPeerRoutes`, `guessRelays`, `routeFor`) — сотни чтений файла за
+  проход на флеше телефона, под нагрузкой десятки секунд. Фикс: кэш в
+  `relaystore.go` по (size, mtime) файла, копия наружу (`cloneRelayState`),
+  `UpdateRelayStateAt` обновляет запись сам; внешний писатель виден по stat.
+  Тест `TestRelayStateIsReadOncePerChange`. Замер отправки на rc16:
+  `spaces=1 express=8 bulk=0 took=1.58s (plan=361ms send=896ms)`, байты
+  скриншотов в угаданные ящики не поехали, владелец: «всё чётко».
