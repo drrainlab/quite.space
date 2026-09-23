@@ -41,6 +41,16 @@ func putsTotal(srv *relayserver.Server) int64 {
 	return int64(srv.StatusSnapshot("", "").Traffic.PutsTotal)
 }
 
+// loudPuts counts the puts a person would be woken for — frames. Receipts,
+// presence and "I moved" bundles are quiet (1.1.0) and land on their own
+// clocks (a receipt a second after the last applied frame, an announce on
+// open); a test about re-mailed HISTORY must not count them, and on a slow
+// runner it did (CI, 2026-09-23: three quiet puts read as a re-mail).
+func loudPuts(srv *relayserver.Server) int64 {
+	t := srv.StatusSnapshot("", "").Traffic
+	return int64(t.PutsTotal - t.QuietPutsTotal)
+}
+
 // A restart re-offers NOTHING that the mailbox already holds: the book
 // remembers, and the peer's signed receipts floor my own chain besides.
 func TestARestartDoesNotRemailTheHistory(t *testing.T) {
@@ -60,7 +70,7 @@ func TestARestartDoesNotRemailTheHistory(t *testing.T) {
 	time.Sleep(4 * cadence) // let the book settle its marks
 	alice.Close()
 
-	putsBefore := putsTotal(srv)
+	putsBefore := loudPuts(srv)
 	mbBefore := mailboxCount(t, addr, tid, bob.Device.ID)
 	alice2 := openRuntime(t, dir, "alice")
 	defer alice2.Close()
@@ -71,19 +81,19 @@ func TestARestartDoesNotRemailTheHistory(t *testing.T) {
 	if got := mailboxCount(t, addr, tid, bob.Device.ID); got != mbBefore {
 		t.Fatalf("bob's mailbox grew across alice's restart (%d → %d): the history was re-mailed", mbBefore, got)
 	}
-	if d := putsTotal(srv) - putsBefore; d > 2 {
-		t.Fatalf("%d puts after a restart with nothing new to say", d)
+	if d := loudPuts(srv) - putsBefore; d > 0 {
+		t.Fatalf("%d loud puts after a restart with nothing new to say — the history was re-mailed", d)
 	}
 	// And a new word is exactly one delta.
-	p := putsTotal(srv)
+	p := loudPuts(srv)
 	if _, err := alice2.Say(tid, "после перезапуска", SayOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	waitUntil(t, 20*time.Second, "the word after the restart did not arrive", func() bool {
 		return countMsg(t, bob, tid, "после перезапуска") >= 1
 	})
-	if d := putsTotal(srv) - p; d > 2 {
-		t.Fatalf("a single word cost %d puts", d)
+	if d := loudPuts(srv) - p; d != 1 {
+		t.Fatalf("a single word cost %d loud puts, want exactly 1", d)
 	}
 }
 
