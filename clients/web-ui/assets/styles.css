@@ -5188,3 +5188,39 @@ body.nav-resizing { user-select: none; cursor: col-resize; }
 .confirm-text { white-space: pre-line; line-height: 1.4; margin-bottom: 1rem; }
 .confirm-actions { display: flex; justify-content: flex-end; gap: .6rem; }
 .confirm-actions .confirm-yes { font-weight: 600; }
+
+/* The viewer, second pass (1.0.27): a gallery with neighbours. The bar
+   floats over the picture on a soft gradient rather than taking a strip of
+   the screen; a tap on the picture hides everything but the picture. */
+dialog.viewer { position: fixed; inset: 0; }
+dialog.viewer .viewer-bar {
+  position: absolute; left: 0; right: 0; top: 0; z-index: 2;
+  background: linear-gradient(to bottom, rgba(0,0,0,.55), rgba(0,0,0,0));
+  transition: opacity .18s ease; }
+dialog.viewer .viewer-btn { background: rgba(255,255,255,.08); border-color: rgba(255,255,255,.14); backdrop-filter: blur(8px); }
+dialog.viewer .viewer-count { flex: 0 0 auto; color: var(--dim); font-size: 12px; font-variant-numeric: tabular-nums; }
+dialog.viewer .viewer-stage { padding: 0; position: absolute; inset: 0; }
+dialog.viewer .viewer-stage > img, dialog.viewer .viewer-stage > video { border-radius: 0; max-height: 100dvh; }
+dialog.viewer .viewer-stage > audio { width: min(92vw, 480px); }
+.viewer-nav {
+  /* Centred by top, not by a transform: the global button:active sets
+     transform: scale(.97) and would replace a translateY(-50%) on press,
+     dropping the button out from under the pointer — the click then landed
+     on the stage and nothing turned the page. Seen on the stand. */
+  position: absolute; top: calc(50% - 32px); z-index: 2;
+  width: 44px; height: 64px; border: 0; border-radius: var(--radius-sm);
+  background: rgba(0,0,0,.35); color: #fff; font-size: 34px; line-height: 1;
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
+  transition: opacity .18s ease; }
+.viewer-nav[hidden] { display: none; }
+.viewer-prev { left: 8px; }
+.viewer-next { right: 8px; }
+.viewer-caption {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 2;
+  padding: 18px 16px max(14px, env(safe-area-inset-bottom));
+  color: #fff; font-size: 14px; line-height: 1.35; text-align: center;
+  background: linear-gradient(to top, rgba(0,0,0,.55), rgba(0,0,0,0));
+  transition: opacity .18s ease; }
+.viewer-caption:empty { display: none; }
+dialog.viewer.immersive .viewer-bar, dialog.viewer.immersive .viewer-nav, dialog.viewer.immersive .viewer-caption { opacity: 0; pointer-events: none; }
+@media (hover: none) { .viewer-nav { opacity: .6; } }

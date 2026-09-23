@@ -407,9 +407,16 @@
   <div class="viewer-bar">
     <button class="viewer-btn" data-on-click="51" aria-label="Close" data-i18n-aria="ui.viewer.close">✕</button>
     <span class="viewer-name" id="viewerName"></span>
+    <span class="viewer-count" id="viewerCount"></span>
     <a class="viewer-btn" id="viewerSave" download data-i18n="ui.viewer.save">Save</a>
   </div>
   <div class="viewer-stage" id="viewerStage"></div>
+  <!-- The neighbours: every photo and video of the room, in order. Swipe
+       or arrow keys do the same; the buttons are for a mouse and a screen
+       reader. -->
+  <button class="viewer-nav viewer-prev" id="viewerPrev" data-on-click="281" aria-label="Previous" data-i18n-aria="ui.viewer.prev">‹</button>
+  <button class="viewer-nav viewer-next" id="viewerNext" data-on-click="282" aria-label="Next" data-i18n-aria="ui.viewer.next">›</button>
+  <div class="viewer-caption" id="viewerCaption"></div>
 </dialog>
 <dialog id="dlgLink">
   <h3 data-i18n="ui.link.title">share a link</h3>

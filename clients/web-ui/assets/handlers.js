@@ -326,6 +326,8 @@ const UI_HANDLERS = [
   /* 278 click    */ (event, el) => { notifPick('sender'); },
   /* 279 click    */ (event, el) => { setRequireCode(true); },
   /* 280 click    */ (event, el) => { setRequireCode(false); },
+  /* 281 click    */ (event, el) => { viewerStep(-1); },
+  /* 282 click    */ (event, el) => { viewerStep(1); },
 ];
 
 /** Attach every handler declared in the markup.
