@@ -24,9 +24,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/drrainlab/quiet_places/kernel/eventlog"
 	"github.com/drrainlab/quiet_places/protocol/id"
-	"github.com/drrainlab/quiet_places/protocol/schemas"
 	"github.com/drrainlab/quiet_places/transports/lan"
 	"github.com/drrainlab/quiet_places/transports/relay"
 	"github.com/drrainlab/quiet_places/transports/relayserver"
@@ -592,17 +590,11 @@ func TestBothJoinedSpacesKeepReceiving(t *testing.T) {
 		for i := 0; i < 60; i++ {
 			_, _, _ = sender.PushToRelay(addr, tid)
 			_, _ = phone.PullFromRelay(addr)
-			if sp, ok := phone.spaceForTest(tid); ok {
-				n := 0
-				_ = sp.Log.Replay(func(a eventlog.Applied) error {
-					if a.Env != nil && a.Env.Schema == schemas.MessageText {
-						n++
-					}
-					return nil
-				})
-				if n > 0 {
-					return n
-				}
+			// Read under the runtime's lock (countMsg goes through withSpace):
+			// the doorbell's own lane applies items concurrently since 1.0.24,
+			// and a bare Replay here raced it under the detector.
+			if n := countMsg(t, phone, tid, text); n > 0 {
+				return n
 			}
 			time.Sleep(100 * time.Millisecond)
 		}

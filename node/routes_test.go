@@ -345,7 +345,9 @@ func TestReceiptsUseTheDialableRoute(t *testing.T) {
 		t.Fatalf("courtesyRoute = %q guessed=%v, want bob's dialable second route %q", ep, guessed, addrB)
 	}
 	before := mailboxCount(t, addrB, tid, bob.Device.ID)
+	alice.mu.Lock()
 	alice.receipts = nil // forget what was receipted; the next pass owes one
+	alice.mu.Unlock()
 	alice.sendReceipts()
 	if got := mailboxCount(t, addrB, tid, bob.Device.ID); got <= before {
 		t.Fatalf("the receipt did not land at bob's dialable route B (mailbox %d → %d)", before, got)
