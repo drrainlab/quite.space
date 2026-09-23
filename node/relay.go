@@ -971,8 +971,18 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 				// the split costs is wire ops — and the alternative was a
 				// space that stops delivering the day its log outgrows one
 				// item.
+				// Frames ring; a body with no frame in it — media bytes, a
+				// question about media, an "I moved" — is put quietly, so a
+				// doorbell rings only for what a person would be woken for.
+				loud := len(j.g.ids) > 0 && !j.media
 				for _, b := range j.g.bodies {
-					d, err := client.Put(hint, expires, b)
+					var d uint64
+					var err error
+					if loud {
+						d, err = client.Put(hint, expires, b)
+					} else {
+						d, err = client.PutQuiet(hint, expires, b)
+					}
 					if err != nil {
 						return err
 					}
@@ -992,7 +1002,7 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 				// goes stale, which is the whole of what "no custody" was
 				// protecting.
 				for _, b := range j.g.fleet {
-					if _, err := client.Put(hint, fleetingUntil, b); err != nil {
+					if _, err := client.PutQuiet(hint, fleetingUntil, b); err != nil {
 						return err
 					}
 				}
@@ -1682,7 +1692,7 @@ func (r *Runtime) answerWants(client *relay.Client, tid id.TerminalID, wanter []
 			return true
 		}
 		body := bundle.EncodeWithBlobs(tid, nil, batch)
-		_, err := client.Put(hint, expires, body)
+		_, err := client.PutQuiet(hint, expires, body) // an answer about media wakes nobody
 		if err == nil {
 			r.noteAnswered(hint, batchHashes, time.Now())
 			r.noteServing()

@@ -450,15 +450,24 @@ func (s *Server) handle(m *relay.Msg, cs *connState) *relay.Msg {
 			DestinationHint: string(m.Hint),
 			ExpiresAt:       expires,
 			Ciphertext:      m.Body,
+			Quiet:           m.Quiet,
 		})
 		if !ok {
 			return &relay.Msg{Type: relay.MsgError, Reason: relay.ReasonQuotaExceeded}
 		}
 		s.st.puts.Add(1)
+		if m.Quiet {
+			s.st.quietPuts.Add(1)
+		}
 		s.st.bytesStored.Add(uint64(len(m.Body)))
-		// The out-of-band doorbell (EN-3): now when nobody is parked,
+		// A parked connection is told either way — an open node wants its
+		// receipts at once. The out-of-band doorbell (EN-3) rings only for
+		// what a person would be woken for: now when nobody is parked,
 		// after a grace when somebody is but does not come to collect.
-		s.pushRegs().ring(string(m.Hint), s.notifyListeners(string(m.Hint)) > 0)
+		parked := s.notifyListeners(string(m.Hint)) > 0
+		if !m.Quiet {
+			s.pushRegs().ring(string(m.Hint), parked)
+		}
 		// The receipt proves exactly accepted_by_relay and nothing more
 		// (ADR-008): the expiry is echoed so the sender knows the deadline.
 		return &relay.Msg{Type: relay.MsgPutOK, Expires: expires}
@@ -684,7 +693,7 @@ func (s *Server) repark(cs *connState, hints [][]byte, now uint64) (waiting bool
 	defer s.listenMu.Unlock()
 	defer func() {
 		for _, h := range hints {
-			if s.store.Holds(string(h), now) {
+			if s.store.HoldsLoud(string(h), now) {
 				waiting = true
 				return
 			}

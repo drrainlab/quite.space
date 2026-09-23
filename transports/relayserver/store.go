@@ -19,6 +19,9 @@ type Item struct {
 	DestinationHint string
 	ExpiresAt       uint64
 	Ciphertext      []byte
+	// Quiet: nobody is woken for this item (keyQuiet) — it rings no
+	// doorbell and does not make a park "waiting".
+	Quiet bool
 }
 
 // Store is a blind mailbox with per-hint and global quotas. Safe for
@@ -162,9 +165,22 @@ func (s *Store) Fetch(hint string, now uint64, maxBytes int) [][]byte {
 // read out and nothing is touched: it exists so a parked listener can be
 // told "there is mail" without a Fetch that would move the ciphertext.
 func (s *Store) Holds(hint string, now uint64) bool {
+	return s.holds(hint, now, false)
+}
+
+// HoldsLoud is Holds for the items a person would be woken for: a mailbox
+// with nothing but receipts and presence in it is not "waiting".
+func (s *Store) HoldsLoud(hint string, now uint64) bool {
+	return s.holds(hint, now, true)
+}
+
+func (s *Store) holds(hint string, now uint64, loudOnly bool) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, it := range s.items[hint] {
+		if loudOnly && it.Quiet {
+			continue
+		}
 		if it.ExpiresAt == 0 || now < it.ExpiresAt {
 			return true
 		}

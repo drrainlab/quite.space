@@ -239,7 +239,19 @@ func putTimeout(n int) time.Duration {
 // Put stores one opaque item; returns the relay's accepted deadline. This
 // is a transport receipt: it proves accepted_by_relay, never delivery.
 func (c *Client) Put(hint []byte, expiresAt uint64, body []byte) (uint64, error) {
-	reply, err := c.roundTrip(&Msg{Type: MsgPut, Hint: hint, Expires: expiresAt, Body: body}, putTimeout(len(body)))
+	return c.put(hint, expiresAt, body, false)
+}
+
+// PutQuiet is Put for an item nobody should be woken for — a receipt, a
+// fleeting presence, a media chunk, a question about media: stored and
+// served like any other, but it rings no doorbell and counts as nothing
+// waiting for a park (keyQuiet). An older relay ignores the key.
+func (c *Client) PutQuiet(hint []byte, expiresAt uint64, body []byte) (uint64, error) {
+	return c.put(hint, expiresAt, body, true)
+}
+
+func (c *Client) put(hint []byte, expiresAt uint64, body []byte, quiet bool) (uint64, error) {
+	reply, err := c.roundTrip(&Msg{Type: MsgPut, Hint: hint, Expires: expiresAt, Body: body, Quiet: quiet}, putTimeout(len(body)))
 	if err != nil {
 		return 0, err
 	}

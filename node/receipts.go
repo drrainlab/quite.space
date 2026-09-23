@@ -273,8 +273,11 @@ func (r *Runtime) deliverReceipts(items []receiptItem, arrival bool) {
 			if arrival {
 				lane = r.withRelayOutbox
 			}
+			// QUIET: a receipt is not a thing a person is woken for. It
+			// rang the author's doorbell — and a closed node answered with
+			// "Something is waiting" about the ✓✓ on the author's own word.
 			err := lane(ep, func(client *relay.Client) error {
-				_, err := client.Put(hint, expires, body)
+				_, err := client.PutQuiet(hint, expires, body)
 				return err
 			})
 			if err != nil {

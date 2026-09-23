@@ -120,3 +120,31 @@ func TestALanPeerReceiptsOverTheWireNotTheRelay(t *testing.T) {
 		t.Fatalf("alice's mailbox grew %d→%d while bob was on her wire", mailBefore, got)
 	}
 }
+
+// A receipt wakes nobody: it is put quietly, so the author's doorbell
+// stays silent and a closed node is not told "something is waiting" about
+// the ✓✓ on its own word (the tester's phone, 1.0.26, every half hour).
+func TestAReceiptRingsNoDoorbell(t *testing.T) {
+	srv, addr := startRelay(t)
+	defer srv.Close()
+	alice, bob, tid := pairOnRelay(t, addr)
+	defer alice.Close()
+	defer bob.Close()
+	defer holdCycle(bob)()
+	quietBefore := srv.StatusSnapshot("", "").Traffic.QuietPutsTotal
+	if _, err := alice.Say(tid, "тихо ли?", SayOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, 10*time.Second, "the word never reached the relay", func() bool {
+		return deliveryOf(t, alice, tid, "тихо ли?") != "sent"
+	})
+	if _, err := bob.PullFromRelay(addr); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, 5*time.Second, "alice never saw ✓✓", func() bool {
+		return deliveryOf(t, alice, tid, "тихо ли?") == "delivered"
+	})
+	if got := srv.StatusSnapshot("", "").Traffic.QuietPutsTotal; got == quietBefore {
+		t.Fatal("the receipt was put loudly — it would ring the author's doorbell")
+	}
+}

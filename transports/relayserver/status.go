@@ -44,8 +44,8 @@ import (
 
 // stats are the monotonic-since-start counters (RR-7 + status spec).
 type stats struct {
-	puts, replaces, fetches, collects, probes, rateLimited atomic.Uint64
-	bytesStored, bytesServed                               atomic.Uint64
+	puts, quietPuts, replaces, fetches, collects, probes, rateLimited atomic.Uint64
+	bytesStored, bytesServed                                          atomic.Uint64
 }
 
 // censusWindow is the relay's own six-hour bucket, the same one hints
@@ -151,6 +151,7 @@ type StatusStore struct {
 type StatusTraf struct {
 	WindowSeconds    int    `json:"window_seconds"`
 	PutsTotal        uint64 `json:"puts_total"`
+	QuietPutsTotal   uint64 `json:"quiet_puts_total"` // of PutsTotal: items that rang nothing
 	ReplacesTotal    uint64 `json:"replaces_total"`
 	FetchesTotal     uint64 `json:"fetches_total"`
 	CollectsTotal    uint64 `json:"collects_total"`
@@ -197,6 +198,7 @@ func (s *Server) StatusSnapshot(name, label string) Status {
 		Traffic: StatusTraf{
 			WindowSeconds:    60,
 			PutsTotal:        s.st.puts.Load(),
+			QuietPutsTotal:   s.st.quietPuts.Load(),
 			ReplacesTotal:    s.st.replaces.Load(),
 			FetchesTotal:     s.st.fetches.Load(),
 			CollectsTotal:    s.st.collects.Load(),

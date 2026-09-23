@@ -352,6 +352,14 @@ const (
 	// nothing anybody is waiting for. Absent = every parked hint rings
 	// (EN-3's behaviour); older relays skip the key and do exactly that.
 	keyPushHints = 18
+	// keyQuiet (1.0.27) rides MsgPut: 1 = store this item but do not ring
+	// the out-of-band doorbell for it and do not count it as "waiting" for
+	// a park. A delivery receipt, a fleeting presence, a media chunk, a
+	// question about media are not things a person is woken for — the
+	// tester's phone said "Something is waiting" for the ✓✓ on his own
+	// message. Append-only: a relay that does not know the key rings as
+	// before, and nothing is lost but the quiet.
+	keyQuiet = 19
 )
 
 // Msg is one relay protocol message.
@@ -377,6 +385,8 @@ type Msg struct {
 	PushHints [][]byte
 	// Waiting: see keyWaiting (MsgListenOK only).
 	Waiting bool
+	// Quiet: see keyQuiet (MsgPut only).
+	Quiet bool
 	// RR-3 probe fields.
 	Nonce     []byte
 	ProtoMin  uint64
@@ -437,6 +447,9 @@ func (m *Msg) Encode() []byte {
 		n++
 	}
 	if m.Waiting {
+		n++
+	}
+	if m.Quiet {
 		n++
 	}
 	buf := codec.AppendMap(nil, n)
@@ -520,6 +533,10 @@ func (m *Msg) Encode() []byte {
 	}
 	if m.Waiting {
 		buf = codec.AppendUint(buf, keyWaiting)
+		buf = codec.AppendUint(buf, 1)
+	}
+	if m.Quiet {
+		buf = codec.AppendUint(buf, keyQuiet)
 		buf = codec.AppendUint(buf, 1)
 	}
 	return buf
@@ -646,6 +663,10 @@ func DecodeMsg(data []byte) (*Msg, error) {
 			var w uint64
 			w, er = d.ReadUint()
 			m.Waiting = w != 0
+		case keyQuiet:
+			var q uint64
+			q, er = d.ReadUint()
+			m.Quiet = q != 0
 		default:
 			er = d.SkipItem()
 		}
