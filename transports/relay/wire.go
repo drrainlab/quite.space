@@ -274,6 +274,13 @@ const (
 	MsgNotify   = 16
 	MsgPing     = 17
 	MsgPong     = 18
+	// MsgPutMany / MsgPutManyOK (1.1.0, LT-4 S6): one body into many
+	// mailboxes in one round trip — Hints (keyHints) instead of Hint,
+	// Expires, Body and Quiet as for MsgPut. All-or-nothing: the relay
+	// stores every copy or refuses the whole thing. A room of four used to
+	// cost a word three round trips on a phone's link; one now.
+	MsgPutMany   = 19
+	MsgPutManyOK = 20
 )
 
 // RelayProtocolVersion is this build's wire protocol generation.

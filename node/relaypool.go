@@ -90,8 +90,11 @@ type relayPeer struct {
 	mu           sync.Mutex
 	failures     int       // consecutive, resets after recovery
 	backoffUntil time.Time // no dial attempts before this
-	attempt      int       // backoff ladder position
-	untrusted    bool      // pin mismatch: no auto-retry, ever
+	// noPutMany: this relay answered PutMany with "unknown message type";
+	// per-hint Puts until then. An hour, then ask again — relays update.
+	noPutMany time.Time
+	attempt   int  // backoff ladder position
+	untrusted bool // pin mismatch: no auto-retry, ever
 	// successStreak gates RECOVERY (RR-6): a relay that failed does not
 	// read healthy again on one lucky round trip — two consecutive
 	// successes clear the ladder.
@@ -542,4 +545,20 @@ func maxTime(a, b time.Time) time.Time {
 		return a
 	}
 	return b
+}
+
+// putManyOK reports whether addr is worth a PutMany right now.
+func (p *relayPool) putManyOK(addr string) bool {
+	pe := p.peer(addr)
+	pe.mu.Lock()
+	defer pe.mu.Unlock()
+	return time.Now().After(pe.noPutMany)
+}
+
+// notePutManyUnknown remembers that addr does not know the verb.
+func (p *relayPool) notePutManyUnknown(addr string) {
+	pe := p.peer(addr)
+	pe.mu.Lock()
+	pe.noPutMany = time.Now().Add(time.Hour)
+	pe.mu.Unlock()
 }

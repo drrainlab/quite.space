@@ -65,6 +65,13 @@ func (r *Runtime) noteSaid(tid id.TerminalID) {
 	r.saidMu.Unlock()
 }
 
+// hasSaid reports whether a word is waiting for the outbox.
+func (r *Runtime) hasSaid() bool {
+	r.saidMu.Lock()
+	defer r.saidMu.Unlock()
+	return len(r.said) > 0
+}
+
 // takeSaid drains the set.
 func (r *Runtime) takeSaid() map[id.TerminalID]struct{} {
 	r.saidMu.Lock()

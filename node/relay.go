@@ -964,30 +964,88 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 	// by the pass (run) and the bulk courier below.
 	put := func(ep string, lane func(string, func(*relay.Client) error) error, jobs []copyJob) (epIDs []id.EventID, accepted []id.DeviceID, d0 uint64, err error) {
 		err = lane(ep, func(client *relay.Client) error {
+			// ONE BODY, MANY MAILBOXES, ONE ROUND TRIP (LT-4 S6). Members of
+			// a room whose cursors agree need the same bytes; they used to
+			// cost one Put each, in series, on a phone's link. Identical
+			// bodies across this endpoint's jobs are laid with PutMany; a
+			// relay that has not learned the verb answers "unknown message
+			// type" once, is remembered for an hour, and gets Puts. A job's
+			// cursor still moves only after EVERY body of its group was
+			// accepted — the grouping changes the wire, not the promise.
+			type copies struct {
+				hints [][]byte
+				loud  bool
+				exp   uint64
+			}
+			order := []string{}
+			byBody := map[string]*copies{}
+			bodyOf := map[string][]byte{}
 			for _, j := range jobs {
 				hint := relay.HintFor(tid, j.dev, bucket)
-				// One mailbox, several items. A Collect drains them all and
-				// the receiver folds each independently, so the only thing
-				// the split costs is wire ops — and the alternative was a
-				// space that stops delivering the day its log outgrows one
-				// item.
 				// Frames ring; a body with no frame in it — media bytes, a
 				// question about media, an "I moved" — is put quietly, so a
 				// doorbell rings only for what a person would be woken for.
 				loud := len(j.g.ids) > 0 && !j.media
 				for _, b := range j.g.bodies {
+					k := "b" + string(b)
+					c := byBody[k]
+					if c == nil {
+						c = &copies{loud: loud, exp: expires}
+						byBody[k] = c
+						bodyOf[k] = b
+						order = append(order, k)
+					}
+					c.hints = append(c.hints, hint)
+				}
+				// A status, on its own clock. The relay forgets it when it
+				// goes stale, which is the whole of what "no custody" was
+				// protecting.
+				for _, b := range j.g.fleet {
+					k := "f" + string(b)
+					c := byBody[k]
+					if c == nil {
+						c = &copies{loud: false, exp: fleetingUntil}
+						byBody[k] = c
+						bodyOf[k] = b
+						order = append(order, k)
+					}
+					c.hints = append(c.hints, hint)
+				}
+			}
+			many := r.pool().putManyOK(ep)
+			for _, k := range order {
+				c, b := byBody[k], bodyOf[k]
+				if many && len(c.hints) > 1 {
+					d, err := client.PutMany(c.hints, c.exp, b, !c.loud)
+					if err == nil {
+						if c.exp == expires {
+							d0 = d
+						}
+						continue
+					}
+					if !relay.IsUnknownMessageType(err) {
+						return err
+					}
+					r.pool().notePutManyUnknown(ep)
+					many = false
+				}
+				for _, h := range c.hints {
 					var d uint64
 					var err error
-					if loud {
-						d, err = client.Put(hint, expires, b)
+					if c.loud {
+						d, err = client.Put(h, c.exp, b)
 					} else {
-						d, err = client.PutQuiet(hint, expires, b)
+						d, err = client.PutQuiet(h, c.exp, b)
 					}
 					if err != nil {
 						return err
 					}
-					d0 = d
+					if c.exp == expires {
+						d0 = d
+					}
 				}
+			}
+			for _, j := range jobs {
 				if delta && !j.media {
 					// Only here, after EVERY body of this mailbox's group
 					// was accepted: the cursor never moves ahead of the
@@ -998,14 +1056,6 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 				}
 				epIDs = append(epIDs, j.g.ids...)
 				accepted = append(accepted, j.dev)
-				// A status, on its own clock. The relay forgets it when it
-				// goes stale, which is the whole of what "no custody" was
-				// protecting.
-				for _, b := range j.g.fleet {
-					if _, err := client.PutQuiet(hint, fleetingUntil, b); err != nil {
-						return err
-					}
-				}
 			}
 			return nil
 		})

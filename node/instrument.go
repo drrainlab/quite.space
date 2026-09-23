@@ -155,6 +155,9 @@ func (r *Runtime) AttachSimulatedInstrument(space id.TerminalID, label string, s
 	r.instruments[part.TerminalID] = ir
 	r.mu.Unlock()
 	r.startSimulator(ir)
+	// A local frame is a word for the outbox's purposes (1.1.0: the sync
+	// kick no longer wakes the outbox on its own).
+	r.noteSaid(space)
 	r.kickRelaySync()
 	return part.TerminalID, nil
 }
@@ -517,6 +520,7 @@ func (r *Runtime) AttachInstrumentByEnrollment(space id.TerminalID, enrollBytes 
 	if err != nil {
 		return nil, id.TerminalID{}, err
 	}
+	r.noteSaid(space)
 	r.kickRelaySync()
 	return provision, e.Terminal, nil
 }
@@ -608,6 +612,9 @@ func (r *Runtime) ingestInstrumentFrames(space, instrumentID id.TerminalID, fram
 		return nil
 	})
 	if err == nil && applied > 0 {
+		// The readings just written here are this node's to push: note
+		// the space so the outbox carries them at once.
+		r.noteSaid(space)
 		r.kickRelaySync()
 	}
 	return applied, err

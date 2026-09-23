@@ -111,6 +111,51 @@ func (s *Store) Put(it Item) bool {
 	return true
 }
 
+// PutMany stores one body under several hints, all or nothing: every
+// mailbox's quota is checked before any is touched, so a refusal leaves
+// the store exactly as it was. Identical retries dedup per mailbox as Put
+// does. Reports how many hints actually gained a copy (the rest already
+// held the bytes).
+func (s *Store) PutMany(hints []string, expires uint64, body []byte, quiet bool) (ok bool, fresh int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := len(body)
+	if n == 0 || n > s.maxItemSize || len(hints) == 0 {
+		return false, 0
+	}
+	var need []string
+	seen := map[string]bool{}
+	for _, h := range hints {
+		if seen[h] {
+			continue
+		}
+		seen[h] = true
+		dup := false
+		for _, held := range s.items[h] {
+			if bytes.Equal(held.Ciphertext, body) {
+				dup = true
+				break
+			}
+		}
+		if dup {
+			continue
+		}
+		if len(s.items[h]) >= s.maxPerHint || s.perHintBytes[h]+n > s.maxPerHintBytes {
+			return false, 0
+		}
+		need = append(need, h)
+	}
+	if s.total+len(need) > s.maxTotal || s.totalBytes+int64(n)*int64(len(need)) > s.maxTotalBytes {
+		return false, 0
+	}
+	for _, h := range need {
+		s.items[h] = append(s.items[h], Item{DestinationHint: h, ExpiresAt: expires, Ciphertext: body, Quiet: quiet})
+		s.total++
+		s.addLocked(h, n)
+	}
+	return true, len(need)
+}
+
 // Replace ATOMICALLY swaps everything under the item's hint with this one
 // item (I5): validation happens before any mutation, so a refused Replace
 // leaves the previous mailbox untouched, and no reader can observe a

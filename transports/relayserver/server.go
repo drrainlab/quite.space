@@ -334,6 +334,10 @@ type connState struct {
 
 // spend counts one use in a one-minute window and reports whether the
 // caller is still inside its budget.
+// maxPutManyHints bounds one PutMany: a room's members at one relay, not a
+// broadcast list.
+const maxPutManyHints = 64
+
 func spend(count *int, window *time.Time, limit int) bool {
 	now := time.Now()
 	if window.IsZero() || now.Sub(*window) > time.Minute {
@@ -471,6 +475,49 @@ func (s *Server) handle(m *relay.Msg, cs *connState) *relay.Msg {
 		// The receipt proves exactly accepted_by_relay and nothing more
 		// (ADR-008): the expiry is echoed so the sender knows the deadline.
 		return &relay.Msg{Type: relay.MsgPutOK, Expires: expires}
+	case relay.MsgPutMany:
+		// One body, many mailboxes, one round trip (1.1.0). Every hint must
+		// be well-formed, the count bounded like a collect's, and each copy
+		// is a write against the same budget a Put would spend.
+		if len(m.Hints) == 0 || len(m.Hints) > maxPutManyHints || len(m.Body) == 0 {
+			return &relay.Msg{Type: relay.MsgError, Reason: "malformed put"}
+		}
+		hints := make([]string, 0, len(m.Hints))
+		for _, h := range m.Hints {
+			if len(h) != relay.HintLen {
+				return &relay.Msg{Type: relay.MsgError, Reason: "malformed put"}
+			}
+			hints = append(hints, string(h))
+		}
+		for range hints {
+			if !spend(&cs.writes, &cs.writeWindow, s.limits.writeRatePerMin()) {
+				s.st.rateLimited.Add(1)
+				return &relay.Msg{Type: relay.MsgError, Reason: relay.ReasonRateLimited,
+					RetryAfterMs: retryAfter(cs.writeWindow)}
+			}
+		}
+		expires := m.Expires
+		maxExpiry := now + uint64(s.limits.MaxTTL/time.Second)
+		if expires == 0 || expires > maxExpiry {
+			expires = maxExpiry
+		}
+		ok, fresh := s.store.PutMany(hints, expires, m.Body, m.Quiet)
+		if !ok {
+			return &relay.Msg{Type: relay.MsgError, Reason: relay.ReasonQuotaExceeded}
+		}
+		s.st.puts.Add(uint64(len(hints)))
+		s.st.putMany.Add(1)
+		if m.Quiet {
+			s.st.quietPuts.Add(uint64(len(hints)))
+		}
+		s.st.bytesStored.Add(uint64(len(m.Body) * fresh))
+		for _, h := range hints {
+			parked := s.notifyListeners(h) > 0
+			if !m.Quiet {
+				s.pushRegs().ring(h, parked)
+			}
+		}
+		return &relay.Msg{Type: relay.MsgPutManyOK, Expires: expires}
 	case relay.MsgCollect:
 		// PH-1: knowing a hint is no longer enough to empty a mailbox. Refuse
 		// loudly rather than answering "nothing here" — an empty drain and a

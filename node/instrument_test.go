@@ -90,10 +90,23 @@ func TestTheGreenhouseReachesEveryMember(t *testing.T) {
 
 	// Across the relay: owner pushes, guest pulls, the guest's reducer
 	// holds the exact deterministic values.
+	// The reading leaves on the OUTBOX the moment it is written (1.1.0: a
+	// local frame is a word to the outbox), racing this cycle; the guest
+	// pulls until it is there rather than assuming the cycle carried it.
 	owner.relaySyncOnce(addr)
-	if _, err := guest.PullFromRelay(addr); err != nil {
-		t.Fatal(err)
-	}
+	waitUntil(t, 10*time.Second, "the guest never received the temperature", func() bool {
+		_, _ = guest.PullFromRelay(addr)
+		got := false
+		_ = guest.withSpace(tid, func(st *spaceState) error {
+			for k := range st.space.State.ValueObservations() {
+				if k.Instrument == iid && k.Channel == "temperature" {
+					got = true
+				}
+			}
+			return nil
+		})
+		return got
+	})
 	tempDeci, humidDeci, door, light := simValues(1, 1)
 	if err := guest.withSpace(tid, func(st *spaceState) error {
 		vos := st.space.State.ValueObservations()

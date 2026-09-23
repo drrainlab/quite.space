@@ -10,6 +10,7 @@ package relay
 import (
 	"errors"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -248,6 +249,31 @@ func (c *Client) Put(hint []byte, expiresAt uint64, body []byte) (uint64, error)
 // waiting for a park (keyQuiet). An older relay ignores the key.
 func (c *Client) PutQuiet(hint []byte, expiresAt uint64, body []byte) (uint64, error) {
 	return c.put(hint, expiresAt, body, true)
+}
+
+// PutMany lays one body into several mailboxes in one round trip
+// (MsgPutMany). All or nothing: a refusal for any mailbox refuses them
+// all. An older relay answers "unknown message type" (an ErrRelay); the
+// caller falls back to Put per hint and remembers.
+func (c *Client) PutMany(hints [][]byte, expiresAt uint64, body []byte, quiet bool) (uint64, error) {
+	reply, err := c.roundTrip(&Msg{Type: MsgPutMany, Hints: hints, Expires: expiresAt, Body: body, Quiet: quiet}, putTimeout(len(body)*len(hints)))
+	if err != nil {
+		return 0, err
+	}
+	if reply.Type != MsgPutManyOK {
+		return 0, errors.New("relay: unexpected reply")
+	}
+	return reply.Expires, nil
+}
+
+// IsUnknownMessageType reports the answer an older relay gives a verb it
+// has not learned — the signal to fall back and remember.
+func IsUnknownMessageType(err error) bool {
+	var re ErrRelay
+	if errors.As(err, &re) {
+		return re.Reason == "unknown message type"
+	}
+	return err != nil && strings.Contains(err.Error(), "unknown message type")
 }
 
 func (c *Client) put(hint []byte, expiresAt uint64, body []byte, quiet bool) (uint64, error) {

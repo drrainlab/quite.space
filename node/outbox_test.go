@@ -293,6 +293,11 @@ func TestThePersonalPullRunsBeforeThePush(t *testing.T) {
 	alice, bob, tid := pairOnRelay(t, addr)
 	defer alice.Close()
 	defer bob.Close()
+	// The background loop is switched off: its cycles would interleave
+	// their probes with the one run here, and "the last four" would be two
+	// cycles' halves (seen once in a full run as push-pull-public-historical).
+	// Not held with beforeCycle — relaySyncOnce runs that hook too.
+	alice.applyRelaySync("", 0)
 	var mu sync.Mutex
 	var phases []string
 	rs := alice.relaySync
@@ -472,4 +477,58 @@ func TestAWordDoesNotWaitBehindAPhoto(t *testing.T) {
 		return err == nil && st.State == assets.StateComplete
 	})
 	t.Logf("card in %v, word in %v, with a 1 MB photo held on the bulk lane", cardIn, took)
+}
+
+// LT-4 S6 (1.1.0). A word for a room of four is one PutMany per body at the
+// relay they share, not three Puts in series: the relay counts the round
+// trip, and every member still holds one copy.
+func TestARoomOfFourIsOnePutManyPerBody(t *testing.T) {
+	srv, addr := startRelay(t)
+	defer srv.Close()
+	open := func(name string) *Runtime {
+		rt := openRuntime(t, t.TempDir(), name)
+		t.Cleanup(func() { rt.Close() })
+		setPersonalRelay(t, rt, addr)
+		return rt
+	}
+	alice := open("alice")
+	guests := []*Runtime{open("bob"), open("carol"), open("dave")}
+	tid, err := alice.CreateSpace("вчетвером")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, g := range guests {
+		pass, err := alice.MintPass(tid, 1, 1, addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req, err := g.JoinByPass(pass.Link)
+		if err != nil {
+			t.Fatal(err)
+		}
+		waitJoin(t, g, req, JoinReady)
+	}
+	if _, err := alice.Say(tid, "все здесь?", SayOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, g := range guests {
+		g := g
+		waitUntil(t, 30*time.Second, "a guest never got the first word", func() bool {
+			return countMsg(t, g, tid, "все здесь?") >= 1
+		})
+	}
+	time.Sleep(4 * cadence)
+	before := srv.StatusSnapshot("", "").Traffic.PutManyTotal
+	if _, err := alice.Say(tid, "одним заходом", SayOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, g := range guests {
+		g := g
+		waitUntil(t, 30*time.Second, "a guest never got the word", func() bool {
+			return countMsg(t, g, tid, "одним заходом") >= 1
+		})
+	}
+	if got := srv.StatusSnapshot("", "").Traffic.PutManyTotal; got == before {
+		t.Fatal("three members at one relay were served with three Puts, not one PutMany")
+	}
 }

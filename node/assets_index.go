@@ -568,9 +568,18 @@ func (r *Runtime) kickRelaySync() {
 	case r.syncKick <- struct{}{}:
 	default:
 	}
-	// Whatever woke the loop may have something to send; the outbox
-	// pushes it at once instead of behind the cycle's reading (LT-3).
-	r.kickOutbox()
+	// The outbox is woken only when a WORD is waiting (LT-4, 1.1.0). This
+	// used to kick it unconditionally — "whatever woke the loop may have
+	// something to send" — and a kick with nothing said walks every space.
+	// Every ring and every successful dial (relayReachable) comes through
+	// here, so on the owner's phone the cycle's own dials fed a full
+	// 26-space outbox pass every two or three seconds, all day, for
+	// nothing. A word kicks the outbox itself (noteSaid + kickOutbox); the
+	// return to the foreground and a media want kick it directly; a failed
+	// pass has its own retry clock.
+	if r.hasSaid() {
+		r.kickOutbox()
+	}
 }
 
 // noSourceAfter is how long a fetch may find nothing before the interface

@@ -823,7 +823,12 @@ class RuntimeController private constructor(appContext: Context) {
                     }
                 }
             } else {
-                if (PassphraseVault(app).has()) armUnlockRetry()
+                // Said in the log, because a tester's phone showed the nudge
+                // with "Keep receiving" on: WHICH copy is missing decides the
+                // fix, and the nudge itself names nothing on purpose.
+                val v = PassphraseVault(app)
+                Log.w(TAG, "doorbell: no readable passphrase copy (stored=${v.has()} receiveWhileLocked=${v.receiveWhileLocked()}) — nudging")
+                if (v.has()) armUnlockRetry()
                 doorbellNudge()
             }
         }
