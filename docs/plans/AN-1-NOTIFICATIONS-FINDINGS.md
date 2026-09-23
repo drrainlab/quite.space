@@ -347,3 +347,15 @@ Debt noted: a node opened by the doorbell (the FCM ring three seconds
 before the owner tapped the icon) does not start the host's ten-minute
 log tail, so `outbox: pass` lines were not in logcat for rc15; the node's
 own file has them. The host should start the tail on any open.
+
+Morning of 2026-09-23, 1.0.26 on the owner's phone: two screenshots to a
+friend, then "ordinary messages feel slow". The node log: the photos' card
+went to the courier for seven mailboxes (a device guessed at three
+official relays, plus own devices) — two screenshots, about fourteen
+megabytes up a mobile link — and the word's own pass in that room ended
+"sending history". Empty passes (nothing to put) took 10–58 s with no
+phase named. Fixed as LT-4 S1c: media bytes are their own channel (never
+in a frame's bundle, never to a guessed mailbox, on the bulk lane under
+their own claim), blobs are read only when something is sent, and the
+pass line now says where its time went (lock / prep / plan / send). The
+58 s is still unexplained until the next log with phases.

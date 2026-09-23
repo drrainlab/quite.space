@@ -272,6 +272,9 @@ type Runtime struct {
 	bulkMu       sync.Mutex
 	bulkInFlight map[offerKey]struct{}
 	bulkFailLog  map[string]time.Time
+	// Where an outbox pass's time went, in nanoseconds, reset per pass
+	// (node/relay.go deliverSpaceRouted, node/outbox.go).
+	outboxPhaseLock, outboxPhasePrep, outboxPhasePlan, outboxPhaseSend atomic.Int64
 	// backgrounded is 1 while no person is looking (node/foreground.go).
 	// An atomic rather than a field under r.mu: read on every loop tick,
 	// including ticks that deliberately avoid the runtime lock.

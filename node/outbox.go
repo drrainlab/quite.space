@@ -26,6 +26,7 @@ import (
 	"log"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/drrainlab/quiet_places/protocol/id"
@@ -171,7 +172,12 @@ func (r *Runtime) runOutbox(addr string, stop chan struct{}) {
 		spaces := r.outboxSpaces()
 		t0 := time.Now()
 		e0, b0 := r.outboxExpress.Load(), r.outboxBulk.Load()
+		r.outboxPhaseLock.Store(0)
+		r.outboxPhasePrep.Store(0)
+		r.outboxPhasePlan.Store(0)
+		r.outboxPhaseSend.Store(0)
 		pushed, failed, held := r.pushSpacesVia(addr, spaces, true)
+		ms := func(a *atomic.Int64) time.Duration { return time.Duration(a.Load()).Round(time.Millisecond) }
 		pass := outboxPass{at: time.Now(), took: time.Since(t0), spaces: len(spaces), pushed: pushed,
 			held: len(held), express: int(r.outboxExpress.Load() - e0), bulk: int(r.outboxBulk.Load() - b0),
 			lastErr: failed}
@@ -183,8 +189,9 @@ func (r *Runtime) runOutbox(addr string, stop chan struct{}) {
 		r.outboxMu2.Unlock()
 		// One line per pass, always: how long a word took to leave is the
 		// number this file exists for. Counts and a duration; no space.
-		log.Printf("outbox: pass spaces=%d pushed=%d express=%d bulk=%d held=%d failed=%q took=%s",
-			len(spaces), pushed, pass.express, pass.bulk, len(held), failed, pass.took.Round(time.Millisecond))
+		log.Printf("outbox: pass spaces=%d pushed=%d express=%d bulk=%d held=%d failed=%q took=%s (lock=%s prep=%s plan=%s send=%s)",
+			len(spaces), pushed, pass.express, pass.bulk, len(held), failed, pass.took.Round(time.Millisecond),
+			ms(&r.outboxPhaseLock), ms(&r.outboxPhasePrep), ms(&r.outboxPhasePlan), ms(&r.outboxPhaseSend))
 		if failed == "" {
 			if len(held) > 0 && time.Since(lastHeldLog) > time.Minute {
 				// A hold is not a failure, and it is also not nothing: a

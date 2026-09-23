@@ -181,13 +181,16 @@ func (r *Runtime) DisarmRideAhead(space id.TerminalID, ref *schemas.AssetRef) {
 // allowed — lazy retrieval completes them later.
 //
 // Caller holds r.mu (it reads the asset index and the ride-ahead set).
-func (r *Runtime) collectBlobs(space id.TerminalID, policy AssetPolicy, budget int) ([][]byte, ExportReport) {
-	rep := ExportReport{}
+//
+// Two lists come back (LT-4 S1c): the MANIFESTS, small and part of what a
+// frame means, travel with the frames; the MEDIA bytes — ride-ahead chunks,
+// or everything on the manual whole-log verb — are their own channel and
+// never decide a frame's lane.
+func (r *Runtime) collectBlobs(space id.TerminalID, policy AssetPolicy, budget int) (manifests, media [][]byte, rep ExportReport) {
 	if policy == AssetsNone {
-		return nil, rep
+		return nil, nil, rep
 	}
-	var blobs [][]byte
-	add := func(h id.Hash) bool {
+	add := func(into *[][]byte, h id.Hash) bool {
 		data, err := r.root.GetBlob(h)
 		if err != nil {
 			return false
@@ -196,7 +199,7 @@ func (r *Runtime) collectBlobs(space id.TerminalID, policy AssetPolicy, budget i
 			rep.Truncated = true
 			return false
 		}
-		blobs = append(blobs, data)
+		*into = append(*into, data)
 		rep.Blobs++
 		rep.BlobBytes += len(data)
 		return true
@@ -210,7 +213,7 @@ func (r *Runtime) collectBlobs(space id.TerminalID, policy AssetPolicy, budget i
 		ref := r.assetIdx.refs[key]
 		complete := true
 		if ref.ManifestWireID != nil {
-			if !add(*ref.ManifestWireID) {
+			if !add(&manifests, *ref.ManifestWireID) {
 				complete = false
 			}
 		}
@@ -226,7 +229,7 @@ func (r *Runtime) collectBlobs(space id.TerminalID, policy AssetPolicy, budget i
 				}
 			}
 			for _, c := range chunks {
-				if !add(c) {
+				if !add(&media, c) {
 					complete = false
 				}
 			}
@@ -239,7 +242,7 @@ func (r *Runtime) collectBlobs(space id.TerminalID, policy AssetPolicy, budget i
 			rep.PartialAssets++
 		}
 	}
-	return blobs, rep
+	return manifests, media, rep
 }
 
 // PushToRelay is the MANUAL full dead-drop (the "push current space"
@@ -429,7 +432,28 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 	// ingress from this node's own past (a bench, a laptop's local relay)
 	// is nobody's route (LT-4 S2). Both resolvers take r.mu — hence here.
 	ownIngress := advertisable(r.SelfIngressRoutes(), r.ownWorld())
+	// Where a pass's seconds go (LT-4 S7): the wait for r.mu, the
+	// preparation under it, the planning, the sending. Accumulated per
+	// outbox pass, printed on its line — a pass that put nothing and took
+	// 58 s on the owner's phone had no other way to say which.
+	phase0 := time.Now()
+	var phaseLock, phasePrep, phasePlan time.Time
+	defer func() {
+		if !viaOutbox || phaseLock.IsZero() {
+			return
+		}
+		end := time.Now()
+		r.outboxPhaseLock.Add(int64(phaseLock.Sub(phase0)))
+		if !phasePrep.IsZero() {
+			r.outboxPhasePrep.Add(int64(phasePrep.Sub(phaseLock)))
+		}
+		if !phasePlan.IsZero() {
+			r.outboxPhasePlan.Add(int64(phasePlan.Sub(phasePrep)))
+			r.outboxPhaseSend.Add(int64(end.Sub(phasePlan)))
+		}
+	}()
 	r.mu.Lock()
+	phaseLock = time.Now()
 	st, ok := r.spaces[tid]
 	if !ok {
 		r.mu.Unlock()
@@ -607,7 +631,21 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 			devSet[dev] = struct{}{}
 		}
 	}
-	blobs, _ := r.collectBlobs(tid, policy, DefaultBundleBudget)
+	// THE BLOBS ARE READ WHEN SOMETHING IS SENT, not on every pass. Every
+	// manifest of every asset of the space came off the disk under r.mu on
+	// every pass, twenty-six spaces every few seconds on the owner's phone,
+	// for passes that then put nothing. And the ride-ahead set is consumed
+	// by the pass that actually carries frames, which is what "one shot"
+	// meant. bodiesFor loads them the first time a recipient needs bodies.
+	var blobsOnce sync.Once
+	var manifests, media [][]byte
+	loadBlobs := func() {
+		blobsOnce.Do(func() {
+			r.mu.Lock()
+			manifests, media, _ = r.collectBlobs(tid, policy, DefaultBundleBudget)
+			r.mu.Unlock()
+		})
+	}
 	// Ride an outstanding media request (if any) on the same bundle: wants =
 	// blob hashes we are missing, wanter = our device so a holder knows which
 	// inbox to answer into. Empty when nothing is pending (a plain bundle).
@@ -695,9 +733,20 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 				ids = append(ids, eventIDs[i])
 			}
 		}
-		var b [][]byte
+		var b, mediaB [][]byte
 		if len(sel) > 0 {
-			b, _ = splitBundles(tid, sel, blobs, wants, wanter, replyBox, returnRoutes)
+			loadBlobs()
+			b, _ = splitBundles(tid, sel, manifests, wants, wanter, replyBox, returnRoutes)
+			if len(media) > 0 {
+				// MEDIA IS ITS OWN CHANNEL (LT-4 S1c). The photo's bytes used
+				// to ride in the frame's bundles, so a 400-byte word next to
+				// a 2 MB screenshot was a 2 MB delta: bulk, the courier, a
+				// claimed mailbox — and the next word to that person waited
+				// for the upload (owner's phone, 2026-09-23 11:31, "доставка
+				// обычных сообщений тупит"). The bytes now go apart, on the
+				// bulk lane under their own claim; the frames ride express.
+				mediaB, _ = splitBundles(tid, nil, media, nil, nil, nil, nil)
+			}
 		} else if len(wants) > 0 || (announce && len(ownIngress) > 0) {
 			// Nothing new to say, something to ask — or something to
 			// STATE: "I moved" is a frameless bundle whose only cargo is
@@ -733,7 +782,7 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 		if len(fl) > 0 {
 			fleet, _ = splitBundles(tid, fl, nil, nil, nil, nil, nil)
 		}
-		g := offerGroup{b, ids, fleet}
+		g := offerGroup{b, ids, fleet, mediaB}
 		groups[key] = g
 		return g
 	}
@@ -773,6 +822,7 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 		recipients = append(recipients, dev)
 	}
 	r.mu.Unlock()
+	phasePrep = time.Now()
 
 	if len(recipients) == 0 {
 		// Nobody addressable yet (solo space, or a fresh joiner before its
@@ -928,10 +978,12 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 					}
 					d0 = d
 				}
-				if delta {
+				if delta && !j.media {
 					// Only here, after EVERY body of this mailbox's group
 					// was accepted: the cursor never moves ahead of the
-					// relay's word (LT-4 S5).
+					// relay's word (LT-4 S5). Media bodies say nothing
+					// about the cursor — ride-ahead is a courtesy the
+					// on-demand path backs.
 					r.markOffered(tid, j.dev, ep, guessed[j.dev], legacyRoute[j.dev], j.from, logN)
 				}
 				epIDs = append(epIDs, j.g.ids...)
@@ -975,8 +1027,11 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 	}
 	inflight := 0
 	var claimed []offerKey // the cycle's own bulk claims, released after the wait
+	mediaJobs := map[string][]copyJob{}
+	mediaKeys := map[string][]offerKey{}
 	for _, ep := range eps {
 		var expressJobs, bulkJobs, courierJobs []copyJob
+		var courierKeys []offerKey
 		for _, dev := range byEndpoint[ep] {
 			from := 0
 			if delta {
@@ -996,16 +1051,38 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 				pushMu.Unlock()
 				continue
 			}
+			if len(g.media) > 0 && !guessed[dev] {
+				// The media channel: the bytes, apart from the frames, on
+				// the bulk lane under their own claim, AFTER the frames
+				// were accepted (the second stage below) — the receiver's
+				// gate refuses a blob nothing it holds refers to, so bytes
+				// that overtook their card were thrown away. NEVER ON A
+				// GUESS: a live device with no stated route is guessed at
+				// every official relay, and two screenshots to one person
+				// became seven mailboxes and fourteen megabytes up a
+				// phone's link, with every word behind them (owner's
+				// phone, 2026-09-23 11:31). The frames go to the guesses;
+				// the bytes wait for a stated route or the on-demand ask.
+				mk := offerKey{tid, dev, ep + "|media"}
+				if !delta || r.bulkClaim(mk) {
+					mediaJobs[ep] = append(mediaJobs[ep], copyJob{dev, from, offerGroup{bodies: g.media}, true})
+					if delta {
+						mediaKeys[ep] = append(mediaKeys[ep], mk)
+					}
+				} else {
+					inflight++ // this mailbox's bytes are already on their way
+				}
+			}
 			size := 0
 			for _, b := range g.bodies {
 				size += len(b)
 			}
 			if size < bulkThreshold {
-				expressJobs = append(expressJobs, copyJob{dev, from, g})
+				expressJobs = append(expressJobs, copyJob{dev, from, g, false})
 				continue
 			}
 			if !delta {
-				bulkJobs = append(bulkJobs, copyJob{dev, from, g}) // the manual whole-log verb waits
+				bulkJobs = append(bulkJobs, copyJob{dev, from, g, false}) // the manual whole-log verb waits
 				continue
 			}
 			// A HISTORY GOES TO THE COURIER (LT-4 S1b) when a WORD is being
@@ -1024,10 +1101,11 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 				continue
 			}
 			if viaOutbox {
-				courierJobs = append(courierJobs, copyJob{dev, from, g})
+				courierJobs = append(courierJobs, copyJob{dev, from, g, false})
+				courierKeys = append(courierKeys, offerKey{tid, dev, ep})
 			} else {
 				claimed = append(claimed, offerKey{tid, dev, ep})
-				bulkJobs = append(bulkJobs, copyJob{dev, from, g})
+				bulkJobs = append(bulkJobs, copyJob{dev, from, g, false})
 			}
 		}
 		// EVERY ENDPOINT AT ONCE (LT-1), and within an endpoint the express
@@ -1050,11 +1128,56 @@ func (r *Runtime) deliverSpaceRouted(tid id.TerminalID, policy AssetPolicy,
 			}
 			inflight += len(courierJobs)
 			r.wg.Add(1)
-			go r.courier(tid, ep, courierJobs, put, ownSeq)
+			go r.courier(tid, ep, courierJobs, courierKeys, put, ownSeq)
 		}
 	}
+	phasePlan = time.Now()
 	pushWG.Wait()
 	r.bulkRelease(claimed)
+	// THE MEDIA STAGE: the bytes follow the frames, never overtake them.
+	// Only to a recipient whose frames this pass got accepted (or who
+	// needed none); a recipient whose history is still on the courier
+	// gets its bytes on demand instead. When a word is being sent the
+	// bytes go to the courier; the cycle and the manual verb wait.
+	for _, ep := range eps {
+		jobs, keys := mediaJobs[ep], mediaKeys[ep]
+		if len(jobs) == 0 {
+			continue
+		}
+		var send []copyJob
+		var sendKeys, drop []offerKey
+		pushMu.Lock()
+		for i, j := range jobs {
+			var k offerKey
+			if i < len(keys) {
+				k = keys[i]
+			}
+			if _, ok := acceptedDevs[j.dev]; ok {
+				send = append(send, j)
+				if i < len(keys) {
+					sendKeys = append(sendKeys, k)
+				}
+			} else if i < len(keys) {
+				drop = append(drop, k)
+			}
+		}
+		pushMu.Unlock()
+		r.bulkRelease(drop)
+		if len(send) == 0 {
+			continue
+		}
+		if delta && viaOutbox {
+			r.outboxBulk.Add(int64(len(send)))
+			inflight += len(send)
+			r.wg.Add(1)
+			go r.courier(tid, ep, send, sendKeys, put, ownSeq)
+			continue
+		}
+		pushWG.Add(1)
+		go run(ep, r.withRelayBulk, send)
+		pushWG.Wait()
+		r.bulkRelease(sendKeys)
+	}
 	// Each device counted once, whichever of its endpoints accepted.
 	relayReached, relayTentative := 0, 0
 	for dev := range acceptedDevs {
@@ -1101,14 +1224,17 @@ type offerGroup struct {
 	bodies [][]byte
 	ids    []id.EventID
 	fleet  [][]byte // the fleeting frames this cursor has not been offered, bundled apart
+	media  [][]byte // the media bytes riding ahead, bundled apart: their own channel
 }
 
 // copyJob is one recipient's copy at one endpoint: its cursor and its
-// bodies, decided BEFORE any lane is taken.
+// bodies, decided BEFORE any lane is taken. A media job carries bytes
+// only and never moves the cursor.
 type copyJob struct {
-	dev  id.DeviceID
-	from int
-	g    offerGroup
+	dev   id.DeviceID
+	from  int
+	g     offerGroup
+	media bool
 }
 
 // noteRelayAccepted records, for every own frame a relay just took, the
@@ -1149,12 +1275,8 @@ func (r *Runtime) noteRelayAccepted(tid id.TerminalID, sentIDs map[id.EventID]st
 // cursor moved inside put, the timeline and the receipt level here; a
 // failure releases the claim and the next pass or cycle offers again (the
 // lane's breaker keeps that cheap while the relay is cooling down).
-func (r *Runtime) courier(tid id.TerminalID, ep string, jobs []copyJob, put func(string, func(string, func(*relay.Client) error) error, []copyJob) ([]id.EventID, []id.DeviceID, uint64, error), ownSeq map[id.EventID]uint64) {
+func (r *Runtime) courier(tid id.TerminalID, ep string, jobs []copyJob, keys []offerKey, put func(string, func(string, func(*relay.Client) error) error, []copyJob) ([]id.EventID, []id.DeviceID, uint64, error), ownSeq map[id.EventID]uint64) {
 	defer r.wg.Done()
-	keys := make([]offerKey, 0, len(jobs))
-	for _, j := range jobs {
-		keys = append(keys, offerKey{tid, j.dev, ep})
-	}
 	defer r.bulkRelease(keys)
 	if r.stopped() {
 		return

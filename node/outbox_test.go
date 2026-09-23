@@ -5,12 +5,17 @@ package node
 // cycle re-arms sooner than the next tick.
 
 import (
+	"bytes"
+	"crypto/rand"
 	"fmt"
-	"github.com/drrainlab/quiet_places/protocol/id"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/drrainlab/quiet_places/kernel/assets"
+	"github.com/drrainlab/quiet_places/protocol/id"
+	"github.com/drrainlab/quiet_places/protocol/schemas"
 )
 
 func TestAWordLeavesWhileTheCycleIsBusy(t *testing.T) {
@@ -392,4 +397,79 @@ func TestAnotherSpacesHistoryDoesNotHoldTheWord(t *testing.T) {
 		return alice.bulkInFlightCount() == 0
 	})
 	t.Logf("the small room's word in %v while the big room's history was held", took)
+}
+
+// LT-4 S1c. A photo's bytes are their own channel: the word said right
+// after a screenshot — and the screenshot's own card — reach the other
+// phone on the express lane while the bytes are still on the bulk lane.
+// Pinned by holding the bulk lane shut: the card and the word must arrive
+// anyway; the bytes must not have; the bytes arrive once the lane is free.
+func TestAWordDoesNotWaitBehindAPhoto(t *testing.T) {
+	srv, addr := startRelay(t)
+	defer srv.Close()
+	alice, bob, tid := pairOnRelay(t, addr)
+	defer alice.Close()
+	defer bob.Close()
+	release := make(chan struct{})
+	defer close(release)
+	rs := alice.relaySync
+	rs.mu.Lock()
+	rs.beforeCycle = func() { <-release }
+	rs.mu.Unlock()
+	time.Sleep(4 * cadence)
+
+	payload := make([]byte, 1<<20)
+	if _, err := rand.Read(payload); err != nil {
+		t.Fatal(err)
+	}
+	ref, err := alice.IngestAsset(bytes.NewReader(payload), int64(len(payload)),
+		assets.Metadata{MediaType: "image/jpeg", Role: "original"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, releaseBulkOnce, err := alice.pool().Bulk(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Released on every exit: a held lane would otherwise hold the courier,
+	// and Close would wait for it.
+	var bulkOnce sync.Once
+	releaseBulk := func(e error) { bulkOnce.Do(func() { releaseBulkOnce(e) }) }
+	defer releaseBulk(nil)
+	alice.RideAhead(tid, ref)
+	body, err := (&schemas.FileBlock{Filename: "screen.jpg",
+		MediaType: "image/jpeg", Size: uint64(len(payload)), Original: ref}).Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	if _, err := alice.EmitBlock(tid, schemas.BlockFile, body); err != nil {
+		t.Fatal(err)
+	}
+	aid := ref.PublicIDHex()
+	// THE CARD FIRST. The frames are one channel, the bytes another:
+	// before this the card rode inside the bytes' bundles and reached the
+	// other phone only when the upload did.
+	waitUntil(t, 5*time.Second, "the photo's card waited behind its bytes", func() bool {
+		_, err := bob.AssetStatus(tid, aid)
+		return err == nil
+	})
+	cardIn := time.Since(start)
+	if st, err := bob.AssetStatus(tid, aid); err == nil && st.State == assets.StateComplete {
+		t.Fatal("the bytes arrived while the bulk lane was held — they did not ride the media channel")
+	}
+	if _, err := alice.Say(tid, "а это сразу после фото", SayOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, 5*time.Second, "the word waited behind the photo's bytes", func() bool {
+		return countMsg(t, bob, tid, "а это сразу после фото") >= 1
+	})
+	took := time.Since(start)
+	releaseBulk(nil)
+	waitUntil(t, 60*time.Second, "the bytes never arrived once the lane was free", func() bool {
+		_, _ = bob.PullFromRelay(addr)
+		st, err := bob.AssetStatus(tid, aid)
+		return err == nil && st.State == assets.StateComplete
+	})
+	t.Logf("card in %v, word in %v, with a 1 MB photo held on the bulk lane", cardIn, took)
 }
