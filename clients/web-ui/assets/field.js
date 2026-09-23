@@ -128,7 +128,7 @@ function fieldBuild(box) {
     if (bcb.checked && !localStorage.getItem(FIELD_BASEMAP_ASKED)) {
       let server = '';
       try { server = (await api('/api/settings')).tiles.server; } catch { /* name it generically */ }
-      const ok = confirm(t('field.basemap_consent', { server: server || 'the tile server' }));
+      const ok = await askConfirm(t('field.basemap_consent', { server: server || 'the tile server' }));
       if (!ok) { bcb.checked = false; return; }
       localStorage.setItem(FIELD_BASEMAP_ASKED, '1');
     }
@@ -188,8 +188,8 @@ function fieldBuild(box) {
   const sos = document.createElement('button');
   sos.className = 'field-sos';
   sos.textContent = '🆘 SOS';
-  sos.onclick = () => {
-    if (confirm(t('field.sos_confirm'))) fieldCheckin(true);
+  sos.onclick = async () => {
+    if (await askConfirm(t('field.sos_confirm'), { ok: '🆘 SOS' })) fieldCheckin(true);
   };
   bar.appendChild(sos);
   box.appendChild(bar);

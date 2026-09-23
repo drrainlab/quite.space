@@ -440,11 +440,11 @@ const NAV = (() => {
     paintAll(); save();
   }
 
-  function deleteGroup(gid) {
+  async function deleteGroup(gid) {
     const g = state.groups.find(x => x.id === gid);
     if (!g) return;
     // Say what is actually being destroyed: the list, not the rooms.
-    if (!confirm(t('nav.group.delete_confirm', { title: g.title }))) return;
+    if (!await askConfirm(t('nav.group.delete_confirm', { title: g.title }))) return;
     state.groups = state.groups.filter(x => x.id !== gid);
     paintAll(); save();
   }

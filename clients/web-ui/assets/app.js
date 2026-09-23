@@ -672,6 +672,47 @@ async function renderRelayDiagnostics() {
   box.replaceChildren(frag);
 }
 
+// askConfirm is the ONE confirmation in this app: a sheet in the page,
+// two buttons, a promise. Never the native confirm(): the desktop WebView
+// swallows it without a word, and on the Mac that made the map's consent
+// switch a switch that would not turn on — and the SOS button a button
+// that did nothing. Same text the native dialog carried, same answer.
+function askConfirm(text, opts) {
+  opts = opts || {};
+  return new Promise((resolve) => {
+    const dlg = document.createElement('dialog');
+    dlg.className = 'sheet confirm-sheet';
+    const body = document.createElement('div');
+    body.className = 'confirm-text';
+    body.textContent = text;
+    const row = document.createElement('div');
+    row.className = 'confirm-actions';
+    const no = document.createElement('button');
+    no.type = 'button'; no.className = 'btn-plain';
+    no.textContent = opts.cancel || t('confirm.cancel');
+    const yes = document.createElement('button');
+    yes.type = 'button'; yes.className = 'btn-plain confirm-yes';
+    yes.textContent = opts.ok || t('confirm.ok');
+    let done = false;
+    const finish = (v) => {
+      if (done) return;
+      done = true;
+      try { dlg.close(); } catch (_) {}
+      dlg.remove();
+      resolve(v);
+    };
+    no.addEventListener('click', () => finish(false));
+    yes.addEventListener('click', () => finish(true));
+    dlg.addEventListener('cancel', (e) => { e.preventDefault(); finish(false); });
+    dlg.addEventListener('close', () => finish(false));
+    row.append(no, yes);
+    dlg.append(body, row);
+    document.body.appendChild(dlg);
+    if (typeof dlg.showModal === 'function') dlg.showModal(); else dlg.setAttribute('open', '');
+    yes.focus();
+  });
+}
+
 // copyText: navigator.clipboard first, textarea+execCommand as the
 // fallback — the macOS webview (wails://) denies the async clipboard API
 // outright ("not allowed by the user agent"), and the one screen that hit
@@ -1454,7 +1495,7 @@ async function copyPublicLink() {
   // Once per device, spell out that a public link is irrevocable before the
   // first copy — after that the badge tooltip carries the same warning.
   if (!localStorage.getItem('qp.linkWarned')) {
-    const ok = confirm(
+    const ok = await askConfirm(
       'This link is irrevocable. Anyone who obtains it can read this space forever — you cannot take it back. Copy it?');
     if (!ok) return;
     localStorage.setItem('qp.linkWarned', '1');
@@ -1727,8 +1768,8 @@ function toggleSeed() {
 }
 
 function setAccessVis(v) { reviseAccess({ visibility: v }); }
-function setAccessMode(m) {
-  if (m === 'curated' && !confirm(t('access.curated_confirm'))) return;
+async function setAccessMode(m) {
+  if (m === 'curated' && !(await askConfirm(t('access.curated_confirm')))) return;
   reviseAccess({ publish: m });
 }
 
@@ -1776,11 +1817,11 @@ function addCurator() { reviseAccess({ add_curator: curatorFields() }); }
 // round is 2 to 30 seconds depending on how busy the space is. "Six per
 // minute" would be a number we cannot stand behind; "strict" is one we can.
 function setContributionLimit(n) { reviseAccess({ rate_per_cycle: n }); }
-function toggleFreeze() {
+async function toggleFreeze() {
   const sp = spacesCache.find(s => s.id === accessSpace);
   const next = !(sp && sp.frozen);
-  if (next && !confirm(
-    'Freeze publication? EVERYONE stops posting — including you — until you unfreeze. Readers keep what is already published.')) return;
+  if (next && !(await askConfirm(
+    'Freeze publication? EVERYONE stops posting — including you — until you unfreeze. Readers keep what is already published.'))) return;
   reviseAccess({ frozen: next });
 }
 

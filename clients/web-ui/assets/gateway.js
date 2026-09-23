@@ -247,7 +247,7 @@ async function gwPin(fingerprint) {
 }
 
 async function gwUnpin(link) {
-  if (!confirm(`Stop trusting the gateway on "${link}"?\n\n` +
+  if (!await askConfirm(`Stop trusting the gateway on "${link}"?\n\n` +
     'Its custody receipts will go back to proving nothing. Messages still ' +
     'travel; nothing will confirm anyone took them on.')) return;
   try {
@@ -342,8 +342,8 @@ async function gwAdoptProfile() {
 }
 
 // Forget drops the key from memory. It was never stored anywhere else.
-function gwForget() {
-  if (!confirm('Forget this link?\n\nThe key is only held on this screen and is ' +
+async function gwForget() {
+  if (!await askConfirm('Forget this link?\n\nThe key is only held on this screen and is ' +
     'not stored anywhere. Once forgotten it cannot be shown again, and any radio ' +
     'that has not imported it yet will need a newly prepared channel.')) return;
   GW_PREPARED = null;
@@ -372,7 +372,7 @@ async function gwApply() {
   const el = document.getElementById('gwSegName');
   const name = (el ? el.value : '').trim();
   if (!name) return;
-  if (!confirm(`Set up this radio for segment "${name}"?\n\n` +
+  if (!await askConfirm(`Set up this radio for segment "${name}"?\n\n` +
     'A new channel with a fresh private key is added to the first free slot. ' +
     'Channels already on the radio are left alone. The radio then reboots, ' +
     'which takes about half a minute.')) return;
@@ -537,7 +537,7 @@ async function gwAttachRNode(port, knownSegment) {
 // Detach releases the port and FORGETS the radio, so the next start does not
 // bring back something somebody just switched off.
 async function gwDetachRadio() {
-  if (!confirm(t('radio.detach.confirm'))) return;
+  if (!await askConfirm(t('radio.detach.confirm'))) return;
   try {
     await api('/api/radio/detach', { method: 'POST', body: '{}' });
     GW_SCAN = null;

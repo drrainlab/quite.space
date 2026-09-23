@@ -265,7 +265,7 @@ async function qrFeedback(s, verdict) {
 
 // qrMuteSpace is a POLICY change and deliberately does not train the model.
 async function qrMuteSpace(s) {
-  if (!confirm(`Stop signalling about “${s.space_title || 'this space'}”? Its messages stay exactly as they are — you just will not be told about them.`)) return;
+  if (!await askConfirm(`Stop signalling about “${s.space_title || 'this space'}”? Its messages stay exactly as they are — you just will not be told about them.`)) return;
   try {
     const pol = await api('/api/attention/policy');
     pol.spaces = pol.spaces || {};
@@ -342,7 +342,7 @@ function qrPickMode(m) {
 }
 
 async function qrForget() {
-  if (!confirm('Delete everything QuietRank learned about you, and every stored signal? The rules keep working; only the learned part is erased.')) return;
+  if (!await askConfirm('Delete everything QuietRank learned about you, and every stored signal? The rules keep working; only the learned part is erased.')) return;
   try {
     await api('/api/attention/forget', { method: 'POST' });
     document.getElementById('attnMsg').textContent = 'profile deleted';

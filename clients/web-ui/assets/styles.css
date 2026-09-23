@@ -5181,3 +5181,10 @@ body.nav-resizing { user-select: none; cursor: col-resize; }
   #navExtras .nav-act { min-height: 44px; padding: 0 14px; }
 }
 /* ==== end UI-2 ==== */
+
+/* askConfirm (app.js): the one confirmation sheet — in the page, never the
+   native confirm() the desktop WebView swallows. */
+.confirm-sheet { max-width: 26rem; padding: 1.1rem 1.2rem; }
+.confirm-text { white-space: pre-line; line-height: 1.4; margin-bottom: 1rem; }
+.confirm-actions { display: flex; justify-content: flex-end; gap: .6rem; }
+.confirm-actions .confirm-yes { font-weight: 600; }
