@@ -144,7 +144,7 @@ var relayRegistryV = func() *atomic.Value {
 // `terminal-relay`'s startup banner) — a constant edit, no architecture
 // change.
 var shippedBuiltinRegistry = RelayRegistry{
-	Version: 1,
+	Version: 2,
 	Relays: []RelayDescriptor{
 		{
 			ID:          "local-dev",
@@ -179,8 +179,8 @@ var shippedBuiltinRegistry = RelayRegistry{
 			// administrative tie-break: selection is measured, and local-dev
 			// is not a candidate at all (ManualOnly).
 			ID:          "staging-1",
-			Endpoint:    "91.201.114.71:7411",
-			Label:       "Amsterdam",
+			Endpoint:    "r-eu.quite.space:7411",
+			Label:       "Europe",
 			Region:      "eu",
 			Priority:    50,
 			ProtocolMin: 1,
@@ -190,11 +190,8 @@ var shippedBuiltinRegistry = RelayRegistry{
 				RelayRoleSpaceRendezvous, RelayRolePublicHost,
 			},
 			Official: true,
-			// Verified from the running box with `terminal relay
-			// show-identity`, and identical to the pin recorded when it was
-			// stood up — RR-1's persistent identity key held across every
-			// restart since. A SET so rotation is [current, next].
-			SPKIPins: []string{"A63rjukjUJkPVU98l0XPdKjRiDNXTVs1xCm9Xs7jyI4="},
+			// Verified against the deployed relay TLS identity.
+			SPKIPins: []string{"utcmE8uagJ8mq2Ey8WlSs7nfcrDxXC6X0EsVeGJf1pM="},
 		},
 		{
 			// THE SECOND REGION, and the first time the backup rule has
@@ -207,7 +204,7 @@ var shippedBuiltinRegistry = RelayRegistry{
 			// itself, which is the whole point of automatic mode, and a tie
 			// here means nothing overrides that measurement.
 			ID:          "ru-1",
-			Endpoint:    "178.20.45.239:7411",
+			Endpoint:    "r-ru.quite.space:7411",
 			Label:       "Russia",
 			Region:      "ru",
 			Priority:    50,
@@ -218,13 +215,8 @@ var shippedBuiltinRegistry = RelayRegistry{
 				RelayRoleSpaceRendezvous, RelayRolePublicHost,
 			},
 			Official: true,
-			// Read off the running box AND verified over the wire from a
-			// second machine with `terminal relay show-identity` — the log
-			// line says what the process believes, the handshake says what a
-			// client will actually be offered. Confirmed to survive a restart
-			// (RR-1's persistent key, /var/lib/quiet-relay-ru). A SET so
-			// rotation ships as [current, next] → [next].
-			SPKIPins: []string{"gk0X84yjjmahVYaUO7snq/a/BecbtX4deDFp7hGkC/c="},
+			// Verified against the deployed relay TLS identity.
+			SPKIPins: []string{"Gzo9Oz+ZYXVUhcEwKKmZZPkeQ2nDMJyx8OD9RFAgFvk="},
 		},
 		{
 			// THE DIRECTORY'S HOME. This is the relay the official catalog
@@ -234,10 +226,8 @@ var shippedBuiltinRegistry = RelayRegistry{
 			// catalog link ever handed out. It can gain a backup pin; it
 			// cannot move.
 			//
-			// It is an ORDINARY relay in every other respect — same roles,
-			// same priority, blind like the rest, and no device is obliged to
-			// use it for anything of its own. Hosting the catalog is not a
-			// privilege the protocol knows about.
+			// Retain explicit resolution for existing references. The retired
+			// endpoint no longer participates in automatic selection.
 			ID:          "catalog-1",
 			Endpoint:    "195.63.160.237:7411",
 			Label:       "Catalog",
@@ -255,7 +245,8 @@ var shippedBuiltinRegistry = RelayRegistry{
 			// show-identity` before it was written here — the log says what
 			// the process believes, the handshake says what a client is
 			// actually offered, and only the second one is evidence.
-			SPKIPins: []string{"nPKCFXxKyvcwaUcNVB1Ibn7xalO1aNRiHfMNXueQgD4="},
+			SPKIPins:   []string{"nPKCFXxKyvcwaUcNVB1Ibn7xalO1aNRiHfMNXueQgD4="},
+			ManualOnly: true,
 		},
 	},
 }
