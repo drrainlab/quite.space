@@ -90,11 +90,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
-            TAG="${GITHUB_REF_NAME}"
-          else
-            TAG="v0.0.0-dryrun"
+          if [ "${GITHUB_REF_TYPE}" != "tag" ]; then
+            {
+              echo 'tag=v0.0.0-dryrun'
+              echo 'name=0.0.0-dryrun'
+              echo 'code=1'
+            } >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          TAG="${GITHUB_REF_NAME}"
           NAME="${TAG#v}"
           # versionCode must increase monotonically forever, and Android's
           # failure when it does not reads to a person as a corrupt download.
